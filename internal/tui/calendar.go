@@ -83,11 +83,19 @@ func (m *Model) onCalendarLoaded(msg calendarLoadedMsg) {
 	m.calMonth, m.calTasks = msg.month, msg.tasks
 }
 
+// addMonths moves t by n months, keeping the day but not past the end of the target month
+// (Jan 31 + 1 month is Feb 28, not Mar 3 as with AddDate).
+func addMonths(t time.Time, n int) time.Time {
+	first := time.Date(t.Year(), t.Month()+time.Month(n), 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+	last := first.AddDate(0, 1, -1).Day()
+	return first.AddDate(0, 0, min(t.Day(), last)-1)
+}
+
 // moveCalendar moves the selected day and reloads when the month changes.
 func (m *Model) moveCalendar(days, months int) tea.Cmd {
 	before := monthStart(m.calDay)
 	if months != 0 {
-		m.calDay = m.calDay.AddDate(0, months, 0)
+		m.calDay = addMonths(m.calDay, months)
 	}
 	m.calDay = m.calDay.AddDate(0, 0, days)
 	if !monthStart(m.calDay).Equal(before) {

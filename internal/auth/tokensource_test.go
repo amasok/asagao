@@ -2,25 +2,42 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"golang.org/x/oauth2"
 
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
+	"github.com/amasok/asana-tui/internal/config"
 )
 
 type memStore struct {
-	caches bool
-	saved  []tokenstore.Credentials
+	caches  bool
+	saved   []tokenstore.Credentials
+	creds   *tokenstore.Credentials // returned by Load (nil: ErrNotFound)
+	loadErr error
+	saveErr error
+	loads   int
 }
 
 func (m *memStore) Name() string            { return "mem" }
 func (m *memStore) CachesAccessToken() bool { return m.caches }
 func (m *memStore) Load(context.Context) (*tokenstore.Credentials, error) {
-	return nil, tokenstore.ErrNotFound
+	m.loads++
+	switch {
+	case m.loadErr != nil:
+		return nil, m.loadErr
+	case m.creds == nil:
+		return nil, tokenstore.ErrNotFound
+	}
+	c := *m.creds
+	return &c, nil
 }
 func (m *memStore) Save(_ context.Context, c *tokenstore.Credentials) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
 	m.saved = append(m.saved, *c)
 	return nil
 }
@@ -79,4 +96,141 @@ func TestPersistingSource(t *testing.T) {
 			}
 		})
 	}
+}
+
+type errSource struct{ err error }
+
+func (s errSource) Token() (*oauth2.Token, error) { return nil, s.err }
+
+func TestPersistingSourceRefreshErrors(t *testing.T) {
+	other := errors.New("network down")
+	for _, tc := range []struct {
+		name        string
+		err         error
+		notLoggedIn bool
+	}{
+		{"invalid_grant means the login is gone", &oauth2.RetrieveError{ErrorCode: "invalid_grant"}, true},
+		{"other OAuth errors pass through", &oauth2.RetrieveError{ErrorCode: "invalid_client"}, false},
+		{"other errors pass through", other, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &memStore{caches: true}
+			p := &persistingSource{ctx: context.Background(), base: errSource{tc.err}, store: st,
+				creds: tokenstore.Credentials{RefreshToken: "rt1"}}
+			tok, err := p.Token()
+			if tok != nil || err == nil {
+				t.Fatalf("Token() = %v, %v; want an error", tok, err)
+			}
+			if got := errors.Is(err, ErrNotLoggedIn); got != tc.notLoggedIn {
+				t.Fatalf("errors.Is(%v, ErrNotLoggedIn) = %v, want %v", err, got, tc.notLoggedIn)
+			}
+			if !tc.notLoggedIn && !errors.Is(err, tc.err) {
+				t.Fatalf("err = %v, want the original error %v", err, tc.err)
+			}
+			if len(st.saved) != 0 {
+				t.Fatalf("nothing should be saved: %v", st.saved)
+			}
+		})
+	}
+}
+
+// When saving a new token fails, Token reports the error and keeps the old credentials, so
+// the next call tries to save again instead of forgetting the rotated refresh token.
+func TestPersistingSourceSaveFailure(t *testing.T) {
+	exp := time.Now().Add(time.Hour)
+	for _, tc := range []struct {
+		name   string
+		caches bool
+		tok    oauth2.Token
+		want   string
+	}{
+		{"rotation, 1password", false, oauth2.Token{AccessToken: "at2", RefreshToken: "rt2", Expiry: exp}, "rt2/"},
+		{"rotation, keychain", true, oauth2.Token{AccessToken: "at2", RefreshToken: "rt2", Expiry: exp}, "rt2/at2"},
+		{"refresh, keychain", true, oauth2.Token{AccessToken: "at2", Expiry: exp}, "rt1/at2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saveErr := errors.New("keychain locked")
+			st := &memStore{caches: tc.caches, saveErr: saveErr}
+			tok := tc.tok
+			p := &persistingSource{ctx: context.Background(), base: &seqSource{&tok}, store: st,
+				creds: tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "9"}}
+			if got, err := p.Token(); got != nil || !errors.Is(err, saveErr) {
+				t.Fatalf("Token() = %v, %v; want the save error", got, err)
+			}
+			if p.creds.RefreshToken != "rt1" || p.creds.AccessToken != "at1" {
+				t.Fatalf("creds changed after a failed save: %+v", p.creds)
+			}
+			st.saveErr = nil
+			got, err := p.Token()
+			if err != nil || got.AccessToken != "at2" {
+				t.Fatalf("retry Token() = %v, %v", got, err)
+			}
+			if len(st.saved) != 1 {
+				t.Fatalf("saved %d times, want 1 (the retry)", len(st.saved))
+			}
+			c := st.saved[0]
+			if c.RefreshToken+"/"+c.AccessToken != tc.want || c.UserGID != "9" {
+				t.Fatalf("saved %+v, want %s keeping the user", c, tc.want)
+			}
+			if _, err := p.Token(); err != nil || len(st.saved) != 1 {
+				t.Fatalf("third call: err %v, saved %d times (want no new save)", err, len(st.saved))
+			}
+		})
+	}
+}
+
+func TestTokenSource(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.AuthConfig{ClientID: "cid", RedirectPort: 8976}
+
+	t.Run("ASANA_TOKEN wins", func(t *testing.T) {
+		t.Setenv(EnvToken, "pat")
+		st := &memStore{loadErr: errors.New("must not load")}
+		ts, err := TokenSource(ctx, config.AuthConfig{}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok, err := ts.Token()
+		if err != nil || tok.AccessToken != "pat" || tok.TokenType != "Bearer" {
+			t.Fatalf("Token() = %+v, %v", tok, err)
+		}
+		if st.loads != 0 {
+			t.Fatal("store should not be read when ASANA_TOKEN is set")
+		}
+	})
+
+	t.Setenv(EnvToken, "")
+	t.Run("no client id", func(t *testing.T) {
+		_, err := TokenSource(ctx, config.AuthConfig{}, &memStore{})
+		if err == nil || errors.Is(err, ErrNotLoggedIn) {
+			t.Fatalf("err = %v, want a client_id error", err)
+		}
+	})
+	t.Run("nothing stored", func(t *testing.T) {
+		if _, err := TokenSource(ctx, cfg, &memStore{}); !errors.Is(err, ErrNotLoggedIn) {
+			t.Fatalf("err = %v, want ErrNotLoggedIn", err)
+		}
+	})
+	t.Run("store error", func(t *testing.T) {
+		loadErr := errors.New("op: not signed in")
+		_, err := TokenSource(ctx, cfg, &memStore{loadErr: loadErr})
+		if !errors.Is(err, loadErr) || errors.Is(err, ErrNotLoggedIn) {
+			t.Fatalf("err = %v, want the store error", err)
+		}
+	})
+	t.Run("valid stored token is used without refreshing", func(t *testing.T) {
+		st := &memStore{caches: true, creds: &tokenstore.Credentials{
+			RefreshToken: "rt", AccessToken: "at", Expiry: time.Now().Add(time.Hour)}}
+		ts, err := TokenSource(ctx, cfg, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok, err := ts.Token()
+		if err != nil || tok.AccessToken != "at" || tok.RefreshToken != "rt" {
+			t.Fatalf("Token() = %+v, %v", tok, err)
+		}
+		if len(st.saved) != 0 {
+			t.Fatalf("unchanged token should not be saved: %v", st.saved)
+		}
+	})
 }

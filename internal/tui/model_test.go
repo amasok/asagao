@@ -1402,3 +1402,282 @@ func TestProjectStatusInTUI(t *testing.T) {
 		t.Fatal("new project must not prompt while offline")
 	}
 }
+
+// boardHarness opens the project board with an extra task t6 whose section is unknown, so
+// the board has a third, gid-less "その他" column: 家具 (t1) | 手続き (t2 t3 t4) | その他 (t6).
+func boardHarness(t *testing.T) (*harness, *store.Store) {
+	t.Helper()
+	st := fixtureStore(t)
+	ref := func(gid string) *asana.Ref { return &asana.Ref{GID: gid} }
+	if err := st.UpsertTasks(context.Background(), []asana.Task{
+		{GID: "t6", Name: "行方不明のタスク", Assignee: ref("me"), Memberships: []asana.Membership{{Project: ref("p1"), Section: ref("s9")}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := projectHarness(t, st, nil)
+	h.key("v")
+	if !h.m.boardActive() {
+		t.Fatal("board should be active")
+	}
+	return h, st
+}
+
+func pendingOps(t *testing.T, st *store.Store) int {
+	t.Helper()
+	n, _, _, err := st.OutboxCounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestBoardRightEdge(t *testing.T) {
+	h, st := boardHarness(t)
+	if s := h.screen(); !strings.Contains(s, "その他 (1)") || !strings.Contains(s, "手続き (3)") {
+		t.Fatalf("board should have an その他 column:\n%s", s)
+	}
+	h.key("l", "j") // 手続き, second card
+	if h.m.boardCol != 1 || h.selected() != "t3" {
+		t.Fatalf("col %d selected %q, want col 1 t3", h.m.boardCol, h.selected())
+	}
+
+	// L into "その他" (no section gid) is refused: no move, cursor stays.
+	h.key("L")
+	if h.m.boardCol != 1 || h.selected() != "t3" || pendingOps(t, st) != 0 {
+		t.Fatalf("L into その他 should do nothing: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	}
+	if s := h.screen(); !strings.Contains(s, "手続き (3)") || !strings.Contains(s, "その他 (1)") {
+		t.Fatalf("columns changed:\n%s", s)
+	}
+
+	// l to the last column, then l / L there do nothing.
+	h.key("l")
+	if h.m.boardCol != 2 || h.selected() != "t6" {
+		t.Fatalf("l should reach その他: col %d selected %q", h.m.boardCol, h.selected())
+	}
+	h.key("l", "right")
+	if h.m.boardCol != 2 || h.selected() != "t6" {
+		t.Fatalf("l on the last column should stay: col %d selected %q", h.m.boardCol, h.selected())
+	}
+	h.key("L")
+	if h.m.boardCol != 2 || h.selected() != "t6" || pendingOps(t, st) != 0 {
+		t.Fatalf("L on the last column should do nothing: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	}
+
+	// H out of その他 moves the card into a real section.
+	h.key("H")
+	if h.m.boardCol != 1 || h.selected() != "t6" || pendingOps(t, st) != 1 {
+		t.Fatalf("H should move the card to 手続き: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	}
+	if s := h.screen(); !strings.Contains(s, "手続き (4)") || strings.Contains(s, "その他") {
+		t.Fatalf("その他 should disappear once empty:\n%s", s)
+	}
+	// With その他 gone, 手続き is the last column: L does nothing.
+	h.key("L")
+	if h.m.boardCol != 1 || pendingOps(t, st) != 1 {
+		t.Fatalf("L on the last section should do nothing: col %d pending %d", h.m.boardCol, pendingOps(t, st))
+	}
+}
+
+func TestBoardLeftEdgeAndRows(t *testing.T) {
+	h, st := boardHarness(t)
+	h.key("H") // first column: nothing to the left
+	if h.m.boardCol != 0 || h.selected() != "t1" || pendingOps(t, st) != 0 {
+		t.Fatalf("H on the first column should do nothing: col %d selected %q", h.m.boardCol, h.selected())
+	}
+	h.key("l", "G")
+	if h.selected() != "t4" {
+		t.Fatalf("G should go to the last card, got %q", h.selected())
+	}
+	h.key("j") // past the end: stays
+	if h.selected() != "t4" || h.m.boardRow != 2 {
+		t.Fatalf("j past the last card: row %d selected %q", h.m.boardRow, h.selected())
+	}
+	h.key("h") // into 家具, which has one card: the row is clamped
+	if h.m.boardCol != 0 || h.m.boardRow != 0 || h.selected() != "t1" {
+		t.Fatalf("h into a shorter column: col %d row %d selected %q", h.m.boardCol, h.m.boardRow, h.selected())
+	}
+	h.key("k", "g")
+	if h.selected() != "t1" || h.m.boardRow != 0 {
+		t.Fatalf("k/g at the top: row %d", h.m.boardRow)
+	}
+	h.key("h") // h on the first column goes to the sidebar
+	if h.m.focus != paneSidebar {
+		t.Fatal("h on the first column should focus the sidebar")
+	}
+}
+
+// After completing a card the cursor stays at the same place in the column.
+func TestBoardCursorAfterComplete(t *testing.T) {
+	h, _ := boardHarness(t)
+	h.key("l", "G") // 手続き: t2 t3 t4, on t4 (last)
+	h.key("x")
+	if h.m.boardCol != 1 || h.selected() != "t3" {
+		t.Fatalf("completing the last card should select the one above: col %d selected %q", h.m.boardCol, h.selected())
+	}
+	h.key("g", "x") // complete t2 (first)
+	if h.selected() != "t3" {
+		t.Fatalf("completing the first card should select the next: %q", h.selected())
+	}
+}
+
+// Completing a task removes it from the list; the cursor goes to the task that took its
+// place (or the one above, if it was the last), not back to the top.
+func TestListCursorAfterComplete(t *testing.T) {
+	h := newHarness(t, 140, 30) // My Tasks: 期限切れ t2 | 今日 t3 | 7日以内 t1
+	if got := h.visibleGIDs(); !slices.Equal(got, []string{"t2", "t3", "t1"}) {
+		t.Fatalf("fixture rows = %v", got)
+	}
+	h.key("j") // t3 (middle)
+	h.key("x")
+	if got := h.visibleGIDs(); !slices.Equal(got, []string{"t2", "t1"}) {
+		t.Fatalf("rows after complete = %v", got)
+	}
+	if h.selected() != "t1" {
+		t.Fatalf("completing the middle task should select the next one, got %q", h.selected())
+	}
+	h.key("x") // t1 (now last)
+	if h.selected() != "t2" {
+		t.Fatalf("completing the last task should select the one above, got %q", h.selected())
+	}
+	h.key("x") // t2 (only one)
+	if len(h.visibleGIDs()) != 0 || h.selected() != "" {
+		t.Fatalf("empty list should select nothing: %v %q", h.visibleGIDs(), h.selected())
+	}
+	if h.m.detail != nil {
+		t.Fatal("detail should be cleared when nothing is selected")
+	}
+}
+
+// Switching scope starts at the first task when the selected one is not in the new scope
+// (the row position of the old scope means nothing there).
+func TestListCursorAfterScopeChange(t *testing.T) {
+	h := projectHarness(t, fixtureStore(t), nil) // 家具 t1 | 手続き t2 t3 t4
+	h.key("j", "j", "j")
+	if h.selected() != "t4" {
+		t.Fatalf("selected %q, want t4", h.selected())
+	}
+	h.key("h", "g", "l") // My Tasks: t2 t3 t1 (t4 is not mine)
+	if got := h.visibleGIDs(); !slices.Equal(got, []string{"t2", "t3", "t1"}) || h.selected() != "t2" {
+		t.Fatalf("selected %q in %v, want the first task t2", h.selected(), got)
+	}
+}
+
+// Archiving the open project switches to My Tasks without going through moveScope (which
+// resets the cursor): the old project's row position must not carry over.
+func TestListCursorAfterArchiveToMyTasks(t *testing.T) {
+	h := projectHarness(t, fixtureStore(t), nil) // 家具 t1 | 手続き t2 t3 t4
+	h.key("j", "j", "j")
+	if h.selected() != "t4" || h.m.listCursor != 5 {
+		t.Fatalf("selected %q at row %d, want t4 at row 5", h.selected(), h.m.listCursor)
+	}
+	h.send(projectDoneMsg{status: "アーカイブしました", toMyTasks: true})
+	if h.m.scopeKey() != "my" {
+		t.Fatalf("scope = %q, want My Tasks", h.m.scopeKey())
+	}
+	// My Tasks rows: 期限切れ t2 | 今日 t3 | 7日以内 t1; row 5 would be t1.
+	if got := h.visibleGIDs(); !slices.Equal(got, []string{"t2", "t3", "t1"}) || h.selected() != "t2" {
+		t.Fatalf("selected %q in %v, want the first task t2", h.selected(), got)
+	}
+}
+
+// selectInListNear falls back to the closest selectable row: the first at or after near,
+// else the last before it. (Lists built by queryRows always end with a selectable row, so
+// the "before" case is only reachable through this helper.)
+func TestSelectInListNear(t *testing.T) {
+	task := func(gid string) row { return row{task: &store.TaskSummary{GID: gid}} }
+	hdr := row{key: "h"}
+	m := &Model{}
+	for _, tc := range []struct {
+		name string
+		rows []row
+		gid  string
+		near int
+		want int
+	}{
+		{"listed gid wins", []row{hdr, task("a"), task("b")}, "b", 0, 2},
+		{"at near", []row{hdr, task("a"), task("b")}, "x", 2, 2},
+		{"after a header", []row{task("a"), hdr, task("b")}, "x", 1, 2},
+		{"past the end is clamped", []row{hdr, task("a")}, "x", 9, 1},
+		{"negative is clamped", []row{hdr, task("a")}, "x", -3, 1},
+		{"nothing after: the one before", []row{task("a"), task("b"), hdr, hdr}, "x", 3, 1},
+		{"collapsed header is selectable", []row{task("a"), {key: "c", collapsed: true}}, "x", 1, 1},
+		{"no selectable rows", []row{hdr}, "x", 0, -1},
+		{"empty list", nil, "x", 0, -1},
+	} {
+		m.rows = tc.rows
+		m.selectInListNear(tc.gid, tc.near)
+		if m.listCursor != tc.want {
+			t.Errorf("%s: cursor %d, want %d", tc.name, m.listCursor, tc.want)
+		}
+	}
+}
+
+func TestCalendarMonthMoves(t *testing.T) {
+	st := fixtureStore(t)
+	ref := func(gid string) *asana.Ref { return &asana.Ref{GID: gid, Name: "Me"} }
+	if err := st.UpsertTasks(context.Background(), []asana.Task{
+		{GID: "t7", Name: "年末の大掃除", DueOn: "2026-12-30", Assignee: ref("me")},
+		{GID: "t8", Name: "初詣", DueOn: "2027-01-01", Assignee: ref("me")},
+		{GID: "t9", Name: "衣替え", DueOn: "2026-10-31", Assignee: ref("me")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := projectHarness(t, st, nil)
+	h.key("h", "g", "l", "v") // My Tasks calendar
+	day := func() string { return h.m.calDay.Format(time.DateOnly) }
+	month := func() string { return h.m.calMonth.Format("2006-01") }
+	loaded := func(due string) bool { return len(h.m.calTasks[due]) > 0 }
+
+	if month() != "2026-11" || !loaded("2026-11-13") {
+		t.Fatalf("calendar should open on November: %s", month())
+	}
+	h.key("n")
+	if day() != "2026-12-13" || month() != "2026-12" || !loaded("2026-12-30") || loaded("2026-11-13") {
+		t.Fatalf("n: day %s month %s; December tasks should be loaded", day(), month())
+	}
+	// The grid shows whole weeks, so tasks just outside the month are loaded too.
+	if !loaded("2027-01-01") {
+		t.Fatal("December's grid should include 2027-01-01")
+	}
+	h.key("p", "p")
+	if day() != "2026-10-13" || month() != "2026-10" || !loaded("2026-10-31") {
+		t.Fatalf("p p: day %s month %s", day(), month())
+	}
+	h.key("]")
+	if day() != "2026-11-13" || month() != "2026-11" {
+		t.Fatalf("]: day %s month %s", day(), month())
+	}
+
+	// Moving by days across a month boundary reloads too.
+	h.m.calDay = time.Date(2026, 11, 30, 10, 0, 0, 0, time.Local)
+	h.key("l")
+	if day() != "2026-12-01" || month() != "2026-12" {
+		t.Fatalf("l on the 30th: day %s month %s", day(), month())
+	}
+	h.key("h")
+	if day() != "2026-11-30" || month() != "2026-11" {
+		t.Fatalf("h on the 1st: day %s month %s", day(), month())
+	}
+	h.key("k", "k", "k", "k", "k") // 5 weeks back: 2026-10-26
+	if day() != "2026-10-26" || month() != "2026-10" {
+		t.Fatalf("k x5: day %s month %s", day(), month())
+	}
+
+	// A new month keeps the day, but never runs past the month's last day.
+	for _, tc := range []struct{ from, key, want string }{
+		{"2026-10-31", "n", "2026-11-30"},
+		{"2027-01-31", "n", "2027-02-28"},
+		{"2028-01-31", "n", "2028-02-29"},
+		{"2027-03-31", "p", "2027-02-28"},
+		{"2026-12-31", "n", "2027-01-31"},
+		{"2027-01-15", "p", "2026-12-15"},
+	} {
+		from, _ := time.ParseInLocation(time.DateOnly, tc.from, time.Local)
+		h.m.calDay = from
+		h.key(tc.key)
+		if day() != tc.want || month() != tc.want[:7] {
+			t.Errorf("%s from %s: day %s month %s, want %s", tc.key, tc.from, day(), month(), tc.want)
+		}
+	}
+}

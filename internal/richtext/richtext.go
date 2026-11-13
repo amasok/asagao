@@ -1,7 +1,7 @@
 // Package richtext converts Asana rich text (html_notes / html_text) to Markdown.
 //
 // Asana's rich text is a small HTML subset: <body>, <strong>, <em>, <u>, <s>, <code>, <pre>,
-// <a href>, <ul>/<ol>/<li>, <h1>, <h2>, <hr>, <blockquote>, <img> and plain newlines in text.
+// <a href>, <ul>/<ol>/<li>, <h1>, <h2>, <h3>, <hr>, <blockquote>, <img> and plain newlines in text.
 // Images are emitted as an ImageToken line so the renderer can put the picture (or a
 // placeholder) exactly where it appeared.
 package richtext
@@ -140,7 +140,7 @@ func (c *converter) walk(n *html.Node) {
 		c.link(n)
 	case atom.H1, atom.H2, atom.H3:
 		c.block()
-		c.write(strings.Repeat("#", int(n.DataAtom-atom.H1)/int(atom.H2-atom.H1)+1) + " ")
+		c.write(strings.Repeat("#", headingLevel(n.DataAtom)) + " ")
 		c.write(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")))
 		c.block()
 	case atom.Hr:
@@ -191,7 +191,7 @@ func (c *converter) text(n *html.Node) {
 	if len(c.lists) > 0 && strings.TrimSpace(t) == "" {
 		return // whitespace between list tags
 	}
-	t = escape(t)
+	t = escape(t, c.atLineStart())
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
@@ -204,6 +204,19 @@ func (c *converter) text(n *html.Node) {
 		}
 		c.write(l)
 	}
+}
+
+// listMarkerEnd matches a list item marker just written at the end of the output.
+var listMarkerEnd = regexp.MustCompile(`(?:^|\n) *(?:- |[0-9]+\. )$`)
+
+// atLineStart reports whether the next text starts a line of Markdown: at the start of the
+// output, after a newline, a blockquote prefix or a list item marker.
+func (c *converter) atLineStart() bool {
+	s := c.b.String()
+	for c.quote > 0 && strings.HasSuffix(s, "> ") {
+		s = strings.TrimSuffix(s, "> ")
+	}
+	return s == "" || strings.HasSuffix(s, "\n") || listMarkerEnd.MatchString(s)
 }
 
 func (c *converter) wrap(n *html.Node, mark string) {
@@ -222,16 +235,16 @@ func (c *converter) link(n *html.Node) {
 	text := strings.TrimSpace(textOf(n))
 	switch {
 	case c.editable && attr(n, "data-asana-type") == "user" && attr(n, "data-asana-gid") != "":
-		c.write("[" + escape(text) + "](" + mentionScheme + attr(n, "data-asana-gid") + ")")
+		c.write("[" + escape(text, false) + "](" + mentionScheme + attr(n, "data-asana-gid") + ")")
 	case attr(n, "data-asana-type") == "user" || strings.HasPrefix(text, "@"):
-		c.write("**" + escape(text) + "**") // mention
+		c.write("**" + escape(text, false) + "**") // mention
 	case href == "" || text == href:
 		if href == "" {
 			href = text
 		}
 		c.write("<" + href + ">")
 	default:
-		c.write("[" + escape(text) + "](" + href + ")")
+		c.write("[" + escape(text, false) + "](" + href + ")")
 	}
 }
 
@@ -264,7 +277,7 @@ func (c *converter) image(n *html.Node) {
 	}
 	if gid == "" {
 		if alt := attr(n, "alt"); alt != "" {
-			c.write("[画像: " + escape(alt) + "]")
+			c.write("[画像: " + escape(alt, false) + "]")
 		}
 		return
 	}
@@ -301,19 +314,82 @@ func textOf(n *html.Node) string {
 	return b.String()
 }
 
-var mdSpecial = strings.NewReplacer(`\`, `\\`, "*", `\*`, "_", `\_`, "`", "\\`", "[", `\[`, "]", `\]`, "<", `\<`)
+// headingLevel is 1 for <h1>, 2 for <h2> and 3 for <h3>. (Atoms are not consecutive, so
+// the level cannot be computed from the atom values.)
+func headingLevel(a atom.Atom) int {
+	switch a {
+	case atom.H2:
+		return 2
+	case atom.H3:
+		return 3
+	}
+	return 1
+}
 
-func escape(s string) string {
+// "~" is escaped too: goldmark's strikethrough accepts a single tilde as well as "~~".
+var mdSpecial = strings.NewReplacer(`\`, `\\`, "*", `\*`, "_", `\_`, "`", "\\`", "[", `\[`, "]", `\]`, "<", `\<`, "~", `\~`)
+
+// orderedMarker matches an ordered list marker at the start of a line ("1. ", "12) ").
+var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
+
+// escape escapes Markdown syntax in text so that it reads back as the same text. lineStart
+// tells whether the text begins at the start of a line (otherwise only the lines after its
+// first newline are checked for block syntax and indentation).
+func escape(s string, lineStart bool) string {
 	s = mdSpecial.Replace(s)
-	// "#", "-", "+", "1." at the start of a line would become headings or lists.
+	s = entityLike.ReplaceAllString(s, `\$0`) // "&copy;" in the text stays as written
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
-		trimmed := strings.TrimLeft(l, " ")
-		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "+ ") || strings.HasPrefix(trimmed, ">") {
-			lines[i] = strings.Repeat(" ", len(l)-len(trimmed)) + `\` + trimmed
+		if i == 0 && !lineStart {
+			continue
+		}
+		trimmed := strings.TrimLeft(l, " \t") // indentation: spaces and tabs
+		indent := l[:len(l)-len(trimmed)]
+		if indent != "" && trimmed != "" {
+			// Indentation would be dropped (or make a code block at the start of a paragraph).
+			// Writing its first character as a character reference keeps it exactly, and the
+			// line no longer starts with block syntax.
+			lines[i] = indentRef[indent[0]] + indent[1:] + trimmed
+			continue
+		}
+		// "#", ">", "- ", "+ ", "1. ", "1) " at the start of a line would become headings,
+		// quotes or lists, and a line of only "-" or "=" would turn the line above into a heading.
+		switch {
+		case strings.HasPrefix(trimmed, "#"), strings.HasPrefix(trimmed, ">"),
+			listBullet(trimmed, '-'), listBullet(trimmed, '+'),
+			onlyOf(trimmed, '-'), onlyOf(trimmed, '='):
+			lines[i] = `\` + trimmed
+		default:
+			if m := orderedMarker.FindStringSubmatchIndex(trimmed); m != nil {
+				lines[i] = trimmed[:m[4]] + `\` + trimmed[m[4]:]
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// entityLike matches what Markdown would read as a character reference ("&amp;", "&#32;").
+var entityLike = regexp.MustCompile(`&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{0,31});`)
+
+// indentRef writes the first indentation character as a character reference.
+var indentRef = map[byte]string{' ': "&#32;", '\t': "&#9;"}
+
+// listBullet reports whether line starts with a bullet list marker ("- ", or "-" alone).
+func listBullet(line string, mark byte) bool {
+	return len(line) > 0 && line[0] == mark && (len(line) == 1 || line[1] == ' ' || line[1] == '\t')
+}
+
+// onlyOf reports whether line consists of mark characters (and spaces or tabs) only.
+func onlyOf(line string, mark rune) bool {
+	if line == "" {
+		return false
+	}
+	for _, r := range line {
+		if r != mark && r != ' ' && r != '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 var manyBlank = regexp.MustCompile(`\n{3,}`)
