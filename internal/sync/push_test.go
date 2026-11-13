@@ -37,6 +37,8 @@ type writeServer struct {
 	tasks map[string]*serverTask
 	calls []string // "METHOD path body"
 	next  int
+	// hook, if set, may answer a request itself (returning true) to inject failures.
+	hook func(rw http.ResponseWriter, r *http.Request) bool
 }
 
 func (w *writeServer) taskJSON(gid string) string {
@@ -60,6 +62,9 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.calls = append(w.calls, r.Method+" "+r.URL.Path+" "+strings.TrimSpace(string(b)))
 	}
+	if w.hook != nil && w.hook(rw, r) {
+		return
+	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/tasks":
@@ -73,6 +78,16 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		w.tasks[gid] = st
 		fmt.Fprintf(rw, `{"data":%s}`, w.taskJSON(gid))
+	case len(parts) == 3 && parts[0] == "tasks" && (parts[2] == "addFollowers" || parts[2] == "removeFollowers"):
+		if _, ok := w.tasks[parts[1]]; !ok {
+			rw.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(rw, `{"errors":[{"message":"task not found"}]}`)
+			return
+		}
+		fmt.Fprintf(rw, `{"data":%s}`, w.taskJSON(parts[1]))
+	case r.Method == http.MethodPost && r.URL.Path == "/attachments":
+		w.next++
+		fmt.Fprintf(rw, `{"data":{"gid":"att%d","name":"f.txt","view_url":"https://x/att%d"}}`, w.next, w.next)
 	case len(parts) == 3 && parts[0] == "sections" && parts[2] == "addTask":
 		gid, _ := body.Data["task"].(string)
 		w.tasks[gid].Section = parts[1]
@@ -908,5 +923,258 @@ func TestProjectOperations(t *testing.T) {
 	}
 	if _, err := (&Syncer{Store: st}).CreateProject(ctx, "x"); err != ErrOffline {
 		t.Fatalf("offline create = %v", err)
+	}
+}
+
+func (w *writeServer) setHook(h func(rw http.ResponseWriter, r *http.Request) bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.hook = h
+}
+
+// countCalls counts recorded write calls starting with prefix ("POST /tasks ").
+func (w *writeServer) countCalls(prefix string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := 0
+	for _, c := range w.calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPushOfflineTaskWithFollowerAndAttachment(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	gid, err := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", SectionGID: "s1", Name: "オフライン"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetFollowerLocal(ctx, gid, "u2", true, now); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "f.txt")
+	_ = os.WriteFile(file, []byte("hello"), 0o600)
+	if _, err := st.UploadAttachmentLocal(ctx, gid, file, t.TempDir(), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceStories(ctx, gid, nil, now); err != nil { // a task_details row for the local task
+		t.Fatal(err)
+	}
+
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 3 || res.Failed != 0 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+	}
+	// A second push (the next sync) must not create the task again.
+	if res, err := s.Push(ctx); err != nil || res.Sent != 0 {
+		t.Fatalf("second push = %+v %v", res, err)
+	}
+	if n := ws.countCalls("POST /tasks "); n != 1 {
+		t.Fatalf("task created %d times:\n%v", n, ws.calls)
+	}
+	real, _ := st.RealGID(ctx, gid)
+	if store.IsLocalGID(real) {
+		t.Fatalf("local gid not replaced: %s", real)
+	}
+	d, err := st.GetTask(ctx, real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Followers) != 1 || d.Followers[0].GID != "u2" {
+		t.Fatalf("followers after push = %+v", d.Followers)
+	}
+	if len(d.Attachments) != 1 || store.IsLocalGID(d.Attachments[0].GID) {
+		t.Fatalf("attachments after push = %+v", d.Attachments)
+	}
+	if p, c, f := pendingCount(t, st); p+c+f != 0 {
+		t.Fatalf("outbox not empty: %d/%d/%d", p, c, f)
+	}
+}
+
+// dropConnection closes the connection without answering: the request reached the server
+// but the client cannot tell what happened.
+func dropConnection(rw http.ResponseWriter) {
+	conn, _, err := rw.(http.Hijacker).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	conn.Close()
+}
+
+func opByKind(t *testing.T, st *store.Store, kind string) *store.Op {
+	t.Helper()
+	ops, err := st.ListOps(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range ops {
+		if ops[i].Kind == kind {
+			return &ops[i]
+		}
+	}
+	return nil
+}
+
+func TestPushRecoversInterruptedSends(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "作成途中"}, now)
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	// A previous process died while sending both entries.
+	ops, _ := st.PendingOps(ctx)
+	for _, op := range ops {
+		if ok, err := st.BeginSend(ctx, op.ID); !ok || err != nil {
+			t.Fatalf("begin send %d: %v %v", op.ID, ok, err)
+		}
+	}
+	if p, _, _ := pendingCount(t, st); p != 0 {
+		t.Fatalf("sending entries must not count as pending, got %d", p)
+	}
+
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if n := ws.countCalls("POST /tasks "); n != 0 {
+		t.Fatal("an interrupted create must not be sent again without the user's confirmation")
+	}
+	if ws.tasks["t1"].Name != "B" {
+		t.Fatal("an interrupted update is safe to resend and should be sent")
+	}
+	op := opByKind(t, st, store.OpCreateTask)
+	if op == nil || op.State != store.OpFailed || op.LastError != store.UnknownResultMessage || op.TaskGID != gid {
+		t.Fatalf("interrupted create = %+v", op)
+	}
+	// After checking Asana, the user retries it.
+	if err := st.RetryOp(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("retry push = %+v %v", res, err)
+	}
+}
+
+func TestPushConnectionDroppedDuringCreate(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いたかも"}, now)
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			dropConnection(rw)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err == nil {
+		t.Fatalf("a dropped connection should stop the push: %+v", res)
+	}
+	if res.Remaining != 1 {
+		t.Fatalf("remaining = %d, want 1 (the update)", res.Remaining)
+	}
+	op := opByKind(t, st, store.OpCreateTask)
+	if op == nil || op.State != store.OpFailed || !strings.Contains(op.LastError, "届いたか分かりません") {
+		t.Fatalf("a create that may have reached Asana must wait for the user: %+v", op)
+	}
+	ws.setHook(nil)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("next push must not resend the create: %+v %v\n%v", res, err, ws.calls)
+	}
+}
+
+func TestPushSkipsWhileAnotherProcessPushes(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	// Another process (its own connection to the same database file) is pushing.
+	other, err := store.Open(ctx, st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	unlock, err := other.TryLockPush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if !errors.Is(err, ErrPushBusy) || !res.Busy || res.Remaining != 1 || res.Sent != 0 {
+		t.Fatalf("push while locked = %+v %v", res, err)
+	}
+	if len(ws.calls) != 0 {
+		t.Fatalf("nothing should be sent while another process pushes: %v", ws.calls)
+	}
+	unlock()
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("push after unlock = %+v %v", res, err)
+	}
+}
+
+func TestPushNonNetworkErrorFailsEntryAndContinues(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	ws.tasks["t2"] = &serverTask{Name: "X"}
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "X"}})
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"name": "Y"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPut && r.URL.Path == "/tasks/t1" {
+			fmt.Fprint(rw, `<html>proxy error</html>`) // 200 but not JSON
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 1 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if ws.tasks["t2"].Name != "Y" {
+		t.Fatal("the next entry should still be sent")
+	}
+	op := opByKind(t, st, store.OpUpdateTask)
+	if op == nil || op.TaskGID != "t1" || op.State != store.OpFailed || !strings.Contains(op.LastError, "decode") {
+		t.Fatalf("failed entry = %+v", op)
+	}
+}
+
+func TestPushCreateRetriesFailedSectionMove(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", SectionGID: "s2", Name: "セクションへ"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/addTask") {
+			rw.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(rw, `{"errors":[{"message":"boom"}]}`)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	real, _ := st.RealGID(ctx, gid)
+	op := opByKind(t, st, store.OpMoveTask)
+	if store.IsLocalGID(real) || op == nil || op.State != store.OpFailed || op.TaskGID != real || op.Payload["section"] != "s2" {
+		t.Fatalf("the failed move should stay queued for the created task %s: %+v", real, op)
+	}
+	if opByKind(t, st, store.OpCreateTask) != nil {
+		t.Fatal("the create itself is done")
+	}
+	if got := sectionOf(t, st, real); got != "s2" {
+		t.Fatalf("local section = %q, want the unsent s2", got)
+	}
+	ws.setHook(nil)
+	if err := st.RetryOp(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("retry = %+v %v", res, err)
+	}
+	if ws.countCalls("POST /tasks ") != 1 || ws.tasks[real].Section != "s2" {
+		t.Fatalf("task should be created once and moved: %v", ws.calls)
 	}
 }

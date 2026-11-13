@@ -382,12 +382,12 @@ func (s *Store) MarkOpConflict(ctx context.Context, id int64, server map[string]
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, "UPDATE outbox SET state = 'conflict', conflict = ?, attempts = attempts + 1 WHERE id = ?", string(b), id)
+	_, err = s.db.ExecContext(ctx, "UPDATE outbox SET state = 'conflict', conflict = ? WHERE id = ?", string(b), id)
 	return err
 }
 
 func (s *Store) MarkOpFailed(ctx context.Context, id int64, cause error) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?", cause.Error(), id)
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'failed', last_error = ? WHERE id = ?", cause.Error(), id)
 	return err
 }
 
@@ -399,6 +399,9 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 		if err != nil {
 			return err
 		}
+		if err := ensureNotSending(op); err != nil {
+			return err
+		}
 		maps.Copy(op.Base, op.Conflict)
 		op.Conflict, op.State, op.LastError = map[string]any{}, OpPending, ""
 		return saveOp(ctx, tx, op)
@@ -406,9 +409,19 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 }
 
 // RetryOp puts a failed entry back in the queue.
+// An entry being sent is refused with ErrOpSending.
 func (s *Store) RetryOp(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'pending', last_error = '' WHERE id = ?", id)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		op, err := getOpTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := ensureNotSending(op); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending', last_error = '' WHERE id = ?", id)
+		return err
+	})
 }
 
 // DiscardOp drops a local change. The task keeps its local values until the next sync
@@ -417,6 +430,9 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		op, err := getOpTx(ctx, tx, id)
 		if err != nil {
+			return err
+		}
+		if err := ensureNotSending(op); err != nil {
 			return err
 		}
 		switch op.Kind {
@@ -485,28 +501,34 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 
 // ReplaceLocalTaskGID swaps a temporary gid for the real one after the task was created in Asana.
 func (s *Store) ReplaceLocalTaskGID(ctx context.Context, local, real string) error {
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		// Children reference tasks(gid); check the constraints at commit, after all rows moved.
-		if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
+	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalTaskGID(ctx, tx, local, real) })
+}
+
+func replaceLocalTaskGID(ctx context.Context, tx *sql.Tx, local, real string) error {
+	// Children reference tasks(gid); check the constraints at commit, after all rows moved.
+	if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
+		return err
+	}
+	// Every table that refers to a task gid must be listed here (see schema.go).
+	for _, q := range []string{
+		"DELETE FROM tasks WHERE gid = ?2", // in case a sync already pulled it
+		"UPDATE tasks SET gid = ?2 WHERE gid = ?1",
+		"UPDATE tasks SET parent_gid = ?2 WHERE parent_gid = ?1",
+		"UPDATE task_memberships SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE task_followers SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE task_details SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE attachments SET parent_gid = ?2 WHERE parent_gid = ?1",
+		"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
+		// Remember the mapping so callers holding the local gid can find the task.
+		"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('gid:' || ?1, ?2)",
+	} {
+		if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
 			return err
 		}
-		for _, q := range []string{
-			"DELETE FROM tasks WHERE gid = ?2", // in case a sync already pulled it
-			"UPDATE tasks SET gid = ?2 WHERE gid = ?1",
-			"UPDATE tasks SET parent_gid = ?2 WHERE parent_gid = ?1",
-			"UPDATE task_memberships SET task_gid = ?2 WHERE task_gid = ?1",
-			"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
-			"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
-			"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
-			// Remember the mapping so callers holding the local gid can find the task.
-			"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('gid:' || ?1, ?2)",
-		} {
-			if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // RealGID returns the Asana gid for a task created offline, or gid itself if it is not
@@ -524,20 +546,22 @@ func (s *Store) RealGID(ctx context.Context, gid string) (string, error) {
 
 // ReplaceLocalStory swaps an offline comment for the one Asana created.
 func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string, st asana.Story) error {
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ? OR gid = ?", localGID, st.GID); err != nil {
-			return err
-		}
-		var byGID, byName string
-		if st.CreatedBy != nil {
-			byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO stories
-			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText)
+	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalStory(ctx, tx, localGID, taskGID, st) })
+}
+
+func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string, st asana.Story) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ? OR gid = ?", localGID, st.GID); err != nil {
 		return err
-	})
+	}
+	var byGID, byName string
+	if st.CreatedBy != nil {
+		byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO stories
+		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText)
+	return err
 }
 
 // --- helpers ---

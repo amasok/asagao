@@ -3,6 +3,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -78,7 +79,8 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 	// Send local changes first, so the pull below sees them and a network error means
 	// we are offline before anything else is attempted.
-	if res.Push, err = s.Push(ctx); err != nil {
+	// If another process is sending them, pull anyway: unsent changes survive a pull.
+	if res.Push, err = s.Push(ctx); err != nil && !errors.Is(err, ErrPushBusy) {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 

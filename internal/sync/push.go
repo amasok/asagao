@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"os"
 	"slices"
 
@@ -18,92 +20,208 @@ type PushResult struct {
 	Failed    int `json:"failed"`
 	// Remaining is the number of pending entries left (e.g. because we went offline).
 	Remaining int `json:"remaining"`
+	// Busy is set when another process was already sending (Push returns ErrPushBusy).
+	Busy bool `json:"busy,omitempty"`
+}
+
+// ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
+// the outbox. The entries stay queued; they are sent by that process or the next push.
+var ErrPushBusy = store.ErrPushBusy
+
+// outcome is what happened to an entry Asana accepted.
+type outcome int
+
+const (
+	sent       outcome = iota
+	conflicted         // left for the user to resolve
+	followUp           // sent; the entry now holds a follow-up change to send right away
+)
+
+// sentNotSavedError wraps a failure to record a change that Asana already accepted.
+type sentNotSavedError struct{ err error }
+
+func (e *sentNotSavedError) Error() string { return store.SentNotSavedMessage + e.err.Error() }
+func (e *sentNotSavedError) Unwrap() error { return e.err }
+
+func sentNotSaved(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &sentNotSavedError{err}
 }
 
 // Push sends pending outbox entries to Asana in order.
 //
+// Only one process pushes at a time (a lock file next to the database); if another one is
+// pushing, Push returns ErrPushBusy at once. Entries left "sending" by a process that died
+// are queued again if resending is harmless, and otherwise marked failed for the user.
+//
 // An update is checked against the server first: if a field we change was also changed
 // on the server (server value differs from both our base and our new value), the entry is
-// marked as a conflict and left for the user to resolve. API errors (e.g. the task was
-// deleted) mark the entry failed and Push continues; network errors stop Push and are
-// returned so the caller can treat it as offline.
-func (s *Syncer) Push(ctx context.Context) (PushResult, error) {
-	var res PushResult
+// marked as a conflict and left for the user to resolve. Network errors stop Push and are
+// returned so the caller can treat it as offline; an entry that may already have reached
+// Asana and must not be sent twice (e.g. a create) is marked failed instead of being queued
+// again. Any other error (e.g. the task was deleted) marks the entry failed and Push continues.
+func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
+	unlock, err := s.Store.TryLockPush()
+	if err != nil {
+		if errors.Is(err, store.ErrPushBusy) {
+			res.Busy = true
+			res.Remaining, _, _, _ = s.Store.OutboxCounts(ctx)
+		}
+		return res, err
+	}
+	defer unlock()
+	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
+		return res, err
+	}
 	ops, err := s.Store.PendingOps(ctx)
 	if err != nil {
 		return res, err
 	}
-	for i, snapshot := range ops {
-		// Re-read: sending an earlier entry may have rewritten this one (a create replaces
-		// the local gid that later comments/updates refer to).
-		op, err := s.Store.GetOp(ctx, snapshot.ID)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
+	defer func() {
+		if err != nil { // stopped early: report what is still queued
+			res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
 		}
-		if err != nil {
-			return res, err
-		}
-		if op.State != store.OpPending {
-			continue
-		}
-		switch op.Kind {
-		case store.OpUpdateTask:
-			var conflict bool
-			conflict, err = s.pushUpdate(ctx, *op)
-			if err == nil && conflict {
-				res.Conflicts++
-				continue
+	}()
+	for _, snapshot := range ops {
+		for again := true; again; {
+			again = false
+			if err := ctx.Err(); err != nil {
+				return res, err
 			}
-		case store.OpCreateTask:
-			err = s.pushCreate(ctx, *op)
-		case store.OpAddComment:
-			err = s.pushComment(ctx, *op)
-		case store.OpMoveTask:
-			err = s.pushMove(ctx, *op)
-		case store.OpAddTag, store.OpRemoveTag:
-			err = s.pushTag(ctx, *op)
-		case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
-			err = s.pushRelation(ctx, *op)
-		case store.OpDuplicateTask:
-			err = s.pushDuplicate(ctx, *op)
-		case store.OpUploadAttachment:
-			err = s.pushUpload(ctx, *op)
-		case store.OpCreateStatus:
-			err = s.pushStatus(ctx, *op)
-		case store.OpRenameSection:
-			var conflict bool
-			conflict, err = s.pushRenameSection(ctx, *op)
-			if err == nil && conflict {
-				res.Conflicts++
-				continue
+			// Re-read: sending an earlier entry may have rewritten this one (a create replaces
+			// the local gid that later comments/updates refer to).
+			op, err := s.Store.GetOp(ctx, snapshot.ID)
+			if errors.Is(err, store.ErrNotFound) {
+				break
 			}
-		default:
-			err = &asana.Error{Status: 400}
+			if err != nil {
+				return res, err
+			}
+			if op.State != store.OpPending {
+				break
+			}
+			if ok, err := s.Store.BeginSend(ctx, op.ID); err != nil {
+				return res, err
+			} else if !ok {
+				break
+			}
+			wasFollowUp := op.Kind != snapshot.Kind
+			out, err := s.send(ctx, *op)
+			switch {
+			case err == nil:
+				switch {
+				case out == conflicted:
+					res.Conflicts++
+				case !wasFollowUp:
+					res.Sent++ // a follow-up is part of the change already counted
+				}
+				again = out == followUp
+			case isNetworkError(err):
+				if err := s.holdBack(ctx, *op, err); err != nil {
+					return res, err
+				}
+				return res, err // offline or cancelled: keep the rest for later
+			default:
+				if err := s.markFailed(ctx, *op, err); err != nil {
+					return res, err
+				}
+				res.Failed++
+			}
 		}
-		if err == nil {
-			res.Sent++
-			continue
-		}
-		var apiErr *asana.Error
-		if !errors.As(err, &apiErr) {
-			res.Remaining = len(ops) - i
-			return res, err // offline or cancelled: keep the rest for later
-		}
-		if err := s.Store.MarkOpFailed(ctx, op.ID, err); err != nil {
-			return res, err
-		}
-		res.Failed++
 	}
 	return res, nil
 }
 
-func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (conflict bool, err error) {
+// send sends one entry (already marked "sending").
+func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
+	var err error
+	switch op.Kind {
+	case store.OpUpdateTask:
+		return s.pushUpdate(ctx, op)
+	case store.OpRenameSection:
+		return s.pushRenameSection(ctx, op)
+	case store.OpCreateTask:
+		return s.pushCreate(ctx, op)
+	case store.OpAddComment:
+		err = s.pushComment(ctx, op)
+	case store.OpMoveTask:
+		err = s.pushMove(ctx, op)
+	case store.OpAddTag, store.OpRemoveTag:
+		err = s.pushTag(ctx, op)
+	case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
+		err = s.pushRelation(ctx, op)
+	case store.OpDuplicateTask:
+		err = s.pushDuplicate(ctx, op)
+	case store.OpUploadAttachment:
+		err = s.pushUpload(ctx, op)
+	case store.OpCreateStatus:
+		err = s.pushStatus(ctx, op)
+	default:
+		err = &asana.Error{Status: 400}
+	}
+	return sent, err
+}
+
+// holdBack handles a network error while sending op: it goes back in the queue, unless
+// Asana may have received it and sending it twice would duplicate something.
+func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
+	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
+	if requestNotSent(cause) {
+		return s.Store.ReleaseOp(ctx, op.ID)
+	}
+	safe, err := s.Store.SafeToResend(ctx, op)
+	if err != nil {
+		return err
+	}
+	if safe {
+		return s.Store.ReleaseOp(ctx, op.ID)
+	}
+	return s.Store.MarkOpUnknown(ctx, op.ID)
+}
+
+func (s *Syncer) markFailed(ctx context.Context, op store.Op, cause error) error {
+	var apiErr *asana.Error
+	var notSaved *sentNotSavedError
+	if !errors.As(cause, &apiErr) && !errors.As(cause, &notSaved) {
+		// Not a rejection by Asana: if the request was sent, it may have been applied.
+		if safe, err := s.Store.SafeToResend(ctx, op); err != nil {
+			return err
+		} else if !safe {
+			cause = fmt.Errorf("%s (%w)", store.UnknownResultMessage, cause)
+		}
+	}
+	return s.Store.MarkOpFailed(ctx, op.ID, cause)
+}
+
+// isNetworkError reports whether err means Asana could not be reached (or the request was
+// cancelled), as opposed to Asana or the local data rejecting the change.
+func isNetworkError(err error) bool {
+	var netErr net.Error
+	var urlErr *url.Error
+	return errors.As(err, &netErr) || errors.As(err, &urlErr) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// requestNotSent reports whether a network error happened before the request could reach
+// the server (no connection could be made).
+func requestNotSent(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && (opErr.Op == "dial" || opErr.Op == "proxyconnect") {
+		return true
+	}
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr)
+}
+
+func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 	if store.IsLocalGID(op.TaskGID) {
-		return false, &asana.Error{Status: 404} // its create failed
+		return sent, &asana.Error{Status: 404} // its create failed
 	}
 	server, err := s.API.Task(ctx, op.TaskGID)
 	if err != nil {
-		return false, err
+		return sent, err
 	}
 	current := store.TaskFieldValues(server)
 	conflicts := map[string]any{}
@@ -117,19 +235,26 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (conflict bool, er
 		}
 	}
 	if len(conflicts) > 0 {
-		return true, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
 	t, err := s.API.UpdateTask(ctx, op.TaskGID, apiFields(op.Payload))
 	if err != nil {
-		return false, err
+		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return false, err
+		return sent, sentNotSaved(err)
 	}
-	return false, s.Store.UpsertTasks(ctx, []asana.Task{*t})
+	s.refresh(ctx, *t)
+	return sent, nil
 }
 
-func (s *Syncer) pushCreate(ctx context.Context, op store.Op) error {
+// refresh stores a task as Asana returned it after a change. The change is already
+// recorded, so a failure here only leaves the cache stale until the next sync.
+func (s *Syncer) refresh(ctx context.Context, t asana.Task) {
+	_ = s.Store.UpsertTasks(ctx, []asana.Task{t})
+}
+
+func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
 	fields := apiFields(op.Payload)
 	section, _ := fields["section"].(string)
 	project, _ := fields["project"].(string)
@@ -145,10 +270,10 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) error {
 	if parent != "" {
 		// The parent may have been created offline too; it has been sent before us.
 		if parent, err = s.Store.RealGID(ctx, parent); err != nil {
-			return err
+			return sent, err
 		}
 		if store.IsLocalGID(parent) {
-			return &asana.Error{Status: 404} // the parent's create failed
+			return sent, &asana.Error{Status: 404} // the parent's create failed
 		}
 		delete(fields, "workspace")
 		t, err = s.API.CreateSubtask(ctx, parent, fields)
@@ -156,23 +281,32 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) error {
 		t, err = s.API.CreateTask(ctx, fields)
 	}
 	if err != nil {
-		return err
+		return sent, err
 	}
-	if err := s.Store.ReplaceLocalTaskGID(ctx, op.TaskGID, t.GID); err != nil {
-		return err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return err
-	}
+	// Moving the task into its section is a separate request: the entry becomes a move,
+	// sent right after (and retried later if it fails), so the create is never repeated.
+	var move *store.MoveTarget
 	if section != "" {
-		if err := s.API.AddTaskToSection(ctx, section, t.GID); err != nil {
-			return fmt.Errorf("作成したタスクをセクションに移せませんでした: %w", err)
-		}
-		if t, err = s.API.Task(ctx, t.GID); err != nil {
-			return err
+		move = &store.MoveTarget{Project: project, Section: section, From: sectionIn(t, project)}
+	}
+	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, move); err != nil {
+		return sent, sentNotSaved(err)
+	}
+	s.refresh(ctx, *t)
+	if move != nil {
+		return followUp, nil
+	}
+	return sent, nil
+}
+
+// sectionIn returns the section t is in within project ("" if unknown).
+func sectionIn(t *asana.Task, project string) string {
+	for _, m := range t.Memberships {
+		if m.Project != nil && m.Project.GID == project && m.Section != nil {
+			return m.Section.GID
 		}
 	}
-	return s.Store.UpsertTasks(ctx, []asana.Task{*t})
+	return ""
 }
 
 func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
@@ -186,10 +320,7 @@ func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Store.ReplaceLocalStory(ctx, localGID, op.TaskGID, *st); err != nil {
-		return err
-	}
-	return s.Store.CompleteOp(ctx, op.ID)
+	return sentNotSaved(s.Store.CompleteComment(ctx, op.ID, localGID, op.TaskGID, *st))
 }
 
 func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
@@ -201,32 +332,32 @@ func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
 		return err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return err
+		return sentNotSaved(err)
 	}
-	t, err := s.API.Task(ctx, op.TaskGID)
-	if err != nil {
-		return nil // moved; the next sync refreshes the task
+	if t, err := s.API.Task(ctx, op.TaskGID); err == nil { // else the next sync refreshes it
+		s.refresh(ctx, *t)
 	}
-	return s.Store.UpsertTasks(ctx, []asana.Task{*t})
+	return nil
 }
 
-func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (conflict bool, err error) {
+func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (outcome, error) {
 	server, err := s.API.Section(ctx, op.TaskGID)
 	if err != nil {
-		return false, err
+		return sent, err
 	}
 	name, _ := op.Payload["name"].(string)
 	if !same(server.Name, op.Base["name"]) && !same(server.Name, name) {
-		return true, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"name": server.Name})
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"name": server.Name})
 	}
 	updated, err := s.API.UpdateSection(ctx, op.TaskGID, name)
 	if err != nil {
-		return false, err
+		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return false, err
+		return sent, sentNotSaved(err)
 	}
-	return false, s.Store.ApplySectionName(ctx, op.TaskGID, updated.Name)
+	_ = s.Store.ApplySectionName(ctx, op.TaskGID, updated.Name) // the next sync fixes a failure
+	return sent, nil
 }
 
 func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
@@ -242,7 +373,7 @@ func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
 		if err := s.API.RemoveTag(ctx, op.TaskGID, tag); err != nil {
 			return err
 		}
-		return s.Store.CompleteOp(ctx, op.ID)
+		return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 	}
 	if store.IsLocalGID(tag) { // created offline: create it in Asana first
 		name, _ := op.Payload["tag_name"].(string)
@@ -252,14 +383,14 @@ func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
 			return err
 		}
 		if err := s.Store.ReplaceLocalTagGID(ctx, tag, created.GID); err != nil {
-			return err
+			return sentNotSaved(err)
 		}
 		tag = created.GID
 	}
 	if err := s.API.AddTag(ctx, op.TaskGID, tag); err != nil {
 		return err
 	}
-	return s.Store.CompleteOp(ctx, op.ID)
+	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
 func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
@@ -286,7 +417,7 @@ func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
 	if err != nil {
 		return err
 	}
-	return s.Store.CompleteOp(ctx, op.ID)
+	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
 func (s *Syncer) pushDuplicate(ctx context.Context, op store.Op) error {
@@ -296,14 +427,11 @@ func (s *Syncer) pushDuplicate(ctx context.Context, op store.Op) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Store.ReplaceLocalTaskGID(ctx, op.TaskGID, created.GID); err != nil {
-		return err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return err
+	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, created.GID, nil); err != nil {
+		return sentNotSaved(err)
 	}
 	if t, err := s.API.Task(ctx, created.GID); err == nil { // subtasks etc. follow on the next sync
-		return s.Store.UpsertTasks(ctx, []asana.Task{*t})
+		s.refresh(ctx, *t)
 	}
 	return nil
 }
@@ -327,10 +455,7 @@ func (s *Syncer) pushUpload(ctx context.Context, op store.Op) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Store.ReplaceLocalAttachment(ctx, local, att.GID, att.ViewURL); err != nil {
-		return err
-	}
-	return s.Store.CompleteOp(ctx, op.ID)
+	return sentNotSaved(s.Store.CompleteUpload(ctx, op.ID, local, att.GID, att.ViewURL))
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.

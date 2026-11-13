@@ -110,8 +110,5 @@ func (s *Syncer) pushStatus(ctx context.Context, op store.Op) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Store.ReplaceLocalStatus(ctx, str("status"), *u); err != nil {
-		return err
-	}
-	return s.Store.CompleteOp(ctx, op.ID)
+	return sentNotSaved(s.Store.CompleteStatus(ctx, op.ID, str("status"), *u))
 }
