@@ -17,24 +17,48 @@ type imagesReadyMsg struct {
 	err   error
 }
 
-// viewImages downloads (or reuses cached copies of) the selected task's image attachments
-// and then hands the terminal to the image viewer.
+// taskImages lists the images of a task in reading order: images pasted into the
+// description, then into comments, then other image attachments.
+func taskImages(d *store.TaskDetail) []string {
+	var gids []string
+	seen := map[string]bool{}
+	add := func(gid string) {
+		if !seen[gid] {
+			seen[gid] = true
+			gids = append(gids, gid)
+		}
+	}
+	for _, g := range store.InlineAssets(d.Notes) {
+		add(g)
+	}
+	for _, st := range d.Stories {
+		if st.Type == "comment" {
+			for _, g := range store.InlineAssets(st.Text) {
+				add(g)
+			}
+		}
+	}
+	for _, a := range d.Attachments {
+		if a.IsImage {
+			add(a.GID)
+		}
+	}
+	return gids
+}
+
+// viewImages downloads (or reuses cached copies of) the selected task's images and then
+// hands the terminal to the image viewer.
 func (m *Model) viewImages() tea.Cmd {
 	d := m.detail
 	if d == nil {
 		return nil
 	}
-	var images []store.AttachmentView
-	for _, a := range d.Attachments {
-		if a.IsImage {
-			images = append(images, a)
-		}
-	}
+	images := taskImages(d)
 	if len(images) == 0 {
 		if d.DetailsFetchedAt == "" {
 			m.status = "添付ファイルはまだ取得していません（オンラインでタスクを開くと取得します）"
 		} else {
-			m.status = "画像の添付はありません"
+			m.status = "画像はありません"
 		}
 		return nil
 	}
@@ -46,12 +70,13 @@ func (m *Model) viewImages() tea.Cmd {
 	if syncer == nil {
 		syncer = &sync.Syncer{Store: m.deps.Store} // offline: cached files only
 	}
+	taskGID := d.GID
 	m.status = fmt.Sprintf("画像を準備しています（%d 件）…", len(images))
 	return func() tea.Msg {
 		var paths []string
 		var errs []string
-		for _, a := range images {
-			p, err := syncer.DownloadAttachment(m.ctx, a.GID)
+		for _, gid := range images {
+			p, err := syncer.DownloadAttachment(m.ctx, taskGID, gid)
 			if err != nil {
 				errs = append(errs, err.Error())
 				continue

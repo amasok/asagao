@@ -410,20 +410,23 @@ func (m *Model) renderDetail(w int) string {
 	if d.Parent != nil {
 		field("親タスク", d.Parent.Name)
 	}
+	imageNo := map[string]int{}
+	for i, gid := range taskImages(d) {
+		imageNo[gid] = i + 1
+	}
+	inline := func(text string) string {
+		return store.ReplaceInlineAssets(text, func(gid string) string {
+			return m.st.tag.Render(fmt.Sprintf("[画像%d]", imageNo[gid]))
+		})
+	}
 	if d.Notes != "" {
-		b.WriteString("\n" + wrap.Render(strings.TrimRight(d.Notes, "\n")) + "\n")
+		b.WriteString("\n" + wrap.Render(inline(strings.TrimRight(d.Notes, "\n"))) + "\n")
+	}
+	if n := len(imageNo); n > 0 {
+		b.WriteString(m.st.dim.Render(fmt.Sprintf("画像 %d 件（i で表示）", n)) + "\n")
 	}
 	if len(d.Attachments) > 0 {
 		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("添付ファイル (%d)", len(d.Attachments))))
-		images := 0
-		for _, a := range d.Attachments {
-			if a.IsImage {
-				images++
-			}
-		}
-		if images > 0 {
-			b.WriteString(m.st.dim.Render("  i で画像を表示"))
-		}
 		b.WriteString("\n")
 		for _, a := range d.Attachments {
 			kind := "[ファイル]"
@@ -484,7 +487,7 @@ func (m *Model) renderDetail(w int) string {
 				meta += "  " + m.st.today.Render("（未送信）")
 			}
 			b.WriteString(meta + "\n")
-			b.WriteString(body.Render(strings.TrimRight(c.Text, "\n")) + "\n")
+			b.WriteString(body.Render(inline(strings.TrimRight(c.Text, "\n"))) + "\n")
 		}
 	case d.DetailsFetchedAt == "":
 		b.WriteString("\n" + m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")

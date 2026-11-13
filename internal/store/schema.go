@@ -164,4 +164,9 @@ CREATE TABLE attachments (
 );
 CREATE INDEX attachments_parent ON attachments(parent_gid, created_at);
 `,
+	`
+-- Details fetched before attachments were supported did not include them; forget the
+-- fetch times so every task is fetched again (with attachments) the next time it is opened.
+DELETE FROM task_details;
+`,
 }

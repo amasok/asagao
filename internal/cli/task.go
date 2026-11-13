@@ -195,7 +195,11 @@ func (a *app) taskShowCmd() *cobra.Command {
 				}
 				return err
 			}
-			if fetchErr != nil {
+			var attErr *sync.AttachmentsError
+			switch {
+			case errors.As(fetchErr, &attErr):
+				fmt.Fprintf(cmd.ErrOrStderr(), "注意: %v\n", attErr)
+			case fetchErr != nil:
 				fmt.Fprintf(cmd.ErrOrStderr(), "注意: Asana から取得できなかったため、ローカルストアの内容を表示します（%v）\n", fetchErr)
 			}
 			if a.json {

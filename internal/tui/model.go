@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -370,7 +371,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fetchingFor == msg.gid {
 			m.fetchingFor = ""
 		}
-		if msg.err != nil {
+		var attErr *sync.AttachmentsError
+		if errors.As(msg.err, &attErr) {
+			m.status = attErr.Error() + attachmentsHint(attErr)
+		} else if msg.err != nil {
 			m.status = "詳細を取得できませんでした（オフライン表示）: " + msg.err.Error()
 			return m, nil
 		}
@@ -786,6 +790,14 @@ func (m *Model) syncStatus() (string, bool) {
 		return "● 同期済み " + m.lastSync.Format("15:04"), true
 	}
 	return "", true
+}
+
+// attachmentsHint explains the most likely fix for an attachments error.
+func attachmentsHint(e *sync.AttachmentsError) string {
+	if strings.Contains(e.Error(), "403") || strings.Contains(e.Error(), "scope") {
+		return "（Asana のアプリ設定で attachments:read の権限を追加し、config の scopes にも足してから auth login し直してください）"
+	}
+	return ""
 }
 
 func shortErr(err error) string {

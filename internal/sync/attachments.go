@@ -12,16 +12,32 @@ import (
 	"time"
 
 	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asana-tui/internal/store"
 )
 
 // maxAttachmentSize guards against huge downloads (Asana's free plan limit is 100MB per file).
 const maxAttachmentSize = 100 << 20
 
-// DownloadAttachment returns a local path for an attachment, downloading it on first use.
-// Once downloaded, the file is reused (and is available offline).
-func (s *Syncer) DownloadAttachment(ctx context.Context, gid string) (string, error) {
+// DownloadAttachment returns a local path for an attachment of a task, downloading it on
+// first use. Once downloaded, the file is reused (and is available offline). Attachments
+// not yet in the store (e.g. images pasted into the description) are looked up first.
+func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (string, error) {
 	a, err := s.Store.GetAttachment(ctx, gid)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) && s.API != nil {
+		meta, err := s.API.Attachment(ctx, gid)
+		if err != nil {
+			return "", fmt.Errorf("画像 %s の取得: %w", gid, err)
+		}
+		if err := s.Store.UpsertAttachment(ctx, taskGID, *meta); err != nil {
+			return "", err
+		}
+		a, err = s.Store.GetAttachment(ctx, gid)
+		if err != nil {
+			return "", err
+		}
+	} else if errors.Is(err, store.ErrNotFound) {
+		return "", errors.New("オフラインのため画像を取得できません")
+	} else if err != nil {
 		return "", err
 	}
 	if a.LocalPath != "" {

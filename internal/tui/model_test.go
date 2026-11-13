@@ -609,7 +609,7 @@ func TestViewImages(t *testing.T) {
 	var viewed []string
 	h := projectHarness(t, st, func(paths []string) tea.Cmd { viewed = paths; return nil })
 	s := h.screen()
-	for _, want := range []string{"添付ファイル (2)", "i で画像を表示", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
+	for _, want := range []string{"添付ファイル (2)", "画像 1 件（i で表示）", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("detail missing %q:\n%s", want, s)
 		}
@@ -620,7 +620,27 @@ func TestViewImages(t *testing.T) {
 	}
 
 	h.key("j", "i") // t2 has no attachments
-	if !strings.Contains(h.screen(), "添付ファイルはまだ取得していません") && !strings.Contains(h.screen(), "画像の添付はありません") {
+	if !strings.Contains(h.screen(), "添付ファイルはまだ取得していません") && !strings.Contains(h.screen(), "画像はありません") {
 		t.Fatalf("status for no images:\n%s", h.screen())
+	}
+}
+
+func TestInlineImagesInNotes(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	notes := "めっちゃ見にくいな\n\nこれ\n\nhttps://app.asana.com/app/asana/-/get_asset?asset_id=1220507679870013\n\nこれ"
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", Notes: notes, DueOn: "2026-11-20",
+		Assignee: &asana.Ref{GID: "me"}, Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	var viewed []string
+	h := projectHarness(t, st, func(p []string) tea.Cmd { viewed = p; return nil })
+	s := h.screen()
+	if strings.Contains(s, "get_asset") || !strings.Contains(s, "[画像1]") || !strings.Contains(s, "画像 1 件（i で表示）") {
+		t.Fatalf("inline image link should be shown as [画像1]:\n%s", s)
+	}
+	h.key("i") // offline and not cached: cannot fetch
+	if len(viewed) != 0 || !strings.Contains(h.screen(), "オフラインのため画像を取得できません") {
+		t.Fatalf("offline inline image:\n%s", h.screen())
 	}
 }

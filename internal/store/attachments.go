@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -102,4 +103,36 @@ func (s *Store) queryAttachments(ctx context.Context, where string, args ...any)
 		atts = append(atts, a)
 	}
 	return atts, rows.Err()
+}
+
+// UpsertAttachment stores one attachment of a task (e.g. an inline image found in its notes).
+func (s *Store) UpsertAttachment(ctx context.Context, taskGID string, a asana.Attachment) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO attachments
+		(gid, parent_gid, name, resource_subtype, host, view_url, permanent_url, size, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(gid) DO UPDATE SET name = excluded.name, host = excluded.host, view_url = excluded.view_url,
+			permanent_url = excluded.permanent_url, size = excluded.size`,
+		a.GID, taskGID, a.Name, a.ResourceSubtype, a.Host, a.ViewURL, a.PermanentURL, a.Size, formatTime(a.CreatedAt))
+	return err
+}
+
+// inlineAsset matches images pasted into task descriptions and comments, which the API
+// returns as links like https://app.asana.com/app/asana/-/get_asset?asset_id=1220507679870013
+// (the asset id is the attachment gid).
+var inlineAsset = regexp.MustCompile(`https://app\.asana\.com/app/asana/-/get_asset\?[^\s)\]>]*?asset_id=(\d+)[^\s)\]>]*`)
+
+// InlineAssets returns the attachment gids of images embedded in text, in order.
+func InlineAssets(text string) []string {
+	var gids []string
+	for _, m := range inlineAsset.FindAllStringSubmatch(text, -1) {
+		gids = append(gids, m[1])
+	}
+	return gids
+}
+
+// ReplaceInlineAssets replaces each embedded image link with repl(gid).
+func ReplaceInlineAssets(text string, repl func(gid string) string) string {
+	return inlineAsset.ReplaceAllStringFunc(text, func(link string) string {
+		return repl(inlineAsset.FindStringSubmatch(link)[1])
+	})
 }
