@@ -1563,6 +1563,56 @@ func TestListCursorAfterScopeChange(t *testing.T) {
 	}
 }
 
+// Archiving the open project switches to My Tasks without going through moveScope (which
+// resets the cursor): the old project's row position must not carry over.
+func TestListCursorAfterArchiveToMyTasks(t *testing.T) {
+	h := projectHarness(t, fixtureStore(t), nil) // 家具 t1 | 手続き t2 t3 t4
+	h.key("j", "j", "j")
+	if h.selected() != "t4" || h.m.listCursor != 5 {
+		t.Fatalf("selected %q at row %d, want t4 at row 5", h.selected(), h.m.listCursor)
+	}
+	h.send(projectDoneMsg{status: "アーカイブしました", toMyTasks: true})
+	if h.m.scopeKey() != "my" {
+		t.Fatalf("scope = %q, want My Tasks", h.m.scopeKey())
+	}
+	// My Tasks rows: 期限切れ t2 | 今日 t3 | 7日以内 t1; row 5 would be t1.
+	if got := h.visibleGIDs(); !slices.Equal(got, []string{"t2", "t3", "t1"}) || h.selected() != "t2" {
+		t.Fatalf("selected %q in %v, want the first task t2", h.selected(), got)
+	}
+}
+
+// selectInListNear falls back to the closest selectable row: the first at or after near,
+// else the last before it. (Lists built by queryRows always end with a selectable row, so
+// the "before" case is only reachable through this helper.)
+func TestSelectInListNear(t *testing.T) {
+	task := func(gid string) row { return row{task: &store.TaskSummary{GID: gid}} }
+	hdr := row{key: "h"}
+	m := &Model{}
+	for _, tc := range []struct {
+		name string
+		rows []row
+		gid  string
+		near int
+		want int
+	}{
+		{"listed gid wins", []row{hdr, task("a"), task("b")}, "b", 0, 2},
+		{"at near", []row{hdr, task("a"), task("b")}, "x", 2, 2},
+		{"after a header", []row{task("a"), hdr, task("b")}, "x", 1, 2},
+		{"past the end is clamped", []row{hdr, task("a")}, "x", 9, 1},
+		{"negative is clamped", []row{hdr, task("a")}, "x", -3, 1},
+		{"nothing after: the one before", []row{task("a"), task("b"), hdr, hdr}, "x", 3, 1},
+		{"collapsed header is selectable", []row{task("a"), {key: "c", collapsed: true}}, "x", 1, 1},
+		{"no selectable rows", []row{hdr}, "x", 0, -1},
+		{"empty list", nil, "x", 0, -1},
+	} {
+		m.rows = tc.rows
+		m.selectInListNear(tc.gid, tc.near)
+		if m.listCursor != tc.want {
+			t.Errorf("%s: cursor %d, want %d", tc.name, m.listCursor, tc.want)
+		}
+	}
+}
+
 func TestCalendarMonthMoves(t *testing.T) {
 	st := fixtureStore(t)
 	ref := func(gid string) *asana.Ref { return &asana.Ref{GID: gid, Name: "Me"} }
