@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -609,7 +612,7 @@ func TestViewImages(t *testing.T) {
 	var viewed []string
 	h := projectHarness(t, st, func(paths []string) tea.Cmd { viewed = paths; return nil })
 	s := h.screen()
-	for _, want := range []string{"添付ファイル (2)", "画像 1 件（i で表示）", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
+	for _, want := range []string{"添付ファイル (2)", "画像 1 件（i で全画面表示）", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("detail missing %q:\n%s", want, s)
 		}
@@ -636,11 +639,119 @@ func TestInlineImagesInNotes(t *testing.T) {
 	var viewed []string
 	h := projectHarness(t, st, func(p []string) tea.Cmd { viewed = p; return nil })
 	s := h.screen()
-	if strings.Contains(s, "get_asset") || !strings.Contains(s, "[画像1]") || !strings.Contains(s, "画像 1 件（i で表示）") {
+	if strings.Contains(s, "get_asset") || !strings.Contains(s, "[画像1]") || !strings.Contains(s, "画像 1 件（i で全画面表示）") {
 		t.Fatalf("inline image link should be shown as [画像1]:\n%s", s)
 	}
 	h.key("i") // offline and not cached: cannot fetch
 	if len(viewed) != 0 || !strings.Contains(h.screen(), "オフラインのため画像を取得できません") {
 		t.Fatalf("offline inline image:\n%s", h.screen())
+	}
+}
+
+func TestMarkdownDescriptionAndComments(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", Notes: "plain", DueOn: "2026-11-20",
+		HTMLNotes: "<body><h1>候補</h1><strong>予算</strong>は10万円\n<ul><li>ニトリ</li><li>無印</li></ul></body>",
+		Assignee:  &asana.Ref{GID: "me"}, Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.ReplaceStories(ctx, "t1", []asana.Story{{GID: "c1", Type: "comment", Text: "x",
+		HTMLText: "<body><em>見に行った</em></body>", CreatedBy: &asana.Ref{GID: "u2", Name: "Partner"}}}, testNow)
+	h := projectHarness(t, st, nil)
+	s := h.screen()
+	for _, want := range []string{"候補", "予算は10万円", "• ニトリ", "• 無印", "見に行った"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("markdown detail missing %q:\n%s", want, s)
+		}
+	}
+	for _, unwanted := range []string{"<strong>", "**予算**", "<li>", "plain"} {
+		if strings.Contains(s, unwanted) {
+			t.Fatalf("raw markup %q should not be shown:\n%s", unwanted, s)
+		}
+	}
+}
+
+func TestDetailWidthAndSidebar(t *testing.T) {
+	st := fixtureStore(t)
+	h := projectHarness(t, st, nil)
+	_, _, before := h.m.paneWidths()
+	h.key(">", ">")
+	_, lw, after := h.m.paneWidths()
+	if after <= before || h.m.detailRatio != 60 {
+		t.Fatalf("> should widen the detail: %d -> %d (ratio %d)", before, after, h.m.detailRatio)
+	}
+	h.key(">", ">", ">", ">")
+	if _, lw, _ = h.m.paneWidths(); lw < minListWidth {
+		t.Fatalf("list must stay usable, got %d", lw)
+	}
+	h.key("b")
+	if sw, _, _ := h.m.paneWidths(); sw != 0 || strings.Contains(h.screen(), "★ My Tasks") {
+		t.Fatal("b should hide the sidebar")
+	}
+	// Layout is remembered across restarts.
+	m2 := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	h2 := &harness{t: t, m: m2}
+	h2.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h2.run(m2.Init())
+	if !h2.m.hideSidebar || h2.m.detailRatio != 80 {
+		t.Fatalf("layout not restored: hide=%v ratio=%d", h2.m.hideSidebar, h2.m.detailRatio)
+	}
+	h2.key("h") // from the list, h brings the sidebar back
+	if h2.m.hideSidebar || h2.m.focus != paneSidebar {
+		t.Fatal("h should show the sidebar again")
+	}
+	for _, size := range [][2]int{{140, 30}, {100, 24}} {
+		h.send(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		for i, l := range strings.Split(h.m.render(), "\n") {
+			if w := ansi.StringWidth(l); w > size[0] {
+				t.Errorf("%v line %d is %d wide", size, i, w)
+			}
+		}
+	}
+}
+
+func TestInlineImagePlaceholders(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 200, 100))
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	path := filepath.Join(dir, "a9-photo.png")
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20",
+		HTMLNotes: `<body>上<img data-asana-gid="9">下</body>`,
+		Assignee:  &asana.Ref{GID: "me"}, Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.UpsertAttachment(ctx, "t1", asana.Attachment{GID: "9", Name: "photo.png"})
+	_ = st.SetAttachmentPath(ctx, "9", path)
+
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
+	m.cellW, m.cellH = 10, 20
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("h", "j", "l")
+
+	out := h.m.render()
+	if !strings.Contains(out, "\U0010EEEE") {
+		t.Fatalf("detail should contain kitty placeholders:\n%s", ansi.Strip(out))
+	}
+	plain := ansi.Strip(out)
+	if strings.Index(plain, "上") > strings.Index(plain, "\U0010EEEE") || strings.Index(plain, "\U0010EEEE") > strings.Index(plain, "下") {
+		t.Fatal("image should be drawn between 上 and 下")
+	}
+	got := h.m.inline["9"]
+	if got == nil || got.sentCols != 20 || got.sentRows != 5 { // 200x100 px with 10x20 cells
+		t.Fatalf("placement = %+v", got)
+	}
+	for i, l := range strings.Split(out, "\n") {
+		if w := ansi.StringWidth(l); w > 140 {
+			t.Errorf("line %d is %d wide", i, w)
+		}
 	}
 }

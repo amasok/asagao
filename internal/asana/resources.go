@@ -54,6 +54,7 @@ type Task struct {
 	GID             string       `json:"gid"`
 	Name            string       `json:"name"`
 	Notes           string       `json:"notes"`
+	HTMLNotes       string       `json:"html_notes"`
 	ResourceSubtype string       `json:"resource_subtype"`
 	Completed       bool         `json:"completed"`
 	CompletedAt     *time.Time   `json:"completed_at"`
@@ -77,7 +78,7 @@ var (
 	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members", "permalink_url", "modified_at"}
 	sectionFields = []string{"name", "project"}
 	TaskFields    = []string{
-		"name", "notes", "resource_subtype", "completed", "completed_at",
+		"name", "notes", "html_notes", "resource_subtype", "completed", "completed_at",
 		"assignee.name", "due_on", "due_at", "start_on", "parent.name",
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
@@ -147,11 +148,12 @@ type Story struct {
 	Type            string    `json:"type"`             // "comment" or "system"
 	ResourceSubtype string    `json:"resource_subtype"` // e.g. "comment_added", "assigned"
 	Text            string    `json:"text"`
+	HTMLText        string    `json:"html_text"`
 	CreatedBy       *Ref      `json:"created_by"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
-var storyFields = []string{"type", "resource_subtype", "text", "created_by.name", "created_at"}
+var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at"}
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
 	var t Task

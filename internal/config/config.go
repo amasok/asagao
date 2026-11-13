@@ -31,6 +31,9 @@ type UIConfig struct {
 	// ImageProtocol is how images are shown: "auto" (detect the terminal), "iterm"
 	// (iTerm2 / WezTerm), "kitty" (kitty / Ghostty) or "open" (the OS image viewer).
 	ImageProtocol string `toml:"image_protocol"`
+	// InlineImages draws images inside the detail pane where they appear in the text:
+	// "auto" (when the image protocol is kitty), "on" or "off".
+	InlineImages string `toml:"inline_images"`
 }
 
 type AuthConfig struct {
@@ -67,7 +70,7 @@ func Default() Config {
 			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName},
 		},
 		Sync: SyncConfig{CompletedDays: 14},
-		UI:   UIConfig{ImageProtocol: "auto"},
+		UI:   UIConfig{ImageProtocol: "auto", InlineImages: "auto"},
 	}
 }
 
@@ -121,6 +124,11 @@ func (c Config) validate() error {
 	case "auto", "iterm", "kitty", "open":
 	default:
 		return fmt.Errorf("ui.image_protocol: unknown value %q (want auto, iterm, kitty or open)", c.UI.ImageProtocol)
+	}
+	switch c.UI.InlineImages {
+	case "auto", "on", "off":
+	default:
+		return fmt.Errorf("ui.inline_images: unknown value %q (want auto, on or off)", c.UI.InlineImages)
 	}
 	if c.Auth.RedirectPort <= 0 || c.Auth.RedirectPort > 65535 {
 		return fmt.Errorf("auth.redirect_port: invalid port %d", c.Auth.RedirectPort)

@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/imageview"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -30,6 +31,8 @@ type Deps struct {
 	Now          func() time.Time
 	// ViewImages shows image files (e.g. by running the image viewer with tea.ExecProcess).
 	ViewImages func(paths []string) tea.Cmd
+	// InlineImages draws images inside the detail pane with kitty Unicode placeholders.
+	InlineImages bool
 }
 
 type pane int
@@ -146,6 +149,18 @@ type Model struct {
 	renameGID string          // section being renamed (promptRenameSection)
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
+
+	// detail rendering (markdown.go)
+	dark         bool // terminal background
+	mdCache      map[mdKey]string
+	inline       map[string]*inlineImage // by attachment gid
+	inlineDirty  bool
+	nextImageID  int
+	cellW, cellH int // terminal cell size in pixels (0 if unknown)
+
+	// layout (layout.go)
+	detailRatio int // detail pane width in % of the area right of the sidebar
+	hideSidebar bool
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -156,14 +171,19 @@ func New(ctx context.Context, deps Deps) *Model {
 	ti.Prompt = "/ "
 	ti.Placeholder = "タスク名・説明・コメントを検索"
 	m := &Model{
-		deps:       deps,
-		ctx:        ctx,
-		st:         newStyles(true),
-		focus:      paneList,
-		scopes:     []scope{{kind: scopeMyTasks, name: "My Tasks"}},
-		detailView: viewport.New(),
-		search:     ti,
-		prompt:     newInput(),
+		deps:        deps,
+		ctx:         ctx,
+		st:          newStyles(true),
+		focus:       paneList,
+		scopes:      []scope{{kind: scopeMyTasks, name: "My Tasks"}},
+		detailView:  viewport.New(),
+		search:      ti,
+		prompt:      newInput(),
+		dark:        true,
+		detailRatio: defaultDetailRatio,
+	}
+	if deps.InlineImages {
+		m.cellW, m.cellH = imageview.CellSize()
 	}
 	return m
 }
@@ -213,7 +233,7 @@ type (
 )
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.startSync())
+	return tea.Batch(tea.RequestBackgroundColor, m.loadLayout(), m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.startSync())
 }
 
 // --- commands ---
@@ -303,9 +323,24 @@ func (m *Model) openURL(url string) tea.Cmd {
 
 // --- update ---
 
+// Update handles a message, then keeps the detail pane's width in step with the layout and
+// sends any inline images that need (re)sending.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	m.syncDetailWidth()
+	return model, tea.Batch(cmd, m.flushInline())
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case inlineLoadedMsg:
+		m.onInlineLoaded(msg)
+		return m, nil
+	case layoutLoadedMsg:
+		m.applyLayout(msg)
+		return m, nil
 	case tea.BackgroundColorMsg:
+		m.dark = msg.IsDark()
 		m.st = newStyles(msg.IsDark())
 		m.refreshDetailView()
 		return m, nil
@@ -357,6 +392,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !keepScroll {
 				m.detailView.GotoTop()
 			}
+			return m, m.prepareInline()
 		}
 		return m, nil
 
@@ -546,6 +582,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.writeKey(key)
 	case "z", "v", "t", "m":
 		return m, m.viewKey(key)
+	case "<", ">", "b":
+		return m, m.layoutKey(key)
 	case "E":
 		if m.focus != paneSidebar || m.boardActive() {
 			return m, m.startRenameSection()
@@ -603,6 +641,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.toggleGroup() // expand
 			}
 		case "h", "left":
+			if m.hideSidebar {
+				m.hideSidebar = false
+				m.focus = paneSidebar
+				return m, m.saveLayout()
+			}
 			m.focus = paneSidebar
 		}
 	case paneDetail:

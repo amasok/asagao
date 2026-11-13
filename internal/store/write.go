@@ -109,10 +109,11 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks
 		(gid, workspace_gid, name, notes, resource_subtype, completed, completed_at, assignee_gid,
-		 due_on, due_at, start_on, parent_gid, num_subtasks, permalink_url, created_at, modified_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 due_on, due_at, start_on, parent_gid, num_subtasks, permalink_url, created_at, modified_at, html_notes)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(gid) DO UPDATE SET
 			workspace_gid = excluded.workspace_gid, name = excluded.name, notes = excluded.notes,
+			html_notes = excluded.html_notes,
 			resource_subtype = excluded.resource_subtype, completed = excluded.completed,
 			completed_at = excluded.completed_at, assignee_gid = excluded.assignee_gid,
 			due_on = excluded.due_on, due_at = excluded.due_at, start_on = excluded.start_on,
@@ -121,7 +122,7 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 			modified_at = excluded.modified_at`,
 		t.GID, workspace, t.Name, t.Notes, subtype, t.Completed, formatTimePtr(t.CompletedAt), assignee,
 		t.DueOn, formatTimePtr(t.DueAt), t.StartOn, parent, t.NumSubtasks, t.PermalinkURL,
-		formatTime(t.CreatedAt), formatTime(t.ModifiedAt)); err != nil {
+		formatTime(t.CreatedAt), formatTime(t.ModifiedAt), t.HTMLNotes); err != nil {
 		return err
 	}
 
@@ -184,9 +185,9 @@ func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []as
 				byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO stories
-				(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at)
-				VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-				st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt)); err != nil {
+				(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText); err != nil {
 				return err
 			}
 		}

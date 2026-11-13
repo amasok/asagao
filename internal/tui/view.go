@@ -12,7 +12,10 @@ import (
 	"github.com/amasok/asana-tui/internal/store"
 )
 
-const sidebarWidth = 28
+const (
+	sidebarWidth = 28
+	minListWidth = 30
+)
 
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.render())
@@ -54,8 +57,14 @@ func (m *Model) paneWidths() (int, int, int) {
 		return w[0], w[1], w[2]
 	}
 	side := sidebarWidth
+	if m.hideSidebar {
+		side = 0
+	}
 	rest := m.width - side
-	detail := rest * 2 / 5
+	detail := rest * m.detailRatio / 100
+	if rest-detail < minListWidth { // keep the task list usable
+		detail = max(minListWidth, rest-minListWidth)
+	}
 	return side, rest - detail, detail
 }
 
@@ -94,6 +103,9 @@ func (m *Model) renderBody(h int) string {
 			if m.focus == paneSidebar {
 				return m.pane("プロジェクト", m.sidebarLines(m.width-4, h-3), m.width, h, true)
 			}
+			return m.renderBoard(m.width, h)
+		}
+		if sw == 0 {
 			return m.renderBoard(m.width, h)
 		}
 		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
@@ -197,7 +209,7 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	keys := [][2]string{{"j/k", "移動"}, {"space", "折りたたみ"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
+	keys := [][2]string{{"j/k", "移動"}, {"space", "折りたたみ"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"<>", "詳細の幅"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
 	if m.boardActive() && !m.zoom {
 		keys = [][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "カードを左右の列へ"}, {"enter", "詳細"}, {"E", "列名を変更"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"v", "リスト表示"}, {"?", "ヘルプ"}}
 	}
@@ -224,6 +236,8 @@ func (m *Model) renderHelp(w, h int) string {
 		"  f / F             絞り込みを切り替え（未完了 → 7日以内 → 期限切れ → 完了済み → すべて）",
 		"  t                 タグで絞り込む",
 		"  z                 詳細を全画面で表示（コメントを全部読む）",
+		"  < / >             詳細ペインを狭く / 広く",
+		"  b                 プロジェクト一覧を隠す / 出す",
 		"  i                 添付された画像を表示（n/p で切り替え、q で戻る）",
 		"  space             リストでセクションを折りたたむ / 開く（- ですべて折りたたむ、= ですべて開く）",
 		"  v                 ボード表示 / リスト表示（プロジェクトを開いているとき）",
@@ -414,16 +428,11 @@ func (m *Model) renderDetail(w int) string {
 	for i, gid := range taskImages(d) {
 		imageNo[gid] = i + 1
 	}
-	inline := func(text string) string {
-		return store.ReplaceInlineAssets(text, func(gid string) string {
-			return m.st.tag.Render(fmt.Sprintf("[画像%d]", imageNo[gid]))
-		})
-	}
-	if d.Notes != "" {
-		b.WriteString("\n" + wrap.Render(inline(strings.TrimRight(d.Notes, "\n"))) + "\n")
+	if md := textMarkdown(d.HTMLNotes, d.Notes); md != "" {
+		b.WriteString("\n" + m.withImages(m.markdown(md, w), w, imageNo) + "\n")
 	}
 	if n := len(imageNo); n > 0 {
-		b.WriteString(m.st.dim.Render(fmt.Sprintf("画像 %d 件（i で表示）", n)) + "\n")
+		b.WriteString(m.st.dim.Render(fmt.Sprintf("画像 %d 件（i で全画面表示）", n)) + "\n")
 	}
 	if len(d.Attachments) > 0 {
 		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("添付ファイル (%d)", len(d.Attachments))))
@@ -473,7 +482,6 @@ func (m *Model) renderDetail(w int) string {
 			b.WriteString(m.st.dim.Render(fmt.Sprintf("… 古いコメント %d 件（z で全部表示）", len(comments)-len(shown))) + "\n")
 		}
 		rule := m.st.dim.Render(strings.Repeat("─", max(1, w)))
-		body := lipgloss.NewStyle().Width(max(1, w-2)).PaddingLeft(2)
 		for i, c := range shown {
 			if i > 0 {
 				b.WriteString(rule + "\n")
@@ -487,12 +495,18 @@ func (m *Model) renderDetail(w int) string {
 				meta += "  " + m.st.today.Render("（未送信）")
 			}
 			b.WriteString(meta + "\n")
-			b.WriteString(body.Render(inline(strings.TrimRight(c.Text, "\n"))) + "\n")
+			text := m.withImages(m.markdown(textMarkdown(c.HTMLText, c.Text), max(10, w-2)), max(10, w-2), imageNo)
+			b.WriteString(indentLines(text, 2) + "\n")
 		}
 	case d.DetailsFetchedAt == "":
 		b.WriteString("\n" + m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")
 	}
 	return b.String()
+}
+
+func indentLines(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 }
 
 // sidePaneComments is how many of the latest comments the (unzoomed) detail pane shows.
