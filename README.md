@@ -3,7 +3,7 @@
 ターミナルで Asana のタスクを確認・操作するための TUI / CLI / MCP サーバー。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
-- 現在の状態: M4（完了・作成・コメント、オフライン編集）
+- 現在の状態: M5（MCP サーバー）
 
 ## インストール（開発版）
 
@@ -104,6 +104,7 @@ asana-tui --offline  # 同期せず、ローカルストアだけで起動
 | `outbox list` | 未送信の変更・競合・失敗を一覧表示 |
 | `outbox resolve <id> --keep local\|remote` | 競合を解決（こちらの値で上書き / Asana の値を採用） |
 | `outbox retry <id>` / `outbox discard <id>` | 失敗した変更を再送 / 変更を取り消す |
+| `mcp [--read-only]` | MCP サーバーとして起動（stdio） |
 
 `task list` と `search` の絞り込み:
 
@@ -118,6 +119,31 @@ asana-tui search 転居 届 --json               # 複数語は AND
 日付は `YYYY-MM-DD` / `today` / `tomorrow` / `yesterday` / `+Nd` / `-Nd` で指定できます。
 
 すべてのコマンドで `--json` を付けると JSON で出力します。
+
+## MCP サーバー（AI から使う）
+
+Claude Code などの MCP クライアントから、ローカルストアの検索や、タスクの作成・完了・コメントができます。
+
+```sh
+claude mcp add asana -- asana-tui mcp               # 読み書き
+claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
+```
+
+| ツール | 内容 |
+|--------|------|
+| `list_tasks` | タスク一覧（デフォルトは自分の未完了。プロジェクト・セクション・担当者・期日・期限切れ・タグで絞り込み） |
+| `search_tasks` | タスク名・説明・コメントを全文検索 |
+| `get_task` | タスク詳細（サブタスク・コメント込み。オンラインなら最新を取得） |
+| `list_projects` | プロジェクトとセクション |
+| `sync_status` | 最終同期の時刻と、未送信の変更・競合 |
+| `sync` | 未送信の変更を送り、Asana の変更を取り込む |
+| `create_task` | タスクを作成（`--read-only` では無効） |
+| `update_task` | 完了 / 未完了・名前・説明・期日・担当者を変更（`--read-only` では無効） |
+| `add_comment` | コメント（`--read-only` では無効） |
+
+- 読み取りはローカルストアから行うので、高速でオフラインでも動きます。
+- 書き込みは TUI・CLI と同じ「未送信の変更」を通ります。オンラインならすぐに送り、結果の `sent` で送れたかどうかが分かります。
+- 期日は `YYYY-MM-DD` のほか、`today` / `tomorrow` / `+7d` などで指定できます。
 
 ## オフライン編集
 

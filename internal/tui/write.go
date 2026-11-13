@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -236,30 +237,11 @@ func parseCreateInput(input string, now time.Time) (name, due string, err error)
 			words = append(words, w)
 			continue
 		}
-		if due, err = parseDue(v, now); err != nil {
+		if due, err = dates.Parse(v, now); err != nil {
 			return "", "", err
 		}
 	}
 	return strings.Join(words, " "), due, nil
-}
-
-func parseDue(s string, now time.Time) (string, error) {
-	switch s {
-	case "今日", "today":
-		return now.Format(time.DateOnly), nil
-	case "明日", "tomorrow":
-		return now.AddDate(0, 0, 1).Format(time.DateOnly), nil
-	case "明後日":
-		return now.AddDate(0, 0, 2).Format(time.DateOnly), nil
-	}
-	var n int
-	if _, err := fmt.Sscanf(s, "+%dd", &n); err == nil {
-		return now.AddDate(0, 0, n).Format(time.DateOnly), nil
-	}
-	if t, err := time.Parse(time.DateOnly, s); err == nil {
-		return t.Format(time.DateOnly), nil
-	}
-	return "", fmt.Errorf("期日の形式が不正です: %q（今日 / 明日 / +3d / 2026-12-01）", s)
 }
 
 // --- outbox overlay ---

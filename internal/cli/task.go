@@ -11,6 +11,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
+	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -219,27 +220,7 @@ func (a *app) fetchDetails(ctx context.Context, st *store.Store, gid string) err
 }
 
 // parseDate accepts YYYY-MM-DD, "today", "tomorrow", "yesterday" and "+Nd" / "-Nd".
-func parseDate(s string, now time.Time) (string, error) {
-	switch s {
-	case "":
-		return "", nil
-	case "today":
-		return now.Format(time.DateOnly), nil
-	case "tomorrow":
-		return now.AddDate(0, 0, 1).Format(time.DateOnly), nil
-	case "yesterday":
-		return now.AddDate(0, 0, -1).Format(time.DateOnly), nil
-	}
-	var n int
-	if _, err := fmt.Sscanf(s, "%dd", &n); err == nil && (s[0] == '+' || s[0] == '-') {
-		return now.AddDate(0, 0, n).Format(time.DateOnly), nil
-	}
-	t, err := time.Parse(time.DateOnly, s)
-	if err != nil {
-		return "", fmt.Errorf("日付の形式が不正です: %q（YYYY-MM-DD / today / tomorrow / +Nd）", s)
-	}
-	return t.Format(time.DateOnly), nil
-}
+func parseDate(s string, now time.Time) (string, error) { return dates.Parse(s, now) }
 
 var weekdays = [...]string{"日", "月", "火", "水", "木", "金", "土"}
 
