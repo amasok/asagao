@@ -50,6 +50,9 @@ func TestToMarkdown(t *testing.T) {
 		{"escapes block syntax at line start",
 			"<body>1. 番号\n12) 括弧\n3.\n-- -\n+ プラス\n> 引用\n  # 字下げ\n-\n---\n===\n~~消し~~ と 10時~12時</body>",
 			`1\. 番号  ` + "\n" + `12\) 括弧  ` + "\n" + `3\.  ` + "\n" + `\-- -  ` + "\n" + `\+ プラス  ` + "\n" + `\> 引用  ` + "\n" + `  \# 字下げ  ` + "\n" + `\-  ` + "\n" + `\---  ` + "\n" + `\===  ` + "\n" + `\~\~消し\~\~ と 10時\~12時`},
+		{"escapes block syntax after tab indentation",
+			"<body>前\n\t# 井桁\n\t- ハイフン\n \t+ プラス\n\t1. 番号\n\t> 引用\n-\t-\t-\n--\t-\n見出し風\n===\t\n後</body>",
+			"前  \n\t\\# 井桁  \n\t\\- ハイフン  \n \t\\+ プラス  \n\t1\\. 番号  \n\t\\> 引用  \n\\-\t-\t-  \n\\--\t-  \n見出し風  \n\\===\t  \n後"},
 		{"does not escape look-alikes",
 			"<body>1.5倍\n2020.1\n-5度\n+1\n=a\n-- x</body>",
 			"1.5倍  \n2020.1  \n-5度  \n+1  \n=a  \n-- x"},
@@ -151,6 +154,7 @@ func TestPlainTextRoundTrip(t *testing.T) {
 		"- ハイフン\n+ プラス\n-\n> 引用\n# 井桁",
 		"見出し風\n---\n見出し風\n===",
 		"段落\n-- -\n3.\n4)",
+		"段落\n--\t-\n後",
 		"~~消し~~ と 10時~12時と14時~15時",
 		"1.5倍\n-5度\n\n次の段落",
 	} {
@@ -162,6 +166,26 @@ func TestPlainTextRoundTrip(t *testing.T) {
 		if plain := PlainFromMarkdown(md); plain != text {
 			t.Errorf("plain of %q = %q", md, plain)
 		}
+	}
+}
+
+// Tabs do not let text turn into Markdown blocks: a tab-indented "- " or "# " inside a list
+// item stays text instead of becoming a nested list or a heading. (Markdown drops the
+// indentation itself, so the tab is not kept.)
+func TestTabsDoNotCreateBlocks(t *testing.T) {
+	in := "<body><ul><li>項目\n\t- 子\n\t# 見出し\n\t1. 番号</li></ul></body>"
+	want := "<body><ul><li>項目\n- 子\n# 見出し\n1. 番号</li></ul></body>"
+	md := ToEditableMarkdown(in)
+	if out := FromMarkdown(md); out != want {
+		t.Fatalf("markdown %q\nhtml %q\nwant %q", md, out, want)
+	}
+	// "===" followed by a tab would make the line above a heading. (Trailing whitespace
+	// before a line break is dropped by Markdown.)
+	in = "<body>見出し風\n===\t\n後</body>"
+	want = "<body>見出し風\n===\n後</body>"
+	md = ToEditableMarkdown(in)
+	if out := FromMarkdown(md); out != want {
+		t.Fatalf("markdown %q\nhtml %q\nwant %q", md, out, want)
 	}
 }
 

@@ -326,7 +326,7 @@ func escape(s string) string {
 	// or lists, and a line of only "-" or "=" would turn the line above into a heading.
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
-		trimmed := strings.TrimLeft(l, " ")
+		trimmed := strings.TrimLeft(l, " \t") // indentation: spaces and tabs
 		indent := l[:len(l)-len(trimmed)]
 		switch {
 		case strings.HasPrefix(trimmed, "#"), strings.HasPrefix(trimmed, ">"),
@@ -347,13 +347,13 @@ func listBullet(line string, mark byte) bool {
 	return len(line) > 0 && line[0] == mark && (len(line) == 1 || line[1] == ' ' || line[1] == '\t')
 }
 
-// onlyOf reports whether line consists of mark characters (and spaces) only.
+// onlyOf reports whether line consists of mark characters (and spaces or tabs) only.
 func onlyOf(line string, mark rune) bool {
 	if line == "" {
 		return false
 	}
 	for _, r := range line {
-		if r != mark && r != ' ' {
+		if r != mark && r != ' ' && r != '\t' {
 			return false
 		}
 	}
