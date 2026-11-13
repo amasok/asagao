@@ -1305,3 +1305,60 @@ func TestKeyBindingsAndTheme(t *testing.T) {
 		t.Fatalf("ActionIDs = %v", ActionIDs())
 	}
 }
+
+func TestDetailExtras(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	ctx := context.Background()
+	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "新居プロジェクト", Members: []asana.Ref{{GID: "me"}}}, {GID: "p2", Name: "家計", Members: []asana.Ref{{GID: "me"}}}}, "me")
+	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, CacheDir: t.TempDir()})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
+	h.run(m.Init())
+	h.key("h", "j", "j", "j", "l", "enter") // 新居プロジェクト (after 家計) / ソファを買う, full screen
+	cursorTo := func(kind itemKind) {
+		t.Helper()
+		h.key("g")
+		for range 40 {
+			if it := h.m.currentItem(); it != nil && it.kind == kind {
+				return
+			}
+			h.key("j")
+		}
+		t.Fatalf("item %d not reachable:\n%s", kind, h.screen())
+	}
+	cursorTo(itemLike)
+	h.key("enter")
+	if d, _ := st.GetTask(ctx, "t1"); !d.Liked || !strings.Contains(h.screen(), "♥ 1（いいね済み）") {
+		t.Fatalf("like:\n%s", h.screen())
+	}
+	cursorTo(itemFollowers)
+	h.key("enter", "j", "enter", "esc") // Partner
+	if d, _ := st.GetTask(ctx, "t1"); len(d.Followers) != 1 || d.Followers[0].GID != "u2" {
+		t.Fatalf("followers = %+v", d.Followers)
+	}
+	cursorTo(itemProjects)
+	h.key("enter", "g", "enter", "esc") // 家計 (sorted first)
+	if d, _ := st.GetTask(ctx, "t1"); len(d.Memberships) != 2 {
+		t.Fatalf("memberships = %+v", d.Memberships)
+	}
+	if !strings.Contains(h.screen(), "家計 / 今月") {
+		t.Fatalf("second project line:\n%s", h.screen())
+	}
+	file := filepath.Join(t.TempDir(), "図面.png")
+	_ = os.WriteFile(file, []byte("png"), 0o600)
+	cursorTo(itemAddAttachment)
+	h.key("enter")
+	h.typeText(file)
+	h.key("enter")
+	if s := h.screen(); !strings.Contains(s, "[画像] 図面.png") {
+		t.Fatalf("attached file:\n%s", s)
+	}
+	h.key("space", "D")
+	h.key("enter") // accept "ソファを買う のコピー"
+	tasks, _ := st.ListTasks(ctx, store.TaskFilter{Query: "のコピー"})
+	if len(tasks) != 1 || tasks[0].Name != "ソファを買う のコピー" {
+		t.Fatalf("duplicate = %+v", tasks)
+	}
+}

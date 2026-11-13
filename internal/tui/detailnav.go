@@ -24,6 +24,11 @@ const (
 	itemSubtask
 	itemAddSubtask
 	itemAddComment
+	itemLike
+	itemFollowers
+	itemProjects // "＋ プロジェクトに追加 / 外す"
+	itemAttachment
+	itemAddAttachment
 )
 
 type detailItem struct {
@@ -148,8 +153,23 @@ func (m *Model) activateItem() tea.Cmd {
 	case itemDue:
 		return m.openDuePicker()
 	case itemSection:
+		if it.sub < len(d.Memberships) {
+			m.sectionProject = d.Memberships[it.sub].ProjectGID
+		}
 		m.openSectionPicker()
 		return nil
+	case itemLike:
+		return m.toggleLike()
+	case itemFollowers:
+		return m.openFollowers()
+	case itemProjects:
+		return m.openProjects()
+	case itemAttachment:
+		if it.sub < len(d.Attachments) {
+			return m.openAttachment(d.Attachments[it.sub])
+		}
+	case itemAddAttachment:
+		return m.startAttach()
 	case itemTags:
 		return m.openTagEditor()
 	case itemCompleted:

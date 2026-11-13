@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -61,6 +62,12 @@ func (s *Syncer) Push(ctx context.Context) (PushResult, error) {
 			err = s.pushMove(ctx, *op)
 		case store.OpAddTag, store.OpRemoveTag:
 			err = s.pushTag(ctx, *op)
+		case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
+			err = s.pushRelation(ctx, *op)
+		case store.OpDuplicateTask:
+			err = s.pushDuplicate(ctx, *op)
+		case store.OpUploadAttachment:
+			err = s.pushUpload(ctx, *op)
 		case store.OpRenameSection:
 			var conflict bool
 			conflict, err = s.pushRenameSection(ctx, *op)
@@ -248,6 +255,77 @@ func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
 		tag = created.GID
 	}
 	if err := s.API.AddTag(ctx, op.TaskGID, tag); err != nil {
+		return err
+	}
+	return s.Store.CompleteOp(ctx, op.ID)
+}
+
+func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	if store.IsLocalGID(task) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	user, _ := op.Payload["user"].(string)
+	project, _ := op.Payload["project"].(string)
+	section, _ := op.Payload["section"].(string)
+	switch op.Kind {
+	case store.OpAddFollower:
+		err = s.API.AddFollowers(ctx, task, []string{user})
+	case store.OpRemoveFollower:
+		err = s.API.RemoveFollowers(ctx, task, []string{user})
+	case store.OpAddProject:
+		err = s.API.AddProject(ctx, task, project, section)
+	case store.OpRemoveProject:
+		err = s.API.RemoveProject(ctx, task, project)
+	}
+	if err != nil {
+		return err
+	}
+	return s.Store.CompleteOp(ctx, op.ID)
+}
+
+func (s *Syncer) pushDuplicate(ctx context.Context, op store.Op) error {
+	source, _ := op.Payload["source"].(string)
+	name, _ := op.Payload["name"].(string)
+	created, err := s.API.DuplicateTask(ctx, source, name)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.ReplaceLocalTaskGID(ctx, op.TaskGID, created.GID); err != nil {
+		return err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return err
+	}
+	if t, err := s.API.Task(ctx, created.GID); err == nil { // subtasks etc. follow on the next sync
+		return s.Store.UpsertTasks(ctx, []asana.Task{*t})
+	}
+	return nil
+}
+
+func (s *Syncer) pushUpload(ctx context.Context, op store.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	if store.IsLocalGID(task) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	local, _ := op.Payload["attachment"].(string)
+	name, _ := op.Payload["name"].(string)
+	path, _ := op.Payload["path"].(string)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return &asana.Error{Status: 400} // the copied file is gone: cannot be retried
+	}
+	att, err := s.API.UploadAttachment(ctx, task, name, data)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.ReplaceLocalAttachment(ctx, local, att.GID, att.ViewURL); err != nil {
 		return err
 	}
 	return s.Store.CompleteOp(ctx, op.ID)

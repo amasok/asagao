@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amasok/asana-tui/internal/browser"
+	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/imageview"
 	"github.com/amasok/asana-tui/internal/sync"
 	"github.com/amasok/asana-tui/internal/tui"
@@ -42,7 +44,8 @@ func (a *app) runTUI(ctx context.Context) error {
 	}
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
 		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
-		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys}
+		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys,
+		CacheDir: filepath.Join(config.CacheDir(), "attachments")}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)

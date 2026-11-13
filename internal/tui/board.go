@@ -253,6 +253,8 @@ const (
 	pickFilter
 	pickTags
 	pickDayTask
+	pickFollowers
+	pickProjects
 )
 
 type pickerItem struct {
@@ -300,8 +302,10 @@ func (m *Model) openSectionPicker() {
 	if t == nil {
 		return
 	}
-	project := ""
-	if sc := m.currentScope(); sc.kind == scopeProject {
+	project := m.sectionProject // chosen from a project line in the detail view
+	m.sectionProject = ""
+	if project != "" {
+	} else if sc := m.currentScope(); sc.kind == scopeProject {
 		project = sc.project
 	} else if len(t.Memberships) == 1 {
 		project = t.Memberships[0].ProjectGID
@@ -354,12 +358,17 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		p.cursor = len(p.items) - 1
 	case "enter", "space":
 		item := p.items[p.cursor]
-		if p.kind == pickTags {
+		switch p.kind { // multi-select choosers stay open
+		case pickTags:
 			if item.value == "+" {
 				m.picker = nil
 				return m, m.startNewTag(p.task)
 			}
-			return m, m.toggleTag(p.task, item) // stays open
+			return m, m.toggleTag(p.task, item)
+		case pickFollowers:
+			return m, m.toggleFollower(p.task, item)
+		case pickProjects:
+			return m, m.toggleProject(p.task, item)
 		}
 		if key == "space" {
 			return m, nil

@@ -39,6 +39,8 @@ type Deps struct {
 	Accent string
 	// KeyBindings rebinds action shortcuts: action id -> keys (see ActionIDs).
 	KeyBindings map[string][]string
+	// CacheDir is where files to upload are copied (so they can be sent later).
+	CacheDir string
 	// RunEditor opens path in the user's editor and reports back with done
 	// (production: tea.ExecProcess with $EDITOR).
 	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
@@ -195,6 +197,10 @@ type Model struct {
 	renderedActive bool              // the detail was last rendered with selectable items
 	dueTask        store.TaskSummary // task for promptDue
 	tagTask        store.TaskSummary // task for promptNewTag
+	// extras.go
+	dupSource      string // task to duplicate (promptDuplicate)
+	attachTask     string // task to attach a file to (promptAttach)
+	sectionProject string // project whose sections to choose from (detail project line)
 }
 
 func New(ctx context.Context, deps Deps) *Model {

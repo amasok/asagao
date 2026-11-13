@@ -85,6 +85,9 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 			if err := reapplyTagOps(ctx, tx, t.GID); err != nil {
 				return err
 			}
+			if err := reapplyRelationOps(ctx, tx, t.GID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -146,6 +149,24 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 		}
 	}
 
+	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET liked = ?, num_likes = ? WHERE gid = ?", t.Liked, t.NumLikes, t.GID); err != nil {
+		return err
+	}
+	if t.Followers != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM task_followers WHERE task_gid = ?", t.GID); err != nil {
+			return err
+		}
+		for _, f := range t.Followers {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name) VALUES(?, ?)
+				ON CONFLICT(gid) DO UPDATE SET name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE users.name END`,
+				f.GID, f.Name); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_followers(task_gid, user_gid) VALUES(?, ?)", t.GID, f.GID); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ?", t.GID); err != nil {
 		return err
 	}

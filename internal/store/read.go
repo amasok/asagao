@@ -49,7 +49,9 @@ type TaskSummary struct {
 	PermalinkURL    string           `json:"permalink_url"`
 	ModifiedAt      string           `json:"modified_at"`
 	// Pending is true while local changes to this task have not been sent to Asana.
-	Pending bool `json:"pending"`
+	Pending  bool `json:"pending"`
+	Liked    bool `json:"liked"`
+	NumLikes int  `json:"num_likes"`
 }
 
 type StoryView struct {
@@ -74,6 +76,7 @@ type TaskDetail struct {
 	Subtasks    []TaskSummary    `json:"subtasks"`
 	Stories     []StoryView      `json:"stories"`
 	Attachments []AttachmentView `json:"attachments"`
+	Followers   []UserRef        `json:"followers"`
 	// DetailsFetchedAt is when subtasks/stories were last fetched; empty if never.
 	DetailsFetchedAt string `json:"details_fetched_at,omitempty"`
 }
@@ -126,7 +129,7 @@ const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.
 	t.due_on, COALESCE(t.due_at, ''), t.start_on, t.assignee_gid, COALESCE(u.name, ''),
 	t.parent_gid, COALESCE((SELECT p.name FROM tasks p WHERE p.gid = t.parent_gid), ''),
 	t.num_subtasks, t.permalink_url, t.modified_at,
-	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid)`
+	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid), t.liked, t.num_likes`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string
@@ -212,7 +215,7 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 		var assigneeGID, assigneeName string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
-			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending); err != nil {
+			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending, &t.Liked, &t.NumLikes); err != nil {
 			return nil, err
 		}
 		if assigneeGID != "" {
@@ -290,6 +293,9 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 	}
 	d := &TaskDetail{TaskSummary: tasks[0], Subtasks: []TaskSummary{}, Stories: []StoryView{}}
 	if d.Attachments, err = s.taskAttachments(ctx, gid); err != nil {
+		return nil, err
+	}
+	if d.Followers, err = s.TaskFollowers(ctx, gid); err != nil {
 		return nil, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT t.notes, t.html_notes, t.created_at, COALESCE(d.fetched_at, '')

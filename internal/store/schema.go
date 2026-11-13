@@ -175,4 +175,14 @@ ALTER TABLE tasks ADD COLUMN html_notes TEXT NOT NULL DEFAULT '';
 ALTER TABLE stories ADD COLUMN html_text TEXT NOT NULL DEFAULT '';
 DELETE FROM task_details;
 `,
+	`
+-- Likes and followers of tasks.
+ALTER TABLE tasks ADD COLUMN liked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN num_likes INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE task_followers (
+	task_gid TEXT NOT NULL REFERENCES tasks(gid) ON DELETE CASCADE,
+	user_gid TEXT NOT NULL,
+	PRIMARY KEY (task_gid, user_gid)
+);
+`,
 }

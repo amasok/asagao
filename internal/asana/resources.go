@@ -1,7 +1,12 @@
 package asana
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -66,6 +71,9 @@ type Task struct {
 	Memberships     []Membership `json:"memberships"`
 	Tags            []Ref        `json:"tags"`
 	NumSubtasks     int          `json:"num_subtasks"`
+	Followers       []Ref        `json:"followers"`
+	Liked           bool         `json:"liked"`
+	NumLikes        int          `json:"num_likes"`
 	Workspace       *Ref         `json:"workspace"`
 	PermalinkURL    string       `json:"permalink_url"`
 	CreatedAt       time.Time    `json:"created_at"`
@@ -82,6 +90,7 @@ var (
 		"assignee.name", "due_on", "due_at", "start_on", "parent.name",
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
+		"followers.name", "liked", "num_likes",
 	}
 )
 
@@ -282,4 +291,99 @@ func (c *Client) AddTag(ctx context.Context, taskGID, tagGID string) error {
 func (c *Client) RemoveTag(ctx context.Context, taskGID, tagGID string) error {
 	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/removeTag", nil, map[string]any{"tag": tagGID}, nil)
 	return err
+}
+
+// --- followers, projects, duplicate, upload ---
+
+// AddFollowers / RemoveFollowers change who follows a task.
+func (c *Client) AddFollowers(ctx context.Context, taskGID string, users []string) error {
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/addFollowers", nil, map[string]any{"followers": users}, nil)
+	return err
+}
+
+func (c *Client) RemoveFollowers(ctx context.Context, taskGID string, users []string) error {
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/removeFollowers", nil, map[string]any{"followers": users}, nil)
+	return err
+}
+
+// AddProject adds a task to a project (optionally a section); RemoveProject removes it.
+func (c *Client) AddProject(ctx context.Context, taskGID, projectGID, sectionGID string) error {
+	body := map[string]any{"project": projectGID}
+	if sectionGID != "" {
+		body["section"] = sectionGID
+	}
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/addProject", nil, body, nil)
+	return err
+}
+
+func (c *Client) RemoveProject(ctx context.Context, taskGID, projectGID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/removeProject", nil, map[string]any{"project": projectGID}, nil)
+	return err
+}
+
+// DuplicateIncludes is what a duplicate copies (everything Asana supports on the free plan).
+const DuplicateIncludes = "notes,assignee,subtasks,attachments,tags,followers,projects,dates,parent"
+
+// DuplicateTask starts duplicating a task and returns the new task (the copy of
+// subtasks etc. continues in the background).
+func (c *Client) DuplicateTask(ctx context.Context, taskGID, name string) (*Ref, error) {
+	var job struct {
+		NewTask *Ref `json:"new_task"`
+	}
+	q := url.Values{"opt_fields": {"new_task.name"}}
+	if _, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/duplicate", q,
+		map[string]any{"name": name, "include": DuplicateIncludes}, &job); err != nil {
+		return nil, err
+	}
+	if job.NewTask == nil {
+		return nil, fmt.Errorf("asana: duplicate returned no new task")
+	}
+	return job.NewTask, nil
+}
+
+// UploadAttachment uploads a file to a task (multipart POST /attachments).
+func (c *Client) UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*Attachment, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := w.WriteField("parent", parentGID); err != nil {
+		return nil, err
+	}
+	part, err := w.CreateFormFile("file", fileName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := part.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	q := fields(attachmentFields)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/attachments?"+q.Encode(), &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		e := &Error{Status: resp.StatusCode}
+		_ = json.Unmarshal(b, e)
+		return nil, e
+	}
+	var env struct {
+		Data Attachment `json:"data"`
+	}
+	if err := json.Unmarshal(b, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
 }
