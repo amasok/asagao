@@ -118,12 +118,28 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) error {
 	fields := apiFields(op.Payload)
 	section, _ := fields["section"].(string)
 	project, _ := fields["project"].(string)
+	parent, _ := fields["parent"].(string)
 	delete(fields, "section")
 	delete(fields, "project")
+	delete(fields, "parent")
 	if project != "" {
 		fields["projects"] = []string{project}
 	}
-	t, err := s.API.CreateTask(ctx, fields)
+	var t *asana.Task
+	var err error
+	if parent != "" {
+		// The parent may have been created offline too; it has been sent before us.
+		if parent, err = s.Store.RealGID(ctx, parent); err != nil {
+			return err
+		}
+		if store.IsLocalGID(parent) {
+			return &asana.Error{Status: 404} // the parent's create failed
+		}
+		delete(fields, "workspace")
+		t, err = s.API.CreateSubtask(ctx, parent, fields)
+	} else {
+		t, err = s.API.CreateTask(ctx, fields)
+	}
 	if err != nil {
 		return err
 	}

@@ -89,7 +89,7 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 }
 
 func (a *app) taskCreateCmd() *cobra.Command {
-	var project, section, due, assignee, notes string
+	var project, section, due, assignee, notes, parent string
 	cmd := &cobra.Command{
 		Use:   "create <タスク名>",
 		Short: "タスクを作成する（プロジェクト未指定なら自分に割り当て）",
@@ -103,11 +103,13 @@ func (a *app) taskCreateCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			nt := store.NewTask{Name: strings.Join(args, " "), Notes: notes}
+			nt := store.NewTask{Name: strings.Join(args, " "), Notes: notes, ParentGID: parent}
 			if nt.DueOn, err = parseDate(due, time.Now()); err != nil {
 				return fmt.Errorf("--due: %w", err)
 			}
-			if project != "" {
+			if parent != "" {
+				// subtask: workspace comes from the parent; no project/section
+			} else if project != "" {
 				if nt.ProjectGID, err = st.ResolveProject(ctx, project); err != nil {
 					return err
 				}
@@ -122,7 +124,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 			} else if nt.WorkspaceGID, err = st.DefaultWorkspace(ctx); err != nil {
 				return err
 			}
-			if project == "" && assignee == "" {
+			if project == "" && parent == "" && assignee == "" {
 				assignee = "me"
 			}
 			switch assignee {
@@ -146,7 +148,32 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&due, "due", "", "期日（YYYY-MM-DD / today / tomorrow / +Nd）")
 	cmd.Flags().StringVar(&assignee, "assignee", "", `担当者（"me" またはユーザーの gid。プロジェクト未指定なら me）`)
 	cmd.Flags().StringVar(&notes, "notes", "", "説明")
+	cmd.Flags().StringVar(&parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
 	return cmd
+}
+
+func (a *app) taskAssignCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "assign <gid> <me|none|ユーザーの gid か名前>",
+		Short: "担当者を変更する（none で未割り当て）",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			gid, err := st.ResolveUser(ctx, args[1])
+			if err != nil {
+				return err
+			}
+			if err := st.UpdateTaskLocal(ctx, args[0], map[string]any{"assignee": gid}, time.Now()); err != nil {
+				return err
+			}
+			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "担当者を変更しました")
+		},
+	}
 }
 
 func (a *app) taskMoveCmd() *cobra.Command {

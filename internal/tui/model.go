@@ -79,6 +79,7 @@ type row struct {
 	key       string // stable id of a group header (section gid / bucket name)
 	count     int    // tasks in the group
 	collapsed bool
+	depth     int // 0 = task in the list, 1+ = expanded subtask
 	task      *store.TaskSummary
 }
 
@@ -161,6 +162,10 @@ type Model struct {
 	// layout (layout.go)
 	detailRatio int // detail pane width in % of the area right of the sidebar
 	hideSidebar bool
+
+	// subtasks (subtasks.go)
+	expanded      map[string]bool // tasks whose subtasks are shown under them
+	subtaskParent string          // parent for promptSubtask
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -251,8 +256,23 @@ func (m *Model) loadTasks() tea.Cmd {
 	seq, sc, query, filter, tag := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.collapsedScope
+	expanded := make(map[string]bool, len(m.expanded))
+	for k, v := range m.expanded {
+		expanded[k] = v
+	}
+	var subCompleted *bool
+	switch filter {
+	case filterAll:
+	case filterCompleted:
+		subCompleted = boolPtr(true)
+	default:
+		subCompleted = boolPtr(false)
+	}
 	return func() tea.Msg {
 		rows, err := queryRows(m.ctx, st, sc, query, filter, tag, now)
+		if err == nil {
+			rows, err = withSubtasks(m.ctx, st, rows, expanded, subCompleted)
+		}
 		msg := tasksLoadedMsg{seq: seq, rows: rows, err: err, scope: scopeKey}
 		if needCollapsed {
 			msg.collapsed = loadCollapsed(m.ctx, st, scopeKey)
@@ -414,10 +434,14 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "詳細を取得できませんでした（オフライン表示）: " + msg.err.Error()
 			return m, nil
 		}
-		if t := m.selectedTask(); t != nil && t.GID == msg.gid {
-			return m, m.loadDetail(msg.gid)
+		var cmds []tea.Cmd
+		if m.expanded[msg.gid] {
+			cmds = append(cmds, m.loadTasks()) // its subtasks may have just arrived
 		}
-		return m, nil
+		if t := m.selectedTask(); t != nil && t.GID == msg.gid {
+			cmds = append(cmds, m.loadDetail(msg.gid))
+		}
+		return m, tea.Batch(cmds...)
 
 	case syncDoneMsg:
 		m.syncing = false
@@ -582,6 +606,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.writeKey(key)
 	case "z", "v", "t", "m":
 		return m, m.viewKey(key)
+	case "@":
+		return m, m.openAssigneePicker()
+	case "S":
+		return m, m.startSubtask()
 	case "<", ">", "b":
 		return m, m.layoutKey(key)
 	case "E":
@@ -634,19 +662,16 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.moveList(-len(m.rows))
 		case "G", "end":
 			return m, m.moveList(len(m.rows))
-		case "enter", "l", "right":
+		case "enter":
 			if m.selectedTask() != nil {
 				m.focus = paneDetail
 			} else if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
 				return m, m.toggleGroup() // expand
 			}
+		case "l", "right":
+			return m, m.expandOrOpen()
 		case "h", "left":
-			if m.hideSidebar {
-				m.hideSidebar = false
-				m.focus = paneSidebar
-				return m, m.saveLayout()
-			}
-			m.focus = paneSidebar
+			return m, m.collapseOrUp()
 		}
 	case paneDetail:
 		switch key {

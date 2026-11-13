@@ -64,6 +64,8 @@ func (s *Server) New() *mcp.Server {
 			"(set offline=true to use only the cache)."}, s.getTask)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: readOnly,
 		Description: "List projects and their sections (gid and name). By default only projects I am a member of."}, s.listProjects)
+	mcp.AddTool(srv, &mcp.Tool{Name: "list_users", Annotations: readOnly,
+		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_tags", Annotations: readOnly,
 		Description: "List tags used by tasks, with the number of open and total tasks for each."}, s.listTags)
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync_status", Annotations: readOnly,
@@ -79,7 +81,8 @@ func (s *Server) New() *mcp.Server {
 		}
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_task", Annotations: write(false),
 			Description: "Create a task. Without a project it is assigned to me in the default workspace " +
-				"(like My Tasks). With a project it goes to the given section or the project's first section."}, s.createTask)
+				"(like My Tasks). With a project it goes to the given section or the project's first section. " +
+				"With parent it is created as a subtask of that task."}, s.createTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description, due date or assignee. " +
 				"Only the fields you pass are changed. Use an empty string to clear due_on or assignee."}, s.updateTask)
@@ -160,6 +163,7 @@ type SyncOutput struct {
 
 type CreateTaskInput struct {
 	Name     string `json:"name" jsonschema:"task name"`
+	Parent   string `json:"parent,omitempty" jsonschema:"parent task gid: create a subtask (project/section are ignored)"`
 	Project  string `json:"project,omitempty" jsonschema:"project gid or name; omit to create in My Tasks"`
 	Section  string `json:"section,omitempty" jsonschema:"section gid or exact name (default: first section)"`
 	DueOn    string `json:"due_on,omitempty" jsonschema:"due date (YYYY-MM-DD, today, tomorrow, +7d)"`
@@ -173,7 +177,7 @@ type UpdateTaskInput struct {
 	Name      *string `json:"name,omitempty" jsonschema:"new name"`
 	Notes     *string `json:"notes,omitempty" jsonschema:"new description (replaces the old one)"`
 	DueOn     *string `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
-	Assignee  *string `json:"assignee,omitempty" jsonschema:"\"me\", a user gid, or empty string to unassign"`
+	Assignee  *string `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
 }
 
 type MoveTaskInput struct {
@@ -311,6 +315,15 @@ func (s *Server) listProjects(ctx context.Context, _ *mcp.CallToolRequest, in Li
 	return nil, ProjectsOutput{Projects: ps}, err
 }
 
+type UsersOutput struct {
+	Users []store.UserRef `json:"users"`
+}
+
+func (s *Server) listUsers(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, UsersOutput, error) {
+	users, err := s.Store.ListUsers(ctx)
+	return nil, UsersOutput{Users: users}, err
+}
+
 func (s *Server) listTags(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, TagsOutput, error) {
 	tags, err := s.Store.ListTags(ctx)
 	return nil, TagsOutput{Tags: tags}, err
@@ -352,13 +365,15 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 
 func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in CreateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
-	nt := store.NewTask{Name: in.Name, Notes: in.Notes}
+	nt := store.NewTask{Name: in.Name, Notes: in.Notes, ParentGID: in.Parent}
 	var err error
 	if nt.DueOn, err = dates.Parse(in.DueOn, now); err != nil {
 		return nil, WriteOutput{}, fmt.Errorf("due_on: %w", err)
 	}
 	assignee := in.Assignee
-	if in.Project != "" {
+	if in.Parent != "" {
+		// subtask: workspace comes from the parent
+	} else if in.Project != "" {
 		if nt.ProjectGID, err = s.Store.ResolveProject(ctx, in.Project); err != nil {
 			return nil, WriteOutput{}, err
 		}
@@ -378,7 +393,7 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 			assignee = "me"
 		}
 	}
-	if nt.AssigneeGID, err = s.resolveAssignee(ctx, assignee); err != nil {
+	if nt.AssigneeGID, err = s.Store.ResolveUser(ctx, assignee); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	gid, err := s.Store.CreateTaskLocal(ctx, nt, now)
@@ -408,7 +423,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		changes["due_on"] = due
 	}
 	if in.Assignee != nil {
-		gid, err := s.resolveAssignee(ctx, *in.Assignee)
+		gid, err := s.Store.ResolveUser(ctx, *in.Assignee)
 		if err != nil {
 			return nil, WriteOutput{}, err
 		}

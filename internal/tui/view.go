@@ -209,7 +209,7 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	keys := [][2]string{{"j/k", "移動"}, {"space", "折りたたみ"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"<>", "詳細の幅"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
+	keys := [][2]string{{"j/k", "移動"}, {"l/h", "サブタスク"}, {"space", "折りたたみ"}, {"x", "完了"}, {"a", "追加"}, {"S", "サブタスク追加"}, {"@", "担当"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"<>", "詳細の幅"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
 	if m.boardActive() && !m.zoom {
 		keys = [][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "カードを左右の列へ"}, {"enter", "詳細"}, {"E", "列名を変更"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"v", "リスト表示"}, {"?", "ヘルプ"}}
 	}
@@ -251,6 +251,10 @@ func (m *Model) renderHelp(w, h int) string {
 		"                    プロジェクト表示中はそのプロジェクトに、My Tasks では自分に割り当て",
 		"  c                 コメントを追加",
 		"  m                 タスクを別のセクションへ移動",
+		"  @                 担当者を変更",
+		"  S                 選択中のタスクにサブタスクを追加（例: 見積もりを取る due:+3d）",
+		"  l / →             サブタスクを開く（ツリー表示）、サブタスクがなければ詳細へ",
+		"  h / ←             サブタスクを閉じる / 親タスクへ / プロジェクト一覧へ",
 		"  E                 セクション（リスト）の名前を変更",
 		"  !                 未送信の変更・競合を確認して解決",
 		"",
@@ -280,7 +284,7 @@ func (m *Model) sidebarLines(w, h int) []string {
 func (m *Model) listTitle() string {
 	n := 0
 	for _, r := range m.allRows {
-		if r.task != nil {
+		if r.task != nil && r.depth == 0 {
 			n++
 		}
 	}
@@ -315,15 +319,18 @@ func (m *Model) listLines(w, h int) []string {
 			}
 			continue
 		}
-		lines = append(lines, m.taskLine(r.task, w, today, i == m.listCursor))
+		lines = append(lines, m.taskLine(r.task, r.depth, w, today, i == m.listCursor))
 	}
 	return lines
 }
 
-func (m *Model) taskLine(t *store.TaskSummary, w int, today string, selected bool) string {
+func (m *Model) taskLine(t *store.TaskSummary, depth, w int, today string, selected bool) string {
 	check := "☐"
 	if t.Completed {
 		check = "☑"
+	}
+	if depth > 0 { // expanded subtask: indent under its parent
+		check = strings.Repeat("  ", depth-1) + "└ " + check
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	extra := ""
@@ -331,15 +338,23 @@ func (m *Model) taskLine(t *store.TaskSummary, w int, today string, selected boo
 		extra += " ↑"
 	}
 	if t.NumSubtasks > 0 {
-		extra = fmt.Sprintf(" ↳%d", t.NumSubtasks)
+		if m.expanded[t.GID] {
+			extra += fmt.Sprintf(" ▾%d", t.NumSubtasks)
+		} else {
+			extra += fmt.Sprintf(" ↳%d", t.NumSubtasks)
+		}
 	}
-	if m.currentScope().kind == scopeMyTasks || m.query != "" {
-		if len(t.Memberships) > 0 {
+	if depth == 0 && (m.currentScope().kind == scopeMyTasks || m.query != "") {
+		switch {
+		case t.ParentName != "":
+			extra += "  ⊂ " + t.ParentName // a subtask listed on its own
+		case len(t.Memberships) > 0:
 			extra += "  " + t.Memberships[0].ProjectName
 		}
 	}
 	dueW := 7
-	nameW := max(4, w-2-dueW-1)
+	checkW := ansi.StringWidth(check)
+	nameW := max(4, w-checkW-1-dueW-1)
 	name := ansi.Truncate(t.Name+extra, nameW, "…")
 
 	if selected {

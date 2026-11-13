@@ -58,6 +58,7 @@ type Op struct {
 
 // NewTask is the input for CreateTaskLocal.
 type NewTask struct {
+	ParentGID    string // create as a subtask of this task
 	WorkspaceGID string
 	ProjectGID   string
 	SectionGID   string
@@ -220,16 +221,25 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	if strings.TrimSpace(nt.Name) == "" {
 		return "", errors.New("タスク名が空です")
 	}
+	if nt.ParentGID != "" {
+		if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM tasks WHERE gid = ?", nt.ParentGID).Scan(&nt.WorkspaceGID); err != nil {
+			return "", fmt.Errorf("parent task %s: %w", nt.ParentGID, ErrNotFound)
+		}
+		nt.ProjectGID, nt.SectionGID = "", "" // subtasks are not in projects
+	}
 	if nt.WorkspaceGID == "" && nt.ProjectGID != "" {
 		if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", nt.ProjectGID).Scan(&nt.WorkspaceGID); err != nil {
 			return "", fmt.Errorf("project %s: %w", nt.ProjectGID, ErrNotFound)
 		}
 	}
-	if nt.WorkspaceGID == "" {
+	if nt.WorkspaceGID == "" && nt.ParentGID == "" { // subtasks inherit it from the parent in Asana
 		return "", errors.New("ワークスペースが決まりません（--project または --workspace を指定してください）")
 	}
 	gid := LocalPrefix + randomID()
 	payload := map[string]any{"workspace": nt.WorkspaceGID, "name": nt.Name}
+	if nt.ParentGID != "" {
+		payload["parent"] = nt.ParentGID
+	}
 	if nt.ProjectGID != "" {
 		payload["project"] = nt.ProjectGID
 	}
@@ -248,10 +258,15 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks
-			(gid, workspace_gid, name, notes, due_on, assignee_gid, created_at, modified_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-			gid, nt.WorkspaceGID, nt.Name, nt.Notes, nt.DueOn, nt.AssigneeGID, ts, ts); err != nil {
+			(gid, workspace_gid, name, notes, due_on, assignee_gid, parent_gid, created_at, modified_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			gid, nt.WorkspaceGID, nt.Name, nt.Notes, nt.DueOn, nt.AssigneeGID, nt.ParentGID, ts, ts); err != nil {
 			return err
+		}
+		if nt.ParentGID != "" {
+			if _, err := tx.ExecContext(ctx, "UPDATE tasks SET num_subtasks = num_subtasks + 1 WHERE gid = ?", nt.ParentGID); err != nil {
+				return err
+			}
 		}
 		if nt.ProjectGID != "" {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO task_memberships(task_gid, project_gid, section_gid) VALUES(?, ?, ?)",

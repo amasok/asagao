@@ -40,7 +40,7 @@ func (m *Model) boardColumns() []boardColumn {
 	}
 	var other []*store.TaskSummary
 	for _, r := range m.allRows {
-		if r.task == nil {
+		if r.task == nil || r.depth > 0 { // expanded subtasks are not cards
 			continue
 		}
 		placed := false
@@ -251,6 +251,7 @@ type pickerKind int
 const (
 	pickTag pickerKind = iota
 	pickSection
+	pickAssignee
 )
 
 type pickerItem struct {
@@ -359,6 +360,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.loadTasks()
 		case pickSection:
 			return m, m.moveTask(p.task, p.project, item.value, item.label)
+		case pickAssignee:
+			return m, m.assign(p.task, item.value, item.label)
 		}
 	}
 	return m, nil
