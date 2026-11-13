@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,9 @@ type fakeAsana struct {
 	modifiedSince  []string
 	completedSince []string
 	subtaskCalls   int
+	t1aSubtasks    string // JSON array: if set, t1a has these subtasks (grandchildren of t1)
+	duringPull     func() // called while project tasks are fetched
+	puts           []string
 }
 
 func (f *fakeAsana) handler() http.Handler {
@@ -44,7 +48,20 @@ func (f *fakeAsana) handler() http.Handler {
 	})
 	mux.HandleFunc("/tasks/t1/subtasks", func(w http.ResponseWriter, r *http.Request) {
 		f.subtaskCalls++
-		fmt.Fprint(w, `{"data":[{"gid":"t1a","name":"Sub","parent":{"gid":"t1"}}]}`)
+		n := 0
+		if f.t1aSubtasks != "" {
+			n = 1
+		}
+		fmt.Fprintf(w, `{"data":[{"gid":"t1a","name":"Sub","num_subtasks":%d,"parent":{"gid":"t1"}}]}`, n)
+	})
+	mux.HandleFunc("/tasks/t1a/subtasks", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"data":%s}`, f.t1aSubtasks)
+	})
+	mux.HandleFunc("/tasks/t9", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			f.puts = append(f.puts, r.URL.Path)
+		}
+		fmt.Fprint(w, `{"data":{"gid":"t9","name":"T9","modified_at":"2026-11-13T00:00:00Z"}}`)
 	})
 	mux.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -55,6 +72,9 @@ func (f *fakeAsana) handler() http.Handler {
 			fmt.Fprint(w, `{"data":[{"gid":"t1","name":"My task","num_subtasks":1,"assignee":{"gid":"u1","name":"Me"},
 				"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s1"}}],"tags":[{"gid":"g1","name":"urgent"}]}]}`)
 		case q.Get("project") == "p1":
+			if f.duringPull != nil {
+				f.duringPull()
+			}
 			fmt.Fprintf(w, `{"data":%s}`, f.projectTasks)
 		default:
 			f.t.Errorf("unexpected tasks query %v", q)
@@ -137,5 +157,131 @@ func TestRunFullThenIncrementalThenPrune(t *testing.T) {
 	now = now.Add(FullSyncInterval)
 	if res, err = s.Run(ctx, false); err != nil || !res.Full {
 		t.Fatalf("expected automatic full sync: %+v %v", res, err)
+	}
+}
+
+func TestRunFetchesNestedSubtasks(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`,
+		t1aSubtasks: `[{"gid":"t1a1","name":"孫","parent":{"gid":"t1a"}}]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	if _, err := s.Run(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := st.GetTask(ctx, "t1a"); err != nil || len(d.Subtasks) != 1 || d.Subtasks[0].GID != "t1a1" {
+		t.Fatalf("grandchild not synced: %+v %v", d, err)
+	}
+	// A full sync keeps (does not prune) the grandchild.
+	if res, err := s.Run(ctx, true); err != nil || res.Pruned != 0 {
+		t.Fatalf("second full sync = %+v %v", res, err)
+	}
+}
+
+// Asana answers as another account than the one the store was synced with: Run stops
+// before sending or fetching anything, and keeps the stored account.
+func TestRunStopsWhenAccountChanged(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.SetSyncState(ctx, store.KeyMeGID, "old-account")
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t9", Name: "前のアカウント"}})
+	_ = st.UpdateTaskLocal(ctx, "t9", map[string]any{"completed": true}, time.Now())
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	_, err = (&Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}).Run(ctx, false)
+	if !errors.Is(err, ErrAccountChanged) {
+		t.Fatalf("run = %v", err)
+	}
+	if me, _ := st.SyncState(ctx, store.KeyMeGID); me != "old-account" {
+		t.Fatalf("stored account overwritten: %q", me)
+	}
+	if p, _, _, _ := st.OutboxCounts(ctx); p != 1 || len(fake.modifiedSince) != 0 {
+		t.Fatalf("nothing may be sent or fetched: pending=%d fetches=%d", p, len(fake.modifiedSince))
+	}
+}
+
+// A sync holds the push lock for its whole run: while another process holds it (pushing,
+// syncing or resetting the store), the sync does nothing.
+func TestRunSkipsWhileLocked(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	other, err := store.Open(ctx, st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	unlock, err := other.TryLockPush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	res, err := s.Run(ctx, false)
+	if !errors.Is(err, ErrPushBusy) || !res.Push.Busy || len(fake.modifiedSince) != 0 {
+		t.Fatalf("run while locked = %+v %v (fetches %d)", res, err, len(fake.modifiedSince))
+	}
+	// A reset cannot happen during a sync either.
+	unlock()
+	unlockRun, _ := st.TryLockPush() // stands for a sync in progress in this process
+	if _, err := other.Reset(ctx, true, time.Now()); !errors.Is(err, store.ErrPushBusy) {
+		t.Fatalf("reset during a sync = %v", err)
+	}
+	unlockRun()
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatalf("run after unlock = %v", err)
+	}
+}
+
+// A change queued by another process during the pull is sent by this sync.
+func TestRunSendsChangesQueuedDuringPull(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	other, err := store.Open(ctx, st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t9", Name: "T9"}})
+	fake.duringPull = func() {
+		if err := other.UpdateTaskLocal(ctx, "t9", map[string]any{"completed": true}, time.Now()); err != nil {
+			t.Error(err)
+		}
+		fake.duringPull = nil
+	}
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	res, err := (&Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}).Run(ctx, true)
+	if err != nil || res.Push.Sent != 1 || res.Push.Remaining != 0 || len(fake.puts) != 1 {
+		t.Fatalf("run = %+v %v (puts %v)", res.Push, err, fake.puts)
 	}
 }

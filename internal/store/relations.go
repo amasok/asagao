@@ -272,6 +272,12 @@ func copyFile(src, dst string) error {
 
 // ReplaceLocalAttachment records the Asana gid of an uploaded file.
 func (s *Store) ReplaceLocalAttachment(ctx context.Context, local, real, viewURL string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE attachments SET gid = ?, view_url = ? WHERE gid = ?", real, viewURL, local)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalAttachment(ctx, tx, local, real, viewURL) })
+}
+
+func replaceLocalAttachment(ctx context.Context, tx *sql.Tx, local, real, viewURL string) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE attachments SET gid = ?, view_url = ? WHERE gid = ?", real, viewURL, local); err != nil {
+		return err
+	}
+	return recordResult(ctx, tx, ResultAttachment, local, real)
 }

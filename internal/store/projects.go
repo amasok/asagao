@@ -113,8 +113,14 @@ func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, t
 
 // ReplaceLocalStatus records the Asana gid of a posted status update.
 func (s *Store) ReplaceLocalStatus(ctx context.Context, local string, u asana.StatusUpdate) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalStatus(ctx, tx, local, u) })
+}
+
+func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u asana.StatusUpdate) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local); err != nil {
+		return err
+	}
+	return recordResult(ctx, tx, ResultStatus, local, u.GID)
 }
 
 // ProjectMembers returns a project's members.

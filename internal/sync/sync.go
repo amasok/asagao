@@ -32,6 +32,22 @@ type Syncer struct {
 	// Authorization header (the storage service rejects it). Default: plain HTTP GET.
 	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
+	sleep    func(context.Context, time.Duration) error // replaced in tests
+}
+
+// wait pauses for d (or until ctx is done).
+func (s *Syncer) wait(ctx context.Context, d time.Duration) error {
+	if s.sleep != nil {
+		return s.sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type Result struct {
@@ -78,7 +94,28 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 	// Send local changes first, so the pull below sees them and a network error means
 	// we are offline before anything else is attempted.
-	if res.Push, err = s.Push(ctx); err != nil {
+	// The store holds one account's data. If Asana now answers as someone else, nothing is
+	// sent, fetched or overwritten: their 404s would look like deletions (see dropGone).
+	me, err := s.API.Me(ctx)
+	if err != nil {
+		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
+	}
+	if want, err := s.Store.SyncState(ctx, store.KeyMeGID); err != nil {
+		return res, err
+	} else if want != "" && me.GID != want {
+		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	}
+	// The whole sync holds the push lock: no other process sends meanwhile, and the store
+	// cannot be reset (store.Reset) between our push and our pull, which would bring the
+	// old data back. If another process is syncing or pushing, this sync is skipped.
+	unlock, err := s.lock(ctx, &res.Push)
+	if err != nil {
+		return res, err
+	}
+	defer unlock()
+	var lastSent int64
+	drops := &dropState{} // one account check and one drop limit for the whole sync
+	if res.Push, lastSent, err = s.pushLocked(ctx, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
@@ -97,10 +134,6 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return s.Store.UpsertTasks(ctx, tasks)
 	}
 
-	me, err := s.API.Me(ctx)
-	if err != nil {
-		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
-	}
 	if err := s.Store.UpsertUser(ctx, *me); err != nil {
 		return res, err
 	}
@@ -181,8 +214,14 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 
 	// Subtasks are not returned by GET /tasks?project=, so fetch them per parent.
-	slices.Sort(withSubtasks)
-	for _, gid := range slices.Compact(withSubtasks) {
+	// upsert appends subtasks that have subtasks of their own, so nested levels are fetched too.
+	fetched := map[string]bool{}
+	for i := 0; i < len(withSubtasks); i++ {
+		gid := withSubtasks[i]
+		if fetched[gid] {
+			continue
+		}
+		fetched[gid] = true
 		subs, err := s.API.Subtasks(ctx, gid)
 		if err != nil {
 			return res, fmt.Errorf("サブタスクの取得 (%s): %w", gid, err)
@@ -199,6 +238,10 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		if err := s.Store.SetSyncState(ctx, keyLastFullSync, started.UTC().Format(time.RFC3339)); err != nil {
 			return res, err
 		}
+	}
+	// Changes queued by other processes during the pull (they were told this sync sends them).
+	if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
+		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, started.UTC().Format(time.RFC3339)); err != nil {
 		return res, err

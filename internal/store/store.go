@@ -15,7 +15,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string // the database file (the push lock file lives next to it)
 }
 
 // Open opens (creating if needed) the database at path with 0600 permissions and migrates it.
@@ -35,7 +36,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate %s: %w", path, err)
@@ -44,6 +45,9 @@ func Open(ctx context.Context, path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// Path is the database file.
+func (s *Store) Path() string { return s.path }
 
 func (s *Store) migrate(ctx context.Context) error {
 	var version int

@@ -288,11 +288,16 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 			return err
 		}
 		for _, gid := range stale {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM sections WHERE project_gid = ?", gid); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE gid = ?", gid); err != nil {
-				return err
+			for _, q := range []string{
+				"DELETE FROM sections WHERE project_gid = ?",
+				"DELETE FROM project_members WHERE project_gid = ?",
+				"DELETE FROM status_updates WHERE project_gid = ?",
+				"DELETE FROM task_memberships WHERE project_gid = ?",
+				"DELETE FROM projects WHERE gid = ?",
+			} {
+				if _, err := tx.ExecContext(ctx, q, gid); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

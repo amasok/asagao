@@ -41,6 +41,7 @@ type Project struct {
 	Team         *Ref      `json:"team"`
 	Members      []Ref     `json:"members"`
 	PermalinkURL string    `json:"permalink_url"`
+	CreatedAt    time.Time `json:"created_at"`
 	ModifiedAt   time.Time `json:"modified_at"`
 }
 
@@ -77,20 +78,21 @@ type Task struct {
 	Workspace       *Ref         `json:"workspace"`
 	PermalinkURL    string       `json:"permalink_url"`
 	CreatedAt       time.Time    `json:"created_at"`
+	CreatedBy       *Ref         `json:"created_by"`
 	ModifiedAt      time.Time    `json:"modified_at"`
 }
 
 // Fields requested for each resource (keep responses small; see requirements 8 章).
 var (
 	userFields    = []string{"name", "email", "workspaces.name"}
-	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members.name", "permalink_url", "modified_at"}
+	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members.name", "permalink_url", "created_at", "modified_at"}
 	sectionFields = []string{"name", "project"}
 	TaskFields    = []string{
 		"name", "notes", "html_notes", "resource_subtype", "completed", "completed_at",
 		"assignee.name", "due_on", "due_at", "start_on", "parent.name",
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
-		"followers.name", "liked", "num_likes",
+		"followers.name", "liked", "num_likes", "created_by",
 	}
 )
 

@@ -282,6 +282,8 @@ type WriteOutput struct {
 	// Sent is true when the change reached Asana; false means it is queued locally.
 	Sent bool   `json:"sent"`
 	Note string `json:"note,omitempty"`
+	// Discarded lists queued changes dropped because what they change was deleted in Asana.
+	Discarded []store.Discard `json:"discarded,omitempty"`
 }
 
 // --- read tools ---
@@ -682,16 +684,25 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	res, err := syncer.Push(ctx)
+	out.Discarded = res.Discarded
+	if len(res.Discarded) > 0 {
+		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
+	}
 	switch {
 	case err != nil:
-		out.Note = "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
+		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
 	case res.Conflicts > 0 || res.Failed > 0:
-		out.Note = fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
+		out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
 	default:
 		out.Sent = true
 	}
 	if real, err := s.Store.RealGID(ctx, taskGID); err == nil {
 		out.TaskGID = real
+	}
+	for _, d := range res.Discarded {
+		if d.TaskGID == taskGID || d.TaskGID == out.TaskGID {
+			out.Sent = false // this change was dropped, not sent
+		}
 	}
 	return out
 }
