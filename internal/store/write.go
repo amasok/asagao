@@ -82,6 +82,9 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 			if err := reapplyUpdates(ctx, tx, t.GID); err != nil {
 				return err
 			}
+			if err := reapplyTagOps(ctx, tx, t.GID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

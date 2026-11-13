@@ -440,6 +440,10 @@ func DescribeOp(op store.Op) string {
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpRenameSection:
 		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
+	case store.OpAddTag:
+		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
+	case store.OpRemoveTag:
+		return fmt.Sprintf("タグを外す: %s #%v", name, op.Payload["tag_name"])
 	case store.OpAddComment:
 		text, _ := op.Payload["text"].(string)
 		if r := []rune(text); len(r) > 30 {

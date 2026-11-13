@@ -40,8 +40,21 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 	} else if err != nil {
 		return "", err
 	}
+	dir := s.CacheDir
+	if dir == "" {
+		dir = filepath.Join(config.CacheDir(), "attachments")
+	}
+	path := filepath.Join(dir, gid+"-"+safeName(a.Name))
 	if a.LocalPath != "" {
 		if _, err := os.Stat(a.LocalPath); err == nil {
+			if a.LocalPath == path || filepath.Base(a.LocalPath) == filepath.Base(path) {
+				return a.LocalPath, nil
+			}
+			// Downloaded by an older version under a name with spaces: rename it so the
+			// path can be used as a Markdown link (editor image plugins need that).
+			if err := os.Rename(a.LocalPath, path); err == nil {
+				return path, s.Store.SetAttachmentPath(ctx, gid, path)
+			}
 			return a.LocalPath, nil
 		}
 	}
@@ -63,14 +76,9 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 	if err != nil {
 		return "", fmt.Errorf("%s のダウンロード: %w", a.Name, err)
 	}
-	dir := s.CacheDir
-	if dir == "" {
-		dir = filepath.Join(config.CacheDir(), "attachments")
-	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, gid+"-"+safeName(a.Name))
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return "", err
@@ -81,7 +89,9 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 	return path, s.Store.SetAttachmentPath(ctx, gid, path)
 }
 
-var unsafeChars = regexp.MustCompile(`[/\\:\x00-\x1f]`)
+// unsafeChars are replaced in cached file names: path separators, control characters, and
+// whitespace / brackets, which would break the path when used as a Markdown link target.
+var unsafeChars = regexp.MustCompile(`[/\\:\x00-\x1f\s()<>\[\]]`)
 
 func safeName(name string) string {
 	name = unsafeChars.ReplaceAllString(name, "_")

@@ -499,10 +499,10 @@ type TagCount struct {
 	Total int    `json:"tasks"`
 }
 
-// ListTags returns tags used by at least one task, ordered by name.
+// ListTags returns the workspace tags (with how many tasks use them), ordered by name.
 func (s *Store) ListTags(ctx context.Context) ([]TagCount, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.gid, g.name, SUM(t.completed = 0), COUNT(*)
-		FROM tags g JOIN task_tags tt ON tt.tag_gid = g.gid JOIN tasks t ON t.gid = tt.task_gid
+	rows, err := s.db.QueryContext(ctx, `SELECT g.gid, g.name, COALESCE(SUM(t.completed = 0), 0), COUNT(t.gid)
+		FROM tags g LEFT JOIN task_tags tt ON tt.tag_gid = g.gid LEFT JOIN tasks t ON t.gid = tt.task_gid
 		GROUP BY g.gid ORDER BY g.name`)
 	if err != nil {
 		return nil, err

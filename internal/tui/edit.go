@@ -12,6 +12,7 @@ import (
 	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/sync"
 )
 
 // Editing in $EDITOR: e writes the task as a Markdown file with front matter, opens the
@@ -110,19 +111,23 @@ func parseTaskDoc(s string) (taskDoc, error) {
 	return d, nil
 }
 
-// editableBody returns the task description as editable Markdown.
-func editableBody(htmlNotes, plain string) string {
+// editableBody returns the task description as editable Markdown. imagePath gives the
+// local file of an image (so editor plugins can display it), or "" to use asana:<gid>.
+func editableBody(htmlNotes, plain string, imagePath func(gid string) string) string {
 	if htmlNotes != "" {
-		return richtext.ToEditableMarkdown(htmlNotes)
+		return richtext.ToEditableMarkdownWith(htmlNotes, imagePath)
 	}
 	md := richtext.FromPlain(store.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	}))
-	return richtext.ImageTokenRe.ReplaceAllString(md, "![画像](asana:$1)")
+	return richtext.ImageTokenRe.ReplaceAllStringFunc(md, func(tok string) string {
+		gid := richtext.ImageTokenRe.FindStringSubmatch(tok)[1]
+		return "![画像](" + richtext.EditableImageDest(gid, imagePath) + ")"
+	})
 }
 
-func docFor(ctx context.Context, st *store.Store, d *store.TaskDetail) taskDoc {
-	doc := taskDoc{Name: d.Name, Due: d.DueOn, Completed: d.Completed, Body: editableBody(d.HTMLNotes, d.Notes)}
+func docFor(ctx context.Context, st *store.Store, d *store.TaskDetail, imagePath func(string) string) taskDoc {
+	doc := taskDoc{Name: d.Name, Due: d.DueOn, Completed: d.Completed, Body: editableBody(d.HTMLNotes, d.Notes, imagePath)}
 	if d.Assignee != nil {
 		doc.Assignee = d.Assignee.Name
 		if me, _ := st.MeGID(ctx); me == d.Assignee.GID {
@@ -163,12 +168,24 @@ func (m *Model) editTask(gid string) tea.Cmd {
 		return nil
 	}
 	st := m.deps.Store
+	syncer := m.syncer
+	if syncer == nil {
+		syncer = &sync.Syncer{Store: st} // offline: cached images only
+	}
 	return func() tea.Msg {
 		d, err := st.GetTask(m.ctx, gid)
 		if err != nil {
 			return editReadyMsg{err: err}
 		}
-		doc := docFor(m.ctx, st, d)
+		// Download the images first so the file can point at them (editor image plugins
+		// such as snacks.nvim need a real path).
+		paths := map[string]string{}
+		for _, img := range taskImages(d) {
+			if p, err := syncer.DownloadAttachment(m.ctx, gid, img); err == nil {
+				paths[img] = p
+			}
+		}
+		doc := docFor(m.ctx, st, d, func(img string) string { return paths[img] })
 		path, err := writeTemp("asana-tui-task-*.md", doc.String())
 		return editReadyMsg{gid: gid, path: path, original: doc, err: err}
 	}

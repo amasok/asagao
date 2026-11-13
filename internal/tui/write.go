@@ -22,6 +22,8 @@ const (
 	promptComment
 	promptRenameSection
 	promptSubtask
+	promptDue
+	promptNewTag
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -79,6 +81,15 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
 		}
 		return m, nil, true
+	case taskTagsMsg:
+		if msg.err != nil {
+			m.status = "タグを読み込めませんでした: " + msg.err.Error()
+		} else {
+			m.showTagEditor(msg)
+		}
+		return m, nil, true
+	case tagToggledMsg:
+		return m, tea.Batch(m.afterWrite(), m.openTagEditorFor(msg.task)), true
 	case imagesReadyMsg:
 		return m, m.onImagesReady(msg), true
 	case usersLoadedMsg:
@@ -177,6 +188,12 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptSubtask:
 		m.prompt.Prompt = "サブタスク: "
 		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る due:+3d）"
+	case promptDue:
+		m.prompt.Prompt = "期日: "
+		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
+	case promptNewTag:
+		m.prompt.Prompt = "新しいタグ: "
+		m.prompt.Placeholder = "タグ名"
 	}
 }
 
@@ -191,6 +208,9 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		kind := m.promptMode
 		m.promptMode = promptNone
 		m.prompt.Blur()
+		if kind == promptDue { // empty clears the due date
+			return m, m.submitDue(value)
+		}
 		if value == "" {
 			return m, nil
 		}
@@ -201,6 +221,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.renameSection(m.renameGID, value)
 		case promptSubtask:
 			return m, m.createSubtask(m.subtaskParent, value)
+		case promptNewTag:
+			return m, m.submitNewTag(value)
 		}
 		if m.commentGID != "" {
 			return m, m.addComment(m.commentGID, value)
@@ -378,6 +400,10 @@ func describeOp(op store.Op) string {
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpRenameSection:
 		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
+	case store.OpAddTag:
+		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
+	case store.OpRemoveTag:
+		return fmt.Sprintf("タグを外す: %s #%v", name, op.Payload["tag_name"])
 	case store.OpAddComment:
 		text, _ := op.Payload["text"].(string)
 		return fmt.Sprintf("コメント: %s「%s」", name, text)

@@ -249,10 +249,14 @@ const (
 	pickTag pickerKind = iota
 	pickSection
 	pickAssignee
+	pickDue
+	pickFilter
+	pickTags
 )
 
 type pickerItem struct {
 	label, value, hint string
+	checked            bool // pickTags: the task has this tag
 }
 
 type picker struct {
@@ -347,10 +351,30 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		p.cursor = 0
 	case "G", "end":
 		p.cursor = len(p.items) - 1
-	case "enter":
-		m.picker = nil
+	case "enter", "space":
 		item := p.items[p.cursor]
+		if p.kind == pickTags {
+			if item.value == "+" {
+				m.picker = nil
+				return m, m.startNewTag(p.task)
+			}
+			return m, m.toggleTag(p.task, item) // stays open
+		}
+		if key == "space" {
+			return m, nil
+		}
+		m.picker = nil
 		switch p.kind {
+		case pickDue:
+			if item.value == "?" {
+				return m, m.startDuePrompt(p.task)
+			}
+			return m, m.setDue(p.task, item.value)
+		case pickFilter:
+			var f int
+			fmt.Sscan(item.value, &f)
+			m.filter = filterMode(f)
+			return m, m.loadTasks()
 		case pickTag:
 			m.tagFilter = item.value
 			m.listCursor, m.listOffset = 0, 0

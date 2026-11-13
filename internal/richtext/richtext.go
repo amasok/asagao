@@ -27,13 +27,20 @@ var assetID = regexp.MustCompile(`asset_id=(\d+)`)
 
 // ToMarkdown converts Asana rich text HTML to Markdown for display. Images become image
 // tokens and mentions bold text. It returns "" if s is empty.
-func ToMarkdown(s string) string { return convert(s, false) }
+func ToMarkdown(s string) string { return convert(s, false, nil) }
 
 // ToEditableMarkdown converts Asana rich text to Markdown for editing: images and mentions
 // are kept as ![画像](asana:GID) and [@Name](asana:user:GID) so FromMarkdown can restore them.
-func ToEditableMarkdown(s string) string { return convert(s, true) }
+func ToEditableMarkdown(s string) string { return convert(s, true, nil) }
 
-func convert(s string, editable bool) string {
+// ToEditableMarkdownWith is ToEditableMarkdown with image links chosen by imageDest (e.g. a
+// local file path so editor plugins can show the image). FromMarkdown recognises cached
+// attachment paths (".../attachments/<gid>-name") as well as asana:<gid>.
+func ToEditableMarkdownWith(s string, imageDest func(gid string) string) string {
+	return convert(s, true, imageDest)
+}
+
+func convert(s string, editable bool, imageDest func(string) string) string {
 	if strings.TrimSpace(s) == "" {
 		return ""
 	}
@@ -41,7 +48,7 @@ func convert(s string, editable bool) string {
 	if err != nil {
 		return s
 	}
-	c := &converter{editable: editable}
+	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
 	return tidy(c.b.String())
 }
@@ -56,11 +63,12 @@ func Images(s string) []string {
 }
 
 type converter struct {
-	editable bool
-	b        strings.Builder
-	lists    []listState // nesting of ul/ol
-	pre      int         // inside <pre>
-	quote    int         // inside <blockquote>
+	editable  bool
+	imageDest func(gid string) string
+	b         strings.Builder
+	lists     []listState // nesting of ul/ol
+	pre       int         // inside <pre>
+	quote     int         // inside <blockquote>
 }
 
 type listState struct {
@@ -262,7 +270,7 @@ func (c *converter) image(n *html.Node) {
 	}
 	c.block()
 	if c.editable {
-		c.write("![画像](" + assetScheme + gid + ")")
+		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
 	} else {
 		c.write(ImageToken(gid))
 	}
@@ -327,4 +335,18 @@ func FromPlain(text string) string {
 		return ""
 	}
 	return ToMarkdown("<body>" + html.EscapeString(text) + "</body>")
+}
+
+// EditableImageDest is the link target of an image in editable Markdown. Targets with
+// spaces or brackets are written as <...> (CommonMark), otherwise they would end the link.
+func EditableImageDest(gid string, imageDest func(string) string) string {
+	if imageDest != nil {
+		if d := imageDest(gid); d != "" {
+			if strings.ContainsAny(d, " \t()<>") {
+				return "<" + d + ">"
+			}
+			return d
+		}
+	}
+	return assetScheme + gid
 }

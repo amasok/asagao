@@ -27,7 +27,7 @@ func TestDetect(t *testing.T) {
 		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TMUX": "/tmp/tmux"}, ProtocolOpen},
 		{map[string]string{"GHOSTTY_RESOURCES_DIR": "/Applications/Ghostty.app/x"}, ProtocolKitty},
 		// Inside a multiplexer the Ghostty variable is inherited but images would not reach it.
-		{map[string]string{"TERM_PROGRAM": "herdr", "HERDR_ENV": "1", "GHOSTTY_RESOURCES_DIR": "/x"}, ProtocolOpen},
+		{map[string]string{"TERM_PROGRAM": "herdr", "HERDR_ENV": "1", "GHOSTTY_RESOURCES_DIR": "/x"}, ProtocolKitty},
 		{map[string]string{"TERM_PROGRAM": "tmux", "GHOSTTY_RESOURCES_DIR": "/x"}, ProtocolOpen},
 		{map[string]string{"ZELLIJ": "0", "TERM_PROGRAM": "ghostty"}, ProtocolOpen},
 		{map[string]string{}, ProtocolOpen},

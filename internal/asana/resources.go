@@ -256,3 +256,30 @@ func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map
 	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(TaskFields), fields, &t)
 	return &t, err
 }
+
+// --- tags ---
+
+// Tags lists the tags of a workspace.
+func (c *Client) Tags(ctx context.Context, workspaceGID string) ([]Ref, error) {
+	q := fields([]string{"name"})
+	q.Set("workspace", workspaceGID)
+	return list[Ref](ctx, c, "/tags", q)
+}
+
+// CreateTag creates a tag in a workspace (POST /tags).
+func (c *Client) CreateTag(ctx context.Context, workspaceGID, name string) (*Ref, error) {
+	var t Ref
+	_, err := c.do(ctx, http.MethodPost, "/tags", fields([]string{"name"}), map[string]any{"name": name, "workspace": workspaceGID}, &t)
+	return &t, err
+}
+
+// AddTag / RemoveTag change a task's tags (POST /tasks/{gid}/addTag, /removeTag).
+func (c *Client) AddTag(ctx context.Context, taskGID, tagGID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/addTag", nil, map[string]any{"tag": tagGID}, nil)
+	return err
+}
+
+func (c *Client) RemoveTag(ctx context.Context, taskGID, tagGID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/removeTag", nil, map[string]any{"tag": tagGID}, nil)
+	return err
+}
