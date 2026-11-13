@@ -476,7 +476,8 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserRef, error) {
 }
 
 // ResolveUser turns "me", "none"/"" (unassigned), a gid, or a unique (partial) name or
-// email into a user gid ("" for unassigned).
+// email into a user gid ("" for unassigned). A numeric gid of a user not in the store yet
+// is passed through as is.
 func (s *Store) ResolveUser(ctx context.Context, arg string) (string, error) {
 	switch arg {
 	case "", "none":
@@ -503,10 +504,12 @@ func (s *Store) ResolveUser(ctx context.Context, arg string) (string, error) {
 		}
 		gids, names = append(gids, g), append(names, n)
 	}
-	switch len(gids) {
-	case 0:
+	switch {
+	case len(gids) == 0 && isGID(arg):
+		return arg, nil
+	case len(gids) == 0:
 		return "", fmt.Errorf("user %q: %w", arg, ErrNotFound)
-	case 1:
+	case len(gids) == 1:
 		return gids[0], nil
 	}
 	return "", fmt.Errorf("user %q matches %s: %w", arg, strings.Join(names, ", "), ErrAmbiguous)
@@ -581,4 +584,9 @@ func (s *Store) MeGID(ctx context.Context) (string, error) {
 		return "", errors.New("自分のユーザー情報がローカルストアにありません。`asana-tui sync` を実行してください")
 	}
 	return gid, err
+}
+
+// isGID reports whether s looks like an Asana gid (digits only).
+func isGID(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
 }

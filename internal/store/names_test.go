@@ -78,7 +78,7 @@ func TestResolveUsersAndProjects(t *testing.T) {
 	if err := s.UpsertUsers(ctx, []asana.User{{GID: "me", Name: "Me"}, {GID: "u2", Name: "Partner"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.ResolveUsers(ctx, []string{"me", "Partner", "u2", "part"}); err != nil || !slices.Equal(got, []string{"me", "u2", "u2", "u2"}) {
+	if got, err := s.ResolveUsers(ctx, []string{"me", "Partner", "u2", "part", "1209999"}); err != nil || !slices.Equal(got, []string{"me", "u2", "u2", "u2", "1209999"}) {
 		t.Fatalf("ResolveUsers = %v, %v", got, err)
 	}
 	if got, err := s.ResolveUsers(ctx, nil); err != nil || len(got) != 0 {

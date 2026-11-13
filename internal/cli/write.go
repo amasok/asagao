@@ -91,8 +91,51 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 	}
 }
 
+// createOpts are the flags of `task create`.
+type createOpts struct {
+	name, project, section, due, assignee, notes, parent string
+}
+
+// createTask resolves every option and then creates the task locally. Nothing is written
+// when an option is invalid.
+func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Time) (string, error) {
+	nt := store.NewTask{Name: o.name, ParentGID: o.parent}
+	if o.notes != "" { // Markdown -> Asana rich text
+		nt.Notes, nt.HTMLNotes = richtext.PlainFromMarkdown(o.notes), richtext.FromMarkdown(o.notes)
+	}
+	var err error
+	if nt.DueOn, err = parseDate(o.due, now); err != nil {
+		return "", fmt.Errorf("--due: %w", err)
+	}
+	if o.parent != "" {
+		// subtask: workspace comes from the parent; no project/section
+	} else if o.project != "" {
+		if nt.ProjectGID, err = st.ResolveProject(ctx, o.project); err != nil {
+			return "", err
+		}
+		if o.section != "" {
+			nt.SectionGID, err = st.ResolveSection(ctx, nt.ProjectGID, o.section)
+		} else {
+			nt.SectionGID, err = st.FirstSection(ctx, nt.ProjectGID)
+		}
+		if err != nil {
+			return "", err
+		}
+	} else if nt.WorkspaceGID, err = st.DefaultWorkspace(ctx); err != nil {
+		return "", err
+	}
+	assignee := o.assignee
+	if o.project == "" && o.parent == "" && assignee == "" {
+		assignee = "me"
+	}
+	if nt.AssigneeGID, err = st.ResolveUser(ctx, assignee); err != nil {
+		return "", fmt.Errorf("--assignee: %w", err)
+	}
+	return st.CreateTaskLocal(ctx, nt, now)
+}
+
 func (a *app) taskCreateCmd() *cobra.Command {
-	var project, section, due, assignee, notes, parent string
+	var o createOpts
 	cmd := &cobra.Command{
 		Use:   "create <タスク名>",
 		Short: "タスクを作成する（プロジェクト未指定なら自分に割り当て）",
@@ -106,49 +149,20 @@ func (a *app) taskCreateCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			nt := store.NewTask{Name: strings.Join(args, " "), ParentGID: parent}
-			if notes != "" { // Markdown -> Asana rich text
-				nt.Notes, nt.HTMLNotes = richtext.PlainFromMarkdown(notes), richtext.FromMarkdown(notes)
-			}
-			if nt.DueOn, err = parseDate(due, time.Now()); err != nil {
-				return fmt.Errorf("--due: %w", err)
-			}
-			if parent != "" {
-				// subtask: workspace comes from the parent; no project/section
-			} else if project != "" {
-				if nt.ProjectGID, err = st.ResolveProject(ctx, project); err != nil {
-					return err
-				}
-				if section != "" {
-					nt.SectionGID, err = st.ResolveSection(ctx, nt.ProjectGID, section)
-				} else {
-					nt.SectionGID, err = st.FirstSection(ctx, nt.ProjectGID)
-				}
-				if err != nil {
-					return err
-				}
-			} else if nt.WorkspaceGID, err = st.DefaultWorkspace(ctx); err != nil {
-				return err
-			}
-			if project == "" && parent == "" && assignee == "" {
-				assignee = "me"
-			}
-			if nt.AssigneeGID, err = st.ResolveUser(ctx, assignee); err != nil {
-				return fmt.Errorf("--assignee: %w", err)
-			}
-			gid, err := st.CreateTaskLocal(ctx, nt, time.Now())
+			o.name = strings.Join(args, " ")
+			gid, err := createTask(ctx, st, o, time.Now())
 			if err != nil {
 				return err
 			}
-			return a.reportWrite(cmd, st, writeResult{TaskGID: gid}, "タスクを作成しました: "+nt.Name)
+			return a.reportWrite(cmd, st, writeResult{TaskGID: gid}, "タスクを作成しました: "+o.name)
 		},
 	}
-	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
-	cmd.Flags().StringVar(&section, "section", "", "セクション（gid または名前。省略時は先頭のセクション）")
-	cmd.Flags().StringVar(&due, "due", "", "期日（YYYY-MM-DD / today / tomorrow / +Nd）")
-	cmd.Flags().StringVar(&assignee, "assignee", "", `担当者（"me"・"none"・ユーザーの gid か名前。プロジェクト未指定なら me）`)
-	cmd.Flags().StringVar(&notes, "notes", "", "説明（マークダウン）")
-	cmd.Flags().StringVar(&parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
+	cmd.Flags().StringVar(&o.project, "project", "", "プロジェクト（gid または名前）")
+	cmd.Flags().StringVar(&o.section, "section", "", "セクション（gid または名前。省略時は先頭のセクション）")
+	cmd.Flags().StringVar(&o.due, "due", "", "期日（YYYY-MM-DD / today / tomorrow / +Nd）")
+	cmd.Flags().StringVar(&o.assignee, "assignee", "", `担当者（"me"・"none"・ユーザーの gid か名前。プロジェクト未指定なら me）`)
+	cmd.Flags().StringVar(&o.notes, "notes", "", "説明（マークダウン）")
+	cmd.Flags().StringVar(&o.parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
 	return cmd
 }
 

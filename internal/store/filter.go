@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/amasok/asana-tui/internal/dates"
@@ -65,9 +64,6 @@ func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time)
 		return f, &FilterError{"assignee", errors.New(`filtering unassigned tasks is not supported; use "any"`)}
 	default:
 		gid, err := s.ResolveUser(ctx, assignee)
-		if errors.Is(err, ErrNotFound) && isGID(assignee) {
-			gid, err = assignee, nil // a user not seen yet
-		}
 		if err != nil {
 			return f, &FilterError{"assignee", err}
 		}
@@ -121,10 +117,6 @@ func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time)
 		f.SortByModified = true
 	}
 	return f, nil
-}
-
-func isGID(s string) bool {
-	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
 func ptrTo[T any](v T) *T { return &v }
