@@ -369,10 +369,11 @@ func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, 
 	return ops, rows.Err()
 }
 
-// OutboxCounts returns the number of entries per state.
+// OutboxCounts returns the number of entries per state. Entries being sent count as pending
+// (they have not reached Asana yet).
 func (s *Store) OutboxCounts(ctx context.Context) (pending, conflict, failed int, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(state = 'pending'), 0), COALESCE(SUM(state = 'conflict'), 0), COALESCE(SUM(state = 'failed'), 0)
+		COALESCE(SUM(state IN ('pending', 'sending')), 0), COALESCE(SUM(state = 'conflict'), 0), COALESCE(SUM(state = 'failed'), 0)
 		FROM outbox`).Scan(&pending, &conflict, &failed)
 	return
 }

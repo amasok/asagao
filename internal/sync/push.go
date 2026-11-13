@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -58,7 +59,8 @@ func sentNotSaved(err error) error {
 //
 // An update is checked against the server first: if a field we change was also changed
 // on the server (server value differs from both our base and our new value), the entry is
-// marked as a conflict and left for the user to resolve. Network errors stop Push and are
+// marked as a conflict and left for the user to resolve. Network errors (and 429 after the
+// client's retries) stop Push and are
 // returned so the caller can treat it as offline; an entry that may already have reached
 // Asana and must not be sent twice (e.g. a create) is marked failed instead of being queued
 // again. Any other error (e.g. the task was deleted) marks the entry failed and Push continues.
@@ -118,7 +120,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 					res.Sent++ // a follow-up is part of the change already counted
 				}
 				again = out == followUp
-			case isNetworkError(err):
+			case isNetworkError(err) || isRateLimited(err):
 				if err := s.holdBack(ctx, *op, err); err != nil {
 					return res, err
 				}
@@ -168,7 +170,7 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 // Asana may have received it and sending it twice would duplicate something.
 func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
-	if requestNotSent(cause) {
+	if requestNotSent(cause) || isRateLimited(cause) {
 		return s.Store.ReleaseOp(ctx, op.ID)
 	}
 	safe, err := s.Store.SafeToResend(ctx, op)
@@ -184,8 +186,9 @@ func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 func (s *Syncer) markFailed(ctx context.Context, op store.Op, cause error) error {
 	var apiErr *asana.Error
 	var notSaved *sentNotSavedError
-	if !errors.As(cause, &apiErr) && !errors.As(cause, &notSaved) {
-		// Not a rejection by Asana: if the request was sent, it may have been applied.
+	rejected := errors.As(cause, &apiErr) && apiErr.Status < 500 // 4xx: Asana did not apply it
+	if !rejected && !errors.As(cause, &notSaved) {
+		// A 5xx or a broken response: if the request was sent, it may have been applied.
 		if safe, err := s.Store.SafeToResend(ctx, op); err != nil {
 			return err
 		} else if !safe {
@@ -193,6 +196,13 @@ func (s *Syncer) markFailed(ctx context.Context, op store.Op, cause error) error
 		}
 	}
 	return s.Store.MarkOpFailed(ctx, op.ID, cause)
+}
+
+// isRateLimited reports whether Asana still answered 429 after the client's retries: the
+// request was not processed, so the entry is kept for the next push.
+func isRateLimited(err error) bool {
+	var apiErr *asana.Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests
 }
 
 // isNetworkError reports whether err means Asana could not be reached (or the request was

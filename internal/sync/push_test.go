@@ -1030,8 +1030,8 @@ func TestPushRecoversInterruptedSends(t *testing.T) {
 			t.Fatalf("begin send %d: %v %v", op.ID, ok, err)
 		}
 	}
-	if p, _, _ := pendingCount(t, st); p != 0 {
-		t.Fatalf("sending entries must not count as pending, got %d", p)
+	if p, _, _ := pendingCount(t, st); p != 2 {
+		t.Fatalf("entries being sent have not reached Asana and count as pending, got %d", p)
 	}
 
 	res, err := s.Push(ctx)
@@ -1176,5 +1176,112 @@ func TestPushCreateRetriesFailedSectionMove(t *testing.T) {
 	}
 	if ws.countCalls("POST /tasks ") != 1 || ws.tasks[real].Section != "s2" {
 		t.Fatalf("task should be created once and moved: %v", ws.calls)
+	}
+}
+
+func TestPushCreate5xxWaitsForUser(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "500"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			rw.WriteHeader(http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	op := opByKind(t, st, store.OpCreateTask)
+	if op == nil || op.State != store.OpFailed || !strings.HasPrefix(op.LastError, store.UnknownResultMessage) {
+		t.Fatalf("a create answered with 5xx may exist in Asana; the user must check: %+v", op)
+	}
+}
+
+func TestPushRateLimitedKeepsQueue(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPut {
+			rw.WriteHeader(http.StatusTooManyRequests)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err == nil || res.Remaining != 1 || res.Failed != 0 {
+		t.Fatalf("rate limited push = %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpUpdateTask); op == nil || op.State != store.OpPending {
+		t.Fatalf("a rate-limited entry should stay queued: %+v", op)
+	}
+}
+
+func TestPushServerAlreadyHasLocalValue(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	ws.tasks["t1"].Name = "B" // someone made the same change on the server
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Conflicts != 0 {
+		t.Fatalf("the same value on both sides is not a conflict: %+v %v", res, err)
+	}
+}
+
+func TestPushClearsDueDateAndAssignee(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	ws.tasks["t1"].DueOn = "2026-11-20"
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", DueOn: "2026-11-20", Assignee: &asana.Ref{GID: "me"},
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"due_on": "", "assignee": ""}, now)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	put := ""
+	for _, c := range ws.calls {
+		if strings.HasPrefix(c, "PUT /tasks/t1 ") {
+			put = c
+		}
+	}
+	if !strings.Contains(put, `"due_on":null`) || !strings.Contains(put, `"assignee":null`) {
+		t.Fatalf("clearing must send null: %q", put)
+	}
+}
+
+func TestPushChildFailsWhenParentCreateFails(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	parent, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "親"}, now)
+	child, err := st.CreateTaskLocal(ctx, store.NewTask{ParentGID: parent, Name: "子"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			rw.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(rw, `{"errors":[{"message":"forbidden"}]}`)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 2 || res.Sent != 0 {
+		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+	}
+	ops, _ := st.ListOps(ctx)
+	for _, op := range ops {
+		if op.State != store.OpFailed {
+			t.Fatalf("entry %+v should be failed", op)
+		}
+		if op.TaskGID == child && !strings.Contains(op.LastError, "404") {
+			t.Fatalf("child should fail because its parent does not exist: %+v", op)
+		}
+	}
+	if n := ws.countCalls("POST /tasks/"); n != 0 {
+		t.Fatalf("no subtask may be created under a local gid: %v", ws.calls)
 	}
 }
