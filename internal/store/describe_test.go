@@ -86,6 +86,9 @@ func TestDiscardLine(t *testing.T) {
 	if got := DiscardLine(Discard{Summary: "セクション名を「x」に変更"}); got != "セクション名を「x」に変更" {
 		t.Errorf("without a task name: %q", got)
 	}
+	if got := DiscardLine(Discard{TaskName: "t", Summary: "コメント「x」", Reason: ResetReason}); got != "「t」: コメント「x」（初期化で破棄）" {
+		t.Errorf("deleted by a reset: %q", got)
+	}
 }
 
 func TestDiscardDetails(t *testing.T) {

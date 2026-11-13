@@ -14,8 +14,14 @@ import (
 
 func createStore(t *testing.T) *store.Store {
 	t.Helper()
+	return createStoreAt(t, filepath.Join(t.TempDir(), "store.db"))
+}
+
+// createStoreAt opens (or creates) the store at path with the test fixture.
+func createStoreAt(t *testing.T, path string) *store.Store {
+	t.Helper()
 	ctx := context.Background()
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	st, err := store.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}

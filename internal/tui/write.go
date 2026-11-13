@@ -65,11 +65,17 @@ func (m *Model) loadOutbox() tea.Cmd {
 		}
 		// Changes dropped because their task was deleted in Asana are announced once
 		// (here or by the CLI); if marking fails they are announced again next time.
-		discards, err := st.PendingDiscards(m.ctx)
-		if err == nil && len(discards) > 0 {
-			ids := make([]int64, len(discards))
-			for i, d := range discards {
+		// Changes deleted by a reset are not announced: the user confirmed them and was
+		// shown the backup (they are still listed in the overlay).
+		pending, err := st.PendingDiscards(m.ctx)
+		var discards []store.Discard
+		if err == nil && len(pending) > 0 {
+			ids := make([]int64, len(pending))
+			for i, d := range pending {
 				ids[i] = d.ID
+				if !store.IsResetDiscard(d) {
+					discards = append(discards, d)
+				}
 			}
 			if err := st.MarkDiscardsNotified(m.ctx, ids); err != nil {
 				discards = nil
@@ -151,6 +157,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.showTagPicker(msg.tags)
 		}
 		return m, nil, true
+	case resetAskMsg, resetDoneMsg:
+		cmd, _ := m.updateReset(msg)
+		return m, cmd, true
 	case writeDoneMsg:
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
@@ -522,7 +531,7 @@ func (m *Model) outboxLines(inner int) []string {
 		}
 	}
 	if len(m.discards) > 0 {
-		lines = append(lines, "", m.st.dim.Render("最近 Asana で削除されたものへの変更を破棄しました（書いた内容は下に全文があります）"))
+		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
 		for _, d := range m.discards {
 			lines = append(lines, "  "+store.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
 			for _, dt := range store.DiscardDetails(d) {

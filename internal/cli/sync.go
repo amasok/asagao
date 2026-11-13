@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,6 +31,9 @@ func (a *app) syncCmd() *cobra.Command {
 				s.Progress = func(f string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), "  "+f+"\n", args...) }
 			}
 			res, err := s.Run(ctx, full)
+			if errors.Is(err, sync.ErrAccountChanged) {
+				return accountChanged(ctx, st)
+			}
 			if err != nil {
 				return err
 			}

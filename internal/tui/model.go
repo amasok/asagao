@@ -41,6 +41,8 @@ type Deps struct {
 	KeyBindings map[string][]string
 	// CacheDir is where files to upload are copied (so they can be sent later).
 	CacheDir string
+	// BackupDir is where unsent changes are written before the local data is reset.
+	BackupDir string
 	// RunEditor opens path in the user's editor and reports back with done
 	// (production: tea.ExecProcess with $EDITOR).
 	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
@@ -515,6 +517,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case syncDoneMsg:
 		m.syncing = false
 		m.syncErr = msg.err
+		if errors.Is(msg.err, sync.ErrAccountChanged) {
+			m.status = m.accountChangedStatus()
+		}
 		if msg.syncer != nil {
 			m.syncer = msg.syncer
 		}
@@ -902,12 +907,15 @@ func (m *Model) syncStatus() (string, bool) {
 	switch {
 	case m.syncing:
 		return "⟳ 同期中", true
+	case errors.Is(m.syncErr, sync.ErrAccountChanged):
+		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:
 		return "○ オフライン", false
 	case m.syncErr != nil:
 		if errors.Is(m.syncErr, context.Canceled) {
 			return "", true
 		}
+
 		return "○ オフライン（" + shortErr(m.syncErr) + "）", false
 	case !m.lastSync.IsZero():
 		return "● 同期済み " + m.lastSync.Format("15:04"), true

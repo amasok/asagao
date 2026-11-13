@@ -247,3 +247,40 @@ func TestPushBusyIsNotOffline(t *testing.T) {
 		t.Fatalf("resolving a sending entry: error = %q", msg)
 	}
 }
+
+// Logged in as someone else: writes stay queued and both writes and sync explain what
+// happened and what the user can do; the server itself never resets.
+func TestAccountChangedIsExplained(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/users/me" {
+			fmt.Fprint(w, `{"data":{"gid":"other","name":"Other"}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound) // another account sees nothing of ours
+		fmt.Fprint(w, `{"errors":[{"message":"Not Found"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+		api := asana.NewClient(srv.Client())
+		api.BaseURL = srv.URL
+		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+	}})
+
+	var w WriteOutput
+	call(t, cs, "update_task", map[string]any{"gid": "t2", "completed": true}, &w)
+	if w.Sent || !strings.Contains(w.Note, "NOT sent") || !strings.Contains(w.Note, "asana-tui reset") || !strings.Contains(w.Note, "1 unsent") {
+		t.Fatalf("write while the account changed: %+v", w)
+	}
+	if n, _ := st.UnsentCount(ctx); n != 1 {
+		t.Fatalf("the change must stay queued: %d", n)
+	}
+	msg := toolError(call(t, cs, "sync", nil, nil))
+	if !strings.Contains(msg, "sync stopped") || !strings.Contains(msg, "auth login") || !strings.Contains(msg, "cannot reset") {
+		t.Fatalf("sync error = %q", msg)
+	}
+	if _, err := st.GetTask(ctx, "t1"); err != nil {
+		t.Fatalf("local data must be kept: %v", err)
+	}
+}

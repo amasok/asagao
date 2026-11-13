@@ -59,13 +59,22 @@ func OpNote(op Op) (heading, text string) {
 // (a task, or its section, project, tag...) was deleted in Asana (see PendingDiscards).
 const DiscardNotice = "Asana で削除されたものへの変更を破棄しました"
 
-// DiscardLine describes one dropped change: 「task」: what it changed.
+// DiscardLine describes one dropped change: 「task」: what it changed (and, for an unsent
+// change deleted by a reset, that it was).
 func DiscardLine(d Discard) string {
-	if d.TaskName == "" {
-		return d.Summary
+	s := d.Summary
+	if d.TaskName != "" {
+		s = "「" + d.TaskName + "」: " + s
 	}
-	return "「" + d.TaskName + "」: " + d.Summary
+	if IsResetDiscard(d) {
+		s += "（初期化で破棄）"
+	}
+	return s
 }
+
+// IsResetDiscard reports whether d was an unsent change deleted by Reset (which the user
+// confirmed), rather than a change to something deleted in Asana.
+func IsResetDiscard(d Discard) bool { return d.Reason == ResetReason }
 
 // DiscardDetail is a piece of a dropped change worth keeping in full, e.g. a comment.
 type DiscardDetail struct {
@@ -97,6 +106,16 @@ func DiscardDetails(d Discard) []DiscardDetail {
 		add("説明", "notes")
 	}
 	return out
+}
+
+// AccountChangedHelp explains a sync stopped because the logged-in Asana account is not
+// the one the local data belongs to (sync.ErrAccountChanged): what happened, how many
+// changes of the previous account are unsent, and the two ways out. resetHow says how to
+// reset in the caller's UI (e.g. "asana-tui reset").
+func AccountChangedHelp(unsent int, resetHow string) string {
+	return fmt.Sprintf("ログイン中の Asana アカウントが、ローカルのデータを同期したアカウントと違うため、同期を止めています"+
+		"（前のアカウントの未送信の変更: %d 件）。前のアカウントでログインし直せば、そのまま送られます（asana-tui auth login）。"+
+		"新しいアカウントで使うなら、ローカルのデータを初期化してください（%s。未送信の変更は消す前に自動でバックアップします）", unsent, resetHow)
 }
 
 // FieldLabel is the label of an update_task field ("" for unknown keys).

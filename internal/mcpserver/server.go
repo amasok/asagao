@@ -407,6 +407,9 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 		return nil, out, err
 	}
 	if out.Result, err = syncer.Run(ctx, in.Full); err != nil {
+		if errors.Is(err, sync.ErrAccountChanged) {
+			return nil, out, fmt.Errorf("sync stopped: %s", s.accountChangedNote(ctx))
+		}
 		return nil, out, err
 	}
 	out.Status, err = s.status(ctx)
@@ -593,6 +596,17 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 	return nil, s.push(ctx, in.GID), nil
 }
 
+// accountChangedNote explains sync.ErrAccountChanged to the model. Resetting is left to
+// the user (TUI or CLI): this server never deletes local data.
+func (s *Server) accountChangedNote(ctx context.Context) string {
+	n, _ := s.Store.UnsentCount(ctx)
+	return fmt.Sprintf("the Asana account now logged in is not the one this local data was synced with, so syncing is stopped "+
+		"(%d unsent change(s) from the previous account). Tell the user, and let them choose: log in again with the previous "+
+		"account (`asana-tui auth login`) to send the changes, or reset the local data to use the new account "+
+		"(`asana-tui reset`, or \"ローカルデータを初期化\" in the TUI menu; unsent changes are backed up to a JSON file first). "+
+		"This MCP server cannot reset. (%s)", n, store.AccountChangedHelp(n, "asana-tui reset"))
+}
+
 // push sends the outbox now. A failure is reported in the output, not as a tool error:
 // the change is saved and will be sent by the next sync.
 func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
@@ -610,6 +624,8 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
 	}
 	switch {
+	case errors.Is(err, sync.ErrAccountChanged):
+		out.Note += "saved locally but NOT sent: " + s.accountChangedNote(ctx)
 	case errors.Is(err, sync.ErrPushBusy):
 		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:

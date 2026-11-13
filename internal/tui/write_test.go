@@ -191,7 +191,7 @@ func TestDiscardedChangesAnnouncedOnce(t *testing.T) {
 	}
 	h.key("!")
 	s := h.screen()
-	if !strings.Contains(s, store.DiscardNotice) || strings.Count(s, "」: ") < 2 {
+	if !strings.Contains(s, "最近破棄した変更") || strings.Count(s, "」: ") < 2 {
 		t.Fatalf("outbox should list the dropped changes:\n%s", s)
 	}
 }

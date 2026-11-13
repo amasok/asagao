@@ -108,6 +108,7 @@ func (m *Model) actions() []action {
 		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other
 		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},
+		{id: "reset", key: "I", group: groupOther, label: "ローカルデータを初期化（別のアカウントで使う）", ctx: ctxAll, run: (*Model).startReset},
 		{id: "outbox", key: "!", shortcut: []string{"!"}, group: groupOther, label: "未送信の変更・競合", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("!") }},
 		{id: "help", key: "?", group: groupOther, label: "ヘルプ（すべてのキー）", ctx: ctxAll, run: func(m *Model) tea.Cmd { m.showHelp = true; return nil }},
 		{id: "quit", key: "q", group: groupOther, label: "終了", ctx: ctxAll, run: func(*Model) tea.Cmd { return tea.Quit }},

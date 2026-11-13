@@ -54,9 +54,15 @@ func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool)
 	if err != nil || len(ds) == 0 {
 		return nil
 	}
-	if print {
+	var announce []store.Discard // changes deleted by a reset were confirmed by the user
+	for _, d := range ds {
+		if !store.IsResetDiscard(d) {
+			announce = append(announce, d)
+		}
+	}
+	if print && len(announce) > 0 {
 		fmt.Fprintln(w, store.DiscardNotice+"（Asana で削除されていたため）:")
-		for _, d := range ds {
+		for _, d := range announce {
 			printDiscard(w, d)
 		}
 		fmt.Fprintln(w, "  （あとで見るには `asana-tui outbox discarded`）")
@@ -106,6 +112,8 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 		return a.printJSON(r)
 	}
 	switch {
+	case errors.Is(err, sync.ErrAccountChanged):
+		fmt.Fprintf(out, "%s（まだ送っていません）\n%v\n", done, accountChanged(cmd.Context(), st))
 	case dropped:
 		fmt.Fprintf(out, "%s。ただし対象のタスクが Asana で削除されていたため、変更は破棄されました\n", done)
 	case errors.Is(err, sync.ErrPushBusy):
@@ -579,7 +587,7 @@ func (a *app) outboxCmd() *cobra.Command {
 	var limit int
 	discarded := &cobra.Command{
 		Use:   "discarded",
-		Short: "Asana で削除されたものへの変更として破棄した変更を、書いた内容の全文つきで表示する（新しい順）",
+		Short: "破棄した変更（Asana で削除されていたもの・初期化で消したもの）を、書いた内容の全文つきで表示する（新しい順）",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, err := a.openStore(cmd.Context())
@@ -634,6 +642,8 @@ func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id in
 			}
 		}
 		switch {
+		case errors.Is(err, sync.ErrAccountChanged):
+			return fmt.Sprintf("#%d: まだ送っていません。%v", id, accountChanged(ctx, st)), nil
 		case errors.Is(err, sync.ErrPushBusy):
 			return fmt.Sprintf("#%d: 別の asana-tui が送信中です。そちらで送られます", id), nil
 		case err != nil:

@@ -257,6 +257,7 @@ const (
 	pickProjects
 	pickMembers
 	pickArchive
+	pickReset
 )
 
 type pickerItem struct {
@@ -383,6 +384,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.openTaskDetail(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
+		case pickReset:
+			return m, m.reset(item.value)
 		case pickDue:
 			if item.value == "?" {
 				return m, m.startDuePrompt(p.task)
