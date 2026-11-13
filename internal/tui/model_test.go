@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -344,5 +345,165 @@ func TestParseCreateInput(t *testing.T) {
 	}
 	if _, _, err := parseCreateInput("x due:来週", testNow); err == nil {
 		t.Error("invalid due should fail")
+	}
+}
+
+func addFixtureExtras(t *testing.T, st *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	ref := func(gid, name string) *asana.Ref { return &asana.Ref{GID: gid, Name: name} }
+	in := func(sec string) []asana.Membership {
+		return []asana.Membership{{Project: ref("p1", ""), Section: ref(sec, "")}}
+	}
+	if err := st.UpsertTasks(ctx, []asana.Task{
+		{GID: "t1", Name: "ソファを買う", Notes: "リビング用", DueOn: "2026-11-20", Assignee: ref("me", "Me"), Memberships: in("s1"),
+			Tags: []asana.Ref{{GID: "g1", Name: "買い物"}}},
+		{GID: "t4", Name: "ガスの契約", Assignee: ref("u2", "Partner"), Memberships: in("s2"), Tags: []asana.Ref{{GID: "g2", Name: "手続き系"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var stories []asana.Story
+	for i := 1; i <= 5; i++ {
+		stories = append(stories, asana.Story{GID: fmt.Sprintf("c%d", i), Type: "comment", Text: fmt.Sprintf("コメント%d番", i),
+			CreatedBy: ref("u2", "Partner"), CreatedAt: testNow.Add(time.Duration(i) * time.Minute)})
+	}
+	if err := st.ReplaceStories(ctx, "t1", stories, testNow); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newHarnessWithExtras(t *testing.T, w, h int) *harness {
+	st := fixtureStore(t)
+	addFixtureExtras(t, st)
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	hs := &harness{t: t, m: m}
+	hs.send(tea.WindowSizeMsg{Width: w, Height: h})
+	hs.run(m.Init())
+	return hs
+}
+
+func TestBoardViewAndCardMoves(t *testing.T) {
+	h := newHarnessWithExtras(t, 140, 30)
+	h.key("v")
+	if h.m.board && h.m.boardActive() {
+		t.Fatal("board should not be available in My Tasks")
+	}
+	h.key("h", "j", "l", "v") // open the project, show the board
+	if !h.m.boardActive() {
+		t.Fatal("board should be active")
+	}
+	s := h.screen()
+	for _, want := range []string{"[ボード]", "家具 (1)", "手続き (3)", "ソファを買う", "ガスの契約"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("board missing %q:\n%s", want, s)
+		}
+	}
+	if h.selected() != "t1" {
+		t.Fatalf("selected %q", h.selected())
+	}
+	h.key("L") // move ソファ to 手続き
+	if s := h.screen(); !strings.Contains(s, "家具 (0)") || !strings.Contains(s, "手続き (4)") || !strings.Contains(s, "↑ 未送信 1") {
+		t.Fatalf("card should move to the next column:\n%s", s)
+	}
+	if h.selected() != "t1" || h.m.boardCol != 1 {
+		t.Fatalf("cursor should follow the moved card: %q col %d", h.selected(), h.m.boardCol)
+	}
+	h.key("H") // and back: the move cancels out
+	if s := h.screen(); !strings.Contains(s, "家具 (1)") || strings.Contains(s, "未送信") {
+		t.Fatalf("moving back should cancel the move:\n%s", s)
+	}
+	h.key("l", "j")
+	if h.selected() != "t3" { // 手続き: t2, t3, t4 by due date
+		t.Fatalf("j in column should move down, got %q", h.selected())
+	}
+	h.key("enter")
+	if !h.m.zoom || !strings.Contains(h.screen(), "詳細（z / esc で戻る）") {
+		t.Fatalf("enter on a card should open the zoomed detail:\n%s", h.screen())
+	}
+	h.key("esc", "v")
+	if h.m.boardActive() || h.selected() != "t3" {
+		t.Fatalf("v should go back to the list keeping the selection, got %q", h.selected())
+	}
+}
+
+func TestZoomShowsAllComments(t *testing.T) {
+	h := newHarnessWithExtras(t, 140, 40)
+	h.key("G") // ソファを買う (t1)
+	s := h.screen()
+	if !strings.Contains(s, "古いコメント 2 件") || strings.Contains(s, "コメント1番") || !strings.Contains(s, "コメント5番") {
+		t.Fatalf("side pane should show only the latest 3 comments:\n%s", s)
+	}
+	h.key("z")
+	s = h.screen()
+	if strings.Contains(s, "古いコメント") || !strings.Contains(s, "コメント1番") || strings.Contains(s, "★ My Tasks") {
+		t.Fatalf("zoom should show every comment, full screen:\n%s", s)
+	}
+	h.key("z")
+	if h.m.zoom || h.m.focus != paneList {
+		t.Fatal("z should toggle the zoom off")
+	}
+}
+
+func TestTagFilter(t *testing.T) {
+	h := newHarnessWithExtras(t, 140, 30)
+	h.key("t")
+	s := h.screen()
+	if !strings.Contains(s, "タグで絞り込む") || !strings.Contains(s, "#買い物") || !strings.Contains(s, "#手続き系") {
+		t.Fatalf("tag picker:\n%s", s)
+	}
+	h.key("j", "enter") // #手続き系 sorts before #買い物? order is by name: 手続き系, 買い物
+	tag := h.m.tagFilter
+	if tag == "" {
+		t.Fatal("tag filter should be set")
+	}
+	h.key("h", "j", "l") // project view shows all assignees
+	var gids []string
+	for _, r := range h.m.rows {
+		if r.task != nil {
+			gids = append(gids, r.task.GID)
+		}
+	}
+	want := map[string]string{"買い物": "t1", "手続き系": "t4"}[tag]
+	if len(gids) != 1 || gids[0] != want || !strings.Contains(h.screen(), "#"+tag) {
+		t.Fatalf("tag %q: rows %v", tag, gids)
+	}
+	h.key("t", "g", "enter") // "（すべてのタスク）"
+	if h.m.tagFilter != "" {
+		t.Fatal("first picker item should clear the filter")
+	}
+}
+
+func TestMoveWithSectionPicker(t *testing.T) {
+	h := newHarnessWithExtras(t, 140, 30)
+	h.key("G") // ソファを買う in My Tasks (one project → picker allowed)
+	h.key("m")
+	if s := h.screen(); !strings.Contains(s, "移動先のセクション（新居プロジェクト）") || !strings.Contains(s, "現在") {
+		t.Fatalf("section picker:\n%s", s)
+	}
+	h.key("j", "enter")
+	d, err := h.m.deps.Store.GetTask(context.Background(), "t1")
+	if err != nil || d.Memberships[0].SectionName != "手続き" || !d.Pending {
+		t.Fatalf("task should move to 手続き: %+v %v", d.Memberships, err)
+	}
+}
+
+func TestBoardAndZoomFitTerminal(t *testing.T) {
+	for _, size := range [][2]int{{140, 30}, {90, 20}} {
+		h := newHarnessWithExtras(t, size[0], size[1])
+		h.key("h", "j", "l", "v")
+		for _, step := range []string{"board", "zoom"} {
+			if step == "zoom" {
+				h.key("enter")
+			}
+			lines := strings.Split(h.m.render(), "\n")
+			if len(lines) != size[1] {
+				t.Errorf("%s %dx%d: %d lines", step, size[0], size[1], len(lines))
+			}
+			for i, l := range lines {
+				if w := ansi.StringWidth(l); w > size[0] {
+					t.Errorf("%s %dx%d: line %d is %d wide", step, size[0], size[1], i, w)
+				}
+			}
+		}
 	}
 }

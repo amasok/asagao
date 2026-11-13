@@ -347,3 +347,66 @@ func TestPruneKeepsLocalTasks(t *testing.T) {
 		t.Fatal("offline task was pruned")
 	}
 }
+
+func sectionOf(t *testing.T, st *store.Store, gid string) string {
+	t.Helper()
+	d, err := st.GetTask(context.Background(), gid)
+	if err != nil || len(d.Memberships) == 0 {
+		t.Fatalf("task %s: %+v %v", gid, d, err)
+	}
+	return d.Memberships[0].SectionGID
+}
+
+func TestMoveTask(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	if err := st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "Todo"}, {GID: "s2", Name: "Doing"}, {GID: "s3", Name: "Done"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Move and move back: nothing to send.
+	_ = st.MoveTaskLocal(ctx, "t1", "p1", "s2", now)
+	_ = st.MoveTaskLocal(ctx, "t1", "p1", "s1", now)
+	if p, _, _ := pendingCount(t, st); p != 0 {
+		t.Fatalf("moving back should cancel the move, %d pending", p)
+	}
+
+	// Two moves merge into one entry.
+	_ = st.MoveTaskLocal(ctx, "t1", "p1", "s2", now)
+	_ = st.MoveTaskLocal(ctx, "t1", "p1", "s3", now)
+	ops, _ := st.ListOps(ctx)
+	if len(ops) != 1 || ops[0].Payload["section"] != "s3" || ops[0].Payload["section_name"] != "Done" {
+		t.Fatalf("ops = %+v", ops)
+	}
+	// A pull with the old section does not undo the local move.
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
+	if got := sectionOf(t, st, "t1"); got != "s3" {
+		t.Fatalf("pull undid the move: %s", got)
+	}
+
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	if ws.tasks["t1"].Section != "s3" {
+		t.Fatalf("server section = %q (calls %v)", ws.tasks["t1"].Section, ws.calls)
+	}
+	if got := sectionOf(t, st, "t1"); got != "s3" {
+		t.Fatalf("store section after push = %s", got)
+	}
+
+	// Discard restores the previous section.
+	_ = st.MoveTaskLocal(ctx, "t1", "p1", "s1", now)
+	ops, _ = st.ListOps(ctx)
+	if err := st.DiscardOp(ctx, ops[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sectionOf(t, st, "t1"); got != "s3" {
+		t.Fatalf("discard should restore s3, got %s", got)
+	}
+
+	// Errors: unknown section, task not in project.
+	if err := st.MoveTaskLocal(ctx, "t1", "p1", "nope", now); err == nil {
+		t.Error("unknown section should fail")
+	}
+}

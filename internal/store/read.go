@@ -401,6 +401,57 @@ func (s *Store) ResolveSection(ctx context.Context, projectGID, arg string) (str
 	return gid, err
 }
 
+// ResolveMove finds the project and section for moving a task. project may be empty when the
+// task is in exactly one project; section is a gid or exact name.
+func (s *Store) ResolveMove(ctx context.Context, taskGID, project, section string) (projectGID, sectionGID string, err error) {
+	d, err := s.GetTask(ctx, taskGID)
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case project != "":
+		if projectGID, err = s.ResolveProject(ctx, project); err != nil {
+			return "", "", err
+		}
+	case len(d.Memberships) == 1:
+		projectGID = d.Memberships[0].ProjectGID
+	case len(d.Memberships) == 0:
+		return "", "", fmt.Errorf("タスク %s はどのプロジェクトにも入っていません", taskGID)
+	default:
+		return "", "", fmt.Errorf("タスク %s は複数のプロジェクトに入っています。project を指定してください", taskGID)
+	}
+	sectionGID, err = s.ResolveSection(ctx, projectGID, section)
+	return projectGID, sectionGID, err
+}
+
+// TagCount is a tag with the number of incomplete tasks that have it.
+type TagCount struct {
+	GID   string `json:"gid"`
+	Name  string `json:"name"`
+	Open  int    `json:"open_tasks"`
+	Total int    `json:"tasks"`
+}
+
+// ListTags returns tags used by at least one task, ordered by name.
+func (s *Store) ListTags(ctx context.Context) ([]TagCount, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT g.gid, g.name, SUM(t.completed = 0), COUNT(*)
+		FROM tags g JOIN task_tags tt ON tt.tag_gid = g.gid JOIN tasks t ON t.gid = tt.task_gid
+		GROUP BY g.gid ORDER BY g.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tags := []TagCount{}
+	for rows.Next() {
+		var t TagCount
+		if err := rows.Scan(&t.GID, &t.Name, &t.Open, &t.Total); err != nil {
+			return nil, err
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
+}
+
 // MeGID returns the logged-in user's gid recorded by the last sync.
 // Me returns the logged-in user recorded by the last sync.
 func (s *Store) Me(ctx context.Context) (UserRef, error) {

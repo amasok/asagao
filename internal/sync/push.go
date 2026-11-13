@@ -56,6 +56,8 @@ func (s *Syncer) Push(ctx context.Context) (PushResult, error) {
 			err = s.pushCreate(ctx, *op)
 		case store.OpAddComment:
 			err = s.pushComment(ctx, *op)
+		case store.OpMoveTask:
+			err = s.pushMove(ctx, *op)
 		default:
 			err = &asana.Error{Status: 400}
 		}
@@ -149,6 +151,24 @@ func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
 		return err
 	}
 	return s.Store.CompleteOp(ctx, op.ID)
+}
+
+func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
+	if store.IsLocalGID(op.TaskGID) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	section, _ := op.Payload["section"].(string)
+	if err := s.API.AddTaskToSection(ctx, section, op.TaskGID); err != nil {
+		return err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return err
+	}
+	t, err := s.API.Task(ctx, op.TaskGID)
+	if err != nil {
+		return nil // moved; the next sync refreshes the task
+	}
+	return s.Store.UpsertTasks(ctx, []asana.Task{*t})
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.

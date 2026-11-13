@@ -12,8 +12,8 @@ import (
 //   - search: one group with all hits (across every project)
 //   - My Tasks: by due date (期限切れ / 今日 / 7日以内 / それ以降 / 期日なし)
 //   - project: by section, in Asana's section order
-func queryRows(ctx context.Context, st *store.Store, sc scope, query string, filter filterMode, now time.Time) ([]row, error) {
-	f := store.TaskFilter{Query: query}
+func queryRows(ctx context.Context, st *store.Store, sc scope, query string, filter filterMode, tag string, now time.Time) ([]row, error) {
+	f := store.TaskFilter{Query: query, Tag: tag}
 	today := now.Format(time.DateOnly)
 	f.Completed = boolPtr(false)
 	switch filter {

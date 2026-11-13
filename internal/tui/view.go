@@ -33,6 +33,8 @@ func (m *Model) render() string {
 		body = m.renderHelp(m.width, bodyH)
 	} else if m.showOutbox {
 		body = m.renderOutbox(m.width, bodyH)
+	} else if m.picker != nil {
+		body = m.renderPicker(m.width, bodyH)
 	} else {
 		body = m.renderBody(bodyH)
 	}
@@ -43,6 +45,9 @@ func (m *Model) render() string {
 
 // paneWidths returns the outer widths of sidebar, list and detail (0 = hidden).
 func (m *Model) paneWidths() (int, int, int) {
+	if m.zoom {
+		return 0, 0, m.width
+	}
 	if m.narrow() {
 		w := [3]int{}
 		w[m.focus] = m.width
@@ -83,6 +88,17 @@ func (m *Model) ensureListVisible() {
 
 func (m *Model) renderBody(h int) string {
 	sw, lw, dw := m.paneWidths()
+	if m.boardActive() && !m.zoom {
+		// The board takes the list and detail area; enter opens the zoomed detail.
+		if m.narrow() {
+			if m.focus == paneSidebar {
+				return m.pane("プロジェクト", m.sidebarLines(m.width-4, h-3), m.width, h, true)
+			}
+			return m.renderBoard(m.width, h)
+		}
+		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
+		return lipgloss.JoinHorizontal(lipgloss.Top, side, m.renderBoard(m.width-sw, h))
+	}
 	var panes []string
 	if sw > 0 {
 		panes = append(panes, m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar))
@@ -91,9 +107,15 @@ func (m *Model) renderBody(h int) string {
 		panes = append(panes, m.pane(m.listTitle(), m.listLines(lw-4, h-3), lw, h, m.focus == paneList))
 	}
 	if dw > 0 {
-		m.detailView.SetWidth(max(1, dw-4))
+		if m.detailView.Width() != max(1, dw-4) {
+			m.detailView.SetWidth(max(1, dw-4))
+			m.refreshDetailView() // re-wrap for the new width (e.g. after z)
+		}
 		m.detailView.SetHeight(h - 3)
 		title := "詳細"
+		if m.zoom {
+			title = "詳細（z / esc で戻る）"
+		}
 		if m.fetchingFor != "" && m.detail != nil && m.fetchingFor == m.detail.GID {
 			title += " ⟳"
 		}
@@ -131,6 +153,12 @@ func (m *Model) pane(title string, lines []string, w, h int, focused bool) strin
 func (m *Model) renderHeader() string {
 	left := m.st.header.Render(" asana-tui ") + " " + m.st.headerScope.Render(m.currentScope().name) +
 		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
+	if m.tagFilter != "" {
+		left += "  " + m.st.tag.Render("#"+m.tagFilter)
+	}
+	if m.boardActive() {
+		left += "  " + m.st.headerFilter.Render("[ボード]")
+	}
 	if m.query != "" {
 		left += "  " + m.st.headerFilter.Render("検索: "+m.query)
 	}
@@ -169,7 +197,10 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	keys := [][2]string{{"j/k", "移動"}, {"tab", "ペイン"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"/", "検索"}, {"f", "絞り込み"}, {"o", "ブラウザ"}, {"r", "同期"}, {"?", "ヘルプ"}, {"q", "終了"}}
+	keys := [][2]string{{"j/k", "移動"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
+	if m.boardActive() && !m.zoom {
+		keys = [][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "カードを左右の列へ"}, {"enter", "詳細"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"v", "リスト表示"}, {"?", "ヘルプ"}}
+	}
 	var parts []string
 	for _, k := range keys {
 		parts = append(parts, m.st.footerKey.Render(k[0])+" "+m.st.footer.Render(k[1]))
@@ -191,6 +222,10 @@ func (m *Model) renderHelp(w, h int) string {
 		"  /                 検索（タスク名・説明・コメント。全プロジェクトが対象）",
 		"  esc               検索を解除 / 戻る",
 		"  f / F             絞り込みを切り替え（未完了 → 7日以内 → 期限切れ → 完了済み → すべて）",
+		"  t                 タグで絞り込む",
+		"  z                 詳細を全画面で表示（コメントを全部読む）",
+		"  v                 ボード表示 / リスト表示（プロジェクトを開いているとき）",
+		"                    ボードでは h/l で列、j/k でカード、H/L でカードを左右の列へ移動",
 		"  o                 選択中のタスクをブラウザで開く",
 		"  r                 今すぐ同期",
 		"",
@@ -199,6 +234,7 @@ func (m *Model) renderHelp(w, h int) string {
 		"  a                 タスクを追加（例: 牛乳を買う due:明日）",
 		"                    プロジェクト表示中はそのプロジェクトに、My Tasks では自分に割り当て",
 		"  c                 コメントを追加",
+		"  m                 タスクを別のセクションへ移動",
 		"  !                 未送信の変更・競合を確認して解決",
 		"",
 		"  q                 終了（狭い画面では 1 つ前のペインへ）",
@@ -389,26 +425,52 @@ func (m *Model) renderDetail(w int) string {
 	switch {
 	case len(comments) > 0:
 		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("コメント (%d)", len(comments))) + "\n")
-		for _, c := range comments {
+		// In the side pane show only the latest few; the zoomed view (z) shows them all.
+		shown := comments
+		if !m.zoom && len(comments) > sidePaneComments {
+			shown = comments[len(comments)-sidePaneComments:]
+			b.WriteString(m.st.dim.Render(fmt.Sprintf("… 古いコメント %d 件（z で全部表示）", len(comments)-len(shown))) + "\n")
+		}
+		rule := m.st.dim.Render(strings.Repeat("─", max(1, w)))
+		body := lipgloss.NewStyle().Width(max(1, w-2)).PaddingLeft(2)
+		for i, c := range shown {
+			if i > 0 {
+				b.WriteString(rule + "\n")
+			}
 			who := "?"
 			if c.CreatedBy != nil {
 				who = c.CreatedBy.Name
 			}
-			when := ""
-			if t, err := time.Parse(time.RFC3339, c.CreatedAt); err == nil {
-				when = t.Local().Format("01/02 15:04")
-			}
-			meta := who + "  " + when
+			meta := m.st.headerScope.Render(who) + "  " + m.st.dim.Render(commentTime(c.CreatedAt, m.deps.Now()))
 			if c.Pending {
-				meta += "  （未送信）"
+				meta += "  " + m.st.today.Render("（未送信）")
 			}
-			b.WriteString(m.st.label.Render(meta) + "\n")
-			b.WriteString(wrap.Render(strings.TrimRight(c.Text, "\n")) + "\n\n")
+			b.WriteString(meta + "\n")
+			b.WriteString(body.Render(strings.TrimRight(c.Text, "\n")) + "\n")
 		}
 	case d.DetailsFetchedAt == "":
 		b.WriteString("\n" + m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")
 	}
 	return b.String()
+}
+
+// sidePaneComments is how many of the latest comments the (unzoomed) detail pane shows.
+const sidePaneComments = 3
+
+// commentTime formats a comment timestamp: "今日 14:03", "11/02 09:15" or "2024/03/01 09:15".
+func commentTime(s string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	t = t.Local()
+	switch {
+	case t.Format(time.DateOnly) == now.Format(time.DateOnly):
+		return "今日 " + t.Format("15:04")
+	case t.Year() == now.Year():
+		return t.Format("01/02 15:04")
+	}
+	return t.Format("2006/01/02 15:04")
 }
 
 // --- formatting ---
