@@ -2550,3 +2550,35 @@ func TestPushAccountCheck5xxKeepsChange(t *testing.T) {
 		t.Fatalf("entry = %+v", op)
 	}
 }
+
+// A change queued by another process while this one pushes (it got ErrPushBusy and was
+// told this process sends it) is sent before the lock is released.
+func TestPushSendsChangesQueuedMeanwhile(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	ws.tasks["t2"] = &serverTask{Name: "X"}
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "X"}})
+	other, err := store.Open(ctx, st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	queued := false
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPut && r.URL.Path == "/tasks/t1" && !queued {
+			queued = true
+			if err := other.UpdateTaskLocal(ctx, "t2", map[string]any{"name": "Y"}, now); err != nil {
+				t.Error(err)
+			}
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 2 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if ws.tasks["t2"].Name != "Y" {
+		t.Fatal("the change queued meanwhile should be sent by this push")
+	}
+}

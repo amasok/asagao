@@ -81,7 +81,8 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		return res, err
 	}
 	defer unlock()
-	return s.pushLocked(ctx)
+	res, _, err = s.pushLocked(ctx)
+	return res, err
 }
 
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
@@ -94,14 +95,43 @@ func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
 	return unlock, err
 }
 
-// pushLocked is Push for a caller holding the push lock.
-func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
-	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
-		return res, err
+// pushLocked is Push for a caller holding the push lock. Changes queued by other
+// processes while it sends (they got ErrPushBusy and were told this process sends them)
+// are sent too, by one more pass before it returns. last is the newest entry handled.
+func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, last int64, err error) {
+	if res, last, err = s.pushPass(ctx, 0); err != nil {
+		return res, last, err
 	}
-	ops, err := s.Store.PendingOps(ctx)
+	return s.catchUp(ctx, res, last)
+}
+
+// catchUp sends entries queued after entry last (one more pass) and adds its result.
+func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64) (PushResult, int64, error) {
+	more, last, err := s.pushPass(ctx, last)
+	res.Sent += more.Sent
+	res.Conflicts += more.Conflicts
+	res.Failed += more.Failed
+	res.Discarded = append(res.Discarded, more.Discarded...)
+	res.Remaining = more.Remaining
+	return res, last, err
+}
+
+// pushPass sends the pending entries newer than entry after, in order.
+func (s *Syncer) pushPass(ctx context.Context, after int64) (res PushResult, last int64, err error) {
+	last = after
+	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
+		return res, last, err
+	}
+	all, err := s.Store.PendingOps(ctx)
 	if err != nil {
-		return res, err
+		return res, last, err
+	}
+	var ops []store.Op
+	for _, op := range all {
+		if op.ID > after {
+			ops = append(ops, op)
+			last = max(last, op.ID)
+		}
 	}
 	defer func() { // report what is still queued (offline, waiting, or to be verified)
 		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
@@ -118,7 +148,7 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 		for step, again := 0, true; again && step < maxStepsPerEntry; step++ {
 			again = false
 			if err := ctx.Err(); err != nil {
-				return res, err
+				return res, last, err
 			}
 			// Re-read: sending an earlier entry may have rewritten this one (a create replaces
 			// the local gid that later comments/updates refer to).
@@ -127,18 +157,18 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 				break
 			}
 			if err != nil {
-				return res, err
+				return res, last, err
 			}
 			if op.State != store.OpPending || (op.Verify && verified[op.ID]) {
 				break // sent again during this push already: verify on the next one
 			}
 			if wait, err := s.waitsForCreate(ctx, *op); err != nil {
-				return res, err
+				return res, last, err
 			} else if wait {
 				break
 			}
 			if ok, err := s.Store.BeginSend(ctx, op.ID, s.clock()); err != nil {
-				return res, err
+				return res, last, err
 			} else if !ok {
 				break
 			}
@@ -152,32 +182,32 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 				switch {
 				case isNotFound(err): // what it changes was deleted in Asana
 					if err := s.dropGone(ctx, *op, err, drops); err != nil {
-						return res, err
+						return res, last, err
 					}
 					sendIt = false
 				case isRejected(err): // e.g. not ours (403)
 					if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
-						return res, err
+						return res, last, err
 					}
 					res.Failed++
 					sendIt = false
 				case err != nil: // could not check: try again on the next push
 					note := "Asana に届いたか確かめられませんでした: " + err.Error()
 					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, note); rerr != nil {
-						return res, rerr
+						return res, last, rerr
 					}
 					if isNetworkError(err) || isRateLimited(err) {
-						return res, err
+						return res, last, err
 					}
 					sendIt = false
 				case m == tooEarly: // Asana may not list it yet: check again on the next push
 					if err := s.Store.MarkOpVerify(ctx, op.ID, "Asana への反映を待っています"); err != nil {
-						return res, err
+						return res, last, err
 					}
 					sendIt = false
 				case m == ambiguous:
 					if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(store.AmbiguousMessage)); err != nil {
-						return res, err
+						return res, last, err
 					}
 					res.Failed++
 					sendIt = false
@@ -189,7 +219,7 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 					sendIt = false
 				default: // not in Asana: send it again
 					if err := s.Store.ClearVerify(ctx, op.ID); err != nil {
-						return res, err
+						return res, last, err
 					}
 				}
 			}
@@ -197,7 +227,7 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 				continue
 			}
 			if err := s.Store.CountAttempt(ctx, op.ID, s.clock()); err != nil {
-				return res, err
+				return res, last, err
 			}
 			op.Attempts++
 			out, err = s.send(ctx, *op)
@@ -212,17 +242,17 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 				again = out == followUp
 			case isNetworkError(err) || isRateLimited(err):
 				if err := s.holdBack(ctx, *op, err); err != nil {
-					return res, err
+					return res, last, err
 				}
-				return res, err // offline or cancelled: keep the rest for later
+				return res, last, err // offline or cancelled: keep the rest for later
 			case isNotFound(err): // what it changes was deleted in Asana
 				if err := s.dropGone(ctx, *op, err, drops); err != nil {
-					return res, err
+					return res, last, err
 				}
 			default:
 				verify, ferr := s.handleError(ctx, *op, err)
 				if ferr != nil {
-					return res, ferr
+					return res, last, ferr
 				}
 				if verify {
 					again = true // check Asana right away (once per push)
@@ -232,7 +262,7 @@ func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 			}
 		}
 	}
-	return res, nil
+	return res, last, nil
 }
 
 // maxStepsPerEntry bounds how often Push handles one entry (see Push).
