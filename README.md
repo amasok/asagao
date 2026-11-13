@@ -166,7 +166,7 @@ claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
 タスクに画像が添付されていると、詳細に「添付ファイル」として表示され、`i` で全画面表示します（`n` / `p` で切り替え、`o` で OS のビューアで開く、`q` で戻る）。
 
 - 対応している端末では、ターミナルの中に表示します: iTerm2・WezTerm（iTerm2 方式）、kitty・Ghostty（kitty 方式）
-- それ以外の端末や tmux の中では、OS の画像ビューア（macOS ならプレビュー）で開きます
+- それ以外の端末や、tmux・zellij・herdr などのマルチプレクサの中では、OS の画像ビューア（macOS ならプレビュー）で開きます（マルチプレクサは画像データを通さないことが多いため）
 - 一度表示した画像は `~/.cache/asana-tui/attachments/` に保存し、オフラインでも表示できます
 - 自動判定がうまくいかない場合は `config.toml` で指定できます:
 

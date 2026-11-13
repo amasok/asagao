@@ -32,15 +32,25 @@ const (
 )
 
 // Detect picks a protocol from the environment (getenv is os.Getenv in production).
+//
+// Multiplexers (tmux, zellij, herdr, …) sit between the program and the real terminal and
+// usually do not pass inline images through, so they get the OS viewer. Variables such as
+// GHOSTTY_RESOURCES_DIR are inherited by programs inside a multiplexer, so they are trusted
+// only when TERM_PROGRAM does not name some other program. Set ui.image_protocol to
+// override the detection.
 func Detect(getenv func(string) string) string {
-	if getenv("TMUX") != "" {
-		return ProtocolOpen // inline images need tmux passthrough; keep it simple
+	if getenv("TMUX") != "" || getenv("ZELLIJ") != "" || getenv("HERDR_ENV") != "" {
+		return ProtocolOpen
 	}
-	switch getenv("TERM_PROGRAM") {
+	program := getenv("TERM_PROGRAM")
+	switch program {
 	case "iTerm.app", "WezTerm":
 		return ProtocolITerm
 	case "ghostty":
 		return ProtocolKitty
+	case "":
+	default:
+		return ProtocolOpen // some other terminal or a multiplexer
 	}
 	if getenv("KITTY_WINDOW_ID") != "" || strings.Contains(getenv("TERM"), "kitty") || getenv("GHOSTTY_RESOURCES_DIR") != "" {
 		return ProtocolKitty

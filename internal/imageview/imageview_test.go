@@ -23,6 +23,11 @@ func TestDetect(t *testing.T) {
 		{map[string]string{"KITTY_WINDOW_ID": "1"}, ProtocolKitty},
 		{map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, ProtocolOpen},
 		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TMUX": "/tmp/tmux"}, ProtocolOpen},
+		{map[string]string{"GHOSTTY_RESOURCES_DIR": "/Applications/Ghostty.app/x"}, ProtocolKitty},
+		// Inside a multiplexer the Ghostty variable is inherited but images would not reach it.
+		{map[string]string{"TERM_PROGRAM": "herdr", "HERDR_ENV": "1", "GHOSTTY_RESOURCES_DIR": "/x"}, ProtocolOpen},
+		{map[string]string{"TERM_PROGRAM": "tmux", "GHOSTTY_RESOURCES_DIR": "/x"}, ProtocolOpen},
+		{map[string]string{"ZELLIJ": "0", "TERM_PROGRAM": "ghostty"}, ProtocolOpen},
 		{map[string]string{}, ProtocolOpen},
 	} {
 		if got := Detect(func(k string) string { return tc.env[k] }); got != tc.want {
