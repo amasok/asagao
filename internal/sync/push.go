@@ -41,7 +41,9 @@ const (
 // sentNotSavedError wraps a failure to record a change that Asana already accepted.
 type sentNotSavedError struct{ err error }
 
-func (e *sentNotSavedError) Error() string { return store.SentNotSavedMessage + e.err.Error() }
+func (e *sentNotSavedError) Error() string {
+	return "Asana には送信済みですが、ローカルへの反映に失敗しました（次の同期で確かめます）: " + e.err.Error()
+}
 func (e *sentNotSavedError) Unwrap() error { return e.err }
 
 func sentNotSaved(err error) error {
@@ -54,16 +56,22 @@ func sentNotSaved(err error) error {
 // Push sends pending outbox entries to Asana in order.
 //
 // Only one process pushes at a time (a lock file next to the database); if another one is
-// pushing, Push returns ErrPushBusy at once. Entries left "sending" by a process that died
-// are queued again if resending is harmless, and otherwise marked failed for the user.
+// pushing, Push returns ErrPushBusy at once.
 //
 // An update is checked against the server first: if a field we change was also changed
 // on the server (server value differs from both our base and our new value), the entry is
-// marked as a conflict and left for the user to resolve. Network errors (and 429 after the
-// client's retries) stop Push and are
-// returned so the caller can treat it as offline; an entry that may already have reached
-// Asana and must not be sent twice (e.g. a create) is marked failed instead of being queued
-// again. Any other error (e.g. the task was deleted) marks the entry failed and Push continues.
+// marked as a conflict and left for the user to resolve.
+//
+// When Asana may or may not have applied an entry (a 5xx, a dropped connection, a process
+// that died while sending), an entry that is harmless to repeat is sent again; any other
+// (a create) is verified: Push looks in Asana for what it created and records that, or
+// sends it again if it is not there (see reconcile.go). The user is asked only if Asana
+// cannot tell.
+//
+// Network errors (and 429 after the client's retries) stop Push and are returned so the
+// caller can treat it as offline; the entries stay queued. Other errors (e.g. the task was
+// deleted) mark the entry failed and Push continues. Changes to a task whose create has
+// not been sent yet wait for it.
 func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 	unlock, err := s.Store.TryLockPush()
 	if err != nil {
@@ -81,11 +89,10 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 	if err != nil {
 		return res, err
 	}
-	defer func() {
-		if err != nil { // stopped early: report what is still queued
-			res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
-		}
+	defer func() { // report what is still queued (offline, waiting, or to be verified)
+		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
 	}()
+	verified := map[int64]bool{} // checked in Asana during this push (at most once each)
 	for _, snapshot := range ops {
 		for again := true; again; {
 			again = false
@@ -101,16 +108,58 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 			if err != nil {
 				return res, err
 			}
-			if op.State != store.OpPending {
+			if op.State != store.OpPending || (op.Verify && verified[op.ID]) {
+				break // sent again during this push already: verify on the next one
+			}
+			if wait, err := s.waitsForCreate(ctx, *op); err != nil {
+				return res, err
+			} else if wait {
 				break
 			}
-			if ok, err := s.Store.BeginSend(ctx, op.ID); err != nil {
+			if ok, err := s.Store.BeginSend(ctx, op.ID, s.clock()); err != nil {
 				return res, err
 			} else if !ok {
 				break
 			}
 			wasFollowUp := op.Kind != snapshot.Kind
-			out, err := s.send(ctx, *op)
+			var out outcome
+			sendIt := true
+			if op.Verify {
+				verified[op.ID] = true
+				var m match
+				out, m, err = s.reconcile(ctx, *op)
+				switch {
+				case err != nil: // could not check: try again on the next push
+					note := "Asana に届いたか確かめられませんでした（次の同期で確かめます）: " + err.Error()
+					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, note); rerr != nil {
+						return res, rerr
+					}
+					if isNetworkError(err) || isRateLimited(err) {
+						return res, err
+					}
+					sendIt = false
+				case m == ambiguous:
+					if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(store.AmbiguousMessage)); err != nil {
+						return res, err
+					}
+					res.Failed++
+					sendIt = false
+				case m == matched: // Asana has it: recorded without sending it again
+					if !wasFollowUp {
+						res.Sent++
+					}
+					again = out == followUp
+					sendIt = false
+				default: // not in Asana: send it again
+					if err := s.Store.ClearVerify(ctx, op.ID); err != nil {
+						return res, err
+					}
+				}
+			}
+			if !sendIt {
+				continue
+			}
+			out, err = s.send(ctx, *op)
 			switch {
 			case err == nil:
 				switch {
@@ -126,14 +175,40 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 				}
 				return res, err // offline or cancelled: keep the rest for later
 			default:
-				if err := s.markFailed(ctx, *op, err); err != nil {
-					return res, err
+				verify, ferr := s.handleError(ctx, *op, err)
+				if ferr != nil {
+					return res, ferr
 				}
-				res.Failed++
+				if verify {
+					again = true // check Asana right away (once per push)
+				} else {
+					res.Failed++
+				}
 			}
 		}
 	}
 	return res, nil
+}
+
+// waitsForCreate reports whether op belongs to a task (or, for a subtask's create, a
+// parent) created offline whose create is still queued or failed. It waits instead of
+// failing, and goes out once the create is sent (or is discarded with it).
+func (s *Syncer) waitsForCreate(ctx context.Context, op store.Op) (bool, error) {
+	gid := op.TaskGID
+	switch op.Kind {
+	case store.OpCreateTask:
+		gid, _ = op.Payload["parent"].(string)
+	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection:
+		return false, nil
+	}
+	if !store.IsLocalGID(gid) {
+		return false, nil
+	}
+	real, err := s.Store.RealGID(ctx, gid)
+	if err != nil || !store.IsLocalGID(real) {
+		return false, err
+	}
+	return s.Store.CreateQueued(ctx, real)
 }
 
 // send sends one entry (already marked "sending").
@@ -166,8 +241,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 	return sent, err
 }
 
-// holdBack handles a network error while sending op: it goes back in the queue, unless
-// Asana may have received it and sending it twice would duplicate something.
+// holdBack handles a network error while sending op: it goes back in the queue, to be
+// verified first if Asana may have received it and sending it twice would duplicate it.
 func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
 	if requestNotSent(cause) || isRateLimited(cause) {
@@ -180,22 +255,32 @@ func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	if safe {
 		return s.Store.ReleaseOp(ctx, op.ID)
 	}
-	return s.Store.MarkOpUnknown(ctx, op.ID)
+	return s.Store.MarkOpVerify(ctx, op.ID, "")
 }
 
-func (s *Syncer) markFailed(ctx context.Context, op store.Op, cause error) error {
+// handleError records an error other than a network error. A 4xx (Asana rejected the
+// change) or a broken response to a harmless entry marks it failed. A 5xx or a broken
+// response to a create, or a change Asana accepted but we could not save, may have been
+// applied: the entry is verified (verify = true).
+func (s *Syncer) handleError(ctx context.Context, op store.Op, cause error) (verify bool, err error) {
 	var apiErr *asana.Error
 	var notSaved *sentNotSavedError
-	rejected := errors.As(cause, &apiErr) && apiErr.Status < 500 // 4xx: Asana did not apply it
-	if !rejected && !errors.As(cause, &notSaved) {
-		// A 5xx or a broken response: if the request was sent, it may have been applied.
-		if safe, err := s.Store.SafeToResend(ctx, op); err != nil {
-			return err
-		} else if !safe {
-			cause = fmt.Errorf("%s (%w)", store.UnknownResultMessage, cause)
+	switch {
+	case errors.As(cause, &notSaved):
+		verify = true
+	case errors.As(cause, &apiErr):
+		verify = apiErr.Status >= 500
+	default:
+		safe, err := s.Store.SafeToResend(ctx, op)
+		if err != nil {
+			return false, err
 		}
+		verify = !safe
 	}
-	return s.Store.MarkOpFailed(ctx, op.ID, cause)
+	if verify {
+		return true, s.Store.MarkOpVerify(ctx, op.ID, cause.Error())
+	}
+	return false, s.Store.MarkOpFailed(ctx, op.ID, cause)
 }
 
 // isRateLimited reports whether Asana still answered 429 after the client's retries: the

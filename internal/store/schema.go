@@ -204,4 +204,10 @@ CREATE TABLE status_updates (
 );
 CREATE INDEX status_updates_project ON status_updates(project_gid, created_at);
 `,
+	`
+-- Outbox entries whose result is unknown (e.g. a create answered with 5xx): verify = 1 means
+-- Push first looks in Asana for what the entry created since sent_at, before sending it again.
+ALTER TABLE outbox ADD COLUMN sent_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE outbox ADD COLUMN verify INTEGER NOT NULL DEFAULT 0;
+`,
 }

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	stdsync "sync"
@@ -23,12 +24,13 @@ import (
 
 // serverTask is the fake server's state for one task.
 type serverTask struct {
-	Name      string `json:"name"`
-	Notes     string `json:"notes"`
-	Completed bool   `json:"completed"`
-	DueOn     string `json:"due_on"`
-	Section   string `json:"-"`
-	Project   string `json:"-"`
+	Name      string    `json:"name"`
+	Notes     string    `json:"notes"`
+	Completed bool      `json:"completed"`
+	DueOn     string    `json:"due_on"`
+	Section   string    `json:"-"`
+	Project   string    `json:"-"`
+	Created   time.Time `json:"-"`
 }
 
 type writeServer struct {
@@ -39,6 +41,10 @@ type writeServer struct {
 	next  int
 	// hook, if set, may answer a request itself (returning true) to inject failures.
 	hook func(rw http.ResponseWriter, r *http.Request) bool
+	// failAfter["POST /tasks"] = n: the next n such requests are applied, then answered 500.
+	failAfter map[string]int
+	stories   map[string][]string // task gid -> story JSON objects
+	atts      map[string][]string // parent gid -> attachment JSON objects
 }
 
 func (w *writeServer) taskJSON(gid string) string {
@@ -47,8 +53,42 @@ func (w *writeServer) taskJSON(gid string) string {
 	if st.Project != "" {
 		ms = fmt.Sprintf(`[{"project":{"gid":%q},"section":{"gid":%q}}]`, st.Project, st.Section)
 	}
-	return fmt.Sprintf(`{"gid":%q,"name":%q,"notes":%q,"completed":%t,"due_on":%q,"memberships":%s,"modified_at":"2026-11-13T00:00:00Z"}`,
-		gid, st.Name, st.Notes, st.Completed, st.DueOn, ms)
+	return fmt.Sprintf(`{"gid":%q,"name":%q,"notes":%q,"completed":%t,"due_on":%q,"memberships":%s,"modified_at":"2026-11-13T00:00:00Z","created_at":%q,"created_by":{"gid":"me"}}`,
+		gid, st.Name, st.Notes, st.Completed, st.DueOn, ms, st.Created.Format(time.RFC3339))
+}
+
+// addTask registers a task created just now (e.g. by a request whose answer was lost).
+func (w *writeServer) addTask(gid, name, project string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.tasks[gid] = &serverTask{Name: name, Project: project, Created: time.Now().UTC()}
+}
+
+// addComment registers a comment created just now.
+func (w *writeServer) addComment(task, text string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.next++
+	w.addStoryLocked(task, text)
+}
+
+func (w *writeServer) addStoryLocked(task, text string) string {
+	if w.stories == nil {
+		w.stories = map[string][]string{}
+	}
+	js := fmt.Sprintf(`{"gid":"story%d","type":"comment","text":%q,"created_by":{"gid":"me","name":"Me"},"created_at":%q}`,
+		w.next, text, time.Now().UTC().Format(time.RFC3339))
+	w.stories[task] = append(w.stories[task], js)
+	return js
+}
+
+func (w *writeServer) setFailAfter(key string, n int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.failAfter == nil {
+		w.failAfter = map[string]int{}
+	}
+	w.failAfter[key] = n
 }
 
 func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -65,12 +105,23 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if w.hook != nil && w.hook(rw, r) {
 		return
 	}
+	if key := r.Method + " " + r.URL.Path; w.failAfter[key] > 0 {
+		w.failAfter[key]--
+		w.handle(httptest.NewRecorder(), r, b, body.Data) // applied, but the answer is lost
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.handle(rw, r, b, body.Data)
+}
+
+func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, data map[string]any) {
+	body := struct{ Data map[string]any }{data}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/tasks":
 		w.next++
 		gid := fmt.Sprintf("new%d", w.next)
-		st := &serverTask{}
+		st := &serverTask{Created: time.Now().UTC()}
 		st.Name, _ = body.Data["name"].(string)
 		st.Completed, _ = body.Data["completed"].(bool)
 		if ps, ok := body.Data["projects"].([]any); ok && len(ps) > 0 {
@@ -87,7 +138,29 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(rw, `{"data":%s}`, w.taskJSON(parts[1]))
 	case r.Method == http.MethodPost && r.URL.Path == "/attachments":
 		w.next++
-		fmt.Fprintf(rw, `{"data":{"gid":"att%d","name":"f.txt","view_url":"https://x/att%d"}}`, w.next, w.next)
+		parent, name := "", "f.txt"
+		if m := regexp.MustCompile(`name="parent"\r\n\r\n(\S+)`).FindSubmatch(b); m != nil {
+			parent = string(m[1])
+		}
+		if m := regexp.MustCompile(`filename="([^"]+)"`).FindSubmatch(b); m != nil {
+			name = string(m[1])
+		}
+		js := fmt.Sprintf(`{"gid":"att%d","name":%q,"view_url":"https://x/att%d","created_at":%q}`, w.next, name, w.next, time.Now().UTC().Format(time.RFC3339))
+		if w.atts == nil {
+			w.atts = map[string][]string{}
+		}
+		w.atts[parent] = append(w.atts[parent], js)
+		fmt.Fprintf(rw, `{"data":%s}`, js)
+	case r.Method == http.MethodGet && r.URL.Path == "/attachments":
+		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(w.atts[r.URL.Query().Get("parent")], ","))
+	case r.Method == http.MethodGet && r.URL.Path == "/tasks":
+		var list []string
+		for gid, st := range w.tasks {
+			if st.Project == r.URL.Query().Get("project") {
+				list = append(list, w.taskJSON(gid))
+			}
+		}
+		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(list, ","))
 	case len(parts) == 3 && parts[0] == "sections" && parts[2] == "addTask":
 		gid, _ := body.Data["task"].(string)
 		w.tasks[gid].Section = parts[1]
@@ -98,8 +171,13 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(rw, `{"errors":[{"message":"not found"}]}`)
 			return
 		}
-		fmt.Fprintf(rw, `{"data":{"gid":"story-%s","type":"comment","text":%q,"created_by":{"gid":"me","name":"Me"},"created_at":"2026-11-13T00:00:00Z"}}`,
-			parts[1], body.Data["text"])
+		if r.Method == http.MethodGet {
+			fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(w.stories[parts[1]], ","))
+			return
+		}
+		w.next++
+		text, _ := body.Data["text"].(string)
+		fmt.Fprintf(rw, `{"data":%s}`, w.addStoryLocked(parts[1], text))
 	case len(parts) == 2 && parts[0] == "tasks":
 		st, ok := w.tasks[parts[1]]
 		if !ok {
@@ -315,7 +393,7 @@ func TestOfflineCreateCommentAndComplete(t *testing.T) {
 		t.Fatal("local gid should be replaced")
 	}
 	d, err = st.GetTask(ctx, "new1")
-	if err != nil || d.Pending || len(d.Stories) != 1 || d.Stories[0].GID != "story-new1" {
+	if err != nil || d.Pending || len(d.Stories) != 1 || !strings.HasPrefix(d.Stories[0].GID, "story") {
 		t.Fatalf("store after push %+v, %v", d, err)
 	}
 	if len(d.Memberships) != 1 || d.Memberships[0].SectionGID != "s2" {
@@ -1018,74 +1096,6 @@ func opByKind(t *testing.T, st *store.Store, kind string) *store.Op {
 	return nil
 }
 
-func TestPushRecoversInterruptedSends(t *testing.T) {
-	ws, _, s, st := setupPush(t)
-	ctx := context.Background()
-	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "作成途中"}, now)
-	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
-	// A previous process died while sending both entries.
-	ops, _ := st.PendingOps(ctx)
-	for _, op := range ops {
-		if ok, err := st.BeginSend(ctx, op.ID); !ok || err != nil {
-			t.Fatalf("begin send %d: %v %v", op.ID, ok, err)
-		}
-	}
-	if p, _, _ := pendingCount(t, st); p != 2 {
-		t.Fatalf("entries being sent have not reached Asana and count as pending, got %d", p)
-	}
-
-	res, err := s.Push(ctx)
-	if err != nil || res.Sent != 1 {
-		t.Fatalf("push = %+v %v", res, err)
-	}
-	if n := ws.countCalls("POST /tasks "); n != 0 {
-		t.Fatal("an interrupted create must not be sent again without the user's confirmation")
-	}
-	if ws.tasks["t1"].Name != "B" {
-		t.Fatal("an interrupted update is safe to resend and should be sent")
-	}
-	op := opByKind(t, st, store.OpCreateTask)
-	if op == nil || op.State != store.OpFailed || op.LastError != store.UnknownResultMessage || op.TaskGID != gid {
-		t.Fatalf("interrupted create = %+v", op)
-	}
-	// After checking Asana, the user retries it.
-	if err := st.RetryOp(ctx, op.ID); err != nil {
-		t.Fatal(err)
-	}
-	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
-		t.Fatalf("retry push = %+v %v", res, err)
-	}
-}
-
-func TestPushConnectionDroppedDuringCreate(t *testing.T) {
-	ws, _, s, st := setupPush(t)
-	ctx := context.Background()
-	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いたかも"}, now)
-	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
-	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
-			dropConnection(rw)
-			return true
-		}
-		return false
-	})
-	res, err := s.Push(ctx)
-	if err == nil {
-		t.Fatalf("a dropped connection should stop the push: %+v", res)
-	}
-	if res.Remaining != 1 {
-		t.Fatalf("remaining = %d, want 1 (the update)", res.Remaining)
-	}
-	op := opByKind(t, st, store.OpCreateTask)
-	if op == nil || op.State != store.OpFailed || !strings.Contains(op.LastError, "届いたか分かりません") {
-		t.Fatalf("a create that may have reached Asana must wait for the user: %+v", op)
-	}
-	ws.setHook(nil)
-	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
-		t.Fatalf("next push must not resend the create: %+v %v\n%v", res, err, ws.calls)
-	}
-}
-
 func TestPushSkipsWhileAnotherProcessPushes(t *testing.T) {
 	ws, _, s, st := setupPush(t)
 	ctx := context.Background()
@@ -1153,13 +1163,13 @@ func TestPushCreateRetriesFailedSectionMove(t *testing.T) {
 		return false
 	})
 	res, err := s.Push(ctx)
-	if err != nil || res.Sent != 1 || res.Failed != 1 {
+	if err != nil || res.Sent != 1 || res.Failed != 0 || res.Remaining != 1 {
 		t.Fatalf("push = %+v %v", res, err)
 	}
 	real, _ := st.RealGID(ctx, gid)
 	op := opByKind(t, st, store.OpMoveTask)
-	if store.IsLocalGID(real) || op == nil || op.State != store.OpFailed || op.TaskGID != real || op.Payload["section"] != "s2" {
-		t.Fatalf("the failed move should stay queued for the created task %s: %+v", real, op)
+	if store.IsLocalGID(real) || op == nil || op.State != store.OpPending || op.TaskGID != real || op.Payload["section"] != "s2" {
+		t.Fatalf("the move should stay queued for the created task %s: %+v", real, op)
 	}
 	if opByKind(t, st, store.OpCreateTask) != nil {
 		t.Fatal("the create itself is done")
@@ -1167,39 +1177,14 @@ func TestPushCreateRetriesFailedSectionMove(t *testing.T) {
 	if got := sectionOf(t, st, real); got != "s2" {
 		t.Fatalf("local section = %q, want the unsent s2", got)
 	}
-	ws.setHook(nil)
-	if err := st.RetryOp(ctx, op.ID); err != nil {
-		t.Fatal(err)
-	}
+	ws.setHook(nil) // the next push sends the move by itself
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
-		t.Fatalf("retry = %+v %v", res, err)
+		t.Fatalf("next push = %+v %v", res, err)
 	}
 	if ws.countCalls("POST /tasks ") != 1 || ws.tasks[real].Section != "s2" {
 		t.Fatalf("task should be created once and moved: %v", ws.calls)
 	}
 }
-
-func TestPushCreate5xxWaitsForUser(t *testing.T) {
-	ws, _, s, st := setupPush(t)
-	ctx := context.Background()
-	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "500"}, now)
-	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
-			rw.WriteHeader(http.StatusInternalServerError)
-			return true
-		}
-		return false
-	})
-	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 1 {
-		t.Fatalf("push = %+v %v", res, err)
-	}
-	op := opByKind(t, st, store.OpCreateTask)
-	if op == nil || op.State != store.OpFailed || !strings.HasPrefix(op.LastError, store.UnknownResultMessage) {
-		t.Fatalf("a create answered with 5xx may exist in Asana; the user must check: %+v", op)
-	}
-}
-
 func TestPushRateLimitedKeepsQueue(t *testing.T) {
 	ws, _, s, st := setupPush(t)
 	ctx := context.Background()
@@ -1252,7 +1237,299 @@ func TestPushClearsDueDateAndAssignee(t *testing.T) {
 	}
 }
 
-func TestPushChildFailsWhenParentCreateFails(t *testing.T) {
+// beginSendAll marks every pending entry "sending", as a process that died mid-push leaves them.
+func beginSendAll(t *testing.T, st *store.Store) {
+	t.Helper()
+	ops, _ := st.PendingOps(context.Background())
+	for _, op := range ops {
+		if ok, err := st.BeginSend(context.Background(), op.ID, time.Now()); !ok || err != nil {
+			t.Fatalf("begin send %d: %v %v", op.ID, ok, err)
+		}
+	}
+}
+
+func assertOutboxEmpty(t *testing.T, st *store.Store) {
+	t.Helper()
+	if ops, _ := st.ListOps(context.Background()); len(ops) != 0 {
+		t.Fatalf("outbox should be empty: %+v", ops)
+	}
+}
+
+// --- tasks ---
+
+func TestPushCreate5xxButCreatedIsNotResent(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いていた"}, now)
+	ws.setFailAfter("POST /tasks", 1)
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 0 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+	}
+	if n := ws.countCalls("POST /tasks "); n != 1 {
+		t.Fatalf("a create Asana already has must not be sent again (sent %d times)", n)
+	}
+	real, _ := st.RealGID(ctx, gid)
+	if _, ok := ws.tasks[real]; !ok || store.IsLocalGID(real) {
+		t.Fatalf("local task should become the one Asana created: %s", real)
+	}
+	assertOutboxEmpty(t, st)
+}
+
+func TestPushCreate5xxNotCreatedIsResentOnce(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いていない"}, now)
+	failed := false
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" && !failed {
+			failed = true
+			rw.WriteHeader(http.StatusInternalServerError) // not applied
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if n := ws.countCalls("POST /tasks "); n != 2 {
+		t.Fatalf("a create Asana does not have should be sent exactly once more (calls %d)", n)
+	}
+	if real, _ := st.RealGID(ctx, gid); store.IsLocalGID(real) {
+		t.Fatal("task not created")
+	}
+	assertOutboxEmpty(t, st)
+}
+
+func TestPushCreate5xxTwiceWaitsForNextPush(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "落ちている"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			rw.WriteHeader(http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || res.Remaining != 1 || ws.countCalls("POST /tasks ") != 2 {
+		t.Fatalf("push = %+v %v (calls %v)", res, err, ws.calls)
+	}
+	op := opByKind(t, st, store.OpCreateTask)
+	if op == nil || op.State != store.OpPending || !op.Verify {
+		t.Fatalf("entry should wait, to be verified on the next push: %+v", op)
+	}
+	ws.setHook(nil)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 3 {
+		t.Fatalf("next push = %+v %v", res, err)
+	}
+}
+
+func TestPushCreateVerifyOfflineRetriesOnNextPush(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "確認できない"}, now)
+	ws.setFailAfter("POST /tasks", 1) // created, but the answer is lost
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/tasks" {
+			dropConnection(rw) // and we cannot look it up either
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err == nil || res.Remaining != 1 || res.Failed != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	op := opByKind(t, st, store.OpCreateTask)
+	if op == nil || op.State != store.OpPending || !op.Verify || op.SentAt == "" {
+		t.Fatalf("entry should stay queued to be verified: %+v", op)
+	}
+	ws.setHook(nil)
+	s.now = func() time.Time { return time.Now().Add(time.Hour) } // the next sync, an hour later
+	res, err = s.Push(ctx)
+	if err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("next push should find the task (created since the first send) instead of creating it again: %+v %v\n%v", res, err, ws.calls)
+	}
+	assertOutboxEmpty(t, st)
+}
+
+func TestPushConnectionDroppedDuringCreate(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いたかも"}, now)
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			dropConnection(rw)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err == nil || res.Remaining != 2 {
+		t.Fatalf("a dropped connection should stop the push with both entries queued: %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpCreateTask); op == nil || op.State != store.OpPending || !op.Verify {
+		t.Fatalf("the create should be verified before it is sent again: %+v", op)
+	}
+	ws.setHook(nil)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 2 || ws.countCalls("POST /tasks ") != 2 {
+		t.Fatalf("not in Asana: sent once more = %+v %v\n%v", res, err, ws.calls)
+	}
+	n := 0
+	for _, st := range ws.tasks {
+		if st.Name == "届いたかも" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("Asana should have the task once, has %d", n)
+	}
+}
+
+func TestPushRecoversInterruptedCreate(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		t.Run(fmt.Sprint("created=", created), func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "作成途中"}, now)
+			_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+			beginSendAll(t, st) // a previous process died while sending both
+			if created {
+				ws.addTask("srv1", "作成途中", "p1")
+			}
+			res, err := s.Push(ctx)
+			if err != nil || res.Sent != 2 || res.Failed != 0 {
+				t.Fatalf("push = %+v %v", res, err)
+			}
+			wantPosts := map[bool]int{true: 0, false: 1}[created]
+			if n := ws.countCalls("POST /tasks "); n != wantPosts {
+				t.Fatalf("creates sent = %d, want %d", n, wantPosts)
+			}
+			if ws.tasks["t1"].Name != "B" {
+				t.Fatal("an interrupted update is harmless to resend and should be sent")
+			}
+			if real, _ := st.RealGID(ctx, gid); created && real != "srv1" {
+				t.Fatalf("local task should become srv1, got %s", real)
+			}
+			assertOutboxEmpty(t, st)
+		})
+	}
+}
+
+func TestPushCreateAmbiguousAsksUser(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "同名"}, now)
+	beginSendAll(t, st)
+	ws.addTask("srv1", "同名", "p1")
+	ws.addTask("srv2", "同名", "p1")
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 1 || ws.countCalls("POST /tasks ") != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpCreateTask); op == nil || op.State != store.OpFailed || op.LastError != store.AmbiguousMessage {
+		t.Fatalf("two candidates: the user decides: %+v", op)
+	}
+}
+
+// --- comments ---
+
+func TestPushComment5xx(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		t.Run(fmt.Sprint("created=", created), func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			_, _ = st.AddCommentLocal(ctx, "t1", "こんにちは", store.UserRef{GID: "me"}, now)
+			if created {
+				ws.setFailAfter("POST /tasks/t1/stories", 1)
+			} else {
+				failed := false
+				ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+					if r.Method == http.MethodPost && r.URL.Path == "/tasks/t1/stories" && !failed {
+						failed = true
+						rw.WriteHeader(http.StatusBadGateway)
+						return true
+					}
+					return false
+				})
+			}
+			res, err := s.Push(ctx)
+			if err != nil || res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v %v", res, err)
+			}
+			if n := len(ws.stories["t1"]); n != 1 {
+				t.Fatalf("Asana should have exactly one comment, has %d", n)
+			}
+			if d, _ := st.GetTask(ctx, "t1"); len(d.Stories) != 1 || store.IsLocalGID(d.Stories[0].GID) {
+				t.Fatalf("local comment should be replaced: %+v", d.Stories)
+			}
+			assertOutboxEmpty(t, st)
+		})
+	}
+}
+
+func TestPushRecoversInterruptedComment(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.AddCommentLocal(ctx, "t1", "途中で落ちた", store.UserRef{GID: "me"}, now)
+	beginSendAll(t, st)
+	ws.addComment("t1", "途中で落ちた")
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || ws.countCalls("POST /tasks/t1/stories") != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	assertOutboxEmpty(t, st)
+}
+
+func TestPushCommentVerifyOfflineRetriesOnNextPush(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.AddCommentLocal(ctx, "t1", "確認できない", store.UserRef{GID: "me"}, now)
+	ws.setFailAfter("POST /tasks/t1/stories", 1)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/tasks/t1/stories" {
+			dropConnection(rw)
+			return true
+		}
+		return false
+	})
+	if res, err := s.Push(ctx); err == nil || res.Remaining != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	ws.setHook(nil)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || len(ws.stories["t1"]) != 1 {
+		t.Fatalf("next push = %+v %v (comments %d)", res, err, len(ws.stories["t1"]))
+	}
+}
+
+// --- attachments ---
+
+func TestPushUpload5xxButUploadedIsNotResent(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "見積.pdf")
+	_ = os.WriteFile(file, []byte("PDF"), 0o600)
+	if _, err := st.UploadAttachmentLocal(ctx, "t1", file, t.TempDir(), now); err != nil {
+		t.Fatal(err)
+	}
+	ws.setFailAfter("POST /attachments", 1)
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || ws.countCalls("POST /attachments") != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if d, _ := st.GetTask(ctx, "t1"); len(d.Attachments) != 1 || store.IsLocalGID(d.Attachments[0].GID) {
+		t.Fatalf("attachments = %+v", d.Attachments)
+	}
+	assertOutboxEmpty(t, st)
+}
+
+// --- tasks created offline wait for their parent ---
+
+func TestPushChildWaitsForFailedParentCreate(t *testing.T) {
 	ws, _, s, st := setupPush(t)
 	ctx := context.Background()
 	parent, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "親"}, now)
@@ -1260,6 +1537,7 @@ func TestPushChildFailsWhenParentCreateFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, _ = st.AddCommentLocal(ctx, parent, "メモ", store.UserRef{GID: "me"}, now)
 	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
 			rw.WriteHeader(http.StatusForbidden)
@@ -1269,19 +1547,89 @@ func TestPushChildFailsWhenParentCreateFails(t *testing.T) {
 		return false
 	})
 	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 2 || res.Sent != 0 {
-		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+	if err != nil || res.Failed != 1 || res.Sent != 0 || res.Remaining != 2 {
+		t.Fatalf("only the parent fails; its subtask and comment wait: %+v %v\n%v", res, err, ws.calls)
 	}
 	ops, _ := st.ListOps(ctx)
 	for _, op := range ops {
-		if op.State != store.OpFailed {
-			t.Fatalf("entry %+v should be failed", op)
-		}
-		if op.TaskGID == child && !strings.Contains(op.LastError, "404") {
-			t.Fatalf("child should fail because its parent does not exist: %+v", op)
+		if want := map[bool]string{true: store.OpFailed, false: store.OpPending}[op.Kind == store.OpCreateTask && op.TaskGID == parent]; op.State != want {
+			t.Fatalf("entry %+v: state %s, want %s", op, op.State, want)
 		}
 	}
 	if n := ws.countCalls("POST /tasks/"); n != 0 {
-		t.Fatalf("no subtask may be created under a local gid: %v", ws.calls)
+		t.Fatalf("nothing may be sent for a task that does not exist yet: %v", ws.calls)
+	}
+	// The user retries the parent: everything goes out.
+	ws.setHook(nil)
+	parentOp := opByKind(t, st, store.OpCreateTask)
+	if err := st.RetryOp(ctx, parentOp.ID); err != nil {
+		t.Fatal(err)
+	}
+	ws.mu.Lock()
+	ws.hook = func(rw http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/subtasks") && r.Method == http.MethodPost {
+			ws.next++
+			gid := fmt.Sprintf("sub%d", ws.next)
+			ws.tasks[gid] = &serverTask{Name: "子", Created: time.Now().UTC()}
+			fmt.Fprintf(rw, `{"data":%s}`, ws.taskJSON(gid))
+			return true
+		}
+		return false
+	}
+	ws.mu.Unlock()
+	if res, err := s.Push(ctx); err != nil || res.Sent != 3 {
+		t.Fatalf("after retry = %+v %v\n%v", res, err, ws.calls)
+	}
+	if real, _ := st.RealGID(ctx, child); store.IsLocalGID(real) {
+		t.Fatal("subtask should be created after its parent")
+	}
+	assertOutboxEmpty(t, st)
+}
+
+func TestCreateProject5xx(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		t.Run(fmt.Sprint("created=", created), func(t *testing.T) {
+			ctx := context.Background()
+			var posts int
+			var projects []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/projects" && r.Method == http.MethodPost:
+					posts++
+					p := fmt.Sprintf(`{"gid":"P%d","name":"新規","workspace":{"gid":"w1"},"created_at":%q}`, posts, time.Now().UTC().Format(time.RFC3339))
+					if posts == 1 {
+						if created {
+							projects = append(projects, p)
+						}
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					projects = append(projects, p)
+					fmt.Fprintf(w, `{"data":%s}`, p)
+				case r.URL.Path == "/projects":
+					old := `{"gid":"OLD","name":"新規","created_at":"2020-01-01T00:00:00Z"}` // same name, long ago
+					fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(append([]string{old}, projects...), ","))
+				default:
+					fmt.Fprint(w, `{"data":[]}`)
+				}
+			}))
+			defer srv.Close()
+			st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			_ = st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1"}})
+			api := asana.NewClient(srv.Client())
+			api.BaseURL = srv.URL
+			p, err := (&Syncer{API: api, Store: st}).CreateProject(ctx, "新規")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPosts := map[bool]int{true: 1, false: 2}[created]
+			if posts != wantPosts || p.GID != "P1" && created || p.GID != "P2" && !created {
+				t.Fatalf("project = %+v, posts = %d (want %d)", p, posts, wantPosts)
+			}
+		})
 	}
 }

@@ -141,7 +141,7 @@ func TestEditWhileSendingQueuesNewEntry(t *testing.T) {
 	ctx := context.Background()
 	must(t, s.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "送信中"}, testNow))
 	sending := onlyOp(t, s)
-	ok, err := s.BeginSend(ctx, sending.ID)
+	ok, err := s.BeginSend(ctx, sending.ID, testNow)
 	if !ok || err != nil {
 		t.Fatalf("begin send: %v %v", ok, err)
 	}
@@ -181,7 +181,7 @@ func TestRetryOp(t *testing.T) {
 	if op = onlyOp(t, s); op.State != OpPending || op.LastError != "" {
 		t.Fatalf("after retry: %+v", op)
 	}
-	ok, _ := s.BeginSend(ctx, op.ID)
+	ok, _ := s.BeginSend(ctx, op.ID, testNow)
 	if !ok {
 		t.Fatal("begin send")
 	}
@@ -348,11 +348,11 @@ func TestEditLocalTaskWhileItsCreateIsSendingOrFailed(t *testing.T) {
 			gid, err := s.CreateTaskLocal(ctx, NewTask{ProjectGID: "p1", SectionGID: "s1", Name: "新規"}, testNow)
 			must(t, err)
 			create := onlyOp(t, s)
-			if ok, err := s.BeginSend(ctx, create.ID); !ok || err != nil {
+			if ok, err := s.BeginSend(ctx, create.ID, testNow); !ok || err != nil {
 				t.Fatalf("begin send: %v %v", ok, err)
 			}
 			if state == OpFailed {
-				must(t, s.MarkOpUnknown(ctx, create.ID))
+				must(t, s.MarkOpFailed(ctx, create.ID, errors.New("asana: 403")))
 			}
 			must(t, s.UpdateTaskLocal(ctx, gid, map[string]any{"name": "名前変更"}, testNow))
 			must(t, s.MoveTaskLocal(ctx, gid, "p1", "s2", testNow))

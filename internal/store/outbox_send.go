@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
 )
@@ -16,9 +17,13 @@ import (
 // entry in one transaction, so a crash can never leave a sent entry queued (which would
 // send it again) or a removed entry whose local gids were not replaced.
 //
-// An entry still "sending" when Push starts was interrupted (the process died while it was
-// being sent): Asana may or may not have received it. RecoverInterruptedOps queues it again
-// if sending it twice is harmless, and otherwise marks it failed for the user to check.
+// Sometimes we cannot tell whether Asana applied an entry: a 5xx answer, a dropped
+// connection, or a process that died while the entry was "sending". Sending it again is
+// harmless for most entries, but would duplicate a create (task, comment, attachment,
+// status update, tag). Such an entry goes back to pending with verify set: the next Push
+// first looks in Asana for what it would have created since sent_at, and either records
+// that (no resend) or sends it again. Only when Asana cannot tell (e.g. several candidates)
+// is the entry marked failed for the user.
 
 // OpSending is the state of an entry while Push is sending it.
 const OpSending = "sending"
@@ -26,17 +31,17 @@ const OpSending = "sending"
 // ErrOpSending is returned when an entry that is being sent is retried or discarded.
 var ErrOpSending = errors.New("この変更は送信中です。送信が終わってからやり直してください")
 
-// UnknownResultMessage is the last_error of an entry that may or may not have reached Asana.
-const UnknownResultMessage = "送信中に中断したため、Asana に届いたか分かりません。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+// AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
+// has several candidates for what it created.
+const AmbiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
 
-// SentNotSavedMessage prefixes the last_error of an entry Asana accepted but whose result
-// could not be saved locally. Retrying it would send it again.
-const SentNotSavedMessage = "Asana には送信済みですが、ローカルへの反映に失敗しました（再送すると重複します。破棄して同期してください）: "
-
-// BeginSend marks a pending entry as being sent. It returns false if the entry is no
-// longer pending (sent, discarded or resolved by someone else in the meantime).
-func (s *Store) BeginSend(ctx context.Context, id int64) (bool, error) {
-	res, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'sending', attempts = attempts + 1 WHERE id = ? AND state = 'pending'", id)
+// BeginSend marks a pending entry as being sent at now. It returns false if the entry is no
+// longer pending (sent, discarded or resolved by someone else in the meantime). An entry
+// being verified keeps its first sent_at, so the check looks back far enough.
+func (s *Store) BeginSend(ctx context.Context, id int64, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'sending', attempts = attempts + 1,
+		sent_at = CASE WHEN verify = 1 AND sent_at <> '' THEN sent_at ELSE ? END
+		WHERE id = ? AND state = 'pending'`, formatTime(now), id)
 	if err != nil {
 		return false, err
 	}
@@ -50,10 +55,19 @@ func (s *Store) ReleaseOp(ctx context.Context, id int64) error {
 	return err
 }
 
-// MarkOpUnknown marks an entry that may or may not have reached Asana, so it is not sent
-// again without the user's confirmation.
-func (s *Store) MarkOpUnknown(ctx context.Context, id int64) error {
-	return s.MarkOpFailed(ctx, id, errors.New(UnknownResultMessage))
+// MarkOpVerify puts back in the queue an entry that may or may not have reached Asana: the
+// next push checks Asana before sending it again. note (may be empty) is shown as its
+// last_error meanwhile.
+func (s *Store) MarkOpVerify(ctx context.Context, id int64, note string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'pending', verify = 1, last_error = ? WHERE id = ?", note, id)
+	return err
+}
+
+// ClearVerify records that Asana does not have what entry id would create, so it is sent
+// again (and gets a new sent_at).
+func (s *Store) ClearVerify(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET verify = 0, last_error = '' WHERE id = ?", id)
+	return err
 }
 
 // SafeToResend reports whether sending op twice has the same effect as sending it once.
@@ -87,8 +101,9 @@ func safeToResend(ctx context.Context, q queryer, op Op) (bool, error) {
 }
 
 // RecoverInterruptedOps handles entries left "sending" by a process that died while
-// sending them. It must only be called while holding the push lock (see TryLockPush).
-func (s *Store) RecoverInterruptedOps(ctx context.Context) (requeued, unknown int, err error) {
+// sending them: they are queued again, to be verified first if resending is not harmless.
+// It must only be called while holding the push lock (see TryLockPush).
+func (s *Store) RecoverInterruptedOps(ctx context.Context) (requeued, verify int, err error) {
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, "SELECT id FROM outbox WHERE state = 'sending' ORDER BY id")
 		if err != nil {
@@ -120,8 +135,8 @@ func (s *Store) RecoverInterruptedOps(ctx context.Context) (requeued, unknown in
 				_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending' WHERE id = ?", id)
 				requeued++
 			} else {
-				_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'failed', last_error = ? WHERE id = ?", UnknownResultMessage, id)
-				unknown++
+				_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending', verify = 1 WHERE id = ?", id)
+				verify++
 			}
 			if err != nil {
 				return err
@@ -129,7 +144,7 @@ func (s *Store) RecoverInterruptedOps(ctx context.Context) (requeued, unknown in
 		}
 		return nil
 	})
-	return requeued, unknown, err
+	return requeued, verify, err
 }
 
 // completeOp runs fn and removes entry id in one transaction.
