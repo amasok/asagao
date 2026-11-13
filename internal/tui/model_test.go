@@ -863,3 +863,154 @@ func TestChangeAssignee(t *testing.T) {
 		t.Fatalf("should be unassigned: %+v", d.Assignee)
 	}
 }
+
+func TestDetailSubtaskNavigation(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	h := projectHarness(t, st, nil) // ソファを買う
+	h.key("enter")
+	if !h.m.zoom || !strings.Contains(h.screen(), "J/K 選択・enter 開く・x 完了・S 追加") {
+		t.Fatalf("enter in the list should open the detail full screen:\n%s", h.screen())
+	}
+	h.key("J", "J") // サイズを測る, 予算を決める
+	if sub := h.m.selectedSubtask(); sub == nil || sub.GID != "t1b" {
+		t.Fatalf("selected subtask = %+v", sub)
+	}
+	h.key("x") // completes the selected subtask, not the parent
+	if d, _ := st.GetTask(context.Background(), "t1b"); !d.Completed {
+		t.Fatal("x should complete the selected subtask")
+	}
+	if d, _ := st.GetTask(context.Background(), "t1"); d.Completed {
+		t.Fatal("parent must stay open")
+	}
+	h.key("K", "enter") // open サイズを測る
+	s := h.screen()
+	if !strings.Contains(s, "← backspace で親タスクへ戻る") || !strings.Contains(s, "サイズを測る") || !strings.Contains(s, "メジャーを買う") {
+		t.Fatalf("subtask detail:\n%s", s)
+	}
+	h.key("S")
+	h.typeText("巻き尺を借りる")
+	h.key("enter")
+	d, _ := st.GetTask(context.Background(), "t1a")
+	if len(d.Subtasks) != 2 || !strings.Contains(h.screen(), "巻き尺を借りる") {
+		t.Fatalf("S in the detail should add a subtask to the shown task:\n%s", h.screen())
+	}
+	if h.m.detailGID() != "t1a" {
+		t.Fatalf("detail should stay on the subtask, got %q", h.m.detailGID())
+	}
+	h.key("backspace")
+	if h.m.detailGID() != "t1" || h.m.selectedSubtask() == nil || h.m.selectedSubtask().GID != "t1a" {
+		t.Fatalf("backspace should return to the parent with the subtask selected: %q %+v", h.m.detailGID(), h.m.selectedSubtask())
+	}
+	h.key("esc", "esc") // deselect, then leave the full screen
+	if h.m.zoom {
+		t.Fatal("esc should close the full screen detail")
+	}
+}
+
+// fakeEditor replaces the file content when "run".
+func fakeEditor(t *testing.T, edit func(string) string) func(string, func(error) tea.Msg) tea.Cmd {
+	return func(path string, done func(error) tea.Msg) tea.Cmd {
+		return func() tea.Msg {
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(edit(string(b))), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return done(nil)
+		}
+	}
+}
+
+func TestEditTaskInEditor(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	ctx := context.Background()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20", NumSubtasks: 2,
+		HTMLNotes: "<body>候補は<strong>ニトリ</strong></body>", Assignee: &asana.Ref{GID: "me", Name: "Me"},
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
+	var seen string
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, func(s string) string {
+		seen = s
+		s = strings.Replace(s, "name: ソファを買う", "name: ソファを買う（3人掛け）", 1)
+		s = strings.Replace(s, "due: 2026-11-20", "due: +7d", 1)
+		s = strings.Replace(s, "\nassignee: me\n", "\nassignee: Partner\n", 1)
+		s = strings.Replace(s, "section: 家具", "section: 手続き", 1)
+		return s + "\n## 予算\n- 10万円まで\n"
+	})})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("h", "j", "l", "e")
+
+	for _, want := range []string{"name: ソファを買う\n", "due: 2026-11-20\n", "assignee: me\n", "completed: false\n", "section: 家具\n", "候補は**ニトリ**"} {
+		if !strings.Contains(seen, want) {
+			t.Fatalf("editor file missing %q:\n%s", want, seen)
+		}
+	}
+	d, _ := st.GetTask(ctx, "t1")
+	// due: +7d from testNow (11/13) is 11/20, the same date, so the due date is unchanged.
+	if d.DueOn != "2026-11-20" {
+		t.Fatalf("due = %q", d.DueOn)
+	}
+	if d.Name != "ソファを買う（3人掛け）" || d.Assignee == nil || d.Assignee.GID != "u2" || d.Memberships[0].SectionName != "手続き" {
+		t.Fatalf("task after edit: %+v assignee=%+v", d.TaskSummary, d.Assignee)
+	}
+	if !strings.Contains(d.HTMLNotes, "<strong>ニトリ</strong>") || !strings.Contains(d.HTMLNotes, "<h2>予算</h2>") || !strings.Contains(d.HTMLNotes, "<li>10万円まで</li>") {
+		t.Fatalf("html_notes = %q", d.HTMLNotes)
+	}
+	ops, _ := st.ListOps(ctx)
+	var kinds []string
+	for _, op := range ops {
+		kinds = append(kinds, op.Kind)
+		if op.Kind == store.OpUpdateTask {
+			if _, ok := op.Payload["html_notes"]; !ok {
+				t.Fatalf("update should carry html_notes: %+v", op.Payload)
+			}
+		}
+	}
+	if !slices.Contains(kinds, store.OpUpdateTask) || !slices.Contains(kinds, store.OpMoveTask) {
+		t.Fatalf("ops = %v", kinds)
+	}
+	if s := h.screen(); !strings.Contains(s, "予算") || !strings.Contains(s, "ソファを買う（3人掛け）") {
+		t.Fatalf("detail should show the edited task:\n%s", s)
+	}
+}
+
+func TestEditTaskErrorsAndNoChange(t *testing.T) {
+	st := fixtureStore(t)
+	editFn := func(s string) string { return s }
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
+		RunEditor: func(path string, done func(error) tea.Msg) tea.Cmd { return fakeEditor(t, editFn)(path, done) }})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("e")
+	if !strings.Contains(h.screen(), "変更はありません") {
+		t.Fatalf("unchanged file:\n%s", h.screen())
+	}
+	editFn = func(s string) string { return strings.Replace(s, "name: 転居届を出す", "name:", 1) }
+	h.key("e")
+	if s := h.screen(); !strings.Contains(s, "編集内容を読めませんでした") || !strings.Contains(s, "name（タスク名）が空です") {
+		t.Fatalf("parse error should be reported:\n%s", s)
+	}
+}
+
+func TestCommentInEditor(t *testing.T) {
+	st := fixtureStore(t)
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
+		RunEditor: fakeEditor(t, func(s string) string { return s + "**明日**行きます\n- 印鑑\n- 免許証\n" })})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("C")
+	d, _ := st.GetTask(context.Background(), "t2")
+	if len(d.Stories) != 1 || !strings.Contains(d.Stories[0].HTMLText, "<strong>明日</strong>") || !strings.Contains(d.Stories[0].Text, "明日行きます") {
+		t.Fatalf("comment = %+v", d.Stories)
+	}
+	if s := h.screen(); !strings.Contains(s, "明日行きます") || !strings.Contains(s, "• 印鑑") {
+		t.Fatalf("comment should render as markdown:\n%s", s)
+	}
+}

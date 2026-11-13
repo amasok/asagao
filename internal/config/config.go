@@ -34,6 +34,8 @@ type UIConfig struct {
 	// InlineImages draws images inside the detail pane where they appear in the text:
 	// "auto" (when the image protocol is kitty), "on" or "off".
 	InlineImages string `toml:"inline_images"`
+	// Editor is the command used to edit tasks and comments (default: $VISUAL, $EDITOR, nvim).
+	Editor string `toml:"editor"`
 }
 
 type AuthConfig struct {

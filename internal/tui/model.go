@@ -33,6 +33,9 @@ type Deps struct {
 	ViewImages func(paths []string) tea.Cmd
 	// InlineImages draws images inside the detail pane with kitty Unicode placeholders.
 	InlineImages bool
+	// RunEditor opens path in the user's editor and reports back with done
+	// (production: tea.ExecProcess with $EDITOR).
+	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
 }
 
 type pane int
@@ -166,6 +169,13 @@ type Model struct {
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
 	subtaskParent string          // parent for promptSubtask
+
+	// detail navigation (detailnav.go)
+	detailStack []string // tasks opened from the detail view (subtasks); top is shown
+	detailSub   int      // selected subtask in the detail view (-1 = none)
+	returnTo    string   // subtask to reselect after going back to its parent
+	subtaskLine int      // line of the first subtask in the rendered detail (-1 = none)
+	commentGID  string   // task the comment prompt posts to
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -186,6 +196,8 @@ func New(ctx context.Context, deps Deps) *Model {
 		prompt:      newInput(),
 		dark:        true,
 		detailRatio: defaultDetailRatio,
+		detailSub:   -1,
+		subtaskLine: -1,
 	}
 	if deps.InlineImages {
 		m.cellW, m.cellH = imageview.CellSize()
@@ -352,6 +364,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if cmd, ok := m.updateEdit(msg); ok {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case inlineLoadedMsg:
 		m.onInlineLoaded(msg)
@@ -399,7 +414,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.setRows(msg.rows)
 
 	case detailLoadedMsg:
-		if t := m.selectedTask(); t == nil || t.GID != msg.gid {
+		if msg.gid != m.detailGID() {
 			return m, nil
 		}
 		if msg.err != nil {
@@ -408,17 +423,29 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			keepScroll := m.detail != nil && m.detail.GID == msg.gid
 			m.detail = msg.d
+			if m.returnTo != "" { // back from a subtask: keep it selected
+				m.detailSub = -1
+				for i, s := range m.detail.Subtasks {
+					if s.GID == m.returnTo {
+						m.detailSub = i
+					}
+				}
+				m.returnTo = ""
+			} else if !keepScroll {
+				m.detailSub = -1
+			}
+			m.detailSub = min(m.detailSub, len(m.detail.Subtasks)-1)
 			m.refreshDetailView()
 			if !keepScroll {
 				m.detailView.GotoTop()
 			}
+			m.scrollToSubtask()
 			return m, m.prepareInline()
 		}
 		return m, nil
 
 	case detailDebounceMsg:
-		t := m.selectedTask()
-		if t == nil || t.GID != msg.gid || !m.needsDetailFetch() {
+		if msg.gid != m.detailGID() || !m.needsDetailFetch() {
 			return m, nil
 		}
 		return m, m.fetchDetails(msg.gid)
@@ -438,7 +465,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.expanded[msg.gid] {
 			cmds = append(cmds, m.loadTasks()) // its subtasks may have just arrived
 		}
-		if t := m.selectedTask(); t != nil && t.GID == msg.gid {
+		if msg.gid == m.detailGID() {
 			cmds = append(cmds, m.loadDetail(msg.gid))
 		}
 		return m, tea.Batch(cmds...)
@@ -457,8 +484,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.lastSync = msg.at
 			cmds = append(cmds, m.loadScopes(), m.loadTasks())
-			if t := m.selectedTask(); t != nil {
-				cmds = append(cmds, m.loadDetail(t.GID), m.debounceDetail(t.GID))
+			if gid := m.detailGID(); gid != "" {
+				cmds = append(cmds, m.loadDetail(gid), m.debounceDetail(gid))
 			}
 		}
 		return m, tea.Batch(cmds...)
@@ -538,6 +565,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		return m, nil
 	}
+	if m.inDetail() {
+		if cmd, ok := m.handleDetailNavKey(key); ok {
+			return m, cmd
+		}
+	}
 
 	switch key {
 	case "?":
@@ -594,7 +626,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.focus = (m.focus + 2) % 3
 		return m, nil
 	case "o":
-		if t := m.selectedTask(); t != nil && m.focus != paneSidebar {
+		if t := m.actionTask(); t != nil && m.focus != paneSidebar {
 			if store.IsLocalGID(t.GID) {
 				m.status = "まだ Asana に送信されていないタスクです"
 				return m, nil
@@ -602,7 +634,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.openURL(t.PermalinkURL)
 		}
 		return m, nil
-	case "x", "a", "c", "!":
+	case "x", "a", "c", "!", "e", "C":
 		return m, m.writeKey(key)
 	case "z", "v", "t", "m":
 		return m, m.viewKey(key)
@@ -664,7 +696,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.moveList(len(m.rows))
 		case "enter":
 			if m.selectedTask() != nil {
-				m.focus = paneDetail
+				return m, m.openDetail()
 			} else if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
 				return m, m.toggleGroup() // expand
 			}
@@ -739,12 +771,17 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	}
 	m.allRows = rows
 	m.rows = m.visibleRows()
-	if m.selectAfter != "" {
-		prev, m.selectAfter = m.selectAfter, ""
+	target := prev
+	if m.selectAfter != "" && m.listed(m.selectAfter) {
+		target = m.selectAfter
 	}
-	m.selectInList(prev)
+	m.selectAfter = ""
+	m.selectInList(target)
 	if m.boardActive() {
-		m.selectInBoard(prev)
+		m.selectInBoard(target)
+	}
+	if t := m.selectedTask(); t == nil || t.GID != prev {
+		m.resetDetailNav()
 	}
 	t := m.selectedTask()
 	if t == nil {
@@ -752,10 +789,20 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		m.refreshDetailView()
 		return nil
 	}
-	if t.GID == prev && m.detail != nil {
-		return m.loadDetail(t.GID) // refresh in place
+	if gid := m.detailGID(); gid != t.GID || (t.GID == prev && m.detail != nil) {
+		return m.loadDetail(gid) // refresh in place (or the subtask opened in the detail)
 	}
 	return tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
+}
+
+// listed reports whether gid is in the task list (or on the board).
+func (m *Model) listed(gid string) bool {
+	for _, r := range m.allRows {
+		if r.task != nil && r.task.GID == gid {
+			return true
+		}
+	}
+	return false
 }
 
 // selectInList puts the list cursor on gid, or on the first task if gid is not listed.
@@ -791,6 +838,7 @@ func (m *Model) moveList(delta int) tea.Cmd {
 	}
 	m.listCursor = next
 	m.ensureListVisible()
+	m.resetDetailNav()
 	t := m.selectedTask()
 	if t == nil { // a collapsed group header
 		return nil

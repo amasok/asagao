@@ -186,10 +186,15 @@ func (c *Client) AddTaskToSection(ctx context.Context, sectionGID, taskGID strin
 	return err
 }
 
-// AddComment posts a comment (POST /tasks/{gid}/stories).
-func (c *Client) AddComment(ctx context.Context, taskGID, text string) (*Story, error) {
+// AddComment posts a comment (POST /tasks/{gid}/stories). If htmlText (Asana rich text) is
+// set it is sent instead of text.
+func (c *Client) AddComment(ctx context.Context, taskGID, text, htmlText string) (*Story, error) {
 	var s Story
-	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/stories", fieldsQuery(storyFields), map[string]any{"text": text}, &s)
+	body := map[string]any{"text": text}
+	if htmlText != "" {
+		body = map[string]any{"html_text": htmlText}
+	}
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/stories", fieldsQuery(storyFields), body, &s)
 	return &s, err
 }
 

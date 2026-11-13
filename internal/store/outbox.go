@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -279,8 +280,13 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	return gid, err
 }
 
-// AddCommentLocal adds a comment with a temporary gid and queues it.
+// AddCommentLocal adds a plain-text comment with a temporary gid and queues it.
 func (s *Store) AddCommentLocal(ctx context.Context, taskGID, text string, author UserRef, now time.Time) (string, error) {
+	return s.AddRichCommentLocal(ctx, taskGID, text, "", author, now)
+}
+
+// AddRichCommentLocal adds a comment; htmlText (Asana rich text) is sent instead of text if set.
+func (s *Store) AddRichCommentLocal(ctx context.Context, taskGID, text, htmlText string, author UserRef, now time.Time) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return "", errors.New("コメントが空です")
 	}
@@ -295,13 +301,16 @@ func (s *Store) AddCommentLocal(ctx context.Context, taskGID, text string, autho
 		}
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO stories
-			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at)
-			VALUES(?, ?, 'comment', 'comment_added', ?, ?, ?, ?)`,
-			gid, taskGID, text, author.GID, author.Name, ts); err != nil {
+			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
+			VALUES(?, ?, 'comment', 'comment_added', ?, ?, ?, ?, ?)`,
+			gid, taskGID, text, author.GID, author.Name, ts, htmlText); err != nil {
 			return err
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpAddComment, TaskGID: taskGID,
-			Payload: map[string]any{"text": text, "story_gid": gid}, State: OpPending, CreatedAt: ts})
+		payload := map[string]any{"text": text, "story_gid": gid}
+		if htmlText != "" {
+			payload["html_text"] = htmlText
+		}
+		return saveOp(ctx, tx, &Op{Kind: OpAddComment, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: ts})
 	})
 	return gid, err
 }
@@ -501,7 +510,7 @@ func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string,
 
 // --- helpers ---
 
-var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "due_on": true, "assignee": true}
+var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true}
 
 func validateFields(changes map[string]any) error {
 	if len(changes) == 0 {
@@ -534,26 +543,41 @@ func TaskFieldValues(t *asana.Task) map[string]any {
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
 	}
-	return map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "due_on": t.DueOn, "assignee": assignee}
+	return map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee}
 }
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
 	var completed bool
-	var name, notes, dueOn, assignee, modifiedAt string
-	err := tx.QueryRowContext(ctx, "SELECT completed, name, notes, due_on, assignee_gid, modified_at FROM tasks WHERE gid = ?", gid).
-		Scan(&completed, &name, &notes, &dueOn, &assignee, &modifiedAt)
+	var name, notes, htmlNotes, dueOn, assignee, modifiedAt string
+	err := tx.QueryRowContext(ctx, "SELECT completed, name, notes, html_notes, due_on, assignee_gid, modified_at FROM tasks WHERE gid = ?", gid).
+		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &assignee, &modifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", fmt.Errorf("task %s: %w", gid, ErrNotFound)
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"completed": completed, "name": name, "notes": notes, "due_on": dueOn, "assignee": assignee}, modifiedAt, nil
+	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "assignee": assignee}, modifiedAt, nil
 }
 
 // applyFields writes update_task fields to the tasks table.
 func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]any, now time.Time) error {
-	for k, v := range fields {
+	// "notes" clears the rich text, so apply "html_notes" after it.
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	slices.SortFunc(keys, func(a, b string) int {
+		if (a == "html_notes") != (b == "html_notes") {
+			if a == "html_notes" {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a, b)
+	})
+	for _, k := range keys {
+		v := fields[k]
 		var err error
 		switch k {
 		case "completed":
@@ -567,6 +591,8 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 		case "notes":
 			// the rich text no longer matches; show the plain notes until the next fetch
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET notes = ?, html_notes = '' WHERE gid = ?", v, gid)
+		case "html_notes":
+			_, err = tx.ExecContext(ctx, "UPDATE tasks SET html_notes = ? WHERE gid = ?", v, gid)
 		case "name", "due_on":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET "+k+" = ? WHERE gid = ?", v, gid)
 		case "assignee":

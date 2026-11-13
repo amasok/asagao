@@ -625,3 +625,44 @@ func TestPushSubtaskOfOfflineParent(t *testing.T) {
 		t.Fatalf("subtask after push: %+v %v", d, err)
 	}
 }
+
+func TestPushRichNotesAndComment(t *testing.T) {
+	ctx := context.Background()
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodGet {
+			bodies = append(bodies, r.Method+" "+r.URL.Path+" "+string(b))
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/stories"):
+			fmt.Fprint(w, `{"data":{"gid":"s1","type":"comment","text":"hi","html_text":"<body><strong>hi</strong></body>"}}`)
+		default:
+			fmt.Fprint(w, `{"data":{"gid":"t1","name":"T","notes":"old","html_notes":"<body>old</body>"}}`)
+		}
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T", Notes: "old", HTMLNotes: "<body>old</body>"}})
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"notes": "new", "html_notes": "<body><strong>new</strong></body>"}, now)
+	if d, _ := st.GetTask(ctx, "t1"); d.HTMLNotes != "<body><strong>new</strong></body>" || d.Notes != "new" {
+		t.Fatalf("local rich notes: %q / %q", d.HTMLNotes, d.Notes)
+	}
+	_, _ = st.AddRichCommentLocal(ctx, "t1", "hi", "<body><strong>hi</strong></body>", store.UserRef{GID: "me"}, now)
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	if err != nil || res.Sent != 2 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if !strings.Contains(bodies[0], `"html_notes":"\u003cbody\u003e\u003cstrong\u003enew`) || strings.Contains(bodies[0], `"notes"`) {
+		t.Fatalf("update should send html_notes only: %s", bodies[0])
+	}
+	if !strings.Contains(bodies[1], `"html_text"`) || strings.Contains(bodies[1], `"text":"hi"`) {
+		t.Fatalf("comment should send html_text: %s", bodies[1])
+	}
+}

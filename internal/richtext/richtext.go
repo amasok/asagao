@@ -25,8 +25,15 @@ func ImageToken(gid string) string { return fmt.Sprintf(imageTokenFormat, gid) }
 
 var assetID = regexp.MustCompile(`asset_id=(\d+)`)
 
-// ToMarkdown converts Asana rich text HTML to Markdown. It returns "" if s is empty.
-func ToMarkdown(s string) string {
+// ToMarkdown converts Asana rich text HTML to Markdown for display. Images become image
+// tokens and mentions bold text. It returns "" if s is empty.
+func ToMarkdown(s string) string { return convert(s, false) }
+
+// ToEditableMarkdown converts Asana rich text to Markdown for editing: images and mentions
+// are kept as ![画像](asana:GID) and [@Name](asana:user:GID) so FromMarkdown can restore them.
+func ToEditableMarkdown(s string) string { return convert(s, true) }
+
+func convert(s string, editable bool) string {
 	if strings.TrimSpace(s) == "" {
 		return ""
 	}
@@ -34,7 +41,7 @@ func ToMarkdown(s string) string {
 	if err != nil {
 		return s
 	}
-	c := &converter{}
+	c := &converter{editable: editable}
 	c.walk(doc)
 	return tidy(c.b.String())
 }
@@ -49,10 +56,11 @@ func Images(s string) []string {
 }
 
 type converter struct {
-	b     strings.Builder
-	lists []listState // nesting of ul/ol
-	pre   int         // inside <pre>
-	quote int         // inside <blockquote>
+	editable bool
+	b        strings.Builder
+	lists    []listState // nesting of ul/ol
+	pre      int         // inside <pre>
+	quote    int         // inside <blockquote>
 }
 
 type listState struct {
@@ -205,6 +213,8 @@ func (c *converter) link(n *html.Node) {
 	href := attr(n, "href")
 	text := strings.TrimSpace(textOf(n))
 	switch {
+	case c.editable && attr(n, "data-asana-type") == "user" && attr(n, "data-asana-gid") != "":
+		c.write("[" + escape(text) + "](" + mentionScheme + attr(n, "data-asana-gid") + ")")
 	case attr(n, "data-asana-type") == "user" || strings.HasPrefix(text, "@"):
 		c.write("**" + escape(text) + "**") // mention
 	case href == "" || text == href:
@@ -251,7 +261,11 @@ func (c *converter) image(n *html.Node) {
 		return
 	}
 	c.block()
-	c.write(ImageToken(gid))
+	if c.editable {
+		c.write("![画像](" + assetScheme + gid + ")")
+	} else {
+		c.write(ImageToken(gid))
+	}
 	c.block()
 }
 

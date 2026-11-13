@@ -65,8 +65,8 @@ func (m *Model) requestSync() tea.Cmd {
 // afterWrite reloads everything a write can change and asks for a sync.
 func (m *Model) afterWrite() tea.Cmd {
 	cmds := []tea.Cmd{m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.requestSync()}
-	if t := m.selectedTask(); t != nil {
-		cmds = append(cmds, m.loadDetail(t.GID))
+	if gid := m.detailGID(); gid != "" {
+		cmds = append(cmds, m.loadDetail(gid))
 	}
 	return tea.Batch(cmds...)
 }
@@ -110,13 +110,26 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 }
 
 func (m *Model) writeKey(key string) tea.Cmd {
-	t := m.selectedTask()
+	t := m.actionTask()
 	switch key {
 	case "x":
+		if sub := m.selectedSubtask(); sub != nil {
+			return m.toggleComplete(*sub) // the subtask selected in the detail view
+		}
 		if t == nil || m.focus == paneSidebar {
 			return nil
 		}
 		return m.toggleComplete(*t)
+	case "e":
+		if t == nil || m.focus == paneSidebar {
+			return nil
+		}
+		return m.editTask(t.GID)
+	case "C":
+		if t == nil || m.focus == paneSidebar {
+			return nil
+		}
+		return m.editComment(t.GID)
 	case "a":
 		m.openPrompt(promptCreate)
 		return m.prompt.Focus()
@@ -125,6 +138,7 @@ func (m *Model) writeKey(key string) tea.Cmd {
 			return nil
 		}
 		m.openPrompt(promptComment)
+		m.commentGID = t.GID
 		return m.prompt.Focus()
 	case "!":
 		m.showOutbox = true
@@ -188,8 +202,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptSubtask:
 			return m, m.createSubtask(m.subtaskParent, value)
 		}
-		if t := m.selectedTask(); t != nil {
-			return m, m.addComment(*t, value)
+		if m.commentGID != "" {
+			return m, m.addComment(m.commentGID, value)
 		}
 		return m, nil
 	}
@@ -243,14 +257,14 @@ func (m *Model) createTask(input string) tea.Cmd {
 	}
 }
 
-func (m *Model) addComment(t store.TaskSummary, text string) tea.Cmd {
+func (m *Model) addComment(taskGID, text string) tea.Cmd {
 	st, now := m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
 		me, err := st.Me(m.ctx)
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
-		if _, err := st.AddCommentLocal(m.ctx, t.GID, text, me, now); err != nil {
+		if _, err := st.AddCommentLocal(m.ctx, taskGID, text, me, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}
