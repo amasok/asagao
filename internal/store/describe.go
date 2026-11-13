@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
@@ -71,70 +72,104 @@ func FieldLabel(k string) string {
 	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]
 }
 
-// DescribeOp is a one-line, human-readable description of an outbox entry.
+// DescribeOp is a one-line description of an outbox entry: "task: what it changes"
+// (see DescribeChange). Entries whose change already names what they are about (creating
+// or duplicating a task, renaming a section) are not prefixed.
 func DescribeOp(op Op) string {
+	what := DescribeChange(op)
+	switch op.Kind {
+	case OpCreateTask, OpDuplicateTask, OpRenameSection:
+		return what
+	}
 	name := op.TaskName
 	if name == "" {
 		name = op.TaskGID
 	}
+	return name + ": " + what
+}
+
+// DescribeChange says in a few words what an outbox entry changes, without naming the
+// task (e.g. 「名前を「…」に変更」「コメント「…」」). It is the one vocabulary for outbox
+// entries: DescribeOp adds the task, and dropped changes are recorded with it (Discard.Summary).
+func DescribeChange(op Op) string {
+	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	switch op.Kind {
 	case OpCreateTask:
-		return "作成: " + name
-	case OpMoveTask:
-		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
-	case OpRenameSection:
-		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
-	case OpCreateStatus:
-		return fmt.Sprintf("ステータス更新: %s（%s）", name, StatusLabel(fmt.Sprint(op.Payload["status_type"])))
-	case OpAddFollower:
-		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
-	case OpRemoveFollower:
-		return fmt.Sprintf("フォロワーを外す: %s %v", name, op.Payload["user_name"])
-	case OpAddProject:
-		return fmt.Sprintf("プロジェクトに追加: %s → %v", name, op.Payload["project_name"])
-	case OpRemoveProject:
-		return fmt.Sprintf("プロジェクトから外す: %s ← %v", name, op.Payload["project_name"])
+		if str("parent") != "" {
+			return fmt.Sprintf("サブタスク「%s」の作成", str("name"))
+		}
+		return fmt.Sprintf("タスク「%s」の作成", str("name"))
 	case OpDuplicateTask:
-		return "複製: " + name
-	case OpUploadAttachment:
-		return fmt.Sprintf("ファイルを添付: %s ← %v", name, op.Payload["name"])
-	case OpAddTag:
-		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
-	case OpRemoveTag:
-		return fmt.Sprintf("タグを外す: %s #%v", name, op.Payload["tag_name"])
+		return fmt.Sprintf("複製「%s」の作成", str("name"))
 	case OpAddComment:
-		text, _ := op.Payload["text"].(string)
-		if r := []rune(text); len(r) > 30 {
-			text = string(r[:30]) + "…"
+		return fmt.Sprintf("コメント「%s」", clip(str("text"), 40))
+	case OpMoveTask:
+		return fmt.Sprintf("セクション「%s」への移動", str("section_name"))
+	case OpAddTag:
+		return fmt.Sprintf("タグ「%s」の追加", str("tag_name"))
+	case OpRemoveTag:
+		if str("tag_name") != "" {
+			return fmt.Sprintf("タグ「%s」の削除", str("tag_name"))
 		}
-		return fmt.Sprintf("コメント: %s「%s」", name, text)
-	}
-	var parts []string
-	for _, k := range []string{"completed", "name", "notes", "due_on", "assignee"} {
-		v, ok := op.Payload[k]
-		if !ok {
-			continue
+		return "タグの削除"
+	case OpAddFollower:
+		return fmt.Sprintf("フォロワー %s の追加", str("user_name"))
+	case OpRemoveFollower:
+		return fmt.Sprintf("フォロワー %s の削除", str("user_name"))
+	case OpAddProject:
+		return fmt.Sprintf("プロジェクト「%s」への追加", str("project_name"))
+	case OpRemoveProject:
+		return fmt.Sprintf("プロジェクト「%s」からの削除", str("project_name"))
+	case OpUploadAttachment:
+		return fmt.Sprintf("添付「%s」", str("name"))
+	case OpCreateStatus:
+		if str("title") == "" {
+			return fmt.Sprintf("ステータス更新（%s）", StatusLabel(str("status_type")))
 		}
-		switch k {
-		case "completed":
-			if v == true {
-				parts = append(parts, "完了にする")
-			} else {
-				parts = append(parts, "未完了に戻す")
+		return fmt.Sprintf("ステータス更新「%s」", str("title"))
+	case OpRenameSection:
+		if old, _ := op.Base["name"].(string); old != "" {
+			return fmt.Sprintf("セクション名を「%s」から「%s」に変更", old, str("name"))
+		}
+		return fmt.Sprintf("セクション名を「%s」に変更", str("name"))
+	case OpUpdateTask:
+		var parts []string
+		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked"} {
+			v, ok := op.Payload[k]
+			if !ok {
+				continue
 			}
-		case "name":
-			parts = append(parts, fmt.Sprintf("名前→%v", v))
-		case "notes":
-			parts = append(parts, "説明を変更")
-		case "due_on":
-			if v == "" {
-				parts = append(parts, "期日を削除")
-			} else {
-				parts = append(parts, fmt.Sprintf("期日→%v", v))
+			switch k {
+			case "name":
+				parts = append(parts, fmt.Sprintf("名前を「%s」に変更", v))
+			case "completed":
+				parts = append(parts, map[bool]string{true: "完了にする", false: "未完了に戻す"}[v == true])
+			case "due_on":
+				if v == "" {
+					parts = append(parts, "期日を削除")
+				} else {
+					parts = append(parts, fmt.Sprintf("期日を %s に変更", v))
+				}
+			case "assignee":
+				parts = append(parts, "担当者の変更")
+			case "notes":
+				parts = append(parts, "説明の変更")
+			case "liked":
+				parts = append(parts, "いいね")
 			}
-		case "assignee":
-			parts = append(parts, "担当者を変更")
 		}
+		if len(parts) == 0 && op.Payload["html_notes"] != nil {
+			parts = append(parts, "説明の変更")
+		}
+		return strings.Join(parts, "、")
 	}
-	return name + ": " + strings.Join(parts, "、")
+	return op.Kind
+}
+
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
 }

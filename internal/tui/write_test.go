@@ -152,8 +152,8 @@ func TestOutboxDetailLinesAligned(t *testing.T) {
 		t.Fatalf("%q not on screen:\n%s", sub, h.screen())
 		return 0
 	}
-	desc := col("ローカル: 名前→")
-	for _, detail := range []string{"名前: こちら=", "ローカル2: 名前→", "Asana への反映を待っています"} {
+	desc := col("ローカル: 名前を「ローカル」に変更")
+	for _, detail := range []string{"名前: こちら=", "ローカル2: 名前を「ローカル2」に変更", "Asana への反映を待っています"} {
 		if got := col(detail); got != desc {
 			t.Errorf("%q starts at column %d, the description at %d", detail, got, desc)
 		}
