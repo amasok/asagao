@@ -21,15 +21,18 @@ import (
 var version = "dev"
 
 type app struct {
-	cfg  config.Config
-	json bool
+	cfg     config.Config
+	json    bool
+	offline bool
 }
 
 func NewRoot() *cobra.Command {
 	a := &app{}
 	root := &cobra.Command{
 		Use:           "asana-tui",
-		Short:         "Asana をターミナルから操作する TUI / CLI / MCP サーバー",
+		Short:         "Asana をターミナルから操作する TUI / CLI / MCP サーバー（引数なしで TUI を起動）",
+		Args:          cobra.NoArgs,
+		RunE:          func(cmd *cobra.Command, _ []string) error { return a.runTUI(cmd.Context()) },
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
@@ -43,6 +46,7 @@ func NewRoot() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "結果を JSON で出力する")
+	root.Flags().BoolVar(&a.offline, "offline", false, "Asana と同期せず、ローカルストアだけで TUI を起動する")
 	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd())
 	return root
 }

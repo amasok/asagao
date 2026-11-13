@@ -9,15 +9,13 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
 
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
+	"github.com/amasok/asana-tui/internal/browser"
 	"github.com/amasok/asana-tui/internal/config"
 )
 
@@ -126,7 +124,7 @@ func receiveCode(ctx context.Context, oc *oauth2.Config, state string, authOpts 
 	}()
 
 	u := authCodeURL(oc, state, authOpts)
-	if opt.NoBrowser || openBrowser(u) != nil {
+	if opt.NoBrowser || browser.Open(u) != nil {
 		opt.Out("次の URL をブラウザで開いてください:\n\n  %s\n\n", u)
 	} else {
 		opt.Out("ブラウザでログインしてください（開かない場合: %s）\n", u)
@@ -140,22 +138,6 @@ func receiveCode(ctx context.Context, oc *oauth2.Config, state string, authOpts 
 	case <-time.After(5 * time.Minute):
 		return "", errors.New("ログインがタイムアウトしました")
 	}
-}
-
-func openBrowser(u string) error {
-	var cmd string
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = "open"
-	case "linux":
-		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-			return errors.New("no display")
-		}
-		cmd = "xdg-open"
-	default:
-		return errors.New("unsupported OS")
-	}
-	return exec.Command(cmd, u).Start()
 }
 
 func randomString() (string, error) {
