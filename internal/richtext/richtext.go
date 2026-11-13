@@ -337,10 +337,14 @@ func FromPlain(text string) string {
 	return ToMarkdown("<body>" + html.EscapeString(text) + "</body>")
 }
 
-// EditableImageDest is the link target of an image in editable Markdown.
+// EditableImageDest is the link target of an image in editable Markdown. Targets with
+// spaces or brackets are written as <...> (CommonMark), otherwise they would end the link.
 func EditableImageDest(gid string, imageDest func(string) string) string {
 	if imageDest != nil {
 		if d := imageDest(gid); d != "" {
+			if strings.ContainsAny(d, " \t()<>") {
+				return "<" + d + ">"
+			}
 			return d
 		}
 	}

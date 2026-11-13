@@ -137,3 +137,14 @@ func TestEditableImagesAsLocalPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestEditableImagePathWithSpaces(t *testing.T) {
+	path := "/Users/me/Library/Application Support/x/attachments/9-a.png"
+	md := ToEditableMarkdownWith(`<body><img data-asana-gid="9"></body>`, func(string) string { return path })
+	if md != "![画像](<"+path+">)" {
+		t.Fatalf("md = %q", md)
+	}
+	if out := FromMarkdown(md); !strings.Contains(out, `<img data-asana-gid="9"/>`) {
+		t.Fatalf("angle-bracket path should map back: %s", out)
+	}
+}

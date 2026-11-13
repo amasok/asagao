@@ -717,3 +717,33 @@ func TestPushTags(t *testing.T) {
 		t.Fatalf("local tag gid should be replaced: %+v", tags)
 	}
 }
+
+func TestCachedFileNamesAreLinkSafe(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	dir := t.TempDir()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T"}})
+	_ = st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "77", Name: "スクリーンショット 2026-11-13 15.53.03 (2).png"}})
+	// A file cached by an older version, with spaces in its name.
+	old := filepath.Join(dir, "77-スクリーンショット 2026-11-13 15.53.03 (2).png")
+	_ = os.WriteFile(old, []byte("png"), 0o600)
+	_ = st.SetAttachmentPath(ctx, "77", old)
+
+	path, err := (&Syncer{Store: st, CacheDir: dir}).DownloadAttachment(ctx, "t1", "77")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "77-スクリーンショット_2026-11-13_15.53.03__2_.png"); path != want {
+		t.Fatalf("path = %q, want %q", path, want)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("cached file should be renamed")
+	}
+	if a, _ := st.GetAttachment(ctx, "77"); a.LocalPath != path {
+		t.Fatalf("stored path = %q", a.LocalPath)
+	}
+}
