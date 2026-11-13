@@ -100,6 +100,8 @@ type ProjectView struct {
 	Archived     bool          `json:"archived"`
 	PermalinkURL string        `json:"permalink_url"`
 	Sections     []SectionView `json:"sections"`
+	// Status is the type of the latest status update ("" if none).
+	Status string `json:"status,omitempty"`
 }
 
 // --- tasks ---
@@ -340,9 +342,11 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 // --- projects ---
 
 func (s *Store) ListProjects(ctx context.Context, memberOnly bool) ([]ProjectView, error) {
-	q := `SELECT gid, name, workspace_gid, team_name, is_member, archived, permalink_url FROM projects`
+	q := `SELECT gid, name, workspace_gid, team_name, is_member, archived, permalink_url,
+		COALESCE((SELECT status_type FROM status_updates su WHERE su.project_gid = projects.gid ORDER BY created_at DESC LIMIT 1), '')
+		FROM projects WHERE archived = 0`
 	if memberOnly {
-		q += " WHERE is_member = 1"
+		q += " AND is_member = 1"
 	}
 	q += " ORDER BY name"
 	rows, err := s.db.QueryContext(ctx, q)
@@ -352,7 +356,7 @@ func (s *Store) ListProjects(ctx context.Context, memberOnly bool) ([]ProjectVie
 	projects := []ProjectView{}
 	for rows.Next() {
 		var p ProjectView
-		if err := rows.Scan(&p.GID, &p.Name, &p.WorkspaceGID, &p.TeamName, &p.IsMember, &p.Archived, &p.PermalinkURL); err != nil {
+		if err := rows.Scan(&p.GID, &p.Name, &p.WorkspaceGID, &p.TeamName, &p.IsMember, &p.Archived, &p.PermalinkURL, &p.Status); err != nil {
 			rows.Close()
 			return nil, err
 		}

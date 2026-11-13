@@ -26,6 +26,7 @@ const (
 	promptNewTag
 	promptDuplicate
 	promptAttach
+	promptNewProject
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -212,6 +213,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptDuplicate:
 		m.prompt.Prompt = "複製したタスクの名前: "
 		m.prompt.Placeholder = ""
+	case promptNewProject:
+		m.prompt.Prompt = "新しいプロジェクト: "
+		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptAttach:
 		m.prompt.Prompt = "添付するファイル: "
 		m.prompt.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
@@ -248,6 +252,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.duplicate(value)
 		case promptAttach:
 			return m, m.attach(value)
+		case promptNewProject:
+			return m, m.createProject(value)
 		}
 		if m.commentGID != "" {
 			return m, m.addComment(m.commentGID, value)
@@ -428,6 +434,8 @@ func describeOp(op store.Op) string {
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpRenameSection:
 		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
+	case store.OpCreateStatus:
+		return fmt.Sprintf("ステータス更新: %s（%s）", name, store.StatusLabel(fmt.Sprint(op.Payload["status_type"])))
 	case store.OpAddFollower:
 		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
 	case store.OpRemoveFollower:

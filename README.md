@@ -92,6 +92,8 @@ asana-tui --offline  # 同期せず、ローカルストアだけで起動
 | `b` / `<` / `>` | プロジェクト一覧を隠す / 詳細を狭く / 広く | 同じ |
 | **プロジェクト** | | |
 | `E` | セクション名を変更 | `E` |
+| `U` / `W` | ステータス更新を見る / 書く（エディタ） | |
+| `N` / `M` / `X` | 新しいプロジェクト / メンバー / アーカイブ（オンラインのみ） | |
 | **その他** | | |
 | `r` / `!` | 今すぐ同期 / 未送信の変更・競合 | `r` / `!` |
 
@@ -149,6 +151,9 @@ due = ["D", "ctrl+t"]
 | `outbox retry <id>` / `outbox discard <id>` | 失敗した変更を再送 / 変更を取り消す |
 | `mcp [--read-only]` | MCP サーバーとして起動（stdio） |
 | `keys` | キー設定で使える操作名の一覧 |
+| `project status <プロジェクト>` / `project status post` | ステータス更新を見る / 投稿する |
+| `project create <名前>` / `project archive <プロジェクト> [--undo]` | プロジェクトを作る / アーカイブ（オンラインのみ） |
+| `project members <プロジェクト> [--add] [--remove]` | メンバーを表示 / 追加 / 外す（変更はオンラインのみ） |
 
 `task list` と `search` の絞り込み:
 
@@ -189,6 +194,9 @@ claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
 | `move_task` | 別のセクションへ移動（`--read-only` では無効） |
 | `rename_section` | セクションの名前を変更（`--read-only` では無効） |
 | `list_tags` | タグとタスク数 |
+| `get_project` | プロジェクトのセクション・メンバー・ステータス更新 |
+| `create_status_update` | ステータス更新を投稿（`--read-only` では無効） |
+| `create_project` / `update_project` | プロジェクトを作る / アーカイブ・メンバー（オンラインのみ。`--read-only` では無効） |
 | `list_users` | ワークスペースのメンバー（担当者の指定に使う） |
 | `add_comment` | コメント（マークダウン。`--read-only` では無効） |
 

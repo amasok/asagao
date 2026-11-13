@@ -589,6 +589,8 @@ func DescribeOp(op store.Op) string {
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpRenameSection:
 		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
+	case store.OpCreateStatus:
+		return fmt.Sprintf("ステータス更新: %s（%s）", name, store.StatusLabel(fmt.Sprint(op.Payload["status_type"])))
 	case store.OpAddFollower:
 		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
 	case store.OpRemoveFollower:

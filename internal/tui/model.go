@@ -83,6 +83,7 @@ type scope struct {
 	name     string
 	project  string // gid
 	sections []store.SectionView
+	status   string // latest status update type of the project
 }
 
 // row is one line of the task list: a group header or a task.
@@ -180,6 +181,12 @@ type Model struct {
 	calDay   time.Time // selected day
 	calMonth time.Time // month of calTasks
 	calTasks map[string][]store.TaskSummary
+
+	// projects (projects.go)
+	statusView         bool
+	statusOffset       int
+	statuses           []store.StatusUpdateView
+	selectProjectAfter string
 
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
@@ -401,6 +408,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateEdit(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateProjects(msg); ok {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case inlineLoadedMsg:
 		m.onInlineLoaded(msg)
@@ -555,6 +565,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handlePromptKey(msg)
 	case m.showOutbox:
 		return m.handleOutboxKey(key)
+	case m.statusView:
+		return m.handleStatusKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
 	case m.searching:
@@ -726,13 +738,21 @@ func (m *Model) setProjects(ps []store.ProjectView) {
 	current := m.currentScope()
 	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, {kind: scopeRecent, name: "最近の更新"}}
 	for _, p := range ps {
-		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections})
+		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status})
 	}
 	m.scopes = scopes
 	m.scopeCursor = 0
 	for i, s := range scopes {
 		if s.kind == current.kind && s.project == current.project {
 			m.scopeCursor = i
+		}
+	}
+	if m.selectProjectAfter != "" { // a project just created
+		for i, s := range scopes {
+			if s.project == m.selectProjectAfter {
+				m.scopeCursor = i
+				m.selectProjectAfter = ""
+			}
 		}
 	}
 }

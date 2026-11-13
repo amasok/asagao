@@ -75,6 +75,8 @@ func (s *Server) New() *mcp.Server {
 		Description: "List projects and their sections (gid and name). By default only projects I am a member of."}, s.listProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_users", Annotations: readOnly,
 		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_project", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Description: "Get a project: sections, members and its status updates (Markdown, newest first)."}, s.getProject)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_tags", Annotations: readOnly,
 		Description: "List tags used by tasks, with the number of open and total tasks for each."}, s.listTags)
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync_status", Annotations: readOnly,
@@ -105,6 +107,12 @@ func (s *Server) New() *mcp.Server {
 			Description: "Duplicate a task (with its description, assignee, dates, projects, tags, subtasks, attachments and followers)."}, s.duplicateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "upload_attachment", Annotations: write(false),
 			Description: "Attach a local file to a task (max 100MB)."}, s.uploadAttachment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "create_status_update", Annotations: write(false),
+			Description: "Post a status update on a project: status (on_track, at_risk, off_track, on_hold, complete), title and a Markdown text."}, s.createStatus)
+		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
+			Description: "Create a project (needs Asana to be reachable)."}, s.createProject)
+		mcp.AddTool(srv, &mcp.Tool{Name: "update_project", Annotations: write(true),
+			Description: "Archive / unarchive a project or add / remove its members (needs Asana to be reachable). Ask before archiving."}, s.updateProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "resolve_outbox", Annotations: write(true),
 			Description: "Resolve a local change that could not be sent (see sync_status.outbox): keep_local overwrites " +
 				"Asana with the local value, keep_remote drops the local change, retry resends a failed entry, discard drops it. " +
@@ -796,4 +804,152 @@ func (s *Server) uploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, i
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.TaskGID), nil
+}
+
+type ProjectInput struct {
+	Project string `json:"project" jsonschema:"project gid or name"`
+}
+
+type ProjectOutput struct {
+	Project  store.ProjectView `json:"project"`
+	Members  []store.UserRef   `json:"members"`
+	Statuses []StatusOutput    `json:"status_updates"`
+	Note     string            `json:"note,omitempty"`
+}
+
+type StatusOutput struct {
+	GID       string `json:"gid"`
+	Status    string `json:"status"`
+	Title     string `json:"title"`
+	Author    string `json:"author"`
+	CreatedAt string `json:"created_at"`
+	Markdown  string `json:"markdown"`
+	Pending   bool   `json:"pending"`
+}
+
+func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in ProjectInput) (*mcp.CallToolResult, ProjectOutput, error) {
+	var out ProjectOutput
+	gid, err := s.Store.ResolveProject(ctx, in.Project)
+	if err != nil {
+		return nil, out, err
+	}
+	if syncer, err := s.getSyncer(ctx); err == nil {
+		if err := syncer.FetchStatusUpdates(ctx, gid); err != nil {
+			out.Note = "status updates from the local cache: " + err.Error()
+		}
+	}
+	projects, err := s.Store.ListProjects(ctx, false)
+	if err != nil {
+		return nil, out, err
+	}
+	for _, p := range projects {
+		if p.GID == gid {
+			out.Project = p
+		}
+	}
+	if out.Members, err = s.Store.ProjectMembers(ctx, gid); err != nil {
+		return nil, out, err
+	}
+	updates, err := s.Store.StatusUpdates(ctx, gid)
+	if err != nil {
+		return nil, out, err
+	}
+	out.Statuses = []StatusOutput{}
+	for _, u := range updates {
+		out.Statuses = append(out.Statuses, StatusOutput{GID: u.GID, Status: u.StatusType, Title: u.Title, Author: u.Author,
+			CreatedAt: u.CreatedAt, Markdown: editableMarkdown(u.HTMLText, u.Text), Pending: u.Pending})
+	}
+	return nil, out, nil
+}
+
+type CreateStatusInput struct {
+	Project string `json:"project" jsonschema:"project gid or name"`
+	Status  string `json:"status" jsonschema:"on_track, at_risk, off_track, on_hold or complete"`
+	Title   string `json:"title,omitempty" jsonschema:"short title"`
+	Text    string `json:"text" jsonschema:"the update in Markdown"`
+}
+
+func (s *Server) createStatus(ctx context.Context, _ *mcp.CallToolRequest, in CreateStatusInput) (*mcp.CallToolResult, WriteOutput, error) {
+	gid, err := s.Store.ResolveProject(ctx, in.Project)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	me, err := s.Store.Me(ctx)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	if _, err := s.Store.CreateStatusLocal(ctx, gid, in.Status, in.Title, richtext.PlainFromMarkdown(in.Text), richtext.FromMarkdown(in.Text), me, s.Now()); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	out := s.push(ctx, "")
+	return nil, out, nil
+}
+
+type CreateProjectInput struct {
+	Name string `json:"name" jsonschema:"project name"`
+}
+
+type ProjectWriteOutput struct {
+	ProjectGID string `json:"project_gid"`
+	Note       string `json:"note,omitempty"`
+}
+
+func (s *Server) createProject(ctx context.Context, _ *mcp.CallToolRequest, in CreateProjectInput) (*mcp.CallToolResult, ProjectWriteOutput, error) {
+	syncer, err := s.getSyncer(ctx)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, fmt.Errorf("Asana に接続できないため作れません: %w", err)
+	}
+	p, err := syncer.CreateProject(ctx, in.Name)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, err
+	}
+	return nil, ProjectWriteOutput{ProjectGID: p.GID}, nil
+}
+
+type UpdateProjectInput struct {
+	Project       string   `json:"project" jsonschema:"project gid or name"`
+	Archived      *bool    `json:"archived,omitempty" jsonschema:"true to archive, false to unarchive"`
+	AddMembers    []string `json:"add_members,omitempty" jsonschema:"\"me\", user names or gids to add"`
+	RemoveMembers []string `json:"remove_members,omitempty" jsonschema:"\"me\", user names or gids to remove"`
+}
+
+func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in UpdateProjectInput) (*mcp.CallToolResult, ProjectWriteOutput, error) {
+	gid, err := s.Store.ResolveProject(ctx, in.Project)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, err
+	}
+	syncer, err := s.getSyncer(ctx)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, fmt.Errorf("Asana に接続できないため変更できません: %w", err)
+	}
+	resolve := func(names []string) ([]string, error) {
+		var gids []string
+		for _, n := range names {
+			g, err := s.Store.ResolveUser(ctx, n)
+			if err != nil {
+				return nil, err
+			}
+			gids = append(gids, g)
+		}
+		return gids, nil
+	}
+	add, err := resolve(in.AddMembers)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, err
+	}
+	remove, err := resolve(in.RemoveMembers)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, err
+	}
+	if len(add)+len(remove) > 0 {
+		if err := syncer.SetProjectMembers(ctx, gid, add, remove); err != nil {
+			return nil, ProjectWriteOutput{}, err
+		}
+	}
+	if in.Archived != nil {
+		if err := syncer.SetProjectArchived(ctx, gid, *in.Archived); err != nil {
+			return nil, ProjectWriteOutput{}, err
+		}
+	}
+	return nil, ProjectWriteOutput{ProjectGID: gid}, nil
 }

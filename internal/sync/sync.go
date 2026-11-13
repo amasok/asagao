@@ -162,6 +162,11 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			if err := s.Store.ReplaceSections(ctx, p.GID, secs); err != nil {
 				return res, err
 			}
+			if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
+				if err := s.Store.ReplaceStatusUpdates(ctx, p.GID, updates); err != nil {
+					return res, err
+				}
+			}
 			tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
 				Project: p.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
 			})

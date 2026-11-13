@@ -48,14 +48,15 @@ func (m *Model) keyContext() keyCtx {
 }
 
 type action struct {
-	id       string   // name used in config.toml [keys] to rebind the shortcut
-	key      string   // key in the space menu
-	shortcut []string // keys that work directly
-	group    string
-	label    string
-	ctx      keyCtx
-	needTask bool // needs a selected (or shown) task
-	run      func(m *Model) tea.Cmd
+	id          string   // name used in config.toml [keys] to rebind the shortcut
+	key         string   // key in the space menu
+	shortcut    []string // keys that work directly
+	group       string
+	label       string
+	ctx         keyCtx
+	needTask    bool // needs a selected (or shown) task
+	needProject bool // needs a project to be open
+	run         func(m *Model) tea.Cmd
 }
 
 const (
@@ -100,6 +101,11 @@ func (m *Model) actions() []action {
 		{id: "narrower", key: "<", shortcut: []string{"<"}, group: groupView, label: "詳細を狭く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("<") }},
 		// project
 		{id: "rename_section", key: "E", shortcut: []string{"E"}, group: groupProject, label: "セクション名を変更", ctx: ctxList | ctxBoard | ctxDetail, run: (*Model).startRenameSection},
+		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
+		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
+		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
+		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
+		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other
 		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},
 		{id: "outbox", key: "!", shortcut: []string{"!"}, group: groupOther, label: "未送信の変更・競合", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("!") }},
@@ -133,7 +139,7 @@ func (m *Model) available() []action {
 	hasTask := m.actionTask() != nil
 	var out []action
 	for _, a := range m.withBindings(m.actions()) {
-		if a.ctx&ctx == 0 || (a.needTask && !hasTask) {
+		if a.ctx&ctx == 0 || (a.needTask && !hasTask) || (a.needProject && m.currentProject() == "") {
 			continue
 		}
 		out = append(out, a)

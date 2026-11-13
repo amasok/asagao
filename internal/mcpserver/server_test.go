@@ -112,8 +112,8 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_task", "duplicate_task", "get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_task", "upload_attachment"}},
-		{true, []string{"get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
+		{false, []string{"add_comment", "create_project", "create_status_update", "create_task", "duplicate_task", "get_attachment", "get_project", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_project", "update_task", "upload_attachment"}},
+		{true, []string{"get_attachment", "get_project", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
@@ -419,5 +419,26 @@ func TestTaskExtras(t *testing.T) {
 	d, _ = st.GetTask(ctx, "t1")
 	if len(d.Attachments) != 1 || d.Attachments[0].Name != "見積 書.pdf" || strings.Contains(filepath.Base(d.Attachments[0].LocalPath), " ") {
 		t.Fatalf("attachments = %+v", d.Attachments)
+	}
+}
+
+func TestProjectStatusAndOnlineOnly(t *testing.T) {
+	st := seed(t)
+	cs := connect(t, &Server{Store: st}) // offline
+	var w WriteOutput
+	call(t, cs, "create_status_update", map[string]any{"project": "新居", "status": "at_risk", "title": "遅れ気味", "text": "**家具**の到着が遅れる"}, &w)
+	var p ProjectOutput
+	call(t, cs, "get_project", map[string]any{"project": "新居"}, &p)
+	if len(p.Statuses) != 1 || p.Statuses[0].Status != "at_risk" || p.Statuses[0].Markdown != "**家具**の到着が遅れる" || !p.Statuses[0].Pending {
+		t.Fatalf("statuses = %+v", p.Statuses)
+	}
+	if p.Project.Status != "at_risk" || len(p.Project.Sections) != 2 {
+		t.Fatalf("project = %+v", p.Project)
+	}
+	if msg := toolError(call(t, cs, "create_status_update", map[string]any{"project": "新居", "status": "great", "text": "x"}, nil)); !strings.Contains(msg, "on_track") {
+		t.Fatalf("bad status error = %q", msg)
+	}
+	if msg := toolError(call(t, cs, "create_project", map[string]any{"name": "新規"}, nil)); !strings.Contains(msg, "接続できない") {
+		t.Fatalf("offline create_project should explain: %q", msg)
 	}
 }

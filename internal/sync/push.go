@@ -68,6 +68,8 @@ func (s *Syncer) Push(ctx context.Context) (PushResult, error) {
 			err = s.pushDuplicate(ctx, *op)
 		case store.OpUploadAttachment:
 			err = s.pushUpload(ctx, *op)
+		case store.OpCreateStatus:
+			err = s.pushStatus(ctx, *op)
 		case store.OpRenameSection:
 			var conflict bool
 			conflict, err = s.pushRenameSection(ctx, *op)

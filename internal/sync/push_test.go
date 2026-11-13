@@ -830,3 +830,83 @@ func TestPushTaskExtras(t *testing.T) {
 		t.Fatalf("uploaded attachment = %+v", d.Attachments)
 	}
 }
+
+func TestProjectOperations(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+string(b))
+		switch {
+		case r.URL.Path == "/projects" && r.Method == http.MethodPost:
+			fmt.Fprint(w, `{"data":{"gid":"P9","name":"新規","workspace":{"gid":"w1"},"members":[{"gid":"me","name":"Me"}]}}`)
+		case r.URL.Path == "/projects/P9/sections":
+			fmt.Fprint(w, `{"data":[{"gid":"S1","name":"Untitled section"}]}`)
+		case strings.HasSuffix(r.URL.Path, "/addMembers"):
+			fmt.Fprint(w, `{"data":{"gid":"P9","name":"新規","workspace":{"gid":"w1"},"members":[{"gid":"me","name":"Me"},{"gid":"u2","name":"Partner"}]}}`)
+		case r.URL.Path == "/status_updates" && r.Method == http.MethodPost:
+			fmt.Fprint(w, `{"data":{"gid":"ST1","status_type":"on_track","title":"t","text":"x","created_at":"2026-11-13T00:00:00Z"}}`)
+		case r.URL.Path == "/status_updates":
+			fmt.Fprint(w, `{"data":[{"gid":"ST0","status_type":"off_track","title":"old","text":"y","author":{"gid":"me","name":"Me"},"created_at":"2026-11-01T00:00:00Z"}]}`)
+		default:
+			fmt.Fprint(w, `{"data":{"gid":"P9","name":"新規","archived":true}}`)
+		}
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1"}})
+	_ = st.SetSyncState(ctx, store.KeyMeGID, "me")
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st}
+
+	p, err := s.CreateProject(ctx, "新規")
+	if err != nil || p.GID != "P9" {
+		t.Fatalf("create = %+v %v", p, err)
+	}
+	ps, _ := st.ListProjects(ctx, true)
+	if len(ps) != 1 || ps[0].Name != "新規" || len(ps[0].Sections) != 1 {
+		t.Fatalf("stored project = %+v", ps)
+	}
+	if err := s.SetProjectMembers(ctx, "P9", []string{"u2"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := st.ProjectMembers(ctx, "P9"); len(m) != 2 {
+		t.Fatalf("members = %+v", m)
+	}
+	if !strings.Contains(strings.Join(calls, "\n"), `POST /projects/P9/addMembers {"data":{"members":"u2"}}`) {
+		t.Fatalf("addMembers body: %v", calls)
+	}
+
+	// Status updates: fetched list + a local one sent on push.
+	if err := s.FetchStatusUpdates(ctx, "P9"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateStatusLocal(ctx, "P9", "on_track", "t", "x", "<body>x</body>", store.UserRef{Name: "Me"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	ups, _ := st.StatusUpdates(ctx, "P9")
+	if len(ups) != 2 || ups[0].GID != "ST1" || ups[1].GID != "ST0" {
+		t.Fatalf("statuses = %+v", ups)
+	}
+	if ps, _ := st.ListProjects(ctx, true); ps[0].Status != "on_track" {
+		t.Fatalf("latest status = %q", ps[0].Status)
+	}
+
+	if err := s.SetProjectArchived(ctx, "P9", true); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := st.ListProjects(ctx, false); len(ps) != 0 {
+		t.Fatal("archived project should leave the list")
+	}
+	if _, err := (&Syncer{Store: st}).CreateProject(ctx, "x"); err != ErrOffline {
+		t.Fatalf("offline create = %v", err)
+	}
+}

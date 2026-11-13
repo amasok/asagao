@@ -255,6 +255,8 @@ const (
 	pickDayTask
 	pickFollowers
 	pickProjects
+	pickMembers
+	pickArchive
 )
 
 type pickerItem struct {
@@ -369,6 +371,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.toggleFollower(p.task, item)
 		case pickProjects:
 			return m, m.toggleProject(p.task, item)
+		case pickMembers:
+			return m, m.toggleMember(p.project, item)
 		}
 		if key == "space" {
 			return m, nil
@@ -377,6 +381,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		switch p.kind {
 		case pickDayTask:
 			return m, m.openTaskDetail(item.value)
+		case pickArchive:
+			return m, m.archive(item.value)
 		case pickDue:
 			if item.value == "?" {
 				return m, m.startDuePrompt(p.task)
