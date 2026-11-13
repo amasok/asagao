@@ -339,9 +339,10 @@ func (s *Store) GetOp(ctx context.Context, id int64) (*Op, error) {
 }
 
 func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, ''), o.payload, o.base,
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name, ''), o.payload, o.base,
 		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at
-		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
+		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid
+		LEFT JOIN projects pr ON pr.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -438,6 +439,11 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 			}
 		case OpDuplicateTask:
 			if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE gid = ?", op.TaskGID); err != nil {
+				return err
+			}
+		case OpCreateStatus:
+			gid, _ := op.Payload["status"].(string)
+			if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid); err != nil {
 				return err
 			}
 		case OpUploadAttachment:

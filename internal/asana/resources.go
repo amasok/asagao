@@ -83,7 +83,7 @@ type Task struct {
 // Fields requested for each resource (keep responses small; see requirements 8 章).
 var (
 	userFields    = []string{"name", "email", "workspaces.name"}
-	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members", "permalink_url", "modified_at"}
+	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members.name", "permalink_url", "modified_at"}
 	sectionFields = []string{"name", "project"}
 	TaskFields    = []string{
 		"name", "notes", "html_notes", "resource_subtype", "completed", "completed_at",
@@ -386,4 +386,73 @@ func (c *Client) UploadAttachment(ctx context.Context, parentGID, fileName strin
 		return nil, err
 	}
 	return &env.Data, nil
+}
+
+// --- projects and status updates ---
+
+type StatusUpdate struct {
+	GID        string    `json:"gid"`
+	StatusType string    `json:"status_type"` // on_track, at_risk, off_track, on_hold, complete
+	Title      string    `json:"title"`
+	Text       string    `json:"text"`
+	HTMLText   string    `json:"html_text"`
+	Author     *Ref      `json:"author"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+var statusFields = []string{"status_type", "title", "text", "html_text", "author.name", "created_at"}
+
+// StatusUpdates lists a project's status updates, newest first.
+func (c *Client) StatusUpdates(ctx context.Context, projectGID string) ([]StatusUpdate, error) {
+	q := fields(statusFields)
+	q.Set("parent", projectGID)
+	return list[StatusUpdate](ctx, c, "/status_updates", q)
+}
+
+// CreateStatusUpdate posts a status update on a project.
+func (c *Client) CreateStatusUpdate(ctx context.Context, projectGID, statusType, title, text, htmlText string) (*StatusUpdate, error) {
+	body := map[string]any{"parent": projectGID, "status_type": statusType, "title": title, "text": text}
+	if htmlText != "" {
+		body["html_text"] = htmlText
+	}
+	var s StatusUpdate
+	_, err := c.do(ctx, http.MethodPost, "/status_updates", fields(statusFields), body, &s)
+	return &s, err
+}
+
+// CreateProject creates a project in a workspace (team is needed for organizations).
+func (c *Client) CreateProject(ctx context.Context, workspaceGID, teamGID, name string) (*Project, error) {
+	body := map[string]any{"name": name, "workspace": workspaceGID}
+	if teamGID != "" {
+		body["team"] = teamGID
+	}
+	var p Project
+	_, err := c.do(ctx, http.MethodPost, "/projects", fields(projectFields), body, &p)
+	return &p, err
+}
+
+// SetProjectArchived archives or unarchives a project.
+func (c *Client) SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*Project, error) {
+	var p Project
+	_, err := c.do(ctx, http.MethodPut, "/projects/"+url.PathEscape(projectGID), fields(projectFields), map[string]any{"archived": archived}, &p)
+	return &p, err
+}
+
+// AddMembers / RemoveMembers change a project's members.
+func (c *Client) AddMembers(ctx context.Context, projectGID string, users []string) (*Project, error) {
+	var p Project
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/addMembers", fields(projectFields), map[string]any{"members": strings.Join(users, ",")}, &p)
+	return &p, err
+}
+
+func (c *Client) RemoveMembers(ctx context.Context, projectGID string, users []string) (*Project, error) {
+	var p Project
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/removeMembers", fields(projectFields), map[string]any{"members": strings.Join(users, ",")}, &p)
+	return &p, err
+}
+
+// Project returns one project.
+func (c *Client) Project(ctx context.Context, gid string) (*Project, error) {
+	var p Project
+	return &p, c.get(ctx, "/projects/"+url.PathEscape(gid), fields(projectFields), &p)
 }

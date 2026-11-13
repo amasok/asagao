@@ -36,6 +36,8 @@ func (m *Model) render() string {
 		body = m.renderHelp(m.width, bodyH)
 	} else if m.showOutbox {
 		body = m.renderOutbox(m.width, bodyH)
+	} else if m.statusView {
+		body = m.renderStatuses(m.width, bodyH)
 	} else if m.picker != nil {
 		body = m.renderPicker(m.width, bodyH)
 	} else if m.leader {
@@ -180,7 +182,11 @@ func (m *Model) pane(title string, lines []string, w, h int, focused bool) strin
 // --- header / footer ---
 
 func (m *Model) renderHeader() string {
-	left := m.st.header.Render(" asana-tui ") + " " + m.st.headerScope.Render(m.currentScope().name) +
+	badge := ""
+	if sc := m.currentScope(); sc.status != "" {
+		badge = " " + m.statusBadge(sc.status) // latest project status
+	}
+	left := m.st.header.Render(" asana-tui ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
 		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
 	if m.tagFilter != "" {
 		left += "  " + m.st.tag.Render("#"+m.tagFilter)

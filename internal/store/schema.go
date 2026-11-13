@@ -185,4 +185,23 @@ CREATE TABLE task_followers (
 	PRIMARY KEY (task_gid, user_gid)
 );
 `,
+	`
+-- Project members and status updates.
+CREATE TABLE project_members (
+	project_gid TEXT NOT NULL,
+	user_gid    TEXT NOT NULL,
+	PRIMARY KEY (project_gid, user_gid)
+);
+CREATE TABLE status_updates (
+	gid         TEXT PRIMARY KEY,
+	project_gid TEXT NOT NULL,
+	status_type TEXT NOT NULL DEFAULT '',
+	title       TEXT NOT NULL DEFAULT '',
+	text        TEXT NOT NULL DEFAULT '',
+	html_text   TEXT NOT NULL DEFAULT '',
+	author_name TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX status_updates_project ON status_updates(project_gid, created_at);
+`,
 }

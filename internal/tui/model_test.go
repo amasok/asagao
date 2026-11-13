@@ -1362,3 +1362,43 @@ func TestDetailExtras(t *testing.T) {
 		t.Fatalf("duplicate = %+v", tasks)
 	}
 }
+
+func TestProjectStatusInTUI(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	_ = st.ReplaceStatusUpdates(ctx, "p1", []asana.StatusUpdate{{GID: "s0", StatusType: "off_track", Title: "先週",
+		HTMLText: "<body><strong>見積</strong>待ち</body>", Author: &asana.Ref{Name: "Partner"}, CreatedAt: testNow.Add(-48 * time.Hour)}})
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow },
+		RunEditor: fakeEditor(t, func(s string) string {
+			return strings.Replace(s, "status: off_track", "status: on_track", 1) + "家具の**手配**が終わった\n"
+		})})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("h", "j", "j", "l")
+	if s := h.screen(); !strings.Contains(s, "新居プロジェクト [遅れ]") {
+		t.Fatalf("header should show the latest status:\n%s", s)
+	}
+	h.key("space", "U")
+	s := h.screen()
+	if !strings.Contains(s, "ステータス更新（新居プロジェクト）") || !strings.Contains(s, "[遅れ]  先週") || !strings.Contains(s, "見積待ち") {
+		t.Fatalf("status view:\n%s", s)
+	}
+	h.key("W") // write a new one from the status view
+	ups, _ := st.StatusUpdates(ctx, "p1")
+	if len(ups) != 2 || ups[0].StatusType != "on_track" || !strings.Contains(ups[0].HTMLText, "<strong>手配</strong>") {
+		t.Fatalf("new status = %+v", ups)
+	}
+	if !strings.Contains(h.screen(), "新居プロジェクト [順調]") {
+		t.Fatalf("header should show the new status:\n%s", h.screen())
+	}
+	// Online-only actions explain themselves when offline.
+	h.key("space", "M")
+	if !strings.Contains(h.screen(), "オフラインのためできません") {
+		t.Fatalf("members offline:\n%s", h.screen())
+	}
+	h.key("space", "N")
+	if h.m.promptMode != promptNone {
+		t.Fatal("new project must not prompt while offline")
+	}
+}

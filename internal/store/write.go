@@ -34,6 +34,20 @@ func (s *Store) UpsertProjects(ctx context.Context, workspaceGID string, ps []as
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, p := range ps {
 			isMember := slices.ContainsFunc(p.Members, func(r asana.Ref) bool { return r.GID == meGID })
+			if p.Members != nil {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM project_members WHERE project_gid = ?", p.GID); err != nil {
+					return err
+				}
+				for _, u := range p.Members {
+					if _, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name) VALUES(?, ?)
+						ON CONFLICT(gid) DO UPDATE SET name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE users.name END`, u.GID, u.Name); err != nil {
+						return err
+					}
+					if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO project_members(project_gid, user_gid) VALUES(?, ?)", p.GID, u.GID); err != nil {
+						return err
+					}
+				}
+			}
 			var teamGID, teamName string
 			if p.Team != nil {
 				teamGID, teamName = p.Team.GID, p.Team.Name
