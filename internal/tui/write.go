@@ -6,9 +6,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/sync"
 )
 
 // Writes (complete / create / comment) are applied to the local store immediately and
@@ -33,14 +36,19 @@ type outboxCounts struct{ pending, conflict, failed int }
 
 type (
 	outboxLoadedMsg struct {
-		counts outboxCounts
-		ops    []store.Op
-		err    error
+		counts   outboxCounts
+		ops      []store.Op
+		discards []store.Discard // dropped changes to announce (now marked as notified)
+		recent   []store.Discard // recently dropped changes, to show in full
+		// discardErr: the dropped changes could not be read; the outbox itself still opens.
+		discardErr error
+		err        error
 	}
 	writeDoneMsg struct {
-		status string
-		gid    string // task to select afterwards
-		err    error
+		status  string
+		gid     string // task to select afterwards
+		refresh string // task to fetch again from Asana (after dropping a local change)
+		err     error
 	}
 )
 
@@ -54,7 +62,34 @@ func (m *Model) loadOutbox() tea.Cmd {
 			return outboxLoadedMsg{err: err}
 		}
 		ops, err := st.ListOps(m.ctx)
-		return outboxLoadedMsg{counts: c, ops: ops, err: err}
+		if err != nil {
+			return outboxLoadedMsg{err: err}
+		}
+		// Changes dropped because their task was deleted in Asana are announced once
+		// (here or by the CLI); if marking fails they are announced again next time.
+		// Changes deleted by a reset are not announced: the user confirmed them and was
+		// shown the backup (they are still listed in the overlay).
+		// The dropped changes are extra information: if they cannot be read (e.g. one bad
+		// row), the outbox still opens so conflicts and failures can be resolved.
+		pending, discardErr := st.PendingDiscards(m.ctx)
+		var discards []store.Discard
+		if discardErr == nil && len(pending) > 0 {
+			ids := make([]int64, len(pending))
+			for i, d := range pending {
+				ids[i] = d.ID
+				if !store.IsResetDiscard(d) {
+					discards = append(discards, d)
+				}
+			}
+			if err := st.MarkDiscardsNotified(m.ctx, ids); err != nil {
+				discards = nil
+			}
+		}
+		recent, err := st.RecentDiscards(m.ctx, recentDiscards)
+		if err != nil {
+			discardErr = err
+		}
+		return outboxLoadedMsg{counts: c, ops: ops, discards: discards, recent: recent, discardErr: discardErr}
 	}
 }
 
@@ -82,6 +117,13 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if msg.err == nil {
 			m.outbox, m.ops = msg.counts, msg.ops
 			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
+			m.discards = msg.recent
+			if len(msg.discards) > 0 {
+				m.status = m.discardStatus(msg.discards)
+			}
+			if msg.discardErr != nil {
+				m.status = "破棄した変更の記録を読み込めませんでした（未送信の変更の一覧は使えます）: " + msg.discardErr.Error()
+			}
 		}
 		return m, nil, true
 	case taskTagsMsg:
@@ -122,6 +164,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.showTagPicker(msg.tags)
 		}
 		return m, nil, true
+	case resetAskMsg, resetDoneMsg:
+		cmd, _ := m.updateReset(msg)
+		return m, cmd, true
 	case writeDoneMsg:
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
@@ -130,6 +175,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.status = msg.status
 		if msg.gid != "" {
 			m.selectAfter = msg.gid
+		}
+		if msg.refresh != "" {
+			return m, tea.Batch(m.afterWrite(), m.fetchDetails(msg.refresh)), true
 		}
 		return m, m.afterWrite(), true
 	}
@@ -168,7 +216,7 @@ func (m *Model) writeKey(key string) tea.Cmd {
 		m.commentGID = t.GID
 		return m.prompt.Focus()
 	case "!":
-		m.showOutbox = true
+		m.showOutbox, m.outboxTop = true, 0
 		return m.loadOutbox()
 	}
 	return nil
@@ -320,7 +368,8 @@ func (m *Model) addComment(taskGID, text string) tea.Cmd {
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
-		if _, err := st.AddCommentLocal(m.ctx, taskGID, text, me, now); err != nil {
+		// Markdown -> Asana rich text, like the comment editor (C), the CLI and MCP
+		if _, err := st.AddRichCommentLocal(m.ctx, taskGID, richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}
@@ -350,13 +399,22 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	if m.opCursor < len(m.ops) {
 		op = &m.ops[m.opCursor]
 	}
-	st := m.deps.Store
-	act := func(fn func() error, status string) tea.Cmd {
+	resolve := func(action sync.ResolveAction, status string) tea.Cmd {
+		if op == nil {
+			return nil
+		}
+		if op.State == store.OpSending { // the keys do nothing while Push has it
+			m.status = "送信中の変更は操作できません（送信が終わると結果が表示されます）"
+			return nil
+		}
+		st, id := m.deps.Store, op.ID
 		return func() tea.Msg {
-			if err := fn(); err != nil {
+			r, err := sync.Resolve(m.ctx, st, id, action)
+			if err != nil {
 				return writeDoneMsg{err: err}
 			}
-			return writeDoneMsg{status: status}
+			// afterWrite requests a sync, which sends a requeued entry.
+			return writeDoneMsg{status: status, refresh: r.RefreshGID}
 		}
 	}
 	switch key {
@@ -364,112 +422,141 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 		m.showOutbox = false
 	case "j", "down":
 		m.opCursor = clamp(m.opCursor+1, 0, max(0, len(m.ops)-1))
+		m.showOpCursor()
 	case "k", "up":
 		m.opCursor = clamp(m.opCursor-1, 0, max(0, len(m.ops)-1))
-	case "l": // keep local
-		if op != nil && op.State == store.OpConflict {
-			id := op.ID
-			return m, act(func() error { return st.ResolveKeepLocal(m.ctx, id) }, "こちらの値で上書きします")
-		}
-	case "s", "d": // keep server / discard
-		if op != nil {
-			id, gid, kind := op.ID, op.TaskGID, op.Kind
-			cmd := act(func() error { return st.DiscardOp(m.ctx, id) }, "取り消しました")
-			if kind != store.OpCreateTask && m.syncer != nil {
-				return m, tea.Batch(cmd, m.fetchDetails(gid))
-			}
-			return m, cmd
-		}
+		m.showOpCursor()
+	case "ctrl+d", "pgdown": // scroll, e.g. through the full text of dropped changes
+		m.outboxTop += max(1, m.outboxHeight()/2)
+	case "ctrl+u", "pgup":
+		m.outboxTop = max(0, m.outboxTop-max(1, m.outboxHeight()/2))
+	case "l":
+		return m, resolve(sync.KeepLocal, "こちらの値で上書きします")
+	case "s":
+		return m, resolve(sync.KeepRemote, "Asana の値を採用しました")
+	case "d":
+		return m, resolve(sync.Discard, "取り消しました")
 	case "R":
-		if op != nil && op.State == store.OpFailed {
-			id := op.ID
-			return m, act(func() error { return st.RetryOp(m.ctx, id) }, "もう一度送ります")
-		}
+		return m, resolve(sync.Retry, "もう一度送ります")
 	}
 	return m, nil
 }
 
+// discardStatus is the one-line notice for changes dropped by a push.
+func (m *Model) discardStatus(ds []store.Discard) string {
+	s := store.DiscardNotice + ": " + store.DiscardLine(ds[0])
+	if len(ds) > 1 {
+		s += fmt.Sprintf(" ほか %d 件（%s で一覧）", len(ds)-1, m.actionKey("outbox"))
+	}
+	return s
+}
+
+// actionKey is how to run action id with the user's key bindings: its first shortcut, or
+// the space menu key.
+func (m *Model) actionKey(id string) string {
+	for _, a := range m.withBindings(m.actions()) {
+		if a.id == id {
+			if len(a.shortcut) > 0 {
+				return a.shortcut[0]
+			}
+			return "space " + a.key
+		}
+	}
+	return "space"
+}
+
+// opStateWidth fits the widest state label, "[自動確認中]"; detail lines under an entry
+// start where its description does.
+const opStateWidth = 12
+
+var opDetailIndent = strings.Repeat(" ", opStateWidth+1)
+
+// recentDiscards is how many dropped changes the outbox overlay lists.
+const recentDiscards = 20
+
+// outboxHeight is the number of overlay lines on screen (see View and pane).
+func (m *Model) outboxHeight() int { return max(1, max(3, m.height-2)-3) }
+
+// showOpCursor scrolls the overlay so that the selected entry is on screen.
+func (m *Model) showOpCursor() {
+	line := m.outboxCursorLine()
+	if line < m.outboxTop {
+		m.outboxTop = line
+	} else if line >= m.outboxTop+m.outboxHeight() {
+		m.outboxTop = line - m.outboxHeight() + 1
+	}
+}
+
+// outboxCursorLine is the overlay line of the selected entry (see outboxLines).
+func (m *Model) outboxCursorLine() int {
+	line := 2 // help, blank
+	for _, op := range m.ops[:min(m.opCursor, len(m.ops))] {
+		line++
+		line += len(op.Conflict)
+		if _, text := store.OpNote(op); text != "" {
+			line++
+		}
+	}
+	return line
+}
+
 func (m *Model) renderOutbox(w, h int) string {
+	lines := m.outboxLines(w - 4)
+	visible := max(1, h-3)
+	m.outboxTop = clamp(m.outboxTop, 0, max(0, len(lines)-visible))
+	return m.pane("未送信の変更", lines[m.outboxTop:], w, h, true)
+}
+
+// outboxLines are all the lines of the outbox overlay for an inner width.
+func (m *Model) outboxLines(inner int) []string {
 	lines := []string{
-		m.st.dim.Render("j/k 移動   l こちらの値で上書き（競合）   s Asana の値を採用（競合）   d 取り消し   R 再送（失敗）   esc 閉じる"),
+		m.st.dim.Render("j/k 移動   l こちらの値で上書き（競合）   s Asana の値を採用（競合）   d 取り消し   R 再送（失敗）   ctrl+d/u スクロール   esc 閉じる"),
 		"",
 	}
 	if len(m.ops) == 0 {
 		lines = append(lines, "未送信の変更はありません")
 	}
 	for i, op := range m.ops {
-		state := map[string]string{store.OpPending: "未送信", store.OpConflict: "競合", store.OpFailed: "失敗"}[op.State]
-		style := m.st.dim
+		style := m.st.dim // pending, sending (Push has it; nothing to resolve)
 		switch op.State {
 		case store.OpConflict:
 			style = m.st.today
 		case store.OpFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+state+"]", 8)) + " " + describeOp(op)
-		lines = append(lines, m.highlight(line, w-4, i == m.opCursor, true))
+		line := style.Render(padRight("["+store.OpLabel(op)+"]", opStateWidth)) + " " + store.DescribeOp(op)
+		lines = append(lines, m.highlight(line, inner, i == m.opCursor, true))
 		for k, v := range op.Conflict {
-			lines = append(lines, fmt.Sprintf("           %s: こちら=%v / Asana=%v", fieldLabel(k), op.Payload[k], v))
+			lines = append(lines, fmt.Sprintf("%s%s: こちら=%v / Asana=%v", opDetailIndent, store.FieldLabel(k), op.Payload[k], v))
 		}
-		if op.LastError != "" {
-			lines = append(lines, m.st.errorText.Render("           "+op.LastError))
+		if _, text := store.OpNote(op); text != "" {
+			note := m.st.dim // e.g. being checked against Asana: nothing to do
+			if op.State == store.OpFailed {
+				note = m.st.errorText
+			}
+			lines = append(lines, note.Render(opDetailIndent+text))
 		}
 	}
-	return m.pane("未送信の変更", lines, w, h, true)
+	if len(m.discards) > 0 {
+		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
+		for _, d := range m.discards {
+			lines = append(lines, "  "+store.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
+			for _, dt := range store.DiscardDetails(d) {
+				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))
+				for _, l := range strings.Split(ansi.Wrap(dt.Text, max(10, inner-6), ""), "\n") {
+					lines = append(lines, "      "+l)
+				}
+			}
+		}
+	}
+	return lines
 }
 
-func fieldLabel(k string) string {
-	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]
-}
-
-func describeOp(op store.Op) string {
-	name := op.TaskName
-	if name == "" {
-		name = op.TaskGID
+// shortTime formats an RFC 3339 time as local "01/02 15:04" ("" if it does not parse).
+func shortTime(s string) string {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return ""
 	}
-	switch op.Kind {
-	case store.OpCreateTask:
-		return "作成: " + name
-	case store.OpMoveTask:
-		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
-	case store.OpRenameSection:
-		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
-	case store.OpCreateStatus:
-		return fmt.Sprintf("ステータス更新: %s（%s）", name, store.StatusLabel(fmt.Sprint(op.Payload["status_type"])))
-	case store.OpAddFollower:
-		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
-	case store.OpRemoveFollower:
-		return fmt.Sprintf("フォロワーを外す: %s %v", name, op.Payload["user_name"])
-	case store.OpAddProject:
-		return fmt.Sprintf("プロジェクトに追加: %s → %v", name, op.Payload["project_name"])
-	case store.OpRemoveProject:
-		return fmt.Sprintf("プロジェクトから外す: %s ← %v", name, op.Payload["project_name"])
-	case store.OpDuplicateTask:
-		return "複製: " + name
-	case store.OpUploadAttachment:
-		return fmt.Sprintf("ファイルを添付: %s ← %v", name, op.Payload["name"])
-	case store.OpAddTag:
-		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
-	case store.OpRemoveTag:
-		return fmt.Sprintf("タグを外す: %s #%v", name, op.Payload["tag_name"])
-	case store.OpAddComment:
-		text, _ := op.Payload["text"].(string)
-		return fmt.Sprintf("コメント: %s「%s」", name, text)
-	}
-	var parts []string
-	for _, k := range []string{"completed", "name", "notes", "due_on", "assignee"} {
-		v, ok := op.Payload[k]
-		if !ok {
-			continue
-		}
-		switch {
-		case k == "completed" && v == true:
-			parts = append(parts, "完了にする")
-		case k == "completed":
-			parts = append(parts, "未完了に戻す")
-		default:
-			parts = append(parts, fmt.Sprintf("%s→%v", fieldLabel(k), v))
-		}
-	}
-	return name + ": " + strings.Join(parts, "、")
+	return t.Local().Format("01/02 15:04")
 }

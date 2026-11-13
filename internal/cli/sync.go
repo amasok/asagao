@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,12 +31,29 @@ func (a *app) syncCmd() *cobra.Command {
 				s.Progress = func(f string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), "  "+f+"\n", args...) }
 			}
 			res, err := s.Run(ctx, full)
+			if errors.Is(err, sync.ErrAccountChanged) {
+				return accountChanged(ctx, st)
+			}
+			if errors.Is(err, sync.ErrPushBusy) { // not offline: someone else is syncing
+				if a.json {
+					return a.printJSON(res)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "別の asana-tui（TUI・MCP サーバーなど）が同期中のため、今回は何もしませんでした。未送信の変更はそちらで送られます")
+				return nil
+			}
 			if err != nil {
 				return err
 			}
 			if a.json {
+				// res.Push.Discarded carries this push's dropped changes; mark those as shown
+				ids := make([]int64, len(res.Push.Discarded))
+				for i, d := range res.Push.Discarded {
+					ids[i] = d.ID
+				}
+				_ = st.MarkDiscardsNotified(ctx, ids)
 				return a.printJSON(res)
 			}
+			takeDiscards(ctx, st, cmd.OutOrStdout(), true)
 			kind := "変更分"
 			if res.Full {
 				kind = "全件"

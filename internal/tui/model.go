@@ -41,6 +41,8 @@ type Deps struct {
 	KeyBindings map[string][]string
 	// CacheDir is where files to upload are copied (so they can be sent later).
 	CacheDir string
+	// BackupDir is where unsent changes are written before the local data is reset.
+	BackupDir string
 	// RunEditor opens path in the user's editor and reports back with done
 	// (production: tea.ExecProcess with $EDITOR).
 	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
@@ -132,6 +134,8 @@ type Model struct {
 	syncer      *sync.Syncer
 	syncing     bool
 	syncErr     error
+	syncBusy    bool // the last sync found another process syncing; retrying soon
+	busyRetries int  // busy syncs in a row (the retry waits longer each time)
 	lastSync    time.Time
 	fetchingFor string // gid whose details are being fetched
 
@@ -147,6 +151,8 @@ type Model struct {
 	showOutbox  bool
 	ops         []store.Op
 	opCursor    int
+	discards    []store.Discard // recently dropped changes, newest first (shown in full in the outbox)
+	outboxTop   int             // first line of the outbox overlay on screen (it scrolls)
 
 	// views (board.go)
 	zoom           bool // detail pane fills the screen
@@ -358,6 +364,26 @@ func (m *Model) startSync() tea.Cmd {
 	}
 }
 
+// After another process was found syncing, a sync is tried again after busyRetryMin,
+// doubling each time up to busyRetryMax (each try asks Asana who is logged in).
+const (
+	busyRetryMin = 5 * time.Second
+	busyRetryMax = time.Minute
+)
+
+// busyRetryDelay is the wait before the next try after n busy syncs in a row.
+func busyRetryDelay(n int) time.Duration {
+	d := busyRetryMin
+	for i := 0; i < n && d < busyRetryMax; i++ {
+		d *= 2
+	}
+	return min(d, busyRetryMax)
+}
+
+func (m *Model) retrySyncAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return syncTickMsg{} })
+}
+
 func (m *Model) scheduleSync() tea.Cmd {
 	if m.deps.SyncInterval <= 0 {
 		return nil
@@ -512,9 +538,22 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncDoneMsg:
 		m.syncing = false
-		m.syncErr = msg.err
 		if msg.syncer != nil {
 			m.syncer = msg.syncer
+		}
+		// Another asana-tui (CLI, MCP server, another TUI) is syncing or sending: not an
+		// error and not offline. Keep the last state and quietly try again soon.
+		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
+		if m.syncBusy {
+			m.syncAgain = false // the retry covers a sync requested meanwhile
+			delay := busyRetryDelay(m.busyRetries)
+			m.busyRetries++
+			return m, tea.Batch(m.retrySyncAfter(delay), m.loadOutbox())
+		}
+		m.busyRetries = 0
+		m.syncErr = msg.err
+		if errors.Is(msg.err, sync.ErrAccountChanged) {
+			m.status = m.accountChangedStatus()
 		}
 		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
 		if m.syncAgain {
@@ -900,12 +939,17 @@ func (m *Model) syncStatus() (string, bool) {
 	switch {
 	case m.syncing:
 		return "⟳ 同期中", true
+	case m.syncBusy:
+		return "⟳ 別の asana-tui が同期中（少し後にもう一度同期します）", true
+	case errors.Is(m.syncErr, sync.ErrAccountChanged):
+		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:
 		return "○ オフライン", false
 	case m.syncErr != nil:
 		if errors.Is(m.syncErr, context.Canceled) {
 			return "", true
 		}
+
 		return "○ オフライン（" + shortErr(m.syncErr) + "）", false
 	case !m.lastSync.IsZero():
 		return "● 同期済み " + m.lastSync.Format("15:04"), true

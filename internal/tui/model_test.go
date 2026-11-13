@@ -313,7 +313,7 @@ func TestCommentAndOutboxOverlay(t *testing.T) {
 	}
 	h.key("!")
 	s := h.screen()
-	if !strings.Contains(s, "未送信の変更") || !strings.Contains(s, "コメント: 転居届を出す「区役所は9時から」") {
+	if !strings.Contains(s, "未送信の変更") || !strings.Contains(s, "転居届を出す: コメント「区役所は9時から」") {
 		t.Fatalf("outbox overlay:\n%s", s)
 	}
 	h.key("d") // discard
@@ -593,7 +593,7 @@ func TestRenameSectionFromListAndBoard(t *testing.T) {
 	}
 	h.key("esc")
 	h.key("!")
-	if s := h.screen(); !strings.Contains(s, "セクション名の変更: 手続き → 手続き（役所）") {
+	if s := h.screen(); !strings.Contains(s, "セクション名を「手続き」から「手続き（役所）」に変更") {
 		t.Fatalf("outbox:\n%s", s)
 	}
 }

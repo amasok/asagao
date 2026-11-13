@@ -45,7 +45,7 @@ func (a *app) runTUI(ctx context.Context) error {
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
 		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
 		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys,
-		CacheDir: filepath.Join(config.CacheDir(), "attachments")}
+		CacheDir: filepath.Join(config.CacheDir(), "attachments"), BackupDir: backupDir()}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)

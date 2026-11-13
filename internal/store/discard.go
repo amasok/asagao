@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // Changes to things deleted in Asana are dropped automatically (Asana answered 404), and
@@ -146,81 +144,6 @@ func recordDiscard(ctx context.Context, tx *sql.Tx, op *Op, reason string, now t
 	}
 	d.ID, err = res.LastInsertId()
 	return d, err
-}
-
-// DescribeChange says in a few words what an outbox entry changes.
-func DescribeChange(op Op) string {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	switch op.Kind {
-	case OpCreateTask:
-		if str("parent") != "" {
-			return fmt.Sprintf("サブタスク「%s」の作成", str("name"))
-		}
-		return fmt.Sprintf("タスク「%s」の作成", str("name"))
-	case OpDuplicateTask:
-		return fmt.Sprintf("複製「%s」の作成", str("name"))
-	case OpAddComment:
-		return fmt.Sprintf("コメント「%s」", clip(str("text"), 40))
-	case OpMoveTask:
-		return fmt.Sprintf("セクション「%s」への移動", str("section_name"))
-	case OpAddTag:
-		return fmt.Sprintf("タグ「%s」の追加", str("tag_name"))
-	case OpRemoveTag:
-		return "タグの削除"
-	case OpAddFollower:
-		return fmt.Sprintf("フォロワー %s の追加", str("user_name"))
-	case OpRemoveFollower:
-		return fmt.Sprintf("フォロワー %s の削除", str("user_name"))
-	case OpAddProject:
-		return fmt.Sprintf("プロジェクト「%s」への追加", str("project_name"))
-	case OpRemoveProject:
-		return fmt.Sprintf("プロジェクト「%s」からの削除", str("project_name"))
-	case OpUploadAttachment:
-		return fmt.Sprintf("添付「%s」", str("name"))
-	case OpCreateStatus:
-		return fmt.Sprintf("ステータス更新「%s」", str("title"))
-	case OpRenameSection:
-		return fmt.Sprintf("セクション名を「%s」に変更", str("name"))
-	case OpUpdateTask:
-		var parts []string
-		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked"} {
-			v, ok := op.Payload[k]
-			if !ok {
-				continue
-			}
-			switch k {
-			case "name":
-				parts = append(parts, fmt.Sprintf("名前を「%s」に変更", v))
-			case "completed":
-				parts = append(parts, map[bool]string{true: "完了にする", false: "未完了に戻す"}[v == true])
-			case "due_on":
-				if v == "" {
-					parts = append(parts, "期日を削除")
-				} else {
-					parts = append(parts, fmt.Sprintf("期日を %s に変更", v))
-				}
-			case "assignee":
-				parts = append(parts, "担当者の変更")
-			case "notes":
-				parts = append(parts, "説明の変更")
-			case "liked":
-				parts = append(parts, "いいね")
-			}
-		}
-		if len(parts) == 0 && op.Payload["html_notes"] != nil {
-			parts = append(parts, "説明の変更")
-		}
-		return strings.Join(parts, "、")
-	}
-	return op.Kind
-}
-
-func clip(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n]) + "…"
 }
 
 func scanIDs(rows *sql.Rows) ([]int64, error) {
