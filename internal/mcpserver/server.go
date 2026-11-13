@@ -64,6 +64,8 @@ func (s *Server) New() *mcp.Server {
 			"(set offline=true to use only the cache)."}, s.getTask)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: readOnly,
 		Description: "List projects and their sections (gid and name). By default only projects I am a member of."}, s.listProjects)
+	mcp.AddTool(srv, &mcp.Tool{Name: "list_tags", Annotations: readOnly,
+		Description: "List tags used by tasks, with the number of open and total tasks for each."}, s.listTags)
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync_status", Annotations: readOnly,
 		Description: "Show when the cache was last synced and any local changes not yet sent " +
 			"(pending, conflicts, failures)."}, s.syncStatus)
@@ -81,6 +83,9 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description, due date or assignee. " +
 				"Only the fields you pass are changed. Use an empty string to clear due_on or assignee."}, s.updateTask)
+		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
+			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
+				"project is needed only when the task is in more than one project."}, s.moveTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "add_comment", Annotations: write(false),
 			Description: "Add a comment to a task."}, s.addComment)
 	}
@@ -167,6 +172,16 @@ type UpdateTaskInput struct {
 	Notes     *string `json:"notes,omitempty" jsonschema:"new description (replaces the old one)"`
 	DueOn     *string `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
 	Assignee  *string `json:"assignee,omitempty" jsonschema:"\"me\", a user gid, or empty string to unassign"`
+}
+
+type MoveTaskInput struct {
+	GID     string `json:"gid" jsonschema:"task gid"`
+	Section string `json:"section" jsonschema:"destination section gid or exact name"`
+	Project string `json:"project,omitempty" jsonschema:"project gid or name; only needed if the task is in several projects"`
+}
+
+type TagsOutput struct {
+	Tags []store.TagCount `json:"tags"`
 }
 
 type AddCommentInput struct {
@@ -288,6 +303,11 @@ func (s *Server) listProjects(ctx context.Context, _ *mcp.CallToolRequest, in Li
 	return nil, ProjectsOutput{Projects: ps}, err
 }
 
+func (s *Server) listTags(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, TagsOutput, error) {
+	tags, err := s.Store.ListTags(ctx)
+	return nil, TagsOutput{Tags: tags}, err
+}
+
 func (s *Server) syncStatus(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, SyncStatusOutput, error) {
 	out, err := s.status(ctx)
 	return nil, out, err
@@ -390,6 +410,17 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one of completed, name, notes, due_on, assignee")
 	}
 	if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, s.Now()); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, in.GID), nil
+}
+
+func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
+	projectGID, sectionGID, err := s.Store.ResolveMove(ctx, in.GID, in.Project, in.Section)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	if err := s.Store.MoveTaskLocal(ctx, in.GID, projectGID, sectionGID, s.Now()); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil

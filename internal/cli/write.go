@@ -149,6 +149,65 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *app) taskMoveCmd() *cobra.Command {
+	var project, section string
+	cmd := &cobra.Command{
+		Use:     "move <gid> --section <セクション>",
+		Short:   "タスクを別のセクションに移動する",
+		Example: `  asana-tui task move 1203455468597469 --section Done`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			projectGID, sectionGID, err := st.ResolveMove(ctx, args[0], project, section)
+			if err != nil {
+				return err
+			}
+			if err := st.MoveTaskLocal(ctx, args[0], projectGID, sectionGID, time.Now()); err != nil {
+				return err
+			}
+			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "移動しました: → "+section)
+		},
+	}
+	cmd.Flags().StringVar(&section, "section", "", "移動先のセクション（gid または名前）")
+	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（タスクが複数のプロジェクトに入っている場合）")
+	_ = cmd.MarkFlagRequired("section")
+	return cmd
+}
+
+func (a *app) tagCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "tag", Short: "タグ"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "タグと、そのタグが付いたタスクの数を表示する",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			st, err := a.openStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			tags, err := st.ListTags(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if a.json {
+				return a.printJSON(tags)
+			}
+			rows := [][]string{}
+			for _, t := range tags {
+				rows = append(rows, []string{"#" + t.Name, fmt.Sprintf("未完了 %d / 全 %d", t.Open, t.Total)})
+			}
+			printTable(cmd.OutOrStdout(), rows)
+			return nil
+		},
+	})
+	return cmd
+}
+
 func (a *app) commentCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "comment", Short: "コメント"}
 	cmd.AddCommand(&cobra.Command{
@@ -314,6 +373,8 @@ func DescribeOp(op store.Op) string {
 	switch op.Kind {
 	case store.OpCreateTask:
 		return "作成: " + name
+	case store.OpMoveTask:
+		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpAddComment:
 		text, _ := op.Payload["text"].(string)
 		if r := []rune(text); len(r) > 30 {

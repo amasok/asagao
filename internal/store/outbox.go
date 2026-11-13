@@ -28,6 +28,7 @@ const (
 	OpUpdateTask = "update_task"
 	OpCreateTask = "create_task"
 	OpAddComment = "add_comment"
+	OpMoveTask   = "move_task" // payload: project, section, section_name; base: section
 
 	OpPending  = "pending"
 	OpConflict = "conflict"
@@ -126,6 +127,92 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		}
 		return saveOp(ctx, tx, op)
 	})
+}
+
+// MoveTaskLocal moves a task to another section of a project it belongs to, and queues it.
+// Moves are sent as-is (the last move wins); they are not conflict-checked.
+func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID string, now time.Time) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var sectionName string
+		err := tx.QueryRowContext(ctx, "SELECT name FROM sections WHERE gid = ? AND project_gid = ?", sectionGID, projectGID).Scan(&sectionName)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("section %s is not in project %s: %w", sectionGID, projectGID, ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		var current string
+		err = tx.QueryRowContext(ctx, "SELECT section_gid FROM task_memberships WHERE task_gid = ? AND project_gid = ?", gid, projectGID).Scan(&current)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("タスク %s はこのプロジェクトに入っていません", gid)
+		}
+		if err != nil {
+			return err
+		}
+		if current == sectionGID {
+			return nil
+		}
+		if err := setSection(ctx, tx, gid, projectGID, sectionGID); err != nil {
+			return err
+		}
+
+		if IsLocalGID(gid) {
+			op, err := findOp(ctx, tx, OpCreateTask, gid)
+			if err != nil || op == nil {
+				return fmt.Errorf("task %s: pending create not found", gid)
+			}
+			op.Payload["section"] = sectionGID
+			return saveOp(ctx, tx, op)
+		}
+
+		op, err := findMoveOp(ctx, tx, gid, projectGID)
+		if err != nil {
+			return err
+		}
+		if op == nil {
+			op = &Op{Kind: OpMoveTask, TaskGID: gid, Payload: map[string]any{"project": projectGID},
+				Base: map[string]any{"section": current}, State: OpPending, CreatedAt: formatTime(now)}
+		}
+		if op.Base["section"] == sectionGID { // moved back where it started
+			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
+			return err
+		}
+		op.Payload["section"] = sectionGID
+		op.Payload["section_name"] = sectionName
+		return saveOp(ctx, tx, op)
+	})
+}
+
+func findMoveOp(ctx context.Context, tx *sql.Tx, gid, projectGID string) (*Op, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending' ORDER BY id DESC", OpMoveTask, gid)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for _, id := range ids {
+		op, err := getOpTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		if op.Payload["project"] == projectGID {
+			return op, nil
+		}
+	}
+	return nil, rows.Err()
+}
+
+func setSection(ctx context.Context, tx *sql.Tx, gid, projectGID, sectionGID string) error {
+	_, err := tx.ExecContext(ctx, "UPDATE task_memberships SET section_gid = ? WHERE task_gid = ? AND project_gid = ?", sectionGID, gid, projectGID)
+	return err
 }
 
 // CreateTaskLocal inserts a task with a temporary "local:" gid and queues its creation.
@@ -317,6 +404,12 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 					return err
 				}
 			}
+		case OpMoveTask:
+			project, _ := op.Payload["project"].(string)
+			section, _ := op.Base["section"].(string)
+			if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
+				return err
+			}
 		case OpUpdateTask:
 			// Restore the values from before the local edit.
 			if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
@@ -464,30 +557,43 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 
 // reapplyUpdates re-applies unsent update_task payloads for a task (after a pull overwrote it).
 func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
-	rows, err := tx.QueryContext(ctx, "SELECT payload FROM outbox WHERE task_gid = ? AND kind = ? AND state <> 'failed' ORDER BY id", gid, OpUpdateTask)
+	rows, err := tx.QueryContext(ctx, `SELECT kind, payload FROM outbox
+		WHERE task_gid = ? AND kind IN (?, ?) AND state <> 'failed' ORDER BY id`, gid, OpUpdateTask, OpMoveTask)
 	if err != nil {
 		return err
 	}
-	var payloads []map[string]any
+	type entry struct {
+		kind    string
+		payload map[string]any
+	}
+	var entries []entry
 	for rows.Next() {
+		var e entry
 		var p string
-		if err := rows.Scan(&p); err != nil {
+		if err := rows.Scan(&e.kind, &p); err != nil {
 			rows.Close()
 			return err
 		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(p), &m); err != nil {
+		if err := json.Unmarshal([]byte(p), &e.payload); err != nil {
 			rows.Close()
 			return err
 		}
-		payloads = append(payloads, m)
+		entries = append(entries, e)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for _, p := range payloads {
-		if err := applyFields(ctx, tx, gid, p, time.Time{}); err != nil {
+	for _, e := range entries {
+		var err error
+		if e.kind == OpMoveTask {
+			project, _ := e.payload["project"].(string)
+			section, _ := e.payload["section"].(string)
+			err = setSection(ctx, tx, gid, project, section)
+		} else {
+			err = applyFields(ctx, tx, gid, e.payload, time.Time{})
+		}
+		if err != nil {
 			return err
 		}
 	}

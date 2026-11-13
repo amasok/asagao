@@ -120,6 +120,15 @@ type Model struct {
 	showOutbox  bool
 	ops         []store.Op
 	opCursor    int
+
+	// views (board.go)
+	zoom           bool // detail pane fills the screen
+	board          bool // project tasks as a board (sections = columns)
+	boardCol       int
+	boardRow       int
+	boardColOffset int
+	tagFilter      string
+	picker         *picker
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -200,10 +209,10 @@ func (m *Model) loadScopes() tea.Cmd {
 
 func (m *Model) loadTasks() tea.Cmd {
 	m.taskSeq++
-	seq, sc, query, filter := m.taskSeq, m.currentScope(), m.query, m.filter
+	seq, sc, query, filter, tag := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter
 	st, now := m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
-		rows, err := queryRows(m.ctx, st, sc, query, filter, now)
+		rows, err := queryRows(m.ctx, st, sc, query, filter, tag, now)
 		return tasksLoadedMsg{seq: seq, rows: rows, err: err}
 	}
 }
@@ -393,6 +402,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.showOutbox {
 		return m.handleOutboxKey(key)
 	}
+	if m.picker != nil {
+		return m.handlePickerKey(key)
+	}
 
 	if m.searching {
 		switch key {
@@ -436,6 +448,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 		return m, nil
 	case "q":
+		if m.zoom {
+			m.zoom = false
+			m.focus = paneList
+			return m, nil
+		}
 		if m.narrow() && m.focus != paneSidebar {
 			m.focus--
 			return m, nil
@@ -447,6 +464,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.search.CursorEnd()
 		return m, m.search.Focus()
 	case "esc":
+		if m.zoom {
+			m.zoom = false
+			m.focus = paneList
+			return m, nil
+		}
 		if m.query != "" {
 			m.query = ""
 			m.search.Reset()
@@ -486,6 +508,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "x", "a", "c", "!":
 		return m, m.writeKey(key)
+	case "z", "v", "t", "m":
+		return m, m.viewKey(key)
+	}
+	if m.zoom {
+		m.focus = paneDetail // in the zoomed view, keys scroll the detail
 	}
 
 	switch m.focus {
@@ -503,6 +530,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.focus = paneList
 		}
 	case paneList:
+		if m.boardActive() {
+			return m.handleBoardKey(key)
+		}
 		half := max(1, m.listHeight()/2)
 		switch key {
 		case "j", "down":
@@ -539,7 +569,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "G", "end":
 			m.detailView.GotoBottom()
 		case "h", "left":
-			m.focus = paneList
+			if !m.zoom {
+				m.focus = paneList
+			}
 		}
 	}
 	return m, nil
@@ -576,6 +608,7 @@ func (m *Model) moveScope(delta int) tea.Cmd {
 	}
 	m.scopeCursor = next
 	m.listCursor, m.listOffset = 0, 0
+	m.boardCol, m.boardRow, m.boardColOffset = 0, 0, 0
 	return m.loadTasks()
 }
 
@@ -586,20 +619,13 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		prev = t.GID
 	}
 	m.rows = rows
-	m.listCursor = -1
 	if m.selectAfter != "" {
 		prev, m.selectAfter = m.selectAfter, ""
 	}
-	for i, r := range rows {
-		if r.task != nil && r.task.GID == prev {
-			m.listCursor = i
-			break
-		}
+	m.selectInList(prev)
+	if m.boardActive() {
+		m.selectInBoard(prev)
 	}
-	if m.listCursor < 0 {
-		m.listCursor = m.nextTaskRow(0, 1)
-	}
-	m.ensureListVisible()
 	t := m.selectedTask()
 	if t == nil {
 		m.detail = nil
@@ -610,6 +636,21 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		return m.loadDetail(t.GID) // refresh in place
 	}
 	return tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
+}
+
+// selectInList puts the list cursor on gid, or on the first task if gid is not listed.
+func (m *Model) selectInList(gid string) {
+	m.listCursor = -1
+	for i, r := range m.rows {
+		if r.task != nil && r.task.GID == gid {
+			m.listCursor = i
+			break
+		}
+	}
+	if m.listCursor < 0 {
+		m.listCursor = m.nextTaskRow(0, 1)
+	}
+	m.ensureListVisible()
 }
 
 func (m *Model) moveList(delta int) tea.Cmd {
@@ -645,6 +686,9 @@ func (m *Model) nextTaskRow(i, dir int) int {
 }
 
 func (m *Model) selectedTask() *store.TaskSummary {
+	if m.boardActive() {
+		return m.boardSelected()
+	}
 	if m.listCursor < 0 || m.listCursor >= len(m.rows) {
 		return nil
 	}

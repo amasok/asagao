@@ -77,6 +77,13 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
 		}
 		return m, nil, true
+	case tagsLoadedMsg:
+		if msg.err != nil {
+			m.status = "タグを読み込めませんでした: " + msg.err.Error()
+		} else {
+			m.showTagPicker(msg.tags)
+		}
+		return m, nil, true
 	case writeDoneMsg:
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
@@ -331,6 +338,8 @@ func describeOp(op store.Op) string {
 	switch op.Kind {
 	case store.OpCreateTask:
 		return "作成: " + name
+	case store.OpMoveTask:
+		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpAddComment:
 		text, _ := op.Payload["text"].(string)
 		return fmt.Sprintf("コメント: %s「%s」", name, text)
