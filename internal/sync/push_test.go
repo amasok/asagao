@@ -1638,3 +1638,48 @@ func TestCreateProject5xx(t *testing.T) {
 		})
 	}
 }
+
+func TestPushEditsWaitForFailedCreate(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "A"}, {GID: "s2", Name: "B"}})
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", SectionGID: "s1", Name: "新規"}, now)
+	create := opByKind(t, st, store.OpCreateTask)
+	if ok, err := st.BeginSend(ctx, create.ID, now); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if err := st.MarkOpFailed(ctx, create.ID, errors.New("asana: 403")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTaskLocal(ctx, gid, map[string]any{"name": "名前変更"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MoveTaskLocal(ctx, gid, "p1", "s2", now); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || res.Sent != 0 || res.Remaining != 2 {
+		t.Fatalf("edits of a task whose create failed should wait: %+v %v", res, err)
+	}
+	for _, kind := range []string{store.OpUpdateTask, store.OpMoveTask} {
+		if op := opByKind(t, st, kind); op == nil || op.State != store.OpPending {
+			t.Fatalf("%s should stay pending: %+v", kind, op)
+		}
+	}
+	// A pull keeps the waiting edit (failed entries would not be reapplied).
+	if d, _ := st.GetTask(ctx, gid); d.Name != "名前変更" {
+		t.Fatalf("local name = %q", d.Name)
+	}
+	// The create is retried and goes through: the edits follow with the real gid.
+	if err := st.RetryOp(ctx, create.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 3 || res.Failed != 0 {
+		t.Fatalf("after retry = %+v %v\n%v", res, err, ws.calls)
+	}
+	real, _ := st.RealGID(ctx, gid)
+	if st := ws.tasks[real]; st == nil || st.Name != "名前変更" || st.Section != "s2" {
+		t.Fatalf("server task = %+v", st)
+	}
+	assertOutboxEmpty(t, st)
+}

@@ -788,8 +788,8 @@ func (s *Store) CreateQueued(ctx context.Context, gid string) (bool, error) {
 
 // ensureCreateQueued checks that a task with a local gid still has its create (or
 // duplicate) in the outbox, in any state. Changes queued for it keep the local gid, which
-// replaceLocalTaskGID rewrites once Asana has created the task; until then sending them
-// fails (404), and discarding the create discards them too.
+// replaceLocalTaskGID rewrites once Asana has created the task; until then sync.Push skips
+// them (they wait, pending), and discarding the create discards them too.
 func ensureCreateQueued(ctx context.Context, tx *sql.Tx, gid string) error {
 	var n int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE task_gid = ? AND kind IN (?, ?)",
