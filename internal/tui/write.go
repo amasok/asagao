@@ -24,6 +24,8 @@ const (
 	promptSubtask
 	promptDue
 	promptNewTag
+	promptDuplicate
+	promptAttach
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -88,6 +90,19 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.showTagEditor(msg)
 		}
 		return m, nil, true
+	case followersMsg:
+		if msg.err != nil {
+			m.status = "メンバーを読み込めませんでした: " + msg.err.Error()
+		} else {
+			m.showFollowers(msg)
+		}
+		return m, nil, true
+	case relationToggledMsg:
+		if msg.kind == pickFollowers {
+			return m, tea.Batch(m.afterWrite(), m.openFollowersFor(msg.task)), true
+		}
+		m.showProjects(msg.task)
+		return m, m.afterWrite(), true
 	case tagToggledMsg:
 		return m, tea.Batch(m.afterWrite(), m.openTagEditorFor(msg.task)), true
 	case imagesReadyMsg:
@@ -194,6 +209,12 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptNewTag:
 		m.prompt.Prompt = "新しいタグ: "
 		m.prompt.Placeholder = "タグ名"
+	case promptDuplicate:
+		m.prompt.Prompt = "複製したタスクの名前: "
+		m.prompt.Placeholder = ""
+	case promptAttach:
+		m.prompt.Prompt = "添付するファイル: "
+		m.prompt.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
 	}
 }
 
@@ -223,6 +244,10 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.createSubtask(m.subtaskParent, value)
 		case promptNewTag:
 			return m, m.submitNewTag(value)
+		case promptDuplicate:
+			return m, m.duplicate(value)
+		case promptAttach:
+			return m, m.attach(value)
 		}
 		if m.commentGID != "" {
 			return m, m.addComment(m.commentGID, value)
@@ -403,6 +428,18 @@ func describeOp(op store.Op) string {
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpRenameSection:
 		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
+	case store.OpAddFollower:
+		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
+	case store.OpRemoveFollower:
+		return fmt.Sprintf("フォロワーを外す: %s %v", name, op.Payload["user_name"])
+	case store.OpAddProject:
+		return fmt.Sprintf("プロジェクトに追加: %s → %v", name, op.Payload["project_name"])
+	case store.OpRemoveProject:
+		return fmt.Sprintf("プロジェクトから外す: %s ← %v", name, op.Payload["project_name"])
+	case store.OpDuplicateTask:
+		return "複製: " + name
+	case store.OpUploadAttachment:
+		return fmt.Sprintf("ファイルを添付: %s ← %v", name, op.Payload["name"])
 	case store.OpAddTag:
 		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
 	case store.OpRemoveTag:

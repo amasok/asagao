@@ -80,6 +80,11 @@ func (m *Model) actions() []action {
 		{id: "move", key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { m.openSectionPicker(); return nil }},
 		{id: "comment", key: "c", shortcut: []string{"c"}, group: groupTask, label: "コメント（1 行）", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("c") }},
 		{id: "comment_editor", key: "C", shortcut: []string{"C"}, group: groupTask, label: "コメントをエディタで書く", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("C") }},
+		{id: "like", key: "L", group: groupTask, label: "いいね / 取り消し", ctx: ctxTask, needTask: true, run: (*Model).toggleLike},
+		{id: "followers", key: "w", group: groupTask, label: "フォロワーを追加 / 外す", ctx: ctxTask, needTask: true, run: (*Model).openFollowers},
+		{id: "projects", key: "P", group: groupTask, label: "ほかのプロジェクトに追加 / 外す", ctx: ctxTask, needTask: true, run: (*Model).openProjects},
+		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
+		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
 		// view

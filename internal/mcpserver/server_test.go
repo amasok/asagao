@@ -112,7 +112,7 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_task", "get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_task"}},
+		{false, []string{"add_comment", "create_task", "duplicate_task", "get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_task", "upload_attachment"}},
 		{true, []string{"get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
@@ -388,5 +388,36 @@ func TestListRecentlyModified(t *testing.T) {
 	call(t, cs, "list_tasks", map[string]any{"assignee": "any", "modified_within_days": 7}, &tasks)
 	if got := names(tasks.Tasks); !slices.Equal(got, []string{"転居届を出す", "ソファを買う"}) {
 		t.Fatalf("recent = %v", got)
+	}
+}
+
+func TestTaskExtras(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	_ = st.UpsertUsers(ctx, []asana.User{{GID: "u2", Name: "Partner"}})
+	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
+	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
+	cs := connect(t, &Server{Store: st, CacheDir: t.TempDir()})
+	var w WriteOutput
+	call(t, cs, "update_task", map[string]any{"gid": "t1", "liked": true, "add_followers": []string{"Partner", "me"}, "add_projects": []string{"家計"}}, &w)
+	d, _ := st.GetTask(ctx, "t1")
+	if !d.Liked || d.NumLikes != 1 || len(d.Followers) != 2 || len(d.Memberships) != 2 {
+		t.Fatalf("task after update: liked=%v likes=%d followers=%v memberships=%v", d.Liked, d.NumLikes, d.Followers, d.Memberships)
+	}
+	call(t, cs, "update_task", map[string]any{"gid": "t1", "remove_followers": []string{"me"}, "remove_projects": []string{"家計"}}, &w)
+	d, _ = st.GetTask(ctx, "t1")
+	if len(d.Followers) != 1 || d.Followers[0].GID != "u2" || len(d.Memberships) != 1 {
+		t.Fatalf("after removals: followers=%v memberships=%v", d.Followers, d.Memberships)
+	}
+	call(t, cs, "duplicate_task", map[string]any{"gid": "t1"}, &w)
+	if c, err := st.GetTask(ctx, w.TaskGID); err != nil || c.Name != "ソファを買う のコピー" || len(c.Memberships) != 1 {
+		t.Fatalf("copy = %+v %v", c, err)
+	}
+	file := filepath.Join(t.TempDir(), "見積 書.pdf")
+	_ = os.WriteFile(file, []byte("pdf"), 0o600)
+	call(t, cs, "upload_attachment", map[string]any{"task_gid": "t1", "path": file}, &w)
+	d, _ = st.GetTask(ctx, "t1")
+	if len(d.Attachments) != 1 || d.Attachments[0].Name != "見積 書.pdf" || strings.Contains(filepath.Base(d.Attachments[0].LocalPath), " ") {
+		t.Fatalf("attachments = %+v", d.Attachments)
 	}
 }

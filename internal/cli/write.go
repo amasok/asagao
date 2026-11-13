@@ -3,12 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -209,6 +211,93 @@ func (a *app) taskTagCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&add, "add", nil, "付けるタグ（名前または gid）")
 	cmd.Flags().StringSliceVar(&remove, "remove", nil, "外すタグ（名前または gid）")
 	return cmd
+}
+
+// withStore opens the store for a write command and reports the result.
+func (a *app) writeCommand(use, short string, args cobra.PositionalArgs, run func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error)) *cobra.Command {
+	return &cobra.Command{
+		Use: use, Short: short, Args: args,
+		RunE: func(cmd *cobra.Command, argv []string) error {
+			st, err := a.openStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			gid, msg, err := run(cmd, st, argv)
+			if err != nil {
+				return err
+			}
+			return a.reportWrite(cmd, st, writeResult{TaskGID: gid}, msg)
+		},
+	}
+}
+
+func (a *app) taskExtraCmds() []*cobra.Command {
+	like := a.writeCommand("like <gid>", "いいねする（--off で取り消し）", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			off, _ := cmd.Flags().GetBool("off")
+			return args[0], "いいねを変更しました", st.UpdateTaskLocal(cmd.Context(), args[0], map[string]any{"liked": !off}, time.Now())
+		})
+	like.Flags().Bool("off", false, "いいねを取り消す")
+
+	follow := a.writeCommand("follow <gid> [--add ユーザー]... [--remove ユーザー]...", "フォロワーを追加 / 外す（me・名前・gid）", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			for _, f := range []struct {
+				flag   string
+				follow bool
+			}{{"add", true}, {"remove", false}} {
+				users, _ := cmd.Flags().GetStringSlice(f.flag)
+				for _, u := range users {
+					gid, err := st.ResolveUser(cmd.Context(), u)
+					if err != nil {
+						return "", "", err
+					}
+					if err := st.SetFollowerLocal(cmd.Context(), args[0], gid, f.follow, time.Now()); err != nil {
+						return "", "", err
+					}
+				}
+			}
+			return args[0], "フォロワーを変更しました", nil
+		})
+	follow.Flags().StringSlice("add", nil, "追加するユーザー")
+	follow.Flags().StringSlice("remove", nil, "外すユーザー")
+
+	project := a.writeCommand("project <gid> [--add プロジェクト]... [--remove プロジェクト]...", "ほかのプロジェクトに追加 / 外す", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			for _, f := range []struct {
+				flag string
+				add  bool
+			}{{"add", true}, {"remove", false}} {
+				projects, _ := cmd.Flags().GetStringSlice(f.flag)
+				for _, p := range projects {
+					gid, err := st.ResolveProject(cmd.Context(), p)
+					if err != nil {
+						return "", "", err
+					}
+					if err := st.SetProjectLocal(cmd.Context(), args[0], gid, "", f.add, time.Now()); err != nil {
+						return "", "", err
+					}
+				}
+			}
+			return args[0], "プロジェクトを変更しました", nil
+		})
+	project.Flags().StringSlice("add", nil, "追加するプロジェクト（名前または gid）")
+	project.Flags().StringSlice("remove", nil, "外すプロジェクト")
+
+	duplicate := a.writeCommand("duplicate <gid>", "タスクを複製する（サブタスク・添付・フォロワーも）", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			name, _ := cmd.Flags().GetString("name")
+			gid, err := st.DuplicateTaskLocal(cmd.Context(), args[0], name, time.Now())
+			return gid, "複製しました", err
+		})
+	duplicate.Flags().String("name", "", "複製したタスクの名前（省略時は「… のコピー」）")
+
+	attach := a.writeCommand("attach <gid> <ファイル>", "ファイルを添付する（100MB まで）", cobra.ExactArgs(2),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			_, err := st.UploadAttachmentLocal(cmd.Context(), args[0], args[1], filepath.Join(config.CacheDir(), "attachments"), time.Now())
+			return args[0], "添付しました: " + filepath.Base(args[1]), err
+		})
+	return []*cobra.Command{like, follow, project, duplicate, attach}
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {
@@ -500,6 +589,18 @@ func DescribeOp(op store.Op) string {
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
 	case store.OpRenameSection:
 		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
+	case store.OpAddFollower:
+		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
+	case store.OpRemoveFollower:
+		return fmt.Sprintf("フォロワーを外す: %s %v", name, op.Payload["user_name"])
+	case store.OpAddProject:
+		return fmt.Sprintf("プロジェクトに追加: %s → %v", name, op.Payload["project_name"])
+	case store.OpRemoveProject:
+		return fmt.Sprintf("プロジェクトから外す: %s ← %v", name, op.Payload["project_name"])
+	case store.OpDuplicateTask:
+		return "複製: " + name
+	case store.OpUploadAttachment:
+		return fmt.Sprintf("ファイルを添付: %s ← %v", name, op.Payload["name"])
 	case store.OpAddTag:
 		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
 	case store.OpRemoveTag:

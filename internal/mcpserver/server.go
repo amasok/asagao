@@ -39,8 +39,10 @@ type Server struct {
 	Store *store.Store
 	// NewSyncer creates an authenticated syncer; nil means offline-only.
 	NewSyncer func(ctx context.Context) (*sync.Syncer, error)
-	// ReadOnly hides the write tools (create_task, update_task, add_comment).
+	// ReadOnly hides the write tools (create_task, update_task, add_comment, ...).
 	ReadOnly bool
+	// CacheDir is where files to upload are copied before sending.
+	CacheDir string
 	Version  string
 	Now      func() time.Time
 
@@ -92,12 +94,17 @@ func (s *Server) New() *mcp.Server {
 				"With parent it is created as a subtask of that task."}, s.createTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
-				"assignee or tags. Only the fields you pass are changed. Use an empty string to clear due_on or assignee."}, s.updateTask)
+				"assignee, tags, followers, likes or the projects it is in. Only the fields you pass are changed. " +
+				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
 				"project is needed only when the task is in more than one project."}, s.moveTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "rename_section", Annotations: write(false),
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
+		mcp.AddTool(srv, &mcp.Tool{Name: "duplicate_task", Annotations: write(false),
+			Description: "Duplicate a task (with its description, assignee, dates, projects, tags, subtasks, attachments and followers)."}, s.duplicateTask)
+		mcp.AddTool(srv, &mcp.Tool{Name: "upload_attachment", Annotations: write(false),
+			Description: "Attach a local file to a task (max 100MB)."}, s.uploadAttachment)
 		mcp.AddTool(srv, &mcp.Tool{Name: "resolve_outbox", Annotations: write(true),
 			Description: "Resolve a local change that could not be sent (see sync_status.outbox): keep_local overwrites " +
 				"Asana with the local value, keep_remote drops the local change, retry resends a failed entry, discard drops it. " +
@@ -199,14 +206,29 @@ type CreateTaskInput struct {
 }
 
 type UpdateTaskInput struct {
-	GID        string   `json:"gid" jsonschema:"task gid"`
-	Completed  *bool    `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
-	Name       *string  `json:"name,omitempty" jsonschema:"new name"`
-	Notes      *string  `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
-	DueOn      *string  `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
-	Assignee   *string  `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
-	AddTags    []string `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
-	RemoveTags []string `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
+	GID             string   `json:"gid" jsonschema:"task gid"`
+	Completed       *bool    `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
+	Name            *string  `json:"name,omitempty" jsonschema:"new name"`
+	Notes           *string  `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
+	DueOn           *string  `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	Assignee        *string  `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
+	AddTags         []string `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
+	RemoveTags      []string `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
+	Liked           *bool    `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
+	AddFollowers    []string `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
+	RemoveFollowers []string `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
+	AddProjects     []string `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
+	RemoveProjects  []string `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
+}
+
+type DuplicateTaskInput struct {
+	GID  string `json:"gid" jsonschema:"task gid to duplicate"`
+	Name string `json:"name,omitempty" jsonschema:"name of the copy (default: \"<name> のコピー\")"`
+}
+
+type UploadAttachmentInput struct {
+	TaskGID string `json:"task_gid" jsonschema:"task to attach the file to"`
+	Path    string `json:"path" jsonschema:"absolute path of a local file (max 100MB)"`
 }
 
 type MoveTaskInput struct {
@@ -535,6 +557,9 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		changes["notes"] = richtext.PlainFromMarkdown(*in.Notes)
 		changes["html_notes"] = richtext.FromMarkdown(*in.Notes)
 	}
+	if in.Liked != nil {
+		changes["liked"] = *in.Liked
+	}
 	if in.DueOn != nil {
 		due, err := dates.Parse(*in.DueOn, s.Now())
 		if err != nil {
@@ -549,8 +574,9 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		}
 		changes["assignee"] = gid
 	}
-	if len(changes) == 0 && len(in.AddTags) == 0 && len(in.RemoveTags) == 0 {
-		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one of completed, name, notes, due_on, assignee, add_tags, remove_tags")
+	relations := len(in.AddTags) + len(in.RemoveTags) + len(in.AddFollowers) + len(in.RemoveFollowers) + len(in.AddProjects) + len(in.RemoveProjects)
+	if len(changes) == 0 && relations == 0 {
+		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
 	if len(changes) > 0 {
 		if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, s.Now()); err != nil {
@@ -559,6 +585,34 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	}
 	if err := s.changeTags(ctx, in.GID, in.AddTags, in.RemoveTags); err != nil {
 		return nil, WriteOutput{}, err
+	}
+	for _, list := range []struct {
+		users  []string
+		follow bool
+	}{{in.AddFollowers, true}, {in.RemoveFollowers, false}} {
+		for _, u := range list.users {
+			gid, err := s.Store.ResolveUser(ctx, u)
+			if err != nil {
+				return nil, WriteOutput{}, fmt.Errorf("follower %q: %w", u, err)
+			}
+			if err := s.Store.SetFollowerLocal(ctx, in.GID, gid, list.follow, s.Now()); err != nil {
+				return nil, WriteOutput{}, err
+			}
+		}
+	}
+	for _, list := range []struct {
+		projects []string
+		add      bool
+	}{{in.AddProjects, true}, {in.RemoveProjects, false}} {
+		for _, p := range list.projects {
+			gid, err := s.Store.ResolveProject(ctx, p)
+			if err != nil {
+				return nil, WriteOutput{}, err
+			}
+			if err := s.Store.SetProjectLocal(ctx, in.GID, gid, "", list.add, s.Now()); err != nil {
+				return nil, WriteOutput{}, err
+			}
+		}
 	}
 	return nil, s.push(ctx, in.GID), nil
 }
@@ -727,4 +781,19 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 		&mcp.TextContent{Text: a.Name + " (" + path + ")"},
 	}}
 	return res, out, nil
+}
+
+func (s *Server) duplicateTask(ctx context.Context, _ *mcp.CallToolRequest, in DuplicateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
+	gid, err := s.Store.DuplicateTaskLocal(ctx, in.GID, in.Name, s.Now())
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, gid), nil
+}
+
+func (s *Server) uploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, in UploadAttachmentInput) (*mcp.CallToolResult, WriteOutput, error) {
+	if _, err := s.Store.UploadAttachmentLocal(ctx, in.TaskGID, in.Path, s.CacheDir, s.Now()); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, in.TaskGID), nil
 }

@@ -470,22 +470,42 @@ func (m *Model) renderDetail(w int) string {
 	if d.StartOn != "" {
 		b.WriteString(m.st.label.Render(padRight("開始日", labelW)) + " " + d.StartOn + "\n")
 	}
-	for _, ms := range d.Memberships {
+	for i, ms := range d.Memberships {
 		v := ms.ProjectName
 		if ms.SectionName != "" && ms.SectionName != "(no section)" && ms.SectionName != "Untitled section" {
 			v += " / " + ms.SectionName
 		}
-		if len(d.Memberships) == 1 {
-			field(itemSection, "プロジェクト", v, "")
-		} else {
-			b.WriteString(m.st.label.Render(padRight("プロジェクト", labelW)) + " " + v + "\n")
+		label := "プロジェクト"
+		if i > 0 {
+			label = ""
 		}
+		row(item(itemSection, i), m.st.label.Render(padRight(label, labelW))+" "+v)
+	}
+	if active {
+		label := ""
+		if len(d.Memberships) == 0 {
+			label = "プロジェクト"
+		}
+		row(item(itemProjects, 0), m.st.label.Render(padRight(label, labelW))+" "+m.st.dim.Render("＋ プロジェクトに追加 / 外す"))
 	}
 	tags := ""
 	if len(d.Tags) > 0 {
 		tags = m.st.tag.Render("#" + strings.Join(d.Tags, " #"))
 	}
 	field(itemTags, "タグ", tags, "なし")
+	var followers []string
+	for _, f := range d.Followers {
+		followers = append(followers, f.Name)
+	}
+	field(itemFollowers, "フォロワー", strings.Join(followers, "、"), "なし")
+	likes := ""
+	if d.NumLikes > 0 || d.Liked {
+		likes = fmt.Sprintf("♥ %d", d.NumLikes)
+		if d.Liked {
+			likes += "（いいね済み）"
+		}
+	}
+	field(itemLike, "いいね", likes, "♡ なし")
 	if active {
 		done := "☐ 未完了"
 		if d.Completed {
@@ -519,9 +539,9 @@ func (m *Model) renderDetail(w int) string {
 	if n := len(imageNo); n > 0 {
 		b.WriteString(m.st.dim.Render(fmt.Sprintf("画像 %d 件（space i で全画面表示）", n)) + "\n")
 	}
-	if len(d.Attachments) > 0 {
+	if len(d.Attachments) > 0 || active {
 		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("添付ファイル (%d)", len(d.Attachments))) + "\n")
-		for _, a := range d.Attachments {
+		for i, a := range d.Attachments {
 			kind := "[ファイル]"
 			if a.IsImage {
 				kind = "[画像]"
@@ -533,7 +553,13 @@ func (m *Model) renderDetail(w int) string {
 			if a.LocalPath != "" {
 				text += m.st.dim.Render("  ✓保存済み")
 			}
-			b.WriteString(ansi.Truncate(text, w, "…") + "\n")
+			if store.IsLocalGID(a.GID) {
+				text += " ↑"
+			}
+			row(item(itemAttachment, i), ansi.Truncate(text, w, "…"))
+		}
+		if active {
+			row(item(itemAddAttachment, 0), m.st.dim.Render("＋ ファイルを添付"))
 		}
 	}
 

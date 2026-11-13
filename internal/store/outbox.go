@@ -432,6 +432,19 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 					return err
 				}
 			}
+		case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
+			if err := applyRelation(ctx, tx, *op, true); err != nil {
+				return err
+			}
+		case OpDuplicateTask:
+			if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE gid = ?", op.TaskGID); err != nil {
+				return err
+			}
+		case OpUploadAttachment:
+			gid, _ := op.Payload["attachment"].(string)
+			if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
+				return err
+			}
 		case OpAddTag, OpRemoveTag:
 			tag, _ := op.Payload["tag"].(string)
 			q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
@@ -523,7 +536,7 @@ func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string,
 
 // --- helpers ---
 
-var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true}
+var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true, "liked": true}
 
 func validateFields(changes map[string]any) error {
 	if len(changes) == 0 {
@@ -534,9 +547,9 @@ func validateFields(changes map[string]any) error {
 			return fmt.Errorf("unsupported field %q", k)
 		}
 		switch k {
-		case "completed":
+		case "completed", "liked":
 			if _, ok := v.(bool); !ok {
-				return fmt.Errorf("completed must be bool")
+				return fmt.Errorf("%s must be bool", k)
 			}
 		default:
 			if _, ok := v.(string); !ok {
@@ -556,21 +569,21 @@ func TaskFieldValues(t *asana.Task) map[string]any {
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
 	}
-	return map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee}
+	return map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked}
 }
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
-	var completed bool
+	var completed, liked bool
 	var name, notes, htmlNotes, dueOn, assignee, modifiedAt string
-	err := tx.QueryRowContext(ctx, "SELECT completed, name, notes, html_notes, due_on, assignee_gid, modified_at FROM tasks WHERE gid = ?", gid).
-		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &assignee, &modifiedAt)
+	err := tx.QueryRowContext(ctx, "SELECT completed, name, notes, html_notes, due_on, assignee_gid, modified_at, liked FROM tasks WHERE gid = ?", gid).
+		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &assignee, &modifiedAt, &liked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", fmt.Errorf("task %s: %w", gid, ErrNotFound)
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "assignee": assignee}, modifiedAt, nil
+	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "assignee": assignee, "liked": liked}, modifiedAt, nil
 }
 
 // applyFields writes update_task fields to the tasks table.
@@ -606,6 +619,10 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET notes = ?, html_notes = '' WHERE gid = ?", v, gid)
 		case "html_notes":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET html_notes = ? WHERE gid = ?", v, gid)
+		case "liked":
+			like, _ := v.(bool)
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET num_likes = max(0, num_likes + CASE WHEN ? = liked THEN 0 WHEN ? THEN 1 ELSE -1 END),
+				liked = ? WHERE gid = ?`, like, like, like, gid)
 		case "name", "due_on":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET "+k+" = ? WHERE gid = ?", v, gid)
 		case "assignee":

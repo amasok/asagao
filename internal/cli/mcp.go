@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/mcpserver"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -33,6 +35,7 @@ func (a *app) mcpCmd() *cobra.Command {
 			s := &mcpserver.Server{
 				Store:    st,
 				ReadOnly: readOnly,
+				CacheDir: filepath.Join(config.CacheDir(), "attachments"),
 				Version:  version,
 				// The syncer outlives the tool call that creates it, so build it with the
 				// server's context, not the request's (token refresh may write to 1Password).

@@ -747,3 +747,86 @@ func TestCachedFileNamesAreLinkSafe(t *testing.T) {
 		t.Fatalf("stored path = %q", a.LocalPath)
 	}
 }
+
+func TestPushTaskExtras(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodGet {
+			body := string(b)
+			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+				body = "multipart:" + map[bool]string{true: "has-file", false: "no-file"}[strings.Contains(body, "見積.pdf") && strings.Contains(body, "PDF!")]
+			}
+			calls = append(calls, r.Method+" "+r.URL.Path+" "+body)
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/duplicate"):
+			fmt.Fprint(w, `{"data":{"gid":"job1","new_task":{"gid":"T2","name":"コピー"}}}`)
+		case r.URL.Path == "/attachments":
+			fmt.Fprint(w, `{"data":{"gid":"A9","name":"見積.pdf","view_url":"https://x/a9"}}`)
+		case r.Method == http.MethodGet:
+			fmt.Fprintf(w, `{"data":{"gid":%q,"name":"コピー"}}`, strings.TrimPrefix(r.URL.Path, "/tasks/"))
+		default:
+			fmt.Fprint(w, `{"data":{"gid":"t1","name":"T","liked":true}}`)
+		}
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T", Followers: []asana.Ref{}}})
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(st.SetFollowerLocal(ctx, "t1", "u2", true, now))
+	must(st.SetFollowerLocal(ctx, "t1", "u3", true, now))
+	must(st.SetFollowerLocal(ctx, "t1", "u3", false, now)) // cancels the add
+	must(st.SetProjectLocal(ctx, "t1", "p2", "", true, now))
+	must(st.UpdateTaskLocal(ctx, "t1", map[string]any{"liked": true}, now))
+	copyGID, err := st.DuplicateTaskLocal(ctx, "t1", "", now)
+	must(err)
+	file := filepath.Join(t.TempDir(), "見積.pdf")
+	_ = os.WriteFile(file, []byte("PDF!"), 0o600)
+	_, err = st.UploadAttachmentLocal(ctx, "t1", file, t.TempDir(), now)
+	must(err)
+	// A pull that does not know about the follower/project keeps them.
+	must(st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T", Followers: []asana.Ref{}}}))
+	if d, _ := st.GetTask(ctx, "t1"); len(d.Followers) != 1 || len(d.Memberships) != 1 || !d.Liked {
+		t.Fatalf("local changes lost on pull: %+v", d)
+	}
+
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	if err != nil || res.Sent != 5 || res.Failed != 0 {
+		t.Fatalf("push = %+v %v\n%v", res, err, calls)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		`POST /tasks/t1/addFollowers {"data":{"followers":["u2"]}}`,
+		`POST /tasks/t1/addProject {"data":{"project":"p2"}}`,
+		`PUT /tasks/t1 {"data":{"liked":true}}`,
+		`POST /tasks/t1/duplicate {"data":{"include":"notes,assignee,subtasks,attachments,tags,followers,projects,dates,parent","name":"T のコピー"}}`,
+		`POST /attachments multipart:has-file`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing call %q in\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "u3") {
+		t.Fatal("cancelled follower must not be sent")
+	}
+	if _, err := st.GetTask(ctx, copyGID); err == nil {
+		t.Fatal("local copy should be replaced by the real duplicate")
+	}
+	if d, _ := st.GetTask(ctx, "t1"); len(d.Attachments) != 1 || d.Attachments[0].GID != "A9" {
+		t.Fatalf("uploaded attachment = %+v", d.Attachments)
+	}
+}
