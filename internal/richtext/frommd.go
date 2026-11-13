@@ -10,7 +10,6 @@ import (
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
 )
 
 // Editable Markdown keeps Asana-specific references in a form that survives editing:
@@ -40,7 +39,8 @@ func PlainFromMarkdown(src string) string {
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b, plain: true}
 	w.blocks(doc)
-	return strings.TrimSpace(w.b.String())
+	// keep the indentation of the first line (written as "&#32;" / "&#9;" in Markdown)
+	return strings.TrimLeft(strings.TrimRight(w.b.String(), " \t\n"), "\n")
 }
 
 type htmlWriter struct {
@@ -168,8 +168,7 @@ func (w *htmlWriter) inlines(n gast.Node) {
 func (w *htmlWriter) inline(n gast.Node) {
 	switch n := n.(type) {
 	case *gast.Text:
-		// The segment still holds backslash escapes ("\*"); goldmark's own renderer removes them.
-		w.textOut(string(util.UnescapePunctuations(n.Segment.Value(w.src))))
+		w.textOut(decodeText(n.Segment.Value(w.src)))
 		if n.SoftLineBreak() || n.HardLineBreak() {
 			w.b.WriteString("\n")
 		}
@@ -233,6 +232,21 @@ func (w *htmlWriter) inline(n gast.Node) {
 	default:
 		w.inlines(n)
 	}
+}
+
+// textEscape matches a backslash escape ("\*") or a character reference ("&amp;", "&#32;").
+var textEscape = regexp.MustCompile(`\\[!-/:-@\[-` + "`" + `{-~]|&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{0,31});`)
+
+// decodeText turns the raw source of a text segment into its text: backslash escapes and
+// character references are resolved in one pass (as goldmark's renderer does), so "\&amp;"
+// is the text "&amp;". Unknown references ("&foo;") stay as written.
+func decodeText(src []byte) string {
+	return textEscape.ReplaceAllStringFunc(string(src), func(m string) string {
+		if m[0] == '\\' {
+			return m[1:]
+		}
+		return html.UnescapeString(m)
+	})
 }
 
 // cachedAttachment matches files downloaded by asana-tui (".../attachments/<gid>-name").

@@ -49,10 +49,19 @@ func TestToMarkdown(t *testing.T) {
 			`\*注意\* \[メモ\] 1\_2  ` + "\n" + `\# ではない  ` + "\n" + `\- でもない`},
 		{"escapes block syntax at line start",
 			"<body>1. 番号\n12) 括弧\n3.\n-- -\n+ プラス\n> 引用\n  # 字下げ\n-\n---\n===\n~~消し~~ と 10時~12時</body>",
-			`1\. 番号  ` + "\n" + `12\) 括弧  ` + "\n" + `3\.  ` + "\n" + `\-- -  ` + "\n" + `\+ プラス  ` + "\n" + `\> 引用  ` + "\n" + `  \# 字下げ  ` + "\n" + `\-  ` + "\n" + `\---  ` + "\n" + `\===  ` + "\n" + `\~\~消し\~\~ と 10時\~12時`},
-		{"escapes block syntax after tab indentation",
-			"<body>前\n\t# 井桁\n\t- ハイフン\n \t+ プラス\n\t1. 番号\n\t> 引用\n-\t-\t-\n--\t-\n見出し風\n===\t\n後</body>",
-			"前  \n\t\\# 井桁  \n\t\\- ハイフン  \n \t\\+ プラス  \n\t1\\. 番号  \n\t\\> 引用  \n\\-\t-\t-  \n\\--\t-  \n見出し風  \n\\===\t  \n後"},
+			`1\. 番号  ` + "\n" + `12\) 括弧  ` + "\n" + `3\.  ` + "\n" + `\-- -  ` + "\n" + `\+ プラス  ` + "\n" + `\> 引用  ` + "\n" + `&#32; # 字下げ  ` + "\n" + `\-  ` + "\n" + `\---  ` + "\n" + `\===  ` + "\n" + `\~\~消し\~\~ と 10時\~12時`},
+		{"indentation is kept with a character reference",
+			"<body>前\n\t# 井桁\n\t- ハイフン\n \t+ プラス\n\t1. 番号\n\t> 引用\n    コード風\n-\t-\t-\n--\t-\n見出し風\n===\t\n後</body>",
+			"前  \n&#9;# 井桁  \n&#9;- ハイフン  \n&#32;\t+ プラス  \n&#9;1. 番号  \n&#9;> 引用  \n&#32;   コード風  \n\\-\t-\t-  \n\\--\t-  \n見出し風  \n\\===\t  \n後"},
+		{"indentation only at real line starts",
+			"<body><strong>太字</strong>  後ろ\n<ul><li>  字下げ項目</li></ul><ol><li>\t番号項目</li></ol><blockquote>引用\n  字下げ</blockquote><blockquote>  先頭から字下げ</blockquote></body>",
+			"**太字**  後ろ\n\n- &#32; 字下げ項目\n\n1. &#9;番号項目\n\n> 引用  \n> &#32; 字下げ\n\n> &#32; 先頭から字下げ"},
+		{"whitespace-only lines stay blank",
+			"<body>前\n  \n\t\n後</body>",
+			"前  \n\n後"}, // the trailing "  " before a blank line is harmless (as before)
+		{"character references in text stay as written",
+			"<body>A&amp;amp;B &amp;copy; &amp;#32; &amp; ; &amp;foo</body>",
+			`A\&amp;B \&copy; \&#32; & ; &foo`},
 		{"does not escape look-alikes",
 			"<body>1.5倍\n2020.1\n-5度\n+1\n=a\n-- x</body>",
 			"1.5倍  \n2020.1  \n-5度  \n+1  \n=a  \n-- x"},
@@ -90,6 +99,7 @@ func TestFromMarkdown(t *testing.T) {
 <img data-asana-gid="123"/>
 
 <a data-asana-gid="9"/> さん</body>`},
+		{"character references", "A &amp; B &copy; &#32;x \\&amp; &foo; `&amp;`", "<body>A &amp; B ©  x &amp;amp; &amp;foo; <code>&amp;amp;</code></body>"},
 		{"code and quote", "```\na < b\n```\n> 引用\n\n---\n後", "<body><pre>a &lt; b</pre><blockquote>引用</blockquote><hr/>後</body>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,6 +146,7 @@ func TestMarkdownRoundTrip(t *testing.T) {
 		"- 牛乳\n- 卵\n   1. 赤\n   2. 白\n\n以上",
 		"> 引用\n\n```\na < b\n```\n\n---\n\n後",
 		"[サイト](https://example.com) と <https://x.jp>\n\n![画像](asana:123)",
+		"前\n\n&#32;   字下げ  \n&#9;タブ  \n\\&amp; は文字",
 		`1\. 番号ではない  ` + "\n" + `\+ リストではない  ` + "\n" + `\# 見出しではない  ` + "\n" + `\~\~消さない\~\~ 10時\~12時`,
 	} {
 		h := FromMarkdown(md)
@@ -155,6 +166,10 @@ func TestPlainTextRoundTrip(t *testing.T) {
 		"見出し風\n---\n見出し風\n===",
 		"段落\n-- -\n3.\n4)",
 		"段落\n--\t-\n後",
+		"前\n\n\t- z",
+		"前\n\n    コード風\n  二行目\n\t\tタブ二つ",
+		"  先頭の字下げ\n項目\n\t# x\n \t> y",
+		"A&amp;B &copy; &#32; & ; &foo; \\&amp;",
 		"~~消し~~ と 10時~12時と14時~15時",
 		"1.5倍\n-5度\n\n次の段落",
 	} {
@@ -170,11 +185,10 @@ func TestPlainTextRoundTrip(t *testing.T) {
 }
 
 // Tabs do not let text turn into Markdown blocks: a tab-indented "- " or "# " inside a list
-// item stays text instead of becoming a nested list or a heading. (Markdown drops the
-// indentation itself, so the tab is not kept.)
+// item stays text (with its tab) instead of becoming a nested list or a heading.
 func TestTabsDoNotCreateBlocks(t *testing.T) {
 	in := "<body><ul><li>項目\n\t- 子\n\t# 見出し\n\t1. 番号</li></ul></body>"
-	want := "<body><ul><li>項目\n- 子\n# 見出し\n1. 番号</li></ul></body>"
+	want := in
 	md := ToEditableMarkdown(in)
 	if out := FromMarkdown(md); out != want {
 		t.Fatalf("markdown %q\nhtml %q\nwant %q", md, out, want)
