@@ -133,14 +133,8 @@ func (a *app) taskCreateCmd() *cobra.Command {
 			if project == "" && parent == "" && assignee == "" {
 				assignee = "me"
 			}
-			switch assignee {
-			case "":
-			case "me":
-				if nt.AssigneeGID, err = st.MeGID(ctx); err != nil {
-					return err
-				}
-			default:
-				nt.AssigneeGID = assignee
+			if nt.AssigneeGID, err = st.ResolveUser(ctx, assignee); err != nil {
+				return fmt.Errorf("--assignee: %w", err)
 			}
 			gid, err := st.CreateTaskLocal(ctx, nt, time.Now())
 			if err != nil {
@@ -152,7 +146,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
 	cmd.Flags().StringVar(&section, "section", "", "セクション（gid または名前。省略時は先頭のセクション）")
 	cmd.Flags().StringVar(&due, "due", "", "期日（YYYY-MM-DD / today / tomorrow / +Nd）")
-	cmd.Flags().StringVar(&assignee, "assignee", "", `担当者（"me" またはユーザーの gid。プロジェクト未指定なら me）`)
+	cmd.Flags().StringVar(&assignee, "assignee", "", `担当者（"me"・"none"・ユーザーの gid か名前。プロジェクト未指定なら me）`)
 	cmd.Flags().StringVar(&notes, "notes", "", "説明（マークダウン）")
 	cmd.Flags().StringVar(&parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
 	return cmd
@@ -172,38 +166,12 @@ func (a *app) taskTagCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			tags, err := st.ListTags(ctx)
+			edit, err := st.ResolveTagEdit(ctx, add, remove)
 			if err != nil {
 				return err
 			}
-			find := func(s string) string {
-				s = strings.TrimPrefix(s, "#")
-				for _, t := range tags {
-					if t.GID == s || t.Name == s {
-						return t.GID
-					}
-				}
-				return ""
-			}
-			now := time.Now()
-			for _, t := range add {
-				if gid := find(t); gid != "" {
-					_, err = st.AddTagLocal(ctx, args[0], gid, "", now)
-				} else {
-					_, err = st.AddTagLocal(ctx, args[0], "", strings.TrimPrefix(t, "#"), now)
-				}
-				if err != nil {
-					return err
-				}
-			}
-			for _, t := range remove {
-				gid := find(t)
-				if gid == "" {
-					return fmt.Errorf("タグ %q はありません", t)
-				}
-				if err := st.RemoveTagLocal(ctx, args[0], gid, now); err != nil {
-					return err
-				}
+			if err := st.ApplyTagEdit(ctx, args[0], edit, time.Now()); err != nil {
+				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "タグを変更しました")
 		},
@@ -242,16 +210,22 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 
 	follow := a.writeCommand("follow <gid> [--add ユーザー]... [--remove ユーザー]...", "フォロワーを追加 / 外す（me・名前・gid）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			// resolve every name before changing anything
+			addNames, _ := cmd.Flags().GetStringSlice("add")
+			removeNames, _ := cmd.Flags().GetStringSlice("remove")
+			add, err := st.ResolveUsers(cmd.Context(), addNames)
+			if err != nil {
+				return "", "", fmt.Errorf("--add: %w", err)
+			}
+			remove, err := st.ResolveUsers(cmd.Context(), removeNames)
+			if err != nil {
+				return "", "", fmt.Errorf("--remove: %w", err)
+			}
 			for _, f := range []struct {
-				flag   string
+				users  []string
 				follow bool
-			}{{"add", true}, {"remove", false}} {
-				users, _ := cmd.Flags().GetStringSlice(f.flag)
-				for _, u := range users {
-					gid, err := st.ResolveUser(cmd.Context(), u)
-					if err != nil {
-						return "", "", err
-					}
+			}{{add, true}, {remove, false}} {
+				for _, gid := range f.users {
 					if err := st.SetFollowerLocal(cmd.Context(), args[0], gid, f.follow, time.Now()); err != nil {
 						return "", "", err
 					}
@@ -264,17 +238,22 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 
 	project := a.writeCommand("project <gid> [--add プロジェクト]... [--remove プロジェクト]...", "ほかのプロジェクトに追加 / 外す", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
-			for _, f := range []struct {
-				flag string
-				add  bool
-			}{{"add", true}, {"remove", false}} {
-				projects, _ := cmd.Flags().GetStringSlice(f.flag)
-				for _, p := range projects {
-					gid, err := st.ResolveProject(cmd.Context(), p)
-					if err != nil {
-						return "", "", err
-					}
-					if err := st.SetProjectLocal(cmd.Context(), args[0], gid, "", f.add, time.Now()); err != nil {
+			addNames, _ := cmd.Flags().GetStringSlice("add")
+			removeNames, _ := cmd.Flags().GetStringSlice("remove")
+			add, err := st.ResolveProjects(cmd.Context(), addNames)
+			if err != nil {
+				return "", "", fmt.Errorf("--add: %w", err)
+			}
+			remove, err := st.ResolveProjects(cmd.Context(), removeNames)
+			if err != nil {
+				return "", "", fmt.Errorf("--remove: %w", err)
+			}
+			for _, p := range []struct {
+				projects []string
+				add      bool
+			}{{add, true}, {remove, false}} {
+				for _, gid := range p.projects {
+					if err := st.SetProjectLocal(cmd.Context(), args[0], gid, "", p.add, time.Now()); err != nil {
 						return "", "", err
 					}
 				}
@@ -450,7 +429,7 @@ func (a *app) commentCmd() *cobra.Command {
 func (a *app) outboxCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "outbox", Short: "未送信の変更（オフライン中の編集・競合）を確認・解決する"}
 
-	withOp := func(use, short string, fn func(ctx context.Context, st *store.Store, op *store.Op) (string, error)) *cobra.Command {
+	withOp := func(use, short string, action func() (sync.ResolveAction, error)) *cobra.Command {
 		return &cobra.Command{
 			Use:   use + " <id>",
 			Short: short,
@@ -460,17 +439,17 @@ func (a *app) outboxCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("id は数値で指定してください: %q", args[0])
 				}
+				act, err := action()
+				if err != nil {
+					return err
+				}
 				ctx := cmd.Context()
 				st, err := a.openStore(ctx)
 				if err != nil {
 					return err
 				}
 				defer st.Close()
-				op, err := st.GetOp(ctx, id)
-				if err != nil {
-					return err
-				}
-				msg, err := fn(ctx, st, op)
+				msg, err := a.resolve(ctx, st, id, act)
 				if err != nil {
 					return err
 				}
@@ -515,53 +494,53 @@ func (a *app) outboxCmd() *cobra.Command {
 
 	var keep string
 	resolve := withOp("resolve", "競合を解決する（--keep local: こちらの値で上書き / remote: Asana の値を採用）",
-		func(ctx context.Context, st *store.Store, op *store.Op) (string, error) {
-			if op.State != store.OpConflict {
-				return "", fmt.Errorf("#%d は競合していません（状態: %s）", op.ID, stateLabel(op.State))
-			}
+		func() (sync.ResolveAction, error) {
 			switch keep {
 			case "local":
-				if err := st.ResolveKeepLocal(ctx, op.ID); err != nil {
-					return "", err
-				}
-				if _, err := a.pushNow(ctx, st); err != nil {
-					return fmt.Sprintf("#%d: こちらの値を送ります（オフラインのため次の sync で送信）", op.ID), nil
-				}
-				return fmt.Sprintf("#%d: こちらの値で上書きしました", op.ID), nil
+				return sync.KeepLocal, nil
 			case "remote":
-				return a.discard(ctx, st, op)
+				return sync.KeepRemote, nil
 			}
 			return "", fmt.Errorf(`--keep は "local" か "remote" を指定してください`)
 		})
 	resolve.Flags().StringVar(&keep, "keep", "", "local または remote")
 	_ = resolve.MarkFlagRequired("keep")
 
+	fixed := func(act sync.ResolveAction) func() (sync.ResolveAction, error) {
+		return func() (sync.ResolveAction, error) { return act, nil }
+	}
 	cmd.AddCommand(resolve,
-		withOp("retry", "送信に失敗した変更をもう一度送る", func(ctx context.Context, st *store.Store, op *store.Op) (string, error) {
-			if err := st.RetryOp(ctx, op.ID); err != nil {
-				return "", err
-			}
-			if _, err := a.pushNow(ctx, st); err != nil {
-				return fmt.Sprintf("#%d: 次の sync で送ります（%v）", op.ID, err), nil
-			}
-			return fmt.Sprintf("#%d: 送信しました（失敗した場合は outbox list に残ります）", op.ID), nil
-		}),
-		withOp("discard", "未送信の変更を取り消す", a.discard),
+		withOp("retry", "送信に失敗した変更をもう一度送る", fixed(sync.Retry)),
+		withOp("discard", "未送信の変更を取り消す", fixed(sync.Discard)),
 	)
 	return cmd
 }
 
-// discard drops a local change and refreshes the task from Asana when online.
-func (a *app) discard(ctx context.Context, st *store.Store, op *store.Op) (string, error) {
-	if err := st.DiscardOp(ctx, op.ID); err != nil {
+// resolve resolves an outbox entry (sync.Resolve), then sends it right away or refreshes
+// the task from Asana as needed. Being offline is not an error: the next sync does it.
+func (a *app) resolve(ctx context.Context, st *store.Store, id int64, act sync.ResolveAction) (string, error) {
+	r, err := sync.Resolve(ctx, st, id, act)
+	if err != nil {
 		return "", err
 	}
-	if op.Kind != store.OpCreateTask {
-		if err := a.fetchDetails(ctx, st, op.TaskGID); err != nil {
-			return fmt.Sprintf("#%d を取り消しました（Asana の最新値は次の sync で反映されます）", op.ID), nil
+	if r.Push {
+		push, err := a.pushNow(ctx, st)
+		switch {
+		case err != nil:
+			return fmt.Sprintf("#%d: 次の sync で送ります（オフライン: %v）", id, err), nil
+		case push.Remaining > 0 || push.Failed > 0 || push.Conflicts > 0:
+			return fmt.Sprintf("#%d: 送信できなかった変更があります。`asana-tui outbox list` で確認してください", id), nil
+		case act == sync.KeepLocal:
+			return fmt.Sprintf("#%d: こちらの値で上書きしました", id), nil
+		}
+		return fmt.Sprintf("#%d: 送信しました", id), nil
+	}
+	if r.RefreshGID != "" {
+		if err := a.fetchDetails(ctx, st, r.RefreshGID); err != nil {
+			return fmt.Sprintf("#%d を取り消しました（Asana の最新値は次の sync で反映されます）", id), nil
 		}
 	}
-	return fmt.Sprintf("#%d を取り消しました", op.ID), nil
+	return fmt.Sprintf("#%d を取り消しました", id), nil
 }
 
 func stateLabel(s string) string {

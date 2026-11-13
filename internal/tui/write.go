@@ -8,7 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/sync"
 )
 
 // Writes (complete / create / comment) are applied to the local store immediately and
@@ -38,9 +40,10 @@ type (
 		err    error
 	}
 	writeDoneMsg struct {
-		status string
-		gid    string // task to select afterwards
-		err    error
+		status  string
+		gid     string // task to select afterwards
+		refresh string // task to fetch again from Asana (after dropping a local change)
+		err     error
 	}
 )
 
@@ -130,6 +133,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.status = msg.status
 		if msg.gid != "" {
 			m.selectAfter = msg.gid
+		}
+		if msg.refresh != "" {
+			return m, tea.Batch(m.afterWrite(), m.fetchDetails(msg.refresh)), true
 		}
 		return m, m.afterWrite(), true
 	}
@@ -320,7 +326,8 @@ func (m *Model) addComment(taskGID, text string) tea.Cmd {
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
-		if _, err := st.AddCommentLocal(m.ctx, taskGID, text, me, now); err != nil {
+		// Markdown -> Asana rich text, like the comment editor (C), the CLI and MCP
+		if _, err := st.AddRichCommentLocal(m.ctx, taskGID, richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}
@@ -350,13 +357,18 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	if m.opCursor < len(m.ops) {
 		op = &m.ops[m.opCursor]
 	}
-	st := m.deps.Store
-	act := func(fn func() error, status string) tea.Cmd {
+	resolve := func(action sync.ResolveAction, status string) tea.Cmd {
+		if op == nil {
+			return nil
+		}
+		st, id := m.deps.Store, op.ID
 		return func() tea.Msg {
-			if err := fn(); err != nil {
+			r, err := sync.Resolve(m.ctx, st, id, action)
+			if err != nil {
 				return writeDoneMsg{err: err}
 			}
-			return writeDoneMsg{status: status}
+			// afterWrite requests a sync, which sends a requeued entry.
+			return writeDoneMsg{status: status, refresh: r.RefreshGID}
 		}
 	}
 	switch key {
@@ -366,25 +378,14 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 		m.opCursor = clamp(m.opCursor+1, 0, max(0, len(m.ops)-1))
 	case "k", "up":
 		m.opCursor = clamp(m.opCursor-1, 0, max(0, len(m.ops)-1))
-	case "l": // keep local
-		if op != nil && op.State == store.OpConflict {
-			id := op.ID
-			return m, act(func() error { return st.ResolveKeepLocal(m.ctx, id) }, "こちらの値で上書きします")
-		}
-	case "s", "d": // keep server / discard
-		if op != nil {
-			id, gid, kind := op.ID, op.TaskGID, op.Kind
-			cmd := act(func() error { return st.DiscardOp(m.ctx, id) }, "取り消しました")
-			if kind != store.OpCreateTask && m.syncer != nil {
-				return m, tea.Batch(cmd, m.fetchDetails(gid))
-			}
-			return m, cmd
-		}
+	case "l":
+		return m, resolve(sync.KeepLocal, "こちらの値で上書きします")
+	case "s":
+		return m, resolve(sync.KeepRemote, "Asana の値を採用しました")
+	case "d":
+		return m, resolve(sync.Discard, "取り消しました")
 	case "R":
-		if op != nil && op.State == store.OpFailed {
-			id := op.ID
-			return m, act(func() error { return st.RetryOp(m.ctx, id) }, "もう一度送ります")
-		}
+		return m, resolve(sync.Retry, "もう一度送ります")
 	}
 	return m, nil
 }
