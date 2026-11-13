@@ -610,6 +610,8 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
 	}
 	switch {
+	case errors.Is(err, sync.ErrPushBusy):
+		out.Note = "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:
 		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
 	case res.Conflicts > 0 || res.Failed > 0:

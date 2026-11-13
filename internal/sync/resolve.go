@@ -75,6 +75,9 @@ func Resolve(ctx context.Context, st *store.Store, id int64, action ResolveActio
 		return Resolution{}, err
 	}
 	r := Resolution{Op: *op, Action: action}
+	if op.State == store.OpSending { // Push has it now; the store would refuse too
+		return r, fmt.Errorf("#%d: %w", op.ID, store.ErrOpSending)
+	}
 	switch action {
 	case KeepLocal:
 		if op.State != store.OpConflict {

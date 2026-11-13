@@ -399,21 +399,24 @@ func (m *Model) renderOutbox(w, h int) string {
 		lines = append(lines, "未送信の変更はありません")
 	}
 	for i, op := range m.ops {
-		state := store.OpStateLabel(op.State)
-		style := m.st.dim
+		style := m.st.dim // pending, sending (Push has it; nothing to resolve)
 		switch op.State {
 		case store.OpConflict:
 			style = m.st.today
 		case store.OpFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+state+"]", 8)) + " " + store.DescribeOp(op)
+		line := style.Render(padRight("["+store.OpLabel(op)+"]", 10)) + " " + store.DescribeOp(op)
 		lines = append(lines, m.highlight(line, w-4, i == m.opCursor, true))
 		for k, v := range op.Conflict {
 			lines = append(lines, fmt.Sprintf("           %s: こちら=%v / Asana=%v", store.FieldLabel(k), op.Payload[k], v))
 		}
 		if op.LastError != "" {
-			lines = append(lines, m.st.errorText.Render("           "+op.LastError))
+			note := m.st.dim // e.g. waiting to check Asana
+			if op.State == store.OpFailed {
+				note = m.st.errorText
+			}
+			lines = append(lines, note.Render("           "+op.LastError))
 		}
 	}
 	return m.pane("未送信の変更", lines, w, h, true)

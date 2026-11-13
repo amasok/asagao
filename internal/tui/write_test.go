@@ -92,3 +92,32 @@ func TestOutboxActionsCheckState(t *testing.T) {
 		t.Fatalf("keep local should requeue: %+v", op)
 	}
 }
+
+func TestOutboxShowsSendingAndVerify(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	ctx, st := context.Background(), h.m.deps.Store
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "新規", WorkspaceGID: "w1"}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	ops, _ := st.ListOps(ctx)
+	if ok, err := st.BeginSend(ctx, ops[0].ID, testNow); !ok || err != nil {
+		t.Fatalf("BeginSend = %v, %v", ok, err)
+	}
+	if err := st.MarkOpVerify(ctx, ops[1].ID, "Asana への反映を待っています（次の同期で確かめます）"); err != nil {
+		t.Fatal(err)
+	}
+	h.key("!")
+	s := h.screen()
+	for _, want := range []string{"[送信中]", "[確認待ち]", "Asana への反映を待っています"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("outbox missing %q:\n%s", want, s)
+		}
+	}
+	// the entry being sent cannot be resolved
+	if msg := outboxAction(t, h, 0, "d"); msg.err == nil || !strings.Contains(msg.err.Error(), "送信中") {
+		t.Fatalf("discarding a sending entry = %+v", msg)
+	}
+}

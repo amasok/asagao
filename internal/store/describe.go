@@ -16,8 +16,28 @@ func OpStateLabel(state string) string {
 		return "競合"
 	case OpFailed:
 		return "失敗"
+	case OpSending:
+		return "送信中"
 	}
 	return state
+}
+
+// OpLabel is OpStateLabel, except that a queued entry Asana may already have applied
+// (Verify: Push checks Asana before sending it again) is "確認待ち".
+func OpLabel(op Op) string {
+	if op.State == OpPending && op.Verify {
+		return "確認待ち"
+	}
+	return OpStateLabel(op.State)
+}
+
+// OpNoteLabel is the heading for op.LastError: an error for a failed entry, otherwise a
+// note on what Push is waiting for.
+func OpNoteLabel(op Op) string {
+	if op.State == OpFailed {
+		return "エラー"
+	}
+	return "状況"
 }
 
 // FieldLabel is the label of an update_task field ("" for unknown keys).

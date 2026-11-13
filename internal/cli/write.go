@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -55,6 +56,8 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 	}
 	out := cmd.OutOrStdout()
 	switch {
+	case errors.Is(err, sync.ErrPushBusy):
+		fmt.Fprintf(out, "%s（別の asana-tui が送信中です。この変更もそちらで送られます）\n", done)
 	case err != nil:
 		fmt.Fprintf(out, "%s（オフラインのため未送信。次の sync で送ります: %v）\n", done, err)
 	case !r.Sent:
@@ -494,12 +497,12 @@ func (a *app) outboxCmd() *cobra.Command {
 				return nil
 			}
 			for _, op := range ops {
-				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, store.OpStateLabel(op.State), store.DescribeOp(op))
+				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, store.OpLabel(op), store.DescribeOp(op))
 				for k, v := range op.Conflict {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s: こちら=%v / Asana=%v\n", store.FieldLabel(k), op.Payload[k], v)
 				}
 				if op.LastError != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "      エラー: %s\n", op.LastError)
+					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", store.OpNoteLabel(op), op.LastError)
 				}
 			}
 			return nil
@@ -540,6 +543,8 @@ func (a *app) resolve(ctx context.Context, st *store.Store, id int64, act sync.R
 	if r.Push {
 		push, err := a.pushNow(ctx, st)
 		switch {
+		case errors.Is(err, sync.ErrPushBusy):
+			return fmt.Sprintf("#%d: 別の asana-tui が送信中です。そちらで送られます", id), nil
 		case err != nil:
 			return fmt.Sprintf("#%d: 次の sync で送ります（オフライン: %v）", id, err), nil
 		case push.Remaining > 0 || push.Failed > 0 || push.Conflicts > 0:

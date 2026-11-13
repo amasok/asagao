@@ -213,3 +213,37 @@ func TestResolveOutboxStateRules(t *testing.T) {
 		t.Errorf("task discard offline should mention the next sync: %+v", w)
 	}
 }
+
+// While another process holds the push lock, a write is queued and says so (not "offline").
+func TestPushBusyIsNotOffline(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	srv := fakeAsana(t)
+	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+		api := asana.NewClient(srv.Client())
+		api.BaseURL = srv.URL
+		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+	}})
+	unlock, err := st.TryLockPush() // "another process" is sending
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w WriteOutput
+	call(t, cs, "update_task", map[string]any{"gid": "t2", "completed": true}, &w)
+	unlock()
+	if w.Sent || !strings.Contains(w.Note, "another asana-tui process") || strings.Contains(w.Note, "could not be reached") {
+		t.Fatalf("busy push = %+v", w)
+	}
+	ops, _ := st.ListOps(ctx)
+	if len(ops) != 1 || ops[0].State != store.OpPending {
+		t.Fatalf("the change should stay queued: %+v", ops)
+	}
+
+	// an entry being sent cannot be resolved
+	if ok, err := st.BeginSend(ctx, ops[0].ID, testNow); !ok || err != nil {
+		t.Fatalf("BeginSend = %v, %v", ok, err)
+	}
+	if msg := toolError(call(t, cs, "resolve_outbox", map[string]any{"id": ops[0].ID, "action": "discard"}, nil)); !strings.Contains(msg, "送信中") {
+		t.Fatalf("resolving a sending entry: error = %q", msg)
+	}
+}

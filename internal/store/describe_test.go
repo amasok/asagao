@@ -39,3 +39,31 @@ func TestDescribeOp(t *testing.T) {
 		})
 	}
 }
+
+func TestOpLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		op          Op
+		label, note string
+	}{
+		{"pending", Op{State: OpPending}, "未送信", "状況"},
+		{"waiting to check Asana", Op{State: OpPending, Verify: true, LastError: "Asana への反映を待っています"}, "確認待ち", "状況"},
+		{"sending", Op{State: OpSending}, "送信中", "状況"},
+		{"sending while verifying", Op{State: OpSending, Verify: true}, "送信中", "状況"},
+		{"conflict", Op{State: OpConflict}, "競合", "状況"},
+		{"failed", Op{State: OpFailed, LastError: "boom"}, "失敗", "エラー"},
+		{"unknown state", Op{State: "weird"}, "weird", "状況"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := OpLabel(tc.op); got != tc.label {
+				t.Errorf("OpLabel = %q, want %q", got, tc.label)
+			}
+			if got := OpNoteLabel(tc.op); got != tc.note {
+				t.Errorf("OpNoteLabel = %q, want %q", got, tc.note)
+			}
+		})
+	}
+	if got := OpStateLabel(OpSending); got != "送信中" {
+		t.Errorf("OpStateLabel(sending) = %q", got)
+	}
+}

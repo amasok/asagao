@@ -198,3 +198,24 @@ func TestResolveBadInput(t *testing.T) {
 		t.Error(`ParseResolveAction("local") should fail`)
 	}
 }
+
+// An entry Push is sending cannot be resolved by anyone.
+func TestResolveRefusesSending(t *testing.T) {
+	for _, action := range []ResolveAction{KeepLocal, KeepRemote, Retry, Discard} {
+		t.Run(string(action), func(t *testing.T) {
+			ctx := context.Background()
+			st := resolveStore(t)
+			id := queue(t, st, store.OpUpdateTask)
+			if ok, err := st.BeginSend(ctx, id, time.Now()); !ok || err != nil {
+				t.Fatalf("BeginSend = %v, %v", ok, err)
+			}
+			_, err := Resolve(ctx, st, id, action)
+			if !errors.Is(err, store.ErrOpSending) {
+				t.Fatalf("err = %v, want ErrOpSending", err)
+			}
+			if op, _ := st.GetOp(ctx, id); op == nil || op.State != store.OpSending {
+				t.Fatalf("the entry must be left alone: %+v", op)
+			}
+		})
+	}
+}
