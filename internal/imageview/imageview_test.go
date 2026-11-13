@@ -9,6 +9,8 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestDetect(t *testing.T) {
@@ -134,5 +136,33 @@ func TestDisplayName(t *testing.T) {
 		if got := displayName(in); got != want {
 			t.Errorf("displayName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestPlaceholderLines(t *testing.T) {
+	lines := PlaceholderLines(42, 2, 2)
+	want := []string{
+		"\x1b[38;5;42m\U0010EEEE̅̅\U0010EEEE̅̍\x1b[39m",
+		"\x1b[38;5;42m\U0010EEEE̍̅\U0010EEEE̍̍\x1b[39m",
+	}
+	if len(lines) != 2 || lines[0] != want[0] || lines[1] != want[1] {
+		t.Fatalf("got %q", lines)
+	}
+	// Each placeholder cell is one column wide, so layout code can treat it as text.
+	if w := ansi.StringWidth(lines[0]); w != 2 {
+		t.Fatalf("width = %d", w)
+	}
+	if got := len(PlaceholderLines(1, 500, 3)[0]); got == 0 || ansi.StringWidth(PlaceholderLines(1, 500, 3)[0]) != MaxPlaceholderCells {
+		t.Fatalf("columns should be capped at %d", MaxPlaceholderCells)
+	}
+}
+
+func TestKittyVirtual(t *testing.T) {
+	seq := KittyVirtual(7, bytes.Repeat([]byte{1}, 5000), 30, 10)
+	if !strings.HasPrefix(seq, "\x1b_Ga=T,U=1,f=100,q=2,i=7,c=30,r=10,m=1;") || !strings.HasSuffix(seq, "\x1b\\") {
+		t.Fatalf("seq = %q", seq[:50])
+	}
+	if strings.Count(seq, "\x1b_G") != 2 {
+		t.Fatalf("5000 bytes should take 2 chunks")
 	}
 }

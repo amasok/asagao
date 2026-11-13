@@ -26,7 +26,8 @@ func (a *app) runTUI(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages}
+	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
+		InlineImages: a.inlineImages()}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)
@@ -54,4 +55,16 @@ func (a *app) viewImages(paths []string) tea.Cmd {
 	}
 	args := append([]string{"image-view", "--protocol", protocol}, paths...)
 	return tea.ExecProcess(exec.Command(self, args...), func(error) tea.Msg { return nil })
+}
+
+// inlineImages reports whether to draw images inside the detail pane (kitty Unicode
+// placeholders; supported by kitty and Ghostty, not through multiplexers).
+func (a *app) inlineImages() bool {
+	switch a.cfg.UI.InlineImages {
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	return imageview.Resolve(a.cfg.UI.ImageProtocol) == imageview.ProtocolKitty
 }

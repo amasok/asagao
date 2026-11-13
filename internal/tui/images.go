@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -28,12 +29,18 @@ func taskImages(d *store.TaskDetail) []string {
 			gids = append(gids, gid)
 		}
 	}
-	for _, g := range store.InlineAssets(d.Notes) {
+	textImages := func(htmlText, plain string) []string {
+		if htmlText != "" {
+			return richtext.Images(htmlText)
+		}
+		return store.InlineAssets(plain)
+	}
+	for _, g := range textImages(d.HTMLNotes, d.Notes) {
 		add(g)
 	}
 	for _, st := range d.Stories {
 		if st.Type == "comment" {
-			for _, g := range store.InlineAssets(st.Text) {
+			for _, g := range textImages(st.HTMLText, st.Text) {
 				add(g)
 			}
 		}

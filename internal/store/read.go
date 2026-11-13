@@ -59,11 +59,15 @@ type StoryView struct {
 	CreatedBy       *UserRef `json:"created_by"`
 	CreatedAt       string   `json:"created_at"`
 	Pending         bool     `json:"pending"`
+	// HTMLText is the comment as Asana rich text (empty for comments posted offline).
+	HTMLText string `json:"html_text,omitempty"`
 }
 
 type TaskDetail struct {
 	TaskSummary
-	Notes       string           `json:"notes"`
+	Notes string `json:"notes"`
+	// HTMLNotes is the description as Asana rich text (HTML subset); empty if unknown.
+	HTMLNotes   string           `json:"html_notes,omitempty"`
 	CreatedAt   string           `json:"created_at"`
 	Parent      *TaskRef         `json:"parent"`
 	Subtasks    []TaskSummary    `json:"subtasks"`
@@ -275,9 +279,9 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 	if d.Attachments, err = s.taskAttachments(ctx, gid); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT t.notes, t.created_at, COALESCE(d.fetched_at, '')
+	if err := s.db.QueryRowContext(ctx, `SELECT t.notes, t.html_notes, t.created_at, COALESCE(d.fetched_at, '')
 		FROM tasks t LEFT JOIN task_details d ON d.task_gid = t.gid WHERE t.gid = ?`, gid).
-		Scan(&d.Notes, &d.CreatedAt, &d.DetailsFetchedAt); err != nil {
+		Scan(&d.Notes, &d.HTMLNotes, &d.CreatedAt, &d.DetailsFetchedAt); err != nil {
 		return nil, err
 	}
 	if d.ParentGID != "" {
@@ -293,7 +297,7 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text
 		FROM stories WHERE task_gid = ? ORDER BY created_at`, gid)
 	if err != nil {
 		return nil, err
@@ -302,7 +306,7 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 	for rows.Next() {
 		var st StoryView
 		var byGID, byName string
-		if err := rows.Scan(&st.GID, &st.Type, &st.ResourceSubtype, &st.Text, &byGID, &byName, &st.CreatedAt); err != nil {
+		if err := rows.Scan(&st.GID, &st.Type, &st.ResourceSubtype, &st.Text, &byGID, &byName, &st.CreatedAt, &st.HTMLText); err != nil {
 			return nil, err
 		}
 		if byGID != "" {

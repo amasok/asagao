@@ -477,9 +477,9 @@ func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string,
 			byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO stories
-			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-			st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt))
+			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText)
 		return err
 	})
 }
@@ -549,7 +549,10 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 			}
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET completed = ?, completed_at = CASE WHEN ? THEN COALESCE(?, completed_at) ELSE NULL END WHERE gid = ?",
 				done, done, at, gid)
-		case "name", "notes", "due_on":
+		case "notes":
+			// the rich text no longer matches; show the plain notes until the next fetch
+			_, err = tx.ExecContext(ctx, "UPDATE tasks SET notes = ?, html_notes = '' WHERE gid = ?", v, gid)
+		case "name", "due_on":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET "+k+" = ? WHERE gid = ?", v, gid)
 		case "assignee":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET assignee_gid = ? WHERE gid = ?", v, gid)

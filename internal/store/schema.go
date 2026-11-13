@@ -169,4 +169,10 @@ CREATE INDEX attachments_parent ON attachments(parent_gid, created_at);
 -- fetch times so every task is fetched again (with attachments) the next time it is opened.
 DELETE FROM task_details;
 `,
+	`
+-- Rich text (Asana's HTML subset) for Markdown rendering. Re-fetch details to fill them.
+ALTER TABLE tasks ADD COLUMN html_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE stories ADD COLUMN html_text TEXT NOT NULL DEFAULT '';
+DELETE FROM task_details;
+`,
 }
