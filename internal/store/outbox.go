@@ -55,6 +55,11 @@ type Op struct {
 	LastError      string         `json:"last_error,omitempty"`
 	Attempts       int            `json:"attempts"`
 	CreatedAt      string         `json:"created_at"`
+	// SentAt is when the entry was (first) sent; Verify means Asana may already have
+	// applied it, so Push checks Asana before sending it again (see outbox_send.go).
+	SentAt     string `json:"sent_at,omitempty"`
+	LastSentAt string `json:"last_sent_at,omitempty"`
+	Verify     bool   `json:"verify,omitempty"`
 }
 
 // NewTask is the input for CreateTaskLocal.
@@ -86,21 +91,28 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		}
 		if IsLocalGID(gid) {
 			// Not on the server yet: fold the change into the pending create.
-			op, err := findOp(ctx, tx, OpCreateTask, gid)
+			op, err := findUnsentCreate(ctx, tx, gid)
 			if err != nil {
 				return err
 			}
-			if op == nil {
-				return fmt.Errorf("task %s: pending create not found", gid)
+			if op != nil {
+				maps.Copy(op.Payload, changes)
+				if err := saveOp(ctx, tx, op); err != nil {
+					return err
+				}
+				return applyFields(ctx, tx, gid, changes, now)
 			}
-			maps.Copy(op.Payload, changes)
-			if err := saveOp(ctx, tx, op); err != nil {
+			// The create is being sent, was sent (it may be waiting to be verified, which
+			// looks for what was sent), or failed, or the task is a local duplicate: queue
+			// the edit as an update, sent once the task exists.
+			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
 				return err
 			}
-			return applyFields(ctx, tx, gid, changes, now)
 		}
 
-		op, err := findOp(ctx, tx, OpUpdateTask, gid)
+		// Join the unsent (or conflicted) entry, so its base stays the server value; an
+		// entry being sent is left alone and the edit gets a new one.
+		op, err := findUpdateOp(ctx, tx, gid)
 		if err != nil {
 			return err
 		}
@@ -114,9 +126,13 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 			}
 			if sameValue(op.Base[k], v) {
 				delete(op.Payload, k) // back to the original value
+				delete(op.Conflict, k)
 			} else {
 				op.Payload[k] = v
 			}
+		}
+		if op.State == OpConflict && len(op.Conflict) == 0 {
+			op.State = OpPending // no conflicting field left
 		}
 		if err := applyFields(ctx, tx, gid, changes, now); err != nil {
 			return err
@@ -160,12 +176,18 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 		}
 
 		if IsLocalGID(gid) {
-			op, err := findOp(ctx, tx, OpCreateTask, gid)
-			if err != nil || op == nil {
-				return fmt.Errorf("task %s: pending create not found", gid)
+			op, err := findUnsentCreate(ctx, tx, gid)
+			if err != nil {
+				return err
 			}
-			op.Payload["section"] = sectionGID
-			return saveOp(ctx, tx, op)
+			if op != nil {
+				op.Payload["section"] = sectionGID
+				return saveOp(ctx, tx, op)
+			}
+			// The create was (or is being) sent, or failed: queue a move, sent once the task exists.
+			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
+				return err
+			}
 		}
 
 		op, err := findMoveOp(ctx, tx, gid, projectGID)
@@ -340,7 +362,7 @@ func (s *Store) GetOp(ctx context.Context, id int64) (*Op, error) {
 
 func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name, ''), o.payload, o.base,
-		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at
+		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at, o.sent_at, o.last_sent_at, o.verify
 		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid
 		LEFT JOIN projects pr ON pr.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
 	if err != nil {
@@ -352,7 +374,7 @@ func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, 
 		var op Op
 		var payload, base, conflict string
 		if err := rows.Scan(&op.ID, &op.Kind, &op.TaskGID, &op.TaskName, &payload, &base, &op.BaseModifiedAt,
-			&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt); err != nil {
+			&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.LastSentAt, &op.Verify); err != nil {
 			return nil, err
 		}
 		if err := unmarshalOp(&op, payload, base, conflict); err != nil {
@@ -363,10 +385,11 @@ func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, 
 	return ops, rows.Err()
 }
 
-// OutboxCounts returns the number of entries per state.
+// OutboxCounts returns the number of entries per state. Entries being sent count as pending
+// (they have not reached Asana yet).
 func (s *Store) OutboxCounts(ctx context.Context) (pending, conflict, failed int, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(state = 'pending'), 0), COALESCE(SUM(state = 'conflict'), 0), COALESCE(SUM(state = 'failed'), 0)
+		COALESCE(SUM(state IN ('pending', 'sending')), 0), COALESCE(SUM(state = 'conflict'), 0), COALESCE(SUM(state = 'failed'), 0)
 		FROM outbox`).Scan(&pending, &conflict, &failed)
 	return
 }
@@ -382,12 +405,12 @@ func (s *Store) MarkOpConflict(ctx context.Context, id int64, server map[string]
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, "UPDATE outbox SET state = 'conflict', conflict = ?, attempts = attempts + 1 WHERE id = ?", string(b), id)
+	_, err = s.db.ExecContext(ctx, "UPDATE outbox SET state = 'conflict', conflict = ? WHERE id = ?", string(b), id)
 	return err
 }
 
 func (s *Store) MarkOpFailed(ctx context.Context, id int64, cause error) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?", cause.Error(), id)
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'failed', last_error = ? WHERE id = ?", cause.Error(), id)
 	return err
 }
 
@@ -399,6 +422,9 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 		if err != nil {
 			return err
 		}
+		if err := ensureNotSending(op); err != nil {
+			return err
+		}
 		maps.Copy(op.Base, op.Conflict)
 		op.Conflict, op.State, op.LastError = map[string]any{}, OpPending, ""
 		return saveOp(ctx, tx, op)
@@ -406,9 +432,21 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 }
 
 // RetryOp puts a failed entry back in the queue.
+// An entry being sent is refused with ErrOpSending.
 func (s *Store) RetryOp(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'pending', last_error = '' WHERE id = ?", id)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		op, err := getOpTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := ensureNotSending(op); err != nil {
+			return err
+		}
+		// The user asks to send it again as it is: no check in Asana first.
+		// A fresh start: no check in Asana first, and the attempts count from zero again.
+		_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending', last_error = '', verify = 0, attempts = 0 WHERE id = ?", id)
+		return err
+	})
 }
 
 // DiscardOp drops a local change. The task keeps its local values until the next sync
@@ -419,94 +457,143 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 		if err != nil {
 			return err
 		}
-		switch op.Kind {
-		case OpCreateTask:
-			if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE task_gid = ?", op.TaskGID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE gid = ?", op.TaskGID); err != nil {
-				return err
-			}
-		case OpAddComment:
-			if gid, _ := op.Payload["story_gid"].(string); gid != "" {
-				if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
-					return err
-				}
-			}
-		case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
-			if err := applyRelation(ctx, tx, *op, true); err != nil {
-				return err
-			}
-		case OpDuplicateTask:
-			if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE gid = ?", op.TaskGID); err != nil {
-				return err
-			}
-		case OpCreateStatus:
-			gid, _ := op.Payload["status"].(string)
-			if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid); err != nil {
-				return err
-			}
-		case OpUploadAttachment:
-			gid, _ := op.Payload["attachment"].(string)
-			if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
-				return err
-			}
-		case OpAddTag, OpRemoveTag:
-			tag, _ := op.Payload["tag"].(string)
-			q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
-			if op.Kind == OpRemoveTag {
-				q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
-			}
-			if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
-				return err
-			}
-		case OpRenameSection:
-			if name, ok := op.Base["name"].(string); ok {
-				if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {
-					return err
-				}
-			}
-		case OpMoveTask:
-			project, _ := op.Payload["project"].(string)
-			section, _ := op.Base["section"].(string)
-			if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
-				return err
-			}
-		case OpUpdateTask:
-			// Restore the values from before the local edit.
-			if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
+		if err := ensureNotSending(op); err != nil {
+			return err
+		}
+		return discardOpTx(ctx, tx, op)
+	})
+}
+
+// discardOpTx drops entry op and undoes its local change.
+func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
+	id := op.ID
+	var err error
+	switch op.Kind {
+	case OpCreateTask, OpDuplicateTask:
+		if err := discardLocalTask(ctx, tx, op.TaskGID, op.Kind == OpCreateTask); err != nil {
+			return err
+		}
+	case OpAddComment:
+		if gid, _ := op.Payload["story_gid"].(string); gid != "" {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id)
+	case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
+		if err := applyRelation(ctx, tx, *op, true); err != nil {
+			return err
+		}
+	case OpCreateStatus:
+		gid, _ := op.Payload["status"].(string)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid); err != nil {
+			return err
+		}
+	case OpUploadAttachment:
+		gid, _ := op.Payload["attachment"].(string)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
+			return err
+		}
+	case OpAddTag, OpRemoveTag:
+		tag, _ := op.Payload["tag"].(string)
+		q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
+		if op.Kind == OpRemoveTag {
+			q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
+		}
+		if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
+			return err
+		}
+	case OpRenameSection:
+		if name, ok := op.Base["name"].(string); ok {
+			if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {
+				return err
+			}
+		}
+	case OpMoveTask:
+		project, _ := op.Payload["project"].(string)
+		section, _ := op.Base["section"].(string)
+		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
+			return err
+		}
+	case OpUpdateTask:
+		// Restore the values from before the local edit.
+		if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id)
+	return err
+}
+
+// discardLocalTask removes a task that was never sent, its local subtasks, and every
+// change queued for them. counted is whether the parent's num_subtasks includes it
+// (CreateTaskLocal counts subtasks; a local duplicate does not).
+func discardLocalTask(ctx context.Context, tx *sql.Tx, gid string, counted bool) error {
+	rows, err := tx.QueryContext(ctx, "SELECT gid FROM tasks WHERE parent_gid = ? AND gid LIKE 'local:%'", gid)
+	if err != nil {
 		return err
-	})
+	}
+	var children []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return err
+		}
+		children = append(children, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range children {
+		if err := discardLocalTask(ctx, tx, c, true); err != nil {
+			return err
+		}
+	}
+	var parent string
+	_ = tx.QueryRowContext(ctx, "SELECT parent_gid FROM tasks WHERE gid = ?", gid).Scan(&parent)
+	for _, q := range []string{"DELETE FROM outbox WHERE task_gid = ?", "DELETE FROM tasks WHERE gid = ?"} {
+		if _, err := tx.ExecContext(ctx, q, gid); err != nil {
+			return err
+		}
+	}
+	if parent != "" && counted {
+		_, err := tx.ExecContext(ctx, "UPDATE tasks SET num_subtasks = max(0, num_subtasks - 1) WHERE gid = ?", parent)
+		return err
+	}
+	return nil
 }
 
 // ReplaceLocalTaskGID swaps a temporary gid for the real one after the task was created in Asana.
 func (s *Store) ReplaceLocalTaskGID(ctx context.Context, local, real string) error {
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		// Children reference tasks(gid); check the constraints at commit, after all rows moved.
-		if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
+	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalTaskGID(ctx, tx, local, real) })
+}
+
+func replaceLocalTaskGID(ctx context.Context, tx *sql.Tx, local, real string) error {
+	// Children reference tasks(gid); check the constraints at commit, after all rows moved.
+	if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
+		return err
+	}
+	// Every table that refers to a task gid must be listed here (see schema.go).
+	for _, q := range []string{
+		"DELETE FROM tasks WHERE gid = ?2", // in case a sync already pulled it
+		"UPDATE tasks SET gid = ?2 WHERE gid = ?1",
+		"UPDATE tasks SET parent_gid = ?2 WHERE parent_gid = ?1",
+		"UPDATE task_memberships SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE task_followers SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE task_details SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE attachments SET parent_gid = ?2 WHERE parent_gid = ?1",
+		"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
+		// Remember the mapping so callers holding the local gid can find the task.
+		"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('gid:' || ?1, ?2)",
+	} {
+		if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
 			return err
 		}
-		for _, q := range []string{
-			"DELETE FROM tasks WHERE gid = ?2", // in case a sync already pulled it
-			"UPDATE tasks SET gid = ?2 WHERE gid = ?1",
-			"UPDATE tasks SET parent_gid = ?2 WHERE parent_gid = ?1",
-			"UPDATE task_memberships SET task_gid = ?2 WHERE task_gid = ?1",
-			"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
-			"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
-			"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
-			// Remember the mapping so callers holding the local gid can find the task.
-			"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('gid:' || ?1, ?2)",
-		} {
-			if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // RealGID returns the Asana gid for a task created offline, or gid itself if it is not
@@ -524,20 +611,59 @@ func (s *Store) RealGID(ctx context.Context, gid string) (string, error) {
 
 // ReplaceLocalStory swaps an offline comment for the one Asana created.
 func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string, st asana.Story) error {
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ? OR gid = ?", localGID, st.GID); err != nil {
-			return err
-		}
-		var byGID, byName string
-		if st.CreatedBy != nil {
-			byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO stories
-			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText)
+	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalStory(ctx, tx, localGID, taskGID, st) })
+}
+
+func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string, st asana.Story) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ? OR gid = ?", localGID, st.GID); err != nil {
 		return err
-	})
+	}
+	var byGID, byName string
+	if st.CreatedBy != nil {
+		byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO stories
+		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText); err != nil {
+		return err
+	}
+	return recordResult(ctx, tx, ResultStory, localGID, st.GID)
+}
+
+// Prefixes of the sync_state keys that map a local gid to what Asana created for it.
+const (
+	ResultTask       = "gid:"
+	ResultStory      = "story:"
+	ResultAttachment = "att:"
+	ResultStatus     = "status:"
+)
+
+func recordResult(ctx context.Context, tx *sql.Tx, prefix, local, real string) error {
+	if local == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO sync_state(key, value) VALUES (?, ?)", prefix+local, real)
+	return err
+}
+
+// RecordedResults returns the gids already recorded as the result of some local entry
+// (prefix is one of the Result* constants), so they are not taken for another one.
+func (s *Store) RecordedResults(ctx context.Context, prefix string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT value FROM sync_state WHERE substr(key, 1, ?) = ?", len(prefix), prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
 }
 
 // --- helpers ---
@@ -698,12 +824,65 @@ func findOp(ctx context.Context, tx *sql.Tx, kind, gid string) (*Op, error) {
 	return getOpTx(ctx, tx, id)
 }
 
+// findUnsentCreate returns the pending create of a local task if it was never sent, so
+// edits can be folded into it. Once sent, its payload must stay what was sent: verifying
+// it looks for exactly that in Asana.
+func findUnsentCreate(ctx context.Context, tx *sql.Tx, gid string) (*Op, error) {
+	op, err := findOp(ctx, tx, OpCreateTask, gid)
+	if err != nil || op == nil {
+		return nil, err
+	}
+	if op.Verify || op.SentAt != "" || op.Attempts > 0 {
+		return nil, nil
+	}
+	return op, nil
+}
+
+// CreateQueued reports whether a task with a local gid still has its create (or duplicate)
+// in the outbox, in any state.
+func (s *Store) CreateQueued(ctx context.Context, gid string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE task_gid = ? AND kind IN (?, ?)",
+		gid, OpCreateTask, OpDuplicateTask).Scan(&n)
+	return n > 0, err
+}
+
+// ensureCreateQueued checks that a task with a local gid still has its create (or
+// duplicate) in the outbox, in any state. Changes queued for it keep the local gid, which
+// replaceLocalTaskGID rewrites once Asana has created the task; until then sync.Push skips
+// them (they wait, pending), and discarding the create discards them too.
+func ensureCreateQueued(ctx context.Context, tx *sql.Tx, gid string) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE task_gid = ? AND kind IN (?, ?)",
+		gid, OpCreateTask, OpDuplicateTask).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s: create not found in the outbox: %w", gid, ErrNotFound)
+	}
+	return nil
+}
+
+// findUpdateOp returns the pending or conflicted update_task entry of a task.
+func findUpdateOp(ctx context.Context, tx *sql.Tx, gid string) (*Op, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state IN ('pending', 'conflict')
+		ORDER BY id DESC LIMIT 1`, OpUpdateTask, gid).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return getOpTx(ctx, tx, id)
+}
+
 func getOpTx(ctx context.Context, tx *sql.Tx, id int64) (*Op, error) {
 	var op Op
 	var payload, base, conflict string
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, task_gid, payload, base, base_modified_at, state, conflict, last_error, attempts, created_at
-		FROM outbox WHERE id = ?`, id).Scan(&op.ID, &op.Kind, &op.TaskGID, &payload, &base, &op.BaseModifiedAt,
-		&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt)
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, task_gid, payload, base, base_modified_at, state, conflict, last_error, attempts, created_at,
+		sent_at, last_sent_at, verify FROM outbox WHERE id = ?`, id).Scan(&op.ID, &op.Kind, &op.TaskGID, &payload, &base, &op.BaseModifiedAt,
+		&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.LastSentAt, &op.Verify)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("outbox entry %d: %w", id, ErrNotFound)
 	}

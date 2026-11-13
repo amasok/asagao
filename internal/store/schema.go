@@ -204,4 +204,33 @@ CREATE TABLE status_updates (
 );
 CREATE INDEX status_updates_project ON status_updates(project_gid, created_at);
 `,
+	`
+-- Outbox entries whose result is unknown (e.g. a create answered with 5xx): verify = 1 means
+-- Push first looks in Asana for what the entry created since sent_at, before sending it again.
+ALTER TABLE outbox ADD COLUMN sent_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE outbox ADD COLUMN verify INTEGER NOT NULL DEFAULT 0;
+`,
+	`
+-- When the entry's latest request went out (sent_at is the first): Asana may still be
+-- processing that one, so a missing result is trusted only some time after it.
+ALTER TABLE outbox ADD COLUMN last_sent_at TEXT NOT NULL DEFAULT '';
+`,
+	`
+-- Local changes dropped automatically because what they change was deleted in Asana
+-- (see discard.go). notified = 1 once a front end has shown them.
+CREATE TABLE discarded_changes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,
+    task_gid     TEXT NOT NULL DEFAULT '',
+    task_name    TEXT NOT NULL DEFAULT '',
+    summary      TEXT NOT NULL,
+    reason       TEXT NOT NULL DEFAULT '',
+    discarded_at TEXT NOT NULL,
+    notified     INTEGER NOT NULL DEFAULT 0
+);
+`,
+	`
+-- The dropped change itself (outbox payload JSON), so what the user wrote can be recovered.
+ALTER TABLE discarded_changes ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';
+`,
 }

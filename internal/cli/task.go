@@ -44,67 +44,43 @@ func (f *listFlags) register(cmd *cobra.Command, defaultAssignee string) {
 	cmd.Flags().IntVar(&f.modifiedWithin, "modified-within", 0, "直近 N 日に更新されたタスクを新しい順に（最近の更新）")
 }
 
-// filter converts flags to a store filter. The default assignee is "me" unless a project is given.
-func (f *listFlags) filter(ctx context.Context, st *store.Store, cmd *cobra.Command, now time.Time) (store.TaskFilter, error) {
-	var tf store.TaskFilter
-	assignee := f.assignee
-	if f.project != "" && !cmd.Flags().Changed("assignee") {
-		assignee = "any"
+// spec converts flags to a filter spec. The default assignee (defaultAssignee) applies when
+// --assignee is not given; with --project it is everyone. defaultCompleted applies when
+// neither --completed nor --all is given.
+func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool) store.FilterSpec {
+	sp := store.FilterSpec{
+		DefaultAssignee: defaultAssignee, DefaultCompleted: defaultCompleted,
+		Project: f.project, Section: f.section, Tag: f.tag,
+		DueBefore: f.dueBefore, DueAfter: f.dueAfter, Overdue: f.overdue,
+		ModifiedWithinDays: f.modifiedWithin, Limit: f.limit,
 	}
-	switch assignee {
-	case "any", "all", "":
-	case "me":
-		me, err := st.MeGID(ctx)
-		if err != nil {
-			return tf, err
+	if cmd.Flags().Changed("assignee") {
+		sp.Assignee = f.assignee
+		if sp.Assignee == "" {
+			sp.Assignee = "any"
 		}
-		tf.AssigneeGID = me
-	default:
-		tf.AssigneeGID = assignee
-	}
-	if f.project != "" {
-		gid, err := st.ResolveProject(ctx, f.project)
-		if err != nil {
-			return tf, err
-		}
-		tf.ProjectGID = gid
-		if f.section != "" {
-			if tf.SectionGID, err = st.ResolveSection(ctx, gid, f.section); err != nil {
-				return tf, err
-			}
-		}
-	} else if f.section != "" {
-		return tf, errors.New("--section は --project と一緒に指定してください")
-	}
-	tf.Tag = f.tag
-	var err error
-	if tf.DueBefore, err = parseDate(f.dueBefore, now); err != nil {
-		return tf, fmt.Errorf("--due-before: %w", err)
-	}
-	if tf.DueAfter, err = parseDate(f.dueAfter, now); err != nil {
-		return tf, fmt.Errorf("--due-after: %w", err)
-	}
-	if f.overdue {
-		tf.DueBefore = now.AddDate(0, 0, -1).Format(time.DateOnly)
 	}
 	switch {
 	case f.all:
-	case f.completed && !f.overdue:
-		v := true
-		tf.Completed = &v
-	default:
-		v := false
-		tf.Completed = &v
+		sp.Completion = "all"
+	case f.completed:
+		sp.Completion = "completed"
 	}
-	tf.Limit = f.limit
-	if f.modifiedWithin > 0 {
-		tf.ModifiedAfter = now.AddDate(0, 0, -f.modifiedWithin).UTC().Format(time.RFC3339)
-		tf.SortByModified = true
-		if !cmd.Flags().Changed("completed") && !cmd.Flags().Changed("all") {
-			tf.Completed = nil
+	return sp
+}
+
+// filter builds the store filter for the flags.
+func (f *listFlags) filter(ctx context.Context, st *store.Store, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (store.TaskFilter, error) {
+	tf, err := st.BuildFilter(ctx, f.spec(cmd, defaultAssignee, defaultCompleted), now)
+	var fe *store.FilterError
+	if errors.As(err, &fe) {
+		flag := "--" + strings.ReplaceAll(fe.Field, "_", "-")
+		if errors.Is(fe.Err, store.ErrSectionWithoutProject) {
+			return tf, errors.New("--section は --project と一緒に指定してください")
 		}
+		return tf, fmt.Errorf("%s: %w", flag, fe.Err)
 	}
-	return tf, nil
+	return tf, err
 }
 
 func (a *app) taskListCmd() *cobra.Command {
@@ -122,7 +98,8 @@ func (a *app) taskListCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			tf, err := f.filter(ctx, st, cmd, time.Now())
+			open := false
+			tf, err := f.filter(ctx, st, cmd, "me", &open, time.Now())
 			if err != nil {
 				return err
 			}
@@ -154,12 +131,10 @@ func (a *app) searchCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			tf, err := f.filter(ctx, st, cmd, time.Now())
+			// search finds completed tasks too unless told otherwise
+			tf, err := f.filter(ctx, st, cmd, "any", nil, time.Now())
 			if err != nil {
 				return err
-			}
-			if !cmd.Flags().Changed("completed") && !cmd.Flags().Changed("all") {
-				tf.Completed = nil // search finds completed tasks too unless told otherwise
 			}
 			tf.Query = strings.Join(args, " ")
 			tasks, err := st.ListTasks(ctx, tf)

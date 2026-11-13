@@ -2,6 +2,7 @@ package asana
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -101,5 +102,69 @@ func TestTasksQuery(t *testing.T) {
 	}
 	if len(tasks) != 1 || tasks[0].DueOn != "2026-11-20" || tasks[0].Assignee.GID != "me" {
 		t.Fatalf("got %+v", tasks)
+	}
+}
+
+func TestRetriesGetOn5xx(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
+	})
+	if u, err := c.Me(context.Background()); err != nil || u.GID != "me" || calls != 3 {
+		t.Fatalf("u=%+v err=%v calls=%d", u, err, calls)
+	}
+}
+
+func TestRetriesGiveUpAfterMaxRetries(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprint(w, `{"errors":[{"message":"bad gateway"}]}`)
+	})
+	c.MaxRetries = 2
+	_, err := c.Me(context.Background())
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadGateway {
+		t.Fatalf("err = %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 1 + MaxRetries", calls)
+	}
+}
+
+func TestPostIsNotRetriedOn5xx(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	_, err := c.CreateTask(context.Background(), map[string]any{"name": "x"})
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError {
+		t.Fatalf("err = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("a POST may have been applied; it must not be retried on 5xx (calls = %d)", calls)
+	}
+}
+
+func TestPostIsRetriedOn429(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		fmt.Fprint(w, `{"data":{"gid":"t1","name":"x"}}`)
+	})
+	if task, err := c.CreateTask(context.Background(), map[string]any{"name": "x"}); err != nil || task.GID != "t1" || calls != 2 {
+		t.Fatalf("task=%+v err=%v calls=%d", task, err, calls)
 	}
 }

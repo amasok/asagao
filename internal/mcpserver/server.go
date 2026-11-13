@@ -126,7 +126,7 @@ func (s *Server) New() *mcp.Server {
 // --- inputs / outputs ---
 
 type TaskFilterInput struct {
-	Assignee   string `json:"assignee,omitempty" jsonschema:"\"me\" (default for list_tasks without project), \"any\", or a user gid"`
+	Assignee   string `json:"assignee,omitempty" jsonschema:"\"me\" (default for list_tasks without project), \"any\", or a user gid or name"`
 	Project    string `json:"project,omitempty" jsonschema:"project gid or name (partial match allowed)"`
 	Section    string `json:"section,omitempty" jsonschema:"section gid or exact name; requires project"`
 	Completion string `json:"completion,omitempty" jsonschema:"\"open\" (default for list_tasks), \"completed\" or \"all\""`
@@ -200,6 +200,8 @@ type SyncStatusOutput struct {
 type SyncOutput struct {
 	Result sync.Result      `json:"result"`
 	Status SyncStatusOutput `json:"status"`
+	// Note says why nothing was synced (another asana-tui process is syncing).
+	Note string `json:"note,omitempty"`
 }
 
 type CreateTaskInput struct {
@@ -208,7 +210,7 @@ type CreateTaskInput struct {
 	Project  string   `json:"project,omitempty" jsonschema:"project gid or name; omit to create in My Tasks"`
 	Section  string   `json:"section,omitempty" jsonschema:"section gid or exact name (default: first section)"`
 	DueOn    string   `json:"due_on,omitempty" jsonschema:"due date (YYYY-MM-DD, today, tomorrow, +7d)"`
-	Assignee string   `json:"assignee,omitempty" jsonschema:"\"me\" or a user gid (default: me when no project)"`
+	Assignee string   `json:"assignee,omitempty" jsonschema:"\"me\", \"none\", a user gid or name (default: me when no project)"`
 	Notes    string   `json:"notes,omitempty" jsonschema:"description in Markdown (headings, **bold**, lists, links); converted to Asana rich text"`
 	Tags     []string `json:"tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids"`
 }
@@ -282,6 +284,8 @@ type WriteOutput struct {
 	// Sent is true when the change reached Asana; false means it is queued locally.
 	Sent bool   `json:"sent"`
 	Note string `json:"note,omitempty"`
+	// Discarded lists queued changes dropped because what they change was deleted in Asana.
+	Discarded []store.Discard `json:"discarded,omitempty"`
 }
 
 // --- read tools ---
@@ -309,73 +313,17 @@ func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 }
 
 func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee string, defaultCompleted *bool) (store.TaskFilter, error) {
-	now := s.Now()
-	f := store.TaskFilter{Tag: in.Tag, Limit: in.Limit, Completed: defaultCompleted}
-	if f.Limit <= 0 {
-		f.Limit = 100
+	limit := in.Limit
+	if limit <= 0 {
+		limit = 100
 	}
-	assignee := in.Assignee
-	if assignee == "" {
-		assignee = defaultAssignee
-		if in.Project != "" {
-			assignee = "any"
-		}
-	}
-	switch assignee {
-	case "any", "all":
-	case "me":
-		me, err := s.Store.MeGID(ctx)
-		if err != nil {
-			return f, err
-		}
-		f.AssigneeGID = me
-	default:
-		f.AssigneeGID = assignee
-	}
-	if in.Project != "" {
-		gid, err := s.Store.ResolveProject(ctx, in.Project)
-		if err != nil {
-			return f, err
-		}
-		f.ProjectGID = gid
-		if in.Section != "" {
-			if f.SectionGID, err = s.Store.ResolveSection(ctx, gid, in.Section); err != nil {
-				return f, err
-			}
-		}
-	} else if in.Section != "" {
-		return f, errors.New("section requires project")
-	}
-	var err error
-	if f.DueBefore, err = dates.Parse(in.DueBefore, now); err != nil {
-		return f, fmt.Errorf("due_before: %w", err)
-	}
-	if f.DueAfter, err = dates.Parse(in.DueAfter, now); err != nil {
-		return f, fmt.Errorf("due_after: %w", err)
-	}
-	switch in.Completion {
-	case "":
-	case "open":
-		f.Completed = ptr(false)
-	case "completed":
-		f.Completed = ptr(true)
-	case "all":
-		f.Completed = nil
-	default:
-		return f, fmt.Errorf("completion must be open, completed or all (got %q)", in.Completion)
-	}
-	if in.Overdue {
-		f.DueBefore = now.AddDate(0, 0, -1).Format(time.DateOnly)
-		f.Completed = ptr(false)
-	}
-	if in.ModifiedWithinDays > 0 {
-		f.ModifiedAfter = now.AddDate(0, 0, -in.ModifiedWithinDays).UTC().Format(time.RFC3339)
-		f.SortByModified = true
-		if in.Completion == "" {
-			f.Completed = nil // recent changes include completions
-		}
-	}
-	return f, nil
+	return s.Store.BuildFilter(ctx, store.FilterSpec{
+		Assignee: in.Assignee, DefaultAssignee: defaultAssignee,
+		Project: in.Project, Section: in.Section, Tag: in.Tag,
+		DueBefore: in.DueBefore, DueAfter: in.DueAfter,
+		Completion: in.Completion, DefaultCompleted: defaultCompleted,
+		Overdue: in.Overdue, ModifiedWithinDays: in.ModifiedWithinDays, Limit: limit,
+	}, s.Now())
 }
 
 func (s *Server) getTask(ctx context.Context, _ *mcp.CallToolRequest, in GetTaskInput) (*mcp.CallToolResult, GetTaskOutput, error) {
@@ -461,7 +409,14 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 		return nil, out, err
 	}
 	if out.Result, err = syncer.Run(ctx, in.Full); err != nil {
-		return nil, out, err
+		if errors.Is(err, sync.ErrAccountChanged) {
+			return nil, out, fmt.Errorf("sync stopped: %s", s.accountChangedNote(ctx))
+		}
+		if !errors.Is(err, sync.ErrPushBusy) {
+			return nil, out, err
+		}
+		out.Note = "another asana-tui process (the TUI, the CLI or another MCP server) is syncing right now, so nothing was done; " +
+			"queued changes are sent by that process. Try again in a moment if you need fresh data."
 	}
 	out.Status, err = s.status(ctx)
 	return nil, out, err
@@ -505,55 +460,24 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 	if nt.AssigneeGID, err = s.Store.ResolveUser(ctx, assignee); err != nil {
 		return nil, WriteOutput{}, err
 	}
+	tags, err := s.Store.ResolveTagEdit(ctx, in.Tags, nil)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
 	gid, err := s.Store.CreateTaskLocal(ctx, nt, now)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if err := s.changeTags(ctx, gid, in.Tags, nil); err != nil {
+	if err := s.Store.ApplyTagEdit(ctx, gid, tags, now); err != nil {
 		return nil, WriteOutput{}, err
 	}
-	out := s.push(ctx, gid)
-	return nil, out, nil
+	return nil, s.push(ctx, gid), nil
 }
 
-// changeTags adds and removes tags given by name or gid; unknown names are created.
-func (s *Server) changeTags(ctx context.Context, taskGID string, add, remove []string) error {
-	tags, err := s.Store.ListTags(ctx)
-	if err != nil {
-		return err
-	}
-	find := func(nameOrGID string) string {
-		name := strings.TrimPrefix(nameOrGID, "#")
-		for _, t := range tags {
-			if t.GID == nameOrGID || t.Name == name {
-				return t.GID
-			}
-		}
-		return ""
-	}
-	for _, a := range add {
-		if gid := find(a); gid != "" {
-			_, err = s.Store.AddTagLocal(ctx, taskGID, gid, "", s.Now())
-		} else {
-			_, err = s.Store.AddTagLocal(ctx, taskGID, "", strings.TrimPrefix(a, "#"), s.Now())
-		}
-		if err != nil {
-			return fmt.Errorf("add tag %q: %w", a, err)
-		}
-	}
-	for _, r := range remove {
-		gid := find(r)
-		if gid == "" {
-			return fmt.Errorf("remove tag %q: no such tag", r)
-		}
-		if err := s.Store.RemoveTagLocal(ctx, taskGID, gid, s.Now()); err != nil {
-			return fmt.Errorf("remove tag %q: %w", r, err)
-		}
-	}
-	return nil
-}
-
+// updateTask resolves and checks all of its input before writing anything, so that a bad
+// name (tag, follower, project) does not leave half of the update saved.
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
+	now := s.Now()
 	changes := map[string]any{}
 	if in.Completed != nil {
 		changes["completed"] = *in.Completed
@@ -569,7 +493,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		changes["liked"] = *in.Liked
 	}
 	if in.DueOn != nil {
-		due, err := dates.Parse(*in.DueOn, s.Now())
+		due, err := dates.Parse(*in.DueOn, now)
 		if err != nil {
 			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", err)
 		}
@@ -582,42 +506,57 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		}
 		changes["assignee"] = gid
 	}
-	relations := len(in.AddTags) + len(in.RemoveTags) + len(in.AddFollowers) + len(in.RemoveFollowers) + len(in.AddProjects) + len(in.RemoveProjects)
-	if len(changes) == 0 && relations == 0 {
+	tags, err := s.Store.ResolveTagEdit(ctx, in.AddTags, in.RemoveTags)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	addFollowers, err := s.Store.ResolveUsers(ctx, in.AddFollowers)
+	if err != nil {
+		return nil, WriteOutput{}, fmt.Errorf("add_followers: %w", err)
+	}
+	removeFollowers, err := s.Store.ResolveUsers(ctx, in.RemoveFollowers)
+	if err != nil {
+		return nil, WriteOutput{}, fmt.Errorf("remove_followers: %w", err)
+	}
+	addProjects, err := s.Store.ResolveProjects(ctx, in.AddProjects)
+	if err != nil {
+		return nil, WriteOutput{}, fmt.Errorf("add_projects: %w", err)
+	}
+	removeProjects, err := s.Store.ResolveProjects(ctx, in.RemoveProjects)
+	if err != nil {
+		return nil, WriteOutput{}, fmt.Errorf("remove_projects: %w", err)
+	}
+	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
+	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
+		return nil, WriteOutput{}, err
+	}
+
 	if len(changes) > 0 {
-		if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, s.Now()); err != nil {
+		if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, now); err != nil {
 			return nil, WriteOutput{}, err
 		}
 	}
-	if err := s.changeTags(ctx, in.GID, in.AddTags, in.RemoveTags); err != nil {
+	if err := s.Store.ApplyTagEdit(ctx, in.GID, tags, now); err != nil {
 		return nil, WriteOutput{}, err
 	}
-	for _, list := range []struct {
+	for _, f := range []struct {
 		users  []string
 		follow bool
-	}{{in.AddFollowers, true}, {in.RemoveFollowers, false}} {
-		for _, u := range list.users {
-			gid, err := s.Store.ResolveUser(ctx, u)
-			if err != nil {
-				return nil, WriteOutput{}, fmt.Errorf("follower %q: %w", u, err)
-			}
-			if err := s.Store.SetFollowerLocal(ctx, in.GID, gid, list.follow, s.Now()); err != nil {
+	}{{addFollowers, true}, {removeFollowers, false}} {
+		for _, u := range f.users {
+			if err := s.Store.SetFollowerLocal(ctx, in.GID, u, f.follow, now); err != nil {
 				return nil, WriteOutput{}, err
 			}
 		}
 	}
-	for _, list := range []struct {
+	for _, p := range []struct {
 		projects []string
 		add      bool
-	}{{in.AddProjects, true}, {in.RemoveProjects, false}} {
-		for _, p := range list.projects {
-			gid, err := s.Store.ResolveProject(ctx, p)
-			if err != nil {
-				return nil, WriteOutput{}, err
-			}
-			if err := s.Store.SetProjectLocal(ctx, in.GID, gid, "", list.add, s.Now()); err != nil {
+	}{{addProjects, true}, {removeProjects, false}} {
+		for _, gid := range p.projects {
+			if err := s.Store.SetProjectLocal(ctx, in.GID, gid, "", p.add, now); err != nil {
 				return nil, WriteOutput{}, err
 			}
 		}
@@ -663,11 +602,15 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 	return nil, s.push(ctx, in.GID), nil
 }
 
-func (s *Server) resolveAssignee(ctx context.Context, a string) (string, error) {
-	if a == "me" {
-		return s.Store.MeGID(ctx)
-	}
-	return a, nil
+// accountChangedNote explains sync.ErrAccountChanged to the model. Resetting is left to
+// the user (TUI or CLI): this server never deletes local data.
+func (s *Server) accountChangedNote(ctx context.Context) string {
+	n, _ := s.Store.UnsentCount(ctx)
+	return fmt.Sprintf("the Asana account now logged in is not the one this local data was synced with, so syncing is stopped "+
+		"(%d unsent change(s) from the previous account). Tell the user, and let them choose: log in again with the previous "+
+		"account (`asana-tui auth login`) to send the changes, or reset the local data to use the new account "+
+		"(`asana-tui reset`, or \"ローカルデータを初期化\" in the TUI menu; unsent changes are backed up to a JSON file first). "+
+		"This MCP server cannot reset. (%s)", n, store.AccountChangedHelp(n, "asana-tui reset"))
 }
 
 // push sends the outbox now. A failure is reported in the output, not as a tool error:
@@ -682,16 +625,29 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	res, err := syncer.Push(ctx)
+	out.Discarded = res.Discarded
+	if len(res.Discarded) > 0 {
+		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
+	}
 	switch {
+	case errors.Is(err, sync.ErrAccountChanged):
+		out.Note += "saved locally but NOT sent: " + s.accountChangedNote(ctx)
+	case errors.Is(err, sync.ErrPushBusy):
+		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:
-		out.Note = "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
+		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
 	case res.Conflicts > 0 || res.Failed > 0:
-		out.Note = fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
+		out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
 	default:
 		out.Sent = true
 	}
 	if real, err := s.Store.RealGID(ctx, taskGID); err == nil {
 		out.TaskGID = real
+	}
+	for _, d := range res.Discarded {
+		if d.TaskGID == taskGID || d.TaskGID == out.TaskGID {
+			out.Sent = false // this change was dropped, not sent
+		}
 	}
 	return out
 }
@@ -727,32 +683,24 @@ func (s *Server) getSyncer(ctx context.Context) (*sync.Syncer, error) {
 func ptr[T any](v T) *T { return &v }
 
 func (s *Server) resolveOutbox(ctx context.Context, _ *mcp.CallToolRequest, in ResolveOutboxInput) (*mcp.CallToolResult, WriteOutput, error) {
-	op, err := s.Store.GetOp(ctx, in.ID)
+	action, err := sync.ParseResolveAction(in.Action)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	switch in.Action {
-	case "keep_local":
-		if op.State != store.OpConflict {
-			return nil, WriteOutput{}, fmt.Errorf("entry %d is not a conflict (state %s)", op.ID, op.State)
-		}
-		err = s.Store.ResolveKeepLocal(ctx, op.ID)
-	case "retry":
-		err = s.Store.RetryOp(ctx, op.ID)
-	case "keep_remote", "discard":
-		if err = s.Store.DiscardOp(ctx, op.ID); err == nil && op.Kind != store.OpCreateTask {
-			_ = s.fetchDetails(ctx, op.TaskGID) // bring the server's values back
-		}
-	default:
-		return nil, WriteOutput{}, fmt.Errorf("action must be keep_local, keep_remote, retry or discard (got %q)", in.Action)
-	}
+	r, err := sync.Resolve(ctx, s.Store, in.ID, action)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if in.Action == "keep_remote" || in.Action == "discard" {
-		return nil, WriteOutput{TaskGID: op.TaskGID, Sent: true, Note: "local change dropped"}, nil
+	if r.Push {
+		return nil, s.push(ctx, r.Op.TaskGID), nil
 	}
-	return nil, s.push(ctx, op.TaskGID), nil
+	out := WriteOutput{TaskGID: r.Op.TaskGID, Sent: true, Note: "local change dropped"}
+	if r.RefreshGID != "" {
+		if err := s.fetchDetails(ctx, r.RefreshGID); err != nil {
+			out.Note += "; Asana's values will be loaded on the next sync (" + err.Error() + ")"
+		}
+	}
+	return nil, out, nil
 }
 
 // maxImageBytes keeps images returned to the model reasonably small.
@@ -913,41 +861,50 @@ type UpdateProjectInput struct {
 	RemoveMembers []string `json:"remove_members,omitempty" jsonschema:"\"me\", user names or gids to remove"`
 }
 
+// updateProject checks all of its input before changing anything in Asana.
 func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in UpdateProjectInput) (*mcp.CallToolResult, ProjectWriteOutput, error) {
 	gid, err := s.Store.ResolveProject(ctx, in.Project)
 	if err != nil {
 		return nil, ProjectWriteOutput{}, err
 	}
+	add, err := s.Store.ResolveUsers(ctx, in.AddMembers)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, fmt.Errorf("add_members: %w", err)
+	}
+	remove, err := s.Store.ResolveUsers(ctx, in.RemoveMembers)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, fmt.Errorf("remove_members: %w", err)
+	}
+	members := len(add)+len(remove) > 0
+	if !members && in.Archived == nil {
+		return nil, ProjectWriteOutput{}, errors.New("nothing to update: pass archived, add_members or remove_members")
+	}
 	syncer, err := s.getSyncer(ctx)
 	if err != nil {
 		return nil, ProjectWriteOutput{}, fmt.Errorf("Asana に接続できないため変更できません: %w", err)
 	}
-	resolve := func(names []string) ([]string, error) {
-		var gids []string
-		for _, n := range names {
-			g, err := s.Store.ResolveUser(ctx, n)
-			if err != nil {
-				return nil, err
-			}
-			gids = append(gids, g)
-		}
-		return gids, nil
+	type step struct {
+		name string
+		run  func() error
 	}
-	add, err := resolve(in.AddMembers)
-	if err != nil {
-		return nil, ProjectWriteOutput{}, err
-	}
-	remove, err := resolve(in.RemoveMembers)
-	if err != nil {
-		return nil, ProjectWriteOutput{}, err
-	}
-	if len(add)+len(remove) > 0 {
-		if err := syncer.SetProjectMembers(ctx, gid, add, remove); err != nil {
-			return nil, ProjectWriteOutput{}, err
-		}
+	var steps []step
+	if members {
+		steps = append(steps, step{"members", func() error { return syncer.SetProjectMembers(ctx, gid, add, remove) }})
 	}
 	if in.Archived != nil {
-		if err := syncer.SetProjectArchived(ctx, gid, *in.Archived); err != nil {
+		archive := step{"archive", func() error { return syncer.SetProjectArchived(ctx, gid, *in.Archived) }}
+		if *in.Archived {
+			steps = append(steps, archive) // change members before archiving
+		} else {
+			archive.name = "unarchive"
+			steps = append([]step{archive}, steps...) // and after unarchiving
+		}
+	}
+	for i, st := range steps {
+		if err := st.run(); err != nil {
+			if i > 0 {
+				return nil, ProjectWriteOutput{}, fmt.Errorf("%s was applied, but %s failed: %w", steps[0].name, st.name, err)
+			}
 			return nil, ProjectWriteOutput{}, err
 		}
 	}
