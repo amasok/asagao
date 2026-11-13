@@ -135,6 +135,7 @@ type Model struct {
 	syncing     bool
 	syncErr     error
 	syncBusy    bool // the last sync found another process syncing; retrying soon
+	busyRetries int  // busy syncs in a row (the retry waits longer each time)
 	lastSync    time.Time
 	fetchingFor string // gid whose details are being fetched
 
@@ -363,11 +364,24 @@ func (m *Model) startSync() tea.Cmd {
 	}
 }
 
-// busyRetry is how soon a sync is tried again after another process was syncing.
-const busyRetry = 5 * time.Second
+// After another process was found syncing, a sync is tried again after busyRetryMin,
+// doubling each time up to busyRetryMax (each try asks Asana who is logged in).
+const (
+	busyRetryMin = 5 * time.Second
+	busyRetryMax = time.Minute
+)
 
-func (m *Model) retrySyncSoon() tea.Cmd {
-	return tea.Tick(busyRetry, func(time.Time) tea.Msg { return syncTickMsg{} })
+// busyRetryDelay is the wait before the next try after n busy syncs in a row.
+func busyRetryDelay(n int) time.Duration {
+	d := busyRetryMin
+	for i := 0; i < n && d < busyRetryMax; i++ {
+		d *= 2
+	}
+	return min(d, busyRetryMax)
+}
+
+func (m *Model) retrySyncAfter(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return syncTickMsg{} })
 }
 
 func (m *Model) scheduleSync() tea.Cmd {
@@ -532,8 +546,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
 		if m.syncBusy {
 			m.syncAgain = false // the retry covers a sync requested meanwhile
-			return m, tea.Batch(m.retrySyncSoon(), m.loadOutbox())
+			delay := busyRetryDelay(m.busyRetries)
+			m.busyRetries++
+			return m, tea.Batch(m.retrySyncAfter(delay), m.loadOutbox())
 		}
+		m.busyRetries = 0
 		m.syncErr = msg.err
 		if errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.status = m.accountChangedStatus()

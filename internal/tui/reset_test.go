@@ -161,3 +161,27 @@ func TestOutboxOpensWhenDiscardsCannotBeRead(t *testing.T) {
 		t.Fatalf("ops=%d status=%q\n%s", len(h.m.ops), h.m.status, h.screen())
 	}
 }
+
+// Busy retries back off (5s, 10s, 20s, 40s, then every minute) and start over after a sync.
+func TestBusyRetryBacksOff(t *testing.T) {
+	var got []time.Duration
+	for n := 0; n < 7; n++ {
+		got = append(got, busyRetryDelay(n))
+	}
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute, time.Minute, time.Minute}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("delays = %v, want %v", got, want)
+	}
+	h, _ := resetHarness(t)
+	busy := syncDoneMsg{err: sync.ErrPushBusy, at: testNow}
+	for i := 0; i < 3; i++ {
+		h.m.Update(busy)
+	}
+	if h.m.busyRetries != 3 {
+		t.Fatalf("busyRetries = %d", h.m.busyRetries)
+	}
+	h.m.Update(syncDoneMsg{at: testNow})
+	if h.m.busyRetries != 0 {
+		t.Fatalf("a sync should reset the back-off: %d", h.m.busyRetries)
+	}
+}
