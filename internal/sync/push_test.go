@@ -1347,8 +1347,13 @@ func TestPushCreateVerifyOfflineRetriesOnNextPush(t *testing.T) {
 	if op == nil || op.State != store.OpPending || !op.Verify || op.SentAt == "" {
 		t.Fatalf("entry should stay queued to be verified: %+v", op)
 	}
+	// The next sync, an hour later, still cannot look it up; the one after that can.
+	s.now = func() time.Time { return time.Now().Add(time.Hour) }
+	if res, err := s.Push(ctx); err == nil || res.Remaining != 1 {
+		t.Fatalf("second push = %+v %v", res, err)
+	}
 	ws.setHook(nil)
-	s.now = func() time.Time { return time.Now().Add(time.Hour) } // the next sync, an hour later
+	s.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 	res, err = s.Push(ctx)
 	if err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
 		t.Fatalf("next push should find the task (created since the first send) instead of creating it again: %+v %v\n%v", res, err, ws.calls)
