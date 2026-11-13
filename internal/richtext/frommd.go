@@ -10,6 +10,7 @@ import (
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // Editable Markdown keeps Asana-specific references in a form that survives editing:
@@ -167,7 +168,8 @@ func (w *htmlWriter) inlines(n gast.Node) {
 func (w *htmlWriter) inline(n gast.Node) {
 	switch n := n.(type) {
 	case *gast.Text:
-		w.textOut(string(n.Segment.Value(w.src)))
+		// The segment still holds backslash escapes ("\*"); goldmark's own renderer removes them.
+		w.textOut(string(util.UnescapePunctuations(n.Segment.Value(w.src))))
 		if n.SoftLineBreak() || n.HardLineBreak() {
 			w.b.WriteString("\n")
 		}

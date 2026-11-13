@@ -1,7 +1,7 @@
 // Package richtext converts Asana rich text (html_notes / html_text) to Markdown.
 //
 // Asana's rich text is a small HTML subset: <body>, <strong>, <em>, <u>, <s>, <code>, <pre>,
-// <a href>, <ul>/<ol>/<li>, <h1>, <h2>, <hr>, <blockquote>, <img> and plain newlines in text.
+// <a href>, <ul>/<ol>/<li>, <h1>, <h2>, <h3>, <hr>, <blockquote>, <img> and plain newlines in text.
 // Images are emitted as an ImageToken line so the renderer can put the picture (or a
 // placeholder) exactly where it appeared.
 package richtext
@@ -140,7 +140,7 @@ func (c *converter) walk(n *html.Node) {
 		c.link(n)
 	case atom.H1, atom.H2, atom.H3:
 		c.block()
-		c.write(strings.Repeat("#", int(n.DataAtom-atom.H1)/int(atom.H2-atom.H1)+1) + " ")
+		c.write(strings.Repeat("#", headingLevel(n.DataAtom)) + " ")
 		c.write(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")))
 		c.block()
 	case atom.Hr:
@@ -301,19 +301,63 @@ func textOf(n *html.Node) string {
 	return b.String()
 }
 
-var mdSpecial = strings.NewReplacer(`\`, `\\`, "*", `\*`, "_", `\_`, "`", "\\`", "[", `\[`, "]", `\]`, "<", `\<`)
+// headingLevel is 1 for <h1>, 2 for <h2> and 3 for <h3>. (Atoms are not consecutive, so
+// the level cannot be computed from the atom values.)
+func headingLevel(a atom.Atom) int {
+	switch a {
+	case atom.H2:
+		return 2
+	case atom.H3:
+		return 3
+	}
+	return 1
+}
 
+// "~" is escaped too: goldmark's strikethrough accepts a single tilde as well as "~~".
+var mdSpecial = strings.NewReplacer(`\`, `\\`, "*", `\*`, "_", `\_`, "`", "\\`", "[", `\[`, "]", `\]`, "<", `\<`, "~", `\~`)
+
+// orderedMarker matches an ordered list marker at the start of a line ("1. ", "12) ").
+var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
+
+// escape escapes Markdown syntax in text so that it reads back as the same text.
 func escape(s string) string {
 	s = mdSpecial.Replace(s)
-	// "#", "-", "+", "1." at the start of a line would become headings or lists.
+	// "#", ">", "- ", "+ ", "1. ", "1) " at the start of a line would become headings, quotes
+	// or lists, and a line of only "-" or "=" would turn the line above into a heading.
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		trimmed := strings.TrimLeft(l, " ")
-		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "+ ") || strings.HasPrefix(trimmed, ">") {
-			lines[i] = strings.Repeat(" ", len(l)-len(trimmed)) + `\` + trimmed
+		indent := l[:len(l)-len(trimmed)]
+		switch {
+		case strings.HasPrefix(trimmed, "#"), strings.HasPrefix(trimmed, ">"),
+			listBullet(trimmed, '-'), listBullet(trimmed, '+'),
+			onlyOf(trimmed, '-'), onlyOf(trimmed, '='):
+			lines[i] = indent + `\` + trimmed
+		default:
+			if m := orderedMarker.FindStringSubmatchIndex(trimmed); m != nil {
+				lines[i] = indent + trimmed[:m[4]] + `\` + trimmed[m[4]:]
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// listBullet reports whether line starts with a bullet list marker ("- ", or "-" alone).
+func listBullet(line string, mark byte) bool {
+	return len(line) > 0 && line[0] == mark && (len(line) == 1 || line[1] == ' ' || line[1] == '\t')
+}
+
+// onlyOf reports whether line consists of mark characters (and spaces) only.
+func onlyOf(line string, mark rune) bool {
+	if line == "" {
+		return false
+	}
+	for _, r := range line {
+		if r != mark && r != ' ' {
+			return false
+		}
+	}
+	return true
 }
 
 var manyBlank = regexp.MustCompile(`\n{3,}`)

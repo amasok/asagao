@@ -1,6 +1,7 @@
 package richtext
 
 import (
+	"html"
 	"strings"
 	"testing"
 )
@@ -22,9 +23,18 @@ func TestToMarkdown(t *testing.T) {
 		{"h2",
 			"<body><h2>小見出し</h2>本文</body>",
 			"## 小見出し\n\n本文"},
+		{"h1 h2 h3 levels",
+			"<body><h1>一</h1><h2>二</h2><h3>三</h3></body>",
+			"# 一\n\n## 二\n\n### 三"},
 		{"lists",
 			"<body>買うもの\n<ul>\n<li>牛乳</li>\n<li>卵<ol><li>赤</li><li>白</li></ol></li>\n</ul>以上</body>",
 			"買うもの\n\n- 牛乳\n- 卵\n   1. 赤\n   2. 白\n\n以上"},
+		{"link text starting with @ is a mention",
+			`<body><a href="https://app.asana.com/0/1">@Hanako</a> と <a href="https://example.com"> @Taro </a></body>`,
+			"**@Hanako** と **@Taro**"},
+		{"@ in the middle of link text is not a mention",
+			`<body><a href="mailto:a@example.com">a@example.com</a></body>`,
+			"[a@example.com](mailto:a@example.com)"},
 		{"links and mentions",
 			`<body><a href="https://example.com">サイト</a> <a href="https://x.jp">https://x.jp</a> <a data-asana-type="user" data-asana-gid="1" href="https://app.asana.com/0/1">@Hanako</a></body>`,
 			"[サイト](https://example.com) <https://x.jp> **@Hanako**"},
@@ -37,6 +47,12 @@ func TestToMarkdown(t *testing.T) {
 		{"escapes markdown in text",
 			"<body>*注意* [メモ] 1_2\n# ではない\n- でもない</body>",
 			`\*注意\* \[メモ\] 1\_2  ` + "\n" + `\# ではない  ` + "\n" + `\- でもない`},
+		{"escapes block syntax at line start",
+			"<body>1. 番号\n12) 括弧\n3.\n-- -\n+ プラス\n> 引用\n  # 字下げ\n-\n---\n===\n~~消し~~ と 10時~12時</body>",
+			`1\. 番号  ` + "\n" + `12\) 括弧  ` + "\n" + `3\.  ` + "\n" + `\-- -  ` + "\n" + `\+ プラス  ` + "\n" + `\> 引用  ` + "\n" + `  \# 字下げ  ` + "\n" + `\-  ` + "\n" + `\---  ` + "\n" + `\===  ` + "\n" + `\~\~消し\~\~ と 10時\~12時`},
+		{"does not escape look-alikes",
+			"<body>1.5倍\n2020.1\n-5度\n+1\n=a\n-- x</body>",
+			"1.5倍  \n2020.1  \n-5度  \n+1  \n=a  \n-- x"},
 		{"pre",
 			"<body><pre>a *b*\n  c</pre></body>",
 			"```\na *b*\n  c\n```"},
@@ -90,19 +106,62 @@ func TestEditableRoundTrip(t *testing.T) {
 
 <a data-asana-type="user" data-asana-gid="9" href="https://app.asana.com/0/9">@Hanako</a> よろしく</body>`
 	md := ToEditableMarkdown(in)
-	for _, want := range []string{"# 候補", "**予算**", "- ニトリ", "![画像](asana:1220507679870013)", "[@Hanako](asana:user:9)"} {
-		if !strings.Contains(md, want) {
-			t.Fatalf("editable markdown missing %q:\n%s", want, md)
+	wantMD := "# 候補\n\n**予算**は10万円\n\n- ニトリ\n- 無印\n\nこれ\n\n![画像](asana:1220507679870013)\n\n[@Hanako](asana:user:9) よろしく"
+	if md != wantMD {
+		t.Fatalf("editable markdown\n%q\nwant\n%q", md, wantMD)
+	}
+	// Mentions go back as a bare <a data-asana-gid/>: Asana fills in the name.
+	wantHTML := `<body><h1>候補</h1><strong>予算</strong>は10万円
+<ul><li>ニトリ</li><li>無印</li></ul>これ
+
+<img data-asana-gid="1220507679870013"/>
+
+<a data-asana-gid="9"/> よろしく</body>`
+	if out := FromMarkdown(md); out != wantHTML {
+		t.Fatalf("html\n%q\nwant\n%q", out, wantHTML)
+	}
+	if got, want := PlainFromMarkdown(md), "候補\n予算は10万円\nニトリ\n無印\nこれ\n\n\n\n@Hanako よろしく"; got != want {
+		t.Fatalf("plain\n%q\nwant\n%q", got, want)
+	}
+}
+
+// Markdown -> Asana HTML -> editable Markdown gives back exactly the same Markdown.
+func TestMarkdownRoundTrip(t *testing.T) {
+	for _, md := range []string{
+		"# 大\n\n## 中\n\n本文",
+		"**太字** と *斜体* と ~~消す~~ と `code` と \\*記号\\*  \n次の行",
+		"- 牛乳\n- 卵\n   1. 赤\n   2. 白\n\n以上",
+		"> 引用\n\n```\na < b\n```\n\n---\n\n後",
+		"[サイト](https://example.com) と <https://x.jp>\n\n![画像](asana:123)",
+		`1\. 番号ではない  ` + "\n" + `\+ リストではない  ` + "\n" + `\# 見出しではない  ` + "\n" + `\~\~消さない\~\~ 10時\~12時`,
+	} {
+		h := FromMarkdown(md)
+		if back := ToEditableMarkdown(h); back != md {
+			t.Errorf("round trip of %q via %q\ngot  %q", md, h, back)
 		}
 	}
-	out := FromMarkdown(md)
-	for _, want := range []string{"<h1>候補</h1>", "<strong>予算</strong>", "<li>ニトリ</li>", `<img data-asana-gid="1220507679870013"/>`, `<a data-asana-gid="9"/>`} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("html missing %q:\n%s", want, out)
+}
+
+// Plain text that looks like Markdown survives Asana HTML -> editable Markdown -> Asana HTML
+// unchanged, and its plain-text form is the original text.
+func TestPlainTextRoundTrip(t *testing.T) {
+	for _, text := range []string{
+		"*注意* [メモ] 1_2 a\\b `x` <tag>",
+		"1. 番号\n2) 括弧\n10. 十",
+		"- ハイフン\n+ プラス\n-\n> 引用\n# 井桁",
+		"見出し風\n---\n見出し風\n===",
+		"段落\n-- -\n3.\n4)",
+		"~~消し~~ と 10時~12時と14時~15時",
+		"1.5倍\n-5度\n\n次の段落",
+	} {
+		in := "<body>" + html.EscapeString(text) + "</body>"
+		md := ToEditableMarkdown(in)
+		if out := FromMarkdown(md); out != in {
+			t.Errorf("text %q\nmarkdown %q\nhtml %q\nwant %q", text, md, out, in)
 		}
-	}
-	if got := PlainFromMarkdown(md); !strings.Contains(got, "予算は10万円") || strings.Contains(got, "**") || strings.Contains(got, "asana:") {
-		t.Fatalf("plain = %q", got)
+		if plain := PlainFromMarkdown(md); plain != text {
+			t.Errorf("plain of %q = %q", md, plain)
+		}
 	}
 }
 
