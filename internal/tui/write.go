@@ -399,7 +399,7 @@ func (m *Model) renderOutbox(w, h int) string {
 		lines = append(lines, "未送信の変更はありません")
 	}
 	for i, op := range m.ops {
-		state := map[string]string{store.OpPending: "未送信", store.OpConflict: "競合", store.OpFailed: "失敗"}[op.State]
+		state := store.OpStateLabel(op.State)
 		style := m.st.dim
 		switch op.State {
 		case store.OpConflict:
@@ -407,70 +407,14 @@ func (m *Model) renderOutbox(w, h int) string {
 		case store.OpFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+state+"]", 8)) + " " + describeOp(op)
+		line := style.Render(padRight("["+state+"]", 8)) + " " + store.DescribeOp(op)
 		lines = append(lines, m.highlight(line, w-4, i == m.opCursor, true))
 		for k, v := range op.Conflict {
-			lines = append(lines, fmt.Sprintf("           %s: こちら=%v / Asana=%v", fieldLabel(k), op.Payload[k], v))
+			lines = append(lines, fmt.Sprintf("           %s: こちら=%v / Asana=%v", store.FieldLabel(k), op.Payload[k], v))
 		}
 		if op.LastError != "" {
 			lines = append(lines, m.st.errorText.Render("           "+op.LastError))
 		}
 	}
 	return m.pane("未送信の変更", lines, w, h, true)
-}
-
-func fieldLabel(k string) string {
-	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]
-}
-
-func describeOp(op store.Op) string {
-	name := op.TaskName
-	if name == "" {
-		name = op.TaskGID
-	}
-	switch op.Kind {
-	case store.OpCreateTask:
-		return "作成: " + name
-	case store.OpMoveTask:
-		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
-	case store.OpRenameSection:
-		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
-	case store.OpCreateStatus:
-		return fmt.Sprintf("ステータス更新: %s（%s）", name, store.StatusLabel(fmt.Sprint(op.Payload["status_type"])))
-	case store.OpAddFollower:
-		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
-	case store.OpRemoveFollower:
-		return fmt.Sprintf("フォロワーを外す: %s %v", name, op.Payload["user_name"])
-	case store.OpAddProject:
-		return fmt.Sprintf("プロジェクトに追加: %s → %v", name, op.Payload["project_name"])
-	case store.OpRemoveProject:
-		return fmt.Sprintf("プロジェクトから外す: %s ← %v", name, op.Payload["project_name"])
-	case store.OpDuplicateTask:
-		return "複製: " + name
-	case store.OpUploadAttachment:
-		return fmt.Sprintf("ファイルを添付: %s ← %v", name, op.Payload["name"])
-	case store.OpAddTag:
-		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
-	case store.OpRemoveTag:
-		return fmt.Sprintf("タグを外す: %s #%v", name, op.Payload["tag_name"])
-	case store.OpAddComment:
-		text, _ := op.Payload["text"].(string)
-		return fmt.Sprintf("コメント: %s「%s」", name, text)
-	}
-	var parts []string
-	for _, k := range []string{"completed", "name", "notes", "due_on", "assignee"} {
-		v, ok := op.Payload[k]
-		if !ok {
-			continue
-		}
-		switch {
-		case k == "completed" && v == true:
-			parts = append(parts, "完了にする")
-		case k == "completed":
-			parts = append(parts, "未完了に戻す")
-		default:
-			parts = append(parts, fmt.Sprintf("%s→%v", fieldLabel(k), v))
-		}
-	}
-	return name + ": " + strings.Join(parts, "、")
 }

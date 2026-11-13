@@ -480,9 +480,9 @@ func (a *app) outboxCmd() *cobra.Command {
 				return nil
 			}
 			for _, op := range ops {
-				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, stateLabel(op.State), DescribeOp(op))
+				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, store.OpStateLabel(op.State), store.DescribeOp(op))
 				for k, v := range op.Conflict {
-					fmt.Fprintf(cmd.OutOrStdout(), "      %s: こちら=%v / Asana=%v\n", k, op.Payload[k], v)
+					fmt.Fprintf(cmd.OutOrStdout(), "      %s: こちら=%v / Asana=%v\n", store.FieldLabel(k), op.Payload[k], v)
 				}
 				if op.LastError != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "      エラー: %s\n", op.LastError)
@@ -541,84 +541,4 @@ func (a *app) resolve(ctx context.Context, st *store.Store, id int64, act sync.R
 		}
 	}
 	return fmt.Sprintf("#%d を取り消しました", id), nil
-}
-
-func stateLabel(s string) string {
-	switch s {
-	case store.OpPending:
-		return "未送信"
-	case store.OpConflict:
-		return "競合"
-	case store.OpFailed:
-		return "失敗"
-	}
-	return s
-}
-
-// DescribeOp is a one-line, human-readable description of an outbox entry.
-func DescribeOp(op store.Op) string {
-	name := op.TaskName
-	if name == "" {
-		name = op.TaskGID
-	}
-	switch op.Kind {
-	case store.OpCreateTask:
-		return "作成: " + name
-	case store.OpMoveTask:
-		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
-	case store.OpRenameSection:
-		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
-	case store.OpCreateStatus:
-		return fmt.Sprintf("ステータス更新: %s（%s）", name, store.StatusLabel(fmt.Sprint(op.Payload["status_type"])))
-	case store.OpAddFollower:
-		return fmt.Sprintf("フォロワーを追加: %s %v", name, op.Payload["user_name"])
-	case store.OpRemoveFollower:
-		return fmt.Sprintf("フォロワーを外す: %s %v", name, op.Payload["user_name"])
-	case store.OpAddProject:
-		return fmt.Sprintf("プロジェクトに追加: %s → %v", name, op.Payload["project_name"])
-	case store.OpRemoveProject:
-		return fmt.Sprintf("プロジェクトから外す: %s ← %v", name, op.Payload["project_name"])
-	case store.OpDuplicateTask:
-		return "複製: " + name
-	case store.OpUploadAttachment:
-		return fmt.Sprintf("ファイルを添付: %s ← %v", name, op.Payload["name"])
-	case store.OpAddTag:
-		return fmt.Sprintf("タグを付ける: %s #%v", name, op.Payload["tag_name"])
-	case store.OpRemoveTag:
-		return fmt.Sprintf("タグを外す: %s #%v", name, op.Payload["tag_name"])
-	case store.OpAddComment:
-		text, _ := op.Payload["text"].(string)
-		if r := []rune(text); len(r) > 30 {
-			text = string(r[:30]) + "…"
-		}
-		return fmt.Sprintf("コメント: %s「%s」", name, text)
-	}
-	var parts []string
-	for _, k := range []string{"completed", "name", "notes", "due_on", "assignee"} {
-		v, ok := op.Payload[k]
-		if !ok {
-			continue
-		}
-		switch k {
-		case "completed":
-			if v == true {
-				parts = append(parts, "完了にする")
-			} else {
-				parts = append(parts, "未完了に戻す")
-			}
-		case "name":
-			parts = append(parts, fmt.Sprintf("名前→%v", v))
-		case "notes":
-			parts = append(parts, "説明を変更")
-		case "due_on":
-			if v == "" {
-				parts = append(parts, "期日を削除")
-			} else {
-				parts = append(parts, fmt.Sprintf("期日→%v", v))
-			}
-		case "assignee":
-			parts = append(parts, "担当者を変更")
-		}
-	}
-	return name + ": " + strings.Join(parts, "、")
 }

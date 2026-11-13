@@ -42,11 +42,7 @@ func (e *StateError) Error() string {
 	if e.Action == Retry {
 		want = "送信に失敗した変更"
 	}
-	label := map[string]string{store.OpPending: "未送信", store.OpConflict: "競合", store.OpFailed: "失敗"}[e.State]
-	if label == "" {
-		label = e.State
-	}
-	return fmt.Sprintf("#%d は%sではありません（状態: %s）。%s は%sにだけ使えます", e.ID, want, label, e.Action, want)
+	return fmt.Sprintf("#%d は%sではありません（状態: %s）。%s は%sにだけ使えます", e.ID, want, store.OpStateLabel(e.State), e.Action, want)
 }
 
 func (e *StateError) Is(target error) bool { return target == ErrWrongState }
