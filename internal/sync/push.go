@@ -173,7 +173,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 			if !sendIt {
 				continue
 			}
-			if err := s.Store.CountAttempt(ctx, op.ID); err != nil {
+			if err := s.Store.CountAttempt(ctx, op.ID, s.clock()); err != nil {
 				return res, err
 			}
 			op.Attempts++

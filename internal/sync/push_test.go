@@ -2112,3 +2112,132 @@ func TestPushOfflineDoesNotCountAttempts(t *testing.T) {
 		t.Fatalf("a first 5xx after being offline must not give up: %+v %v", res, err)
 	}
 }
+
+// While a create waits to be verified, edits to the task are queued separately: the check
+// looks for what was sent, and the edits follow once the task is found.
+func TestPushEditWhileVerifyingDoesNotDuplicate(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "A"}, {GID: "s2", Name: "B"}})
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", SectionGID: "s1", Name: "元の名前"}, now)
+	ws.setFailAfter("POST /tasks", 1) // created, but the answer is lost
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/tasks" {
+			dropConnection(rw) // and it cannot be looked up yet
+			return true
+		}
+		return false
+	})
+	if _, err := s.Push(ctx); err == nil {
+		t.Fatal("first push should stop (offline check)")
+	}
+	if err := st.UpdateTaskLocal(ctx, gid, map[string]any{"name": "新しい名前", "due_on": "2026-12-01", "assignee": "u2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MoveTaskLocal(ctx, gid, "p1", "s2", now); err != nil {
+		t.Fatal(err)
+	}
+	if op := opByKind(t, st, store.OpCreateTask); op.Payload["name"] != "元の名前" || op.Payload["section"] != "s1" {
+		t.Fatalf("the create being verified must keep what was sent: %+v", op.Payload)
+	}
+	ws.setHook(nil)
+	later(s, 10*time.Minute)
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+	}
+	if n := ws.countCalls("POST /tasks "); n != 1 {
+		t.Fatalf("the task was created %d times", n)
+	}
+	real, _ := st.RealGID(ctx, gid)
+	srvTask := ws.tasks[real]
+	if srvTask == nil || srvTask.Name != "新しい名前" || srvTask.DueOn != "2026-12-01" || srvTask.Section != "s2" {
+		t.Fatalf("server task = %+v", srvTask)
+	}
+	put := ""
+	for _, c := range ws.calls {
+		if strings.HasPrefix(c, "PUT /tasks/"+real+" ") {
+			put = c
+		}
+	}
+	if !strings.Contains(put, `"assignee":"u2"`) {
+		t.Fatalf("assignee change not sent: %q", put)
+	}
+}
+
+// After a resend that also got a 5xx, the wait starts again from that resend.
+func TestPushSettleRestartsAfterResend(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "遅い"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			rw.WriteHeader(http.StatusServiceUnavailable) // not applied (yet)
+			return true
+		}
+		return false
+	})
+	posts := func() int { return ws.countCalls("POST /tasks ") }
+	_, _ = s.Push(ctx) // send 1 -> 503; too early to resend
+	later(s, 2*time.Minute)
+	_, _ = s.Push(ctx) // not found -> send 2 -> 503
+	if posts() != 2 {
+		t.Fatalf("posts = %d after the second push", posts())
+	}
+	later(s, 2*time.Minute+10*time.Second) // 10 s after send 2
+	_, _ = s.Push(ctx)
+	if posts() != 2 {
+		t.Fatalf("resent only 10 s after the previous 5xx (posts = %d)", posts())
+	}
+	later(s, 4*time.Minute) // a minute after send 2
+	_, _ = s.Push(ctx)
+	if posts() != 3 {
+		t.Fatalf("posts = %d, want a third send once the wait is over", posts())
+	}
+}
+
+// A comment of only emoji has no letters to compare: it must match exactly, not any other
+// such comment.
+func TestPushEmojiCommentMatchesExactly(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.AddCommentLocal(ctx, "t1", "👍", store.UserRef{GID: "me"}, now)
+	beginSendAll(t, st)
+	ws.addComment("t1", "🎉") // another emoji comment of ours, not this one
+	later(s, 2*time.Minute)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks/t1/stories") != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if n := len(ws.stories["t1"]); n != 2 {
+		t.Fatalf("both emoji comments should exist, have %d", n)
+	}
+}
+
+// Retrying an entry that failed after maxSendAttempts gives it a fresh set of attempts.
+func TestRetryResetsAttempts(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPut {
+			rw.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	for i := 0; i < 10; i++ {
+		if res, _ := s.Push(ctx); res.Failed == 1 {
+			break
+		}
+	}
+	op := opByKind(t, st, store.OpUpdateTask)
+	if op.State != store.OpFailed {
+		t.Fatalf("entry = %+v", op)
+	}
+	if err := st.RetryOp(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Failed != 0 {
+		t.Fatalf("one more 5xx after a retry must not fail at once: %+v %v", res, err)
+	}
+}

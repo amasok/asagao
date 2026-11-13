@@ -51,8 +51,8 @@ func (s *Store) BeginSend(ctx context.Context, id int64, now time.Time) (bool, e
 
 // CountAttempt records that entry id is about to be sent (attempts counts requests that
 // may have reached Asana; see sync.maxSendAttempts).
-func (s *Store) CountAttempt(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET attempts = attempts + 1 WHERE id = ?", id)
+func (s *Store) CountAttempt(ctx context.Context, id int64, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET attempts = attempts + 1, last_sent_at = ? WHERE id = ?", formatTime(now), id)
 	return err
 }
 

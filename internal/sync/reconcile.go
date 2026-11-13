@@ -57,8 +57,14 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 	if err != nil {
 		return sent, ambiguous, nil // no idea since when to look
 	}
+	// Look for results since the first send, but trust "not there" only some time after
+	// the latest request: Asana may still be processing it.
+	lastSent := sentAt
+	if t, err := time.Parse(time.RFC3339, op.LastSentAt); err == nil && t.After(lastSent) {
+		lastSent = t
+	}
 	out, m, err := s.find(ctx, op, sentAt.Add(-clockSkew))
-	if err != nil || m != notFound || s.clock().Sub(sentAt) >= settleTime(op.Kind) {
+	if err != nil || m != notFound || s.clock().Sub(lastSent) >= settleTime(op.Kind) {
 		return out, m, err
 	}
 	// Not found so soon after sending: wait, unless what was found made it harmless to
@@ -295,6 +301,9 @@ func pick[T any](items []T, keep func(T) bool) (T, match) {
 // of a rich-text comment itself (links, mentions and lists come out differently from our
 // Markdown-derived text), so the visible words of either form are compared.
 func sameComment(st asana.Story, text, htmlText string) bool {
+	if textKey(text) == "" { // only emoji or symbols: nothing to compare loosely
+		return strings.TrimSpace(st.Text) == strings.TrimSpace(text)
+	}
 	if textKey(st.Text) == textKey(text) {
 		return true
 	}

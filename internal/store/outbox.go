@@ -57,8 +57,9 @@ type Op struct {
 	CreatedAt      string         `json:"created_at"`
 	// SentAt is when the entry was (first) sent; Verify means Asana may already have
 	// applied it, so Push checks Asana before sending it again (see outbox_send.go).
-	SentAt string `json:"sent_at,omitempty"`
-	Verify bool   `json:"verify,omitempty"`
+	SentAt     string `json:"sent_at,omitempty"`
+	LastSentAt string `json:"last_sent_at,omitempty"`
+	Verify     bool   `json:"verify,omitempty"`
 }
 
 // NewTask is the input for CreateTaskLocal.
@@ -90,7 +91,7 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		}
 		if IsLocalGID(gid) {
 			// Not on the server yet: fold the change into the pending create.
-			op, err := findOp(ctx, tx, OpCreateTask, gid)
+			op, err := findUnsentCreate(ctx, tx, gid)
 			if err != nil {
 				return err
 			}
@@ -101,8 +102,9 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 				}
 				return applyFields(ctx, tx, gid, changes, now)
 			}
-			// The create is being sent or failed (or the task is a local duplicate):
-			// queue the edit as an update, sent once the task exists.
+			// The create is being sent, was sent (it may be waiting to be verified, which
+			// looks for what was sent), or failed, or the task is a local duplicate: queue
+			// the edit as an update, sent once the task exists.
 			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
 				return err
 			}
@@ -174,7 +176,7 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 		}
 
 		if IsLocalGID(gid) {
-			op, err := findOp(ctx, tx, OpCreateTask, gid)
+			op, err := findUnsentCreate(ctx, tx, gid)
 			if err != nil {
 				return err
 			}
@@ -182,7 +184,7 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 				op.Payload["section"] = sectionGID
 				return saveOp(ctx, tx, op)
 			}
-			// The create is being sent or failed: queue a move, sent once the task exists.
+			// The create was (or is being) sent, or failed: queue a move, sent once the task exists.
 			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
 				return err
 			}
@@ -360,7 +362,7 @@ func (s *Store) GetOp(ctx context.Context, id int64) (*Op, error) {
 
 func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name, ''), o.payload, o.base,
-		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at, o.sent_at, o.verify
+		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at, o.sent_at, o.last_sent_at, o.verify
 		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid
 		LEFT JOIN projects pr ON pr.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
 	if err != nil {
@@ -372,7 +374,7 @@ func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, 
 		var op Op
 		var payload, base, conflict string
 		if err := rows.Scan(&op.ID, &op.Kind, &op.TaskGID, &op.TaskName, &payload, &base, &op.BaseModifiedAt,
-			&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.Verify); err != nil {
+			&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.LastSentAt, &op.Verify); err != nil {
 			return nil, err
 		}
 		if err := unmarshalOp(&op, payload, base, conflict); err != nil {
@@ -441,7 +443,8 @@ func (s *Store) RetryOp(ctx context.Context, id int64) error {
 			return err
 		}
 		// The user asks to send it again as it is: no check in Asana first.
-		_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending', last_error = '', verify = 0 WHERE id = ?", id)
+		// A fresh start: no check in Asana first, and the attempts count from zero again.
+		_, err = tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending', last_error = '', verify = 0, attempts = 0 WHERE id = ?", id)
 		return err
 	})
 }
@@ -814,6 +817,20 @@ func findOp(ctx context.Context, tx *sql.Tx, kind, gid string) (*Op, error) {
 	return getOpTx(ctx, tx, id)
 }
 
+// findUnsentCreate returns the pending create of a local task if it was never sent, so
+// edits can be folded into it. Once sent, its payload must stay what was sent: verifying
+// it looks for exactly that in Asana.
+func findUnsentCreate(ctx context.Context, tx *sql.Tx, gid string) (*Op, error) {
+	op, err := findOp(ctx, tx, OpCreateTask, gid)
+	if err != nil || op == nil {
+		return nil, err
+	}
+	if op.Verify || op.SentAt != "" || op.Attempts > 0 {
+		return nil, nil
+	}
+	return op, nil
+}
+
 // CreateQueued reports whether a task with a local gid still has its create (or duplicate)
 // in the outbox, in any state.
 func (s *Store) CreateQueued(ctx context.Context, gid string) (bool, error) {
@@ -857,8 +874,8 @@ func getOpTx(ctx context.Context, tx *sql.Tx, id int64) (*Op, error) {
 	var op Op
 	var payload, base, conflict string
 	err := tx.QueryRowContext(ctx, `SELECT id, kind, task_gid, payload, base, base_modified_at, state, conflict, last_error, attempts, created_at,
-		sent_at, verify FROM outbox WHERE id = ?`, id).Scan(&op.ID, &op.Kind, &op.TaskGID, &payload, &base, &op.BaseModifiedAt,
-		&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.Verify)
+		sent_at, last_sent_at, verify FROM outbox WHERE id = ?`, id).Scan(&op.ID, &op.Kind, &op.TaskGID, &payload, &base, &op.BaseModifiedAt,
+		&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.LastSentAt, &op.Verify)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("outbox entry %d: %w", id, ErrNotFound)
 	}

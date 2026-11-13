@@ -210,4 +210,9 @@ CREATE INDEX status_updates_project ON status_updates(project_gid, created_at);
 ALTER TABLE outbox ADD COLUMN sent_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE outbox ADD COLUMN verify INTEGER NOT NULL DEFAULT 0;
 `,
+	`
+-- When the entry's latest request went out (sent_at is the first): Asana may still be
+-- processing that one, so a missing result is trusted only some time after it.
+ALTER TABLE outbox ADD COLUMN last_sent_at TEXT NOT NULL DEFAULT '';
+`,
 }
