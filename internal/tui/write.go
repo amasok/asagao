@@ -394,6 +394,12 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// opStateWidth fits the widest state label, "[自動確認中]"; detail lines under an entry
+// start where its description does.
+const opStateWidth = 12
+
+var opDetailIndent = strings.Repeat(" ", opStateWidth+1)
+
 func (m *Model) renderOutbox(w, h int) string {
 	lines := []string{
 		m.st.dim.Render("j/k 移動   l こちらの値で上書き（競合）   s Asana の値を採用（競合）   d 取り消し   R 再送（失敗）   esc 閉じる"),
@@ -410,17 +416,17 @@ func (m *Model) renderOutbox(w, h int) string {
 		case store.OpFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+store.OpLabel(op)+"]", 12)) + " " + store.DescribeOp(op)
+		line := style.Render(padRight("["+store.OpLabel(op)+"]", opStateWidth)) + " " + store.DescribeOp(op)
 		lines = append(lines, m.highlight(line, w-4, i == m.opCursor, true))
 		for k, v := range op.Conflict {
-			lines = append(lines, fmt.Sprintf("           %s: こちら=%v / Asana=%v", store.FieldLabel(k), op.Payload[k], v))
+			lines = append(lines, fmt.Sprintf("%s%s: こちら=%v / Asana=%v", opDetailIndent, store.FieldLabel(k), op.Payload[k], v))
 		}
 		if _, text := store.OpNote(op); text != "" {
 			note := m.st.dim // e.g. being checked against Asana: nothing to do
 			if op.State == store.OpFailed {
 				note = m.st.errorText
 			}
-			lines = append(lines, note.Render("           "+text))
+			lines = append(lines, note.Render(opDetailIndent+text))
 		}
 	}
 	return m.pane("未送信の変更", lines, w, h, true)

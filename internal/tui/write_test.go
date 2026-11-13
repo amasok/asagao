@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -126,5 +128,33 @@ func TestOutboxShowsSendingAndVerify(t *testing.T) {
 	}
 	if op, _ := st.GetOp(ctx, ops[0].ID); op.State != store.OpSending {
 		t.Fatalf("the sending entry must be left alone: %+v", op)
+	}
+}
+
+// Detail lines (conflict values, notes) start where the entry's description starts.
+func TestOutboxDetailLinesAligned(t *testing.T) {
+	h := newHarness(t, 120, 24)
+	ctx, st := context.Background(), h.m.deps.Store
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
+	_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"name": "ローカル2"}, testNow)
+	ops, _ := st.ListOps(ctx)
+	_ = st.MarkOpConflict(ctx, ops[0].ID, map[string]any{"name": "サーバー"})
+	_ = st.MarkOpVerify(ctx, ops[1].ID, "Asana への反映を待っています")
+	h.key("!")
+	col := func(sub string) int {
+		t.Helper()
+		for _, line := range strings.Split(h.screen(), "\n") {
+			if i := strings.Index(line, sub); i >= 0 {
+				return ansi.StringWidth(line[:i])
+			}
+		}
+		t.Fatalf("%q not on screen:\n%s", sub, h.screen())
+		return 0
+	}
+	desc := col("ローカル: 名前→")
+	for _, detail := range []string{"名前: こちら=", "ローカル2: 名前→", "Asana への反映を待っています"} {
+		if got := col(detail); got != desc {
+			t.Errorf("%q starts at column %d, the description at %d", detail, got, desc)
+		}
 	}
 }
