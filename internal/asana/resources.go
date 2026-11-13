@@ -2,6 +2,7 @@ package asana
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -160,3 +161,34 @@ func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
 func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
 	return list[Story](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/stories", fields(storyFields))
 }
+
+// --- writes ---
+
+// UpdateTask sends changed fields (PUT /tasks/{gid}) and returns the updated task.
+func (c *Client) UpdateTask(ctx context.Context, gid string, fields map[string]any) (*Task, error) {
+	var t Task
+	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(TaskFields), fields, &t)
+	return &t, err
+}
+
+// CreateTask creates a task (POST /tasks).
+func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, error) {
+	var t Task
+	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(TaskFields), fields, &t)
+	return &t, err
+}
+
+// AddTaskToSection moves a task into a section (POST /sections/{gid}/addTask).
+func (c *Client) AddTaskToSection(ctx context.Context, sectionGID, taskGID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/sections/"+url.PathEscape(sectionGID)+"/addTask", nil, map[string]any{"task": taskGID}, nil)
+	return err
+}
+
+// AddComment posts a comment (POST /tasks/{gid}/stories).
+func (c *Client) AddComment(ctx context.Context, taskGID, text string) (*Story, error) {
+	var s Story
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/stories", fieldsQuery(storyFields), map[string]any{"text": text}, &s)
+	return &s, err
+}
+
+func fieldsQuery(f []string) url.Values { return fields(f) }

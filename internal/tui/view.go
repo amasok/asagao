@@ -31,6 +31,8 @@ func (m *Model) render() string {
 	var body string
 	if m.showHelp {
 		body = m.renderHelp(m.width, bodyH)
+	} else if m.showOutbox {
+		body = m.renderOutbox(m.width, bodyH)
 	} else {
 		body = m.renderBody(bodyH)
 	}
@@ -138,11 +140,28 @@ func (m *Model) renderHeader() string {
 		style = m.st.errorText
 	}
 	right := style.Render(status + " ")
+	var counts []string
+	if n := m.outbox.pending; n > 0 {
+		counts = append(counts, m.st.today.Render(fmt.Sprintf("↑ 未送信 %d", n)))
+	}
+	if n := m.outbox.conflict; n > 0 {
+		counts = append(counts, m.st.errorText.Render(fmt.Sprintf("⚠ 競合 %d", n)))
+	}
+	if n := m.outbox.failed; n > 0 {
+		counts = append(counts, m.st.errorText.Render(fmt.Sprintf("✗ 失敗 %d", n)))
+	}
+	if len(counts) > 0 {
+		right = strings.Join(counts, "  ") + m.st.dim.Render(" (!)") + "  " + right
+	}
 	gap := max(1, m.width-ansi.StringWidth(left)-ansi.StringWidth(right))
 	return ansi.Truncate(left+strings.Repeat(" ", gap)+right, m.width, "")
 }
 
 func (m *Model) renderFooter() string {
+	if m.promptMode != promptNone {
+		m.prompt.SetWidth(max(10, m.width-4))
+		return m.prompt.View()
+	}
 	if m.searching {
 		m.search.SetWidth(max(10, m.width-4))
 		return m.search.View()
@@ -150,7 +169,7 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	keys := [][2]string{{"j/k", "移動"}, {"tab", "ペイン"}, {"enter", "開く"}, {"/", "検索"}, {"f", "絞り込み"}, {"o", "ブラウザ"}, {"r", "同期"}, {"?", "ヘルプ"}, {"q", "終了"}}
+	keys := [][2]string{{"j/k", "移動"}, {"tab", "ペイン"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"/", "検索"}, {"f", "絞り込み"}, {"o", "ブラウザ"}, {"r", "同期"}, {"?", "ヘルプ"}, {"q", "終了"}}
 	var parts []string
 	for _, k := range keys {
 		parts = append(parts, m.st.footerKey.Render(k[0])+" "+m.st.footer.Render(k[1]))
@@ -175,10 +194,15 @@ func (m *Model) renderHelp(w, h int) string {
 		"  o                 選択中のタスクをブラウザで開く",
 		"  r                 今すぐ同期",
 		"",
+		"編集（オフラインでも可。オンラインになったら自動で送信）",
+		"  x                 完了 / 未完了を切り替え",
+		"  a                 タスクを追加（例: 牛乳を買う due:明日）",
+		"                    プロジェクト表示中はそのプロジェクトに、My Tasks では自分に割り当て",
+		"  c                 コメントを追加",
+		"  !                 未送信の変更・競合を確認して解決",
+		"",
 		"  q                 終了（狭い画面では 1 つ前のペインへ）",
 		"  ?                 このヘルプ（何かキーを押すと閉じる）",
-		"",
-		"タスクの完了・作成・コメントは次のバージョン（M4）で対応します。",
 	}
 	return m.pane("ヘルプ", lines, w, h, true)
 }
@@ -242,6 +266,9 @@ func (m *Model) taskLine(t *store.TaskSummary, w int, today string, selected boo
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	extra := ""
+	if t.Pending {
+		extra += " ↑"
+	}
 	if t.NumSubtasks > 0 {
 		extra = fmt.Sprintf(" ↳%d", t.NumSubtasks)
 	}
@@ -371,7 +398,11 @@ func (m *Model) renderDetail(w int) string {
 			if t, err := time.Parse(time.RFC3339, c.CreatedAt); err == nil {
 				when = t.Local().Format("01/02 15:04")
 			}
-			b.WriteString(m.st.label.Render(who+"  "+when) + "\n")
+			meta := who + "  " + when
+			if c.Pending {
+				meta += "  （未送信）"
+			}
+			b.WriteString(m.st.label.Render(meta) + "\n")
 			b.WriteString(wrap.Render(strings.TrimRight(c.Text, "\n")) + "\n\n")
 		}
 	case d.DetailsFetchedAt == "":

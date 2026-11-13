@@ -16,8 +16,9 @@ import (
 )
 
 func (a *app) taskCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "task", Short: "タスクの一覧・詳細"}
-	cmd.AddCommand(a.taskListCmd(), a.taskShowCmd())
+	cmd := &cobra.Command{Use: "task", Short: "タスクの一覧・詳細・作成・完了"}
+	cmd.AddCommand(a.taskListCmd(), a.taskShowCmd(), a.taskCreateCmd(),
+		a.taskCompleteCmd("complete", true), a.taskCompleteCmd("reopen", false))
 	return cmd
 }
 

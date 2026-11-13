@@ -110,6 +110,16 @@ type Model struct {
 
 	status   string // transient message for the footer
 	showHelp bool
+
+	// writes (write.go)
+	prompt      textinput.Model
+	promptMode  promptKind
+	selectAfter string // gid to select after the next list load (e.g. a created task)
+	syncAgain   bool   // a write happened during a sync; sync again when it finishes
+	outbox      outboxCounts
+	showOutbox  bool
+	ops         []store.Op
+	opCursor    int
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -127,6 +137,7 @@ func New(ctx context.Context, deps Deps) *Model {
 		scopes:     []scope{{kind: scopeMyTasks, name: "My Tasks"}},
 		detailView: viewport.New(),
 		search:     ti,
+		prompt:     textinput.New(),
 	}
 	return m
 }
@@ -164,7 +175,7 @@ type (
 )
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.loadScopes(), m.loadTasks(), m.startSync())
+	return tea.Batch(tea.RequestBackgroundColor, m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.startSync())
 }
 
 // --- commands ---
@@ -323,7 +334,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.syncer != nil {
 			m.syncer = msg.syncer
 		}
-		cmds := []tea.Cmd{m.scheduleSync()}
+		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
+		if m.syncAgain {
+			m.syncAgain = false
+			cmds = append(cmds, m.startSync())
+		}
 		if msg.err == nil {
 			m.lastSync = msg.at
 			cmds = append(cmds, m.loadScopes(), m.loadTasks())
@@ -343,6 +358,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
+	if model, cmd, ok := m.updateWrite(msg); ok {
+		return model, cmd
+	}
 
 	if m.searching {
 		var cmd tea.Cmd
@@ -358,6 +376,13 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	m.status = ""
+
+	if m.promptMode != promptNone {
+		return m.handlePromptKey(msg)
+	}
+	if m.showOutbox {
+		return m.handleOutboxKey(key)
+	}
 
 	if m.searching {
 		switch key {
@@ -442,9 +467,15 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "o":
 		if t := m.selectedTask(); t != nil && m.focus != paneSidebar {
+			if store.IsLocalGID(t.GID) {
+				m.status = "まだ Asana に送信されていないタスクです"
+				return m, nil
+			}
 			return m, m.openURL(t.PermalinkURL)
 		}
 		return m, nil
+	case "x", "a", "c", "!":
+		return m, m.writeKey(key)
 	}
 
 	switch m.focus {
@@ -546,6 +577,9 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	}
 	m.rows = rows
 	m.listCursor = -1
+	if m.selectAfter != "" {
+		prev, m.selectAfter = m.selectAfter, ""
+	}
 	for i, r := range rows {
 		if r.task != nil && r.task.GID == prev {
 			m.listCursor = i
