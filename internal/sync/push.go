@@ -96,6 +96,9 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
 	}()
 	verified := map[int64]bool{} // checked in Asana during this push (at most once each)
+	// The account is checked only before dropping anything (dropGone), not here: only Run
+	// changes the stored account (KeyMeGID), and Run refuses to when Asana answers as
+	// another account, so the stored one stays the account the local data belongs to.
 	drops := &dropState{res: &res}
 	for _, snapshot := range ops {
 		// An entry is handled a bounded number of times per push, whatever happens: send,
