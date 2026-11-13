@@ -100,7 +100,9 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 			return applyFields(ctx, tx, gid, changes, now)
 		}
 
-		op, err := findOp(ctx, tx, OpUpdateTask, gid)
+		// Join the unsent (or conflicted) entry, so its base stays the server value; an
+		// entry being sent is left alone and the edit gets a new one.
+		op, err := findUpdateOp(ctx, tx, gid)
 		if err != nil {
 			return err
 		}
@@ -114,9 +116,13 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 			}
 			if sameValue(op.Base[k], v) {
 				delete(op.Payload, k) // back to the original value
+				delete(op.Conflict, k)
 			} else {
 				op.Payload[k] = v
 			}
+		}
+		if op.State == OpConflict && len(op.Conflict) == 0 {
+			op.State = OpPending // no conflicting field left
 		}
 		if err := applyFields(ctx, tx, gid, changes, now); err != nil {
 			return err
@@ -436,11 +442,8 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 			return err
 		}
 		switch op.Kind {
-		case OpCreateTask:
-			if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE task_gid = ?", op.TaskGID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE gid = ?", op.TaskGID); err != nil {
+		case OpCreateTask, OpDuplicateTask:
+			if err := discardLocalTask(ctx, tx, op.TaskGID, op.Kind == OpCreateTask); err != nil {
 				return err
 			}
 		case OpAddComment:
@@ -451,10 +454,6 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 			}
 		case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
 			if err := applyRelation(ctx, tx, *op, true); err != nil {
-				return err
-			}
-		case OpDuplicateTask:
-			if _, err := tx.ExecContext(ctx, "DELETE FROM tasks WHERE gid = ?", op.TaskGID); err != nil {
 				return err
 			}
 		case OpCreateStatus:
@@ -497,6 +496,46 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 		_, err = tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id)
 		return err
 	})
+}
+
+// discardLocalTask removes a task that was never sent, its local subtasks, and every
+// change queued for them. counted is whether the parent's num_subtasks includes it
+// (CreateTaskLocal counts subtasks; a local duplicate does not).
+func discardLocalTask(ctx context.Context, tx *sql.Tx, gid string, counted bool) error {
+	rows, err := tx.QueryContext(ctx, "SELECT gid FROM tasks WHERE parent_gid = ? AND gid LIKE 'local:%'", gid)
+	if err != nil {
+		return err
+	}
+	var children []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return err
+		}
+		children = append(children, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range children {
+		if err := discardLocalTask(ctx, tx, c, true); err != nil {
+			return err
+		}
+	}
+	var parent string
+	_ = tx.QueryRowContext(ctx, "SELECT parent_gid FROM tasks WHERE gid = ?", gid).Scan(&parent)
+	for _, q := range []string{"DELETE FROM outbox WHERE task_gid = ?", "DELETE FROM tasks WHERE gid = ?"} {
+		if _, err := tx.ExecContext(ctx, q, gid); err != nil {
+			return err
+		}
+	}
+	if parent != "" && counted {
+		_, err := tx.ExecContext(ctx, "UPDATE tasks SET num_subtasks = max(0, num_subtasks - 1) WHERE gid = ?", parent)
+		return err
+	}
+	return nil
 }
 
 // ReplaceLocalTaskGID swaps a temporary gid for the real one after the task was created in Asana.
@@ -713,6 +752,20 @@ func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
 func findOp(ctx context.Context, tx *sql.Tx, kind, gid string) (*Op, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending' ORDER BY id DESC LIMIT 1", kind, gid).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return getOpTx(ctx, tx, id)
+}
+
+// findUpdateOp returns the pending or conflicted update_task entry of a task.
+func findUpdateOp(ctx context.Context, tx *sql.Tx, gid string) (*Op, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state IN ('pending', 'conflict')
+		ORDER BY id DESC LIMIT 1`, OpUpdateTask, gid).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

@@ -29,7 +29,8 @@ var imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif
 // IsImageName reports whether a file name looks like an image.
 func IsImageName(name string) bool { return imageExts[strings.ToLower(filepath.Ext(name))] }
 
-// ReplaceAttachments stores a task's attachments, keeping local paths of files already downloaded.
+// ReplaceAttachments stores a task's attachments, keeping local paths of files already
+// downloaded and files attached offline ("local:" gids) that are not uploaded yet.
 func (s *Store) ReplaceAttachments(ctx context.Context, taskGID string, atts []asana.Attachment) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		paths := map[string]string{}
@@ -46,7 +47,7 @@ func (s *Store) ReplaceAttachments(ctx context.Context, taskGID string, atts []a
 			paths[gid] = p
 		}
 		rows.Close()
-		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE parent_gid = ?", taskGID); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE parent_gid = ? AND gid NOT LIKE 'local:%'", taskGID); err != nil {
 			return err
 		}
 		for _, a := range atts {
