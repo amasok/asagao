@@ -158,3 +158,38 @@ func TestOutboxDetailLinesAligned(t *testing.T) {
 		}
 	}
 }
+
+// Changes dropped because their task was deleted in Asana are announced once, with what
+// they were, and listed in the outbox for the rest of the session.
+func TestDiscardedChangesAnnouncedOnce(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	ctx, st := context.Background(), h.m.deps.Store
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ソファを2台買う"}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTaskLocal(ctx, "t2", map[string]any{"completed": true}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	for _, gid := range []string{"t1", "t2"} {
+		if _, err := st.DiscardDeletedTask(ctx, gid, "Asana で削除されていました", testNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.run(h.m.loadOutbox())
+	if s := h.m.status; !strings.Contains(s, store.DiscardNotice) || !strings.Contains(s, "ソファを2台買う") || !strings.Contains(s, "ほか 1 件") {
+		t.Fatalf("status = %q", s)
+	}
+	if ds, _ := st.PendingDiscards(ctx); len(ds) != 0 {
+		t.Fatalf("announced changes should be marked as notified: %+v", ds)
+	}
+	h.m.status = ""
+	h.run(h.m.loadOutbox())
+	if h.m.status != "" {
+		t.Fatalf("announced again: %q", h.m.status)
+	}
+	h.key("!")
+	s := h.screen()
+	if !strings.Contains(s, store.DiscardNotice) || strings.Count(s, "」: ") < 2 {
+		t.Fatalf("outbox should list the dropped changes:\n%s", s)
+	}
+}

@@ -72,3 +72,12 @@ func TestOpLabels(t *testing.T) {
 		t.Errorf("OpStateLabel(sending) = %q", got)
 	}
 }
+
+func TestDiscardLine(t *testing.T) {
+	if got := DiscardLine(Discard{TaskName: "ソファを買う", Summary: "名前を「x」に変更"}); got != "「ソファを買う」: 名前を「x」に変更" {
+		t.Errorf("with a task name: %q", got)
+	}
+	if got := DiscardLine(Discard{Summary: "セクション名を「x」に変更"}); got != "セクション名を「x」に変更" {
+		t.Errorf("without a task name: %q", got)
+	}
+}

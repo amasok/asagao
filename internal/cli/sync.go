@@ -34,8 +34,15 @@ func (a *app) syncCmd() *cobra.Command {
 				return err
 			}
 			if a.json {
+				// res.Push.Discarded carries this push's dropped changes; mark those as shown
+				ids := make([]int64, len(res.Push.Discarded))
+				for i, d := range res.Push.Discarded {
+					ids[i] = d.ID
+				}
+				_ = st.MarkDiscardsNotified(ctx, ids)
 				return a.printJSON(res)
 			}
+			takeDiscards(ctx, st, cmd.OutOrStdout(), true)
 			kind := "変更分"
 			if res.Full {
 				kind = "全件"

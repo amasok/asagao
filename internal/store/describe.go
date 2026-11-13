@@ -54,6 +54,18 @@ func OpNote(op Op) (heading, text string) {
 	return "状況", text
 }
 
+// DiscardNotice heads the one-time notice about changes dropped because what they changed
+// was deleted in Asana (see PendingDiscards).
+const DiscardNotice = "削除済みのタスクへの変更を破棄しました"
+
+// DiscardLine describes one dropped change: 「task」: what it changed.
+func DiscardLine(d Discard) string {
+	if d.TaskName == "" {
+		return d.Summary
+	}
+	return "「" + d.TaskName + "」: " + d.Summary
+}
+
 // FieldLabel is the label of an update_task field ("" for unknown keys).
 func FieldLabel(k string) string {
 	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]

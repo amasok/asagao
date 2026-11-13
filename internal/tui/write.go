@@ -35,9 +35,10 @@ type outboxCounts struct{ pending, conflict, failed int }
 
 type (
 	outboxLoadedMsg struct {
-		counts outboxCounts
-		ops    []store.Op
-		err    error
+		counts   outboxCounts
+		ops      []store.Op
+		discards []store.Discard // dropped changes to announce (now marked as notified)
+		err      error
 	}
 	writeDoneMsg struct {
 		status  string
@@ -57,7 +58,22 @@ func (m *Model) loadOutbox() tea.Cmd {
 			return outboxLoadedMsg{err: err}
 		}
 		ops, err := st.ListOps(m.ctx)
-		return outboxLoadedMsg{counts: c, ops: ops, err: err}
+		if err != nil {
+			return outboxLoadedMsg{err: err}
+		}
+		// Changes dropped because their task was deleted in Asana are announced once
+		// (here or by the CLI); if marking fails they are announced again next time.
+		discards, err := st.PendingDiscards(m.ctx)
+		if err == nil && len(discards) > 0 {
+			ids := make([]int64, len(discards))
+			for i, d := range discards {
+				ids[i] = d.ID
+			}
+			if err := st.MarkDiscardsNotified(m.ctx, ids); err != nil {
+				discards = nil
+			}
+		}
+		return outboxLoadedMsg{counts: c, ops: ops, discards: discards}
 	}
 }
 
@@ -85,6 +101,10 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if msg.err == nil {
 			m.outbox, m.ops = msg.counts, msg.ops
 			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
+			if len(msg.discards) > 0 {
+				m.discards = append(m.discards, msg.discards...)
+				m.status = discardStatus(msg.discards)
+			}
 		}
 		return m, nil, true
 	case taskTagsMsg:
@@ -394,6 +414,15 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// discardStatus is the one-line notice for changes dropped by a push.
+func discardStatus(ds []store.Discard) string {
+	s := store.DiscardNotice + ": " + store.DiscardLine(ds[0])
+	if len(ds) > 1 {
+		s += fmt.Sprintf(" ほか %d 件（! で一覧）", len(ds)-1)
+	}
+	return s
+}
+
 // opStateWidth fits the widest state label, "[自動確認中]"; detail lines under an entry
 // start where its description does.
 const opStateWidth = 12
@@ -427,6 +456,12 @@ func (m *Model) renderOutbox(w, h int) string {
 				note = m.st.errorText
 			}
 			lines = append(lines, note.Render(opDetailIndent+text))
+		}
+	}
+	if len(m.discards) > 0 {
+		lines = append(lines, "", m.st.dim.Render(store.DiscardNotice+"（Asana で削除されていたため。操作は不要です）"))
+		for _, d := range m.discards {
+			lines = append(lines, m.st.dim.Render("  "+store.DiscardLine(d)))
 		}
 	}
 	return m.pane("未送信の変更", lines, w, h, true)

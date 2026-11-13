@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +25,31 @@ type writeResult struct {
 	CommentID string           `json:"comment_gid,omitempty"`
 	Sent      bool             `json:"sent"`
 	Push      *sync.PushResult `json:"push,omitempty"`
-	Error     string           `json:"error,omitempty"`
+	// Discarded lists queued changes dropped because what they changed was deleted in Asana
+	// (by this push or an earlier one not shown yet).
+	Discarded []store.Discard `json:"discarded,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
+// takeDiscards returns the dropped changes not shown yet and marks them as shown. When
+// print is set they are printed to w first.
+func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool) []store.Discard {
+	ds, err := st.PendingDiscards(ctx)
+	if err != nil || len(ds) == 0 {
+		return nil
+	}
+	if print {
+		fmt.Fprintln(w, store.DiscardNotice+"（Asana で削除されていたため）:")
+		for _, d := range ds {
+			fmt.Fprintln(w, "  - "+store.DiscardLine(d))
+		}
+	}
+	ids := make([]int64, len(ds))
+	for i, d := range ds {
+		ids[i] = d.ID
+	}
+	_ = st.MarkDiscardsNotified(ctx, ids) // on failure they are shown again next time
+	return ds
 }
 
 // pushNow tries to send the outbox right away. Failure is not an error for the command:
@@ -47,6 +73,14 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 	} else {
 		r.Sent = push.Remaining == 0 && push.Failed == 0 && push.Conflicts == 0
 	}
+	out := cmd.OutOrStdout()
+	r.Discarded = takeDiscards(cmd.Context(), st, out, !a.json)
+	dropped := false
+	for _, d := range r.Discarded {
+		if slices.Contains(strings.Split(r.TaskGID, ","), d.TaskGID) {
+			dropped, r.Sent = true, false
+		}
+	}
 	// The gid may have changed from local:... to the real one.
 	if r.TaskGID != "" && store.IsLocalGID(r.TaskGID) && r.Sent {
 		r.TaskGID = ""
@@ -54,8 +88,9 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 	if a.json {
 		return a.printJSON(r)
 	}
-	out := cmd.OutOrStdout()
 	switch {
+	case dropped:
+		fmt.Fprintf(out, "%s。ただし対象のタスクが Asana で削除されていたため、変更は破棄されました\n", done)
 	case errors.Is(err, sync.ErrPushBusy):
 		fmt.Fprintf(out, "%s（別の asana-tui が送信中です。この変更もそちらで送られます）\n", done)
 	case err != nil:
@@ -466,7 +501,7 @@ func (a *app) outboxCmd() *cobra.Command {
 					return err
 				}
 				defer st.Close()
-				msg, err := a.resolve(ctx, st, id, act)
+				msg, err := a.resolve(ctx, st, cmd.OutOrStdout(), id, act)
 				if err != nil {
 					return err
 				}
@@ -492,6 +527,7 @@ func (a *app) outboxCmd() *cobra.Command {
 			if a.json {
 				return a.printJSON(ops)
 			}
+			takeDiscards(cmd.Context(), st, cmd.OutOrStdout(), true)
 			if len(ops) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "未送信の変更はありません")
 				return nil
@@ -535,13 +571,20 @@ func (a *app) outboxCmd() *cobra.Command {
 
 // resolve resolves an outbox entry (sync.Resolve), then sends it right away or refreshes
 // the task from Asana as needed. Being offline is not an error: the next sync does it.
-func (a *app) resolve(ctx context.Context, st *store.Store, id int64, act sync.ResolveAction) (string, error) {
+func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id int64, act sync.ResolveAction) (string, error) {
 	r, err := sync.Resolve(ctx, st, id, act)
 	if err != nil {
 		return "", err
 	}
 	if r.Push {
 		push, err := a.pushNow(ctx, st)
+		if ds := takeDiscards(ctx, st, out, true); len(ds) > 0 {
+			for _, d := range ds {
+				if d.TaskGID == r.Op.TaskGID {
+					return fmt.Sprintf("#%d: 対象が Asana で削除されていたため、破棄しました", id), nil
+				}
+			}
+		}
 		switch {
 		case errors.Is(err, sync.ErrPushBusy):
 			return fmt.Sprintf("#%d: 別の asana-tui が送信中です。そちらで送られます", id), nil
