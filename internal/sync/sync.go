@@ -26,6 +26,11 @@ type Syncer struct {
 	Cfg   config.SyncConfig
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)
+	// CacheDir is where attachments are downloaded (default: config.CacheDir()/attachments).
+	CacheDir string
+	// Download fetches a pre-signed attachment URL. It must not add the Asana
+	// Authorization header (the storage service rejects it). Default: plain HTTP GET.
+	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
 }
 
@@ -205,7 +210,14 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
+	atts, err := s.API.Attachments(ctx, taskGID)
+	if err != nil {
+		return err
+	}
 	if err := s.Store.UpsertTasks(ctx, append([]asana.Task{*t}, subs...)); err != nil {
+		return err
+	}
+	if err := s.Store.ReplaceAttachments(ctx, taskGID, atts); err != nil {
 		return err
 	}
 	return s.Store.ReplaceStories(ctx, taskGID, stories, s.clock())

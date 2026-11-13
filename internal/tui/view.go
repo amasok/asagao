@@ -197,9 +197,9 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	keys := [][2]string{{"j/k", "移動"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
+	keys := [][2]string{{"j/k", "移動"}, {"space", "折りたたみ"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
 	if m.boardActive() && !m.zoom {
-		keys = [][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "カードを左右の列へ"}, {"enter", "詳細"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"v", "リスト表示"}, {"?", "ヘルプ"}}
+		keys = [][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "カードを左右の列へ"}, {"enter", "詳細"}, {"E", "列名を変更"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"v", "リスト表示"}, {"?", "ヘルプ"}}
 	}
 	var parts []string
 	for _, k := range keys {
@@ -224,6 +224,8 @@ func (m *Model) renderHelp(w, h int) string {
 		"  f / F             絞り込みを切り替え（未完了 → 7日以内 → 期限切れ → 完了済み → すべて）",
 		"  t                 タグで絞り込む",
 		"  z                 詳細を全画面で表示（コメントを全部読む）",
+		"  i                 添付された画像を表示（n/p で切り替え、q で戻る）",
+		"  space             リストでセクションを折りたたむ / 開く（- ですべて折りたたむ、= ですべて開く）",
 		"  v                 ボード表示 / リスト表示（プロジェクトを開いているとき）",
 		"                    ボードでは h/l で列、j/k でカード、H/L でカードを左右の列へ移動",
 		"  o                 選択中のタスクをブラウザで開く",
@@ -235,6 +237,7 @@ func (m *Model) renderHelp(w, h int) string {
 		"                    プロジェクト表示中はそのプロジェクトに、My Tasks では自分に割り当て",
 		"  c                 コメントを追加",
 		"  m                 タスクを別のセクションへ移動",
+		"  E                 セクション（リスト）の名前を変更",
 		"  !                 未送信の変更・競合を確認して解決",
 		"",
 		"  q                 終了（狭い画面では 1 つ前のペインへ）",
@@ -262,7 +265,7 @@ func (m *Model) sidebarLines(w, h int) []string {
 
 func (m *Model) listTitle() string {
 	n := 0
-	for _, r := range m.rows {
+	for _, r := range m.allRows {
 		if r.task != nil {
 			n++
 		}
@@ -287,7 +290,15 @@ func (m *Model) listLines(w, h int) []string {
 	for i := m.listOffset; i < end; i++ {
 		r := m.rows[i]
 		if r.task == nil {
-			lines = append(lines, m.st.sectionHeader.Render("▾ "+r.header))
+			header := "▾ " + r.header
+			if r.collapsed {
+				header = fmt.Sprintf("▸ %s (%d)", r.header, r.count)
+			}
+			if i == m.listCursor {
+				lines = append(lines, m.highlight(header, w, true, m.focus == paneList))
+			} else {
+				lines = append(lines, m.st.sectionHeader.Render(header))
+			}
 			continue
 		}
 		lines = append(lines, m.taskLine(r.task, w, today, i == m.listCursor))
@@ -401,6 +412,33 @@ func (m *Model) renderDetail(w int) string {
 	}
 	if d.Notes != "" {
 		b.WriteString("\n" + wrap.Render(strings.TrimRight(d.Notes, "\n")) + "\n")
+	}
+	if len(d.Attachments) > 0 {
+		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("添付ファイル (%d)", len(d.Attachments))))
+		images := 0
+		for _, a := range d.Attachments {
+			if a.IsImage {
+				images++
+			}
+		}
+		if images > 0 {
+			b.WriteString(m.st.dim.Render("  i で画像を表示"))
+		}
+		b.WriteString("\n")
+		for _, a := range d.Attachments {
+			kind := "[ファイル]"
+			if a.IsImage {
+				kind = "[画像]"
+			}
+			line := kind + " " + a.Name
+			if sz := formatSize(a.Size); sz != "" {
+				line += "  " + m.st.dim.Render(sz)
+			}
+			if a.LocalPath != "" {
+				line += m.st.dim.Render("  ✓保存済み")
+			}
+			b.WriteString(wrap.Render(line) + "\n")
+		}
 	}
 	if len(d.Subtasks) > 0 {
 		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("サブタスク (%d)", len(d.Subtasks))) + "\n")

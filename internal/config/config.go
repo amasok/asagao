@@ -24,6 +24,13 @@ const (
 type Config struct {
 	Auth AuthConfig `toml:"auth"`
 	Sync SyncConfig `toml:"sync"`
+	UI   UIConfig   `toml:"ui"`
+}
+
+type UIConfig struct {
+	// ImageProtocol is how images are shown: "auto" (detect the terminal), "iterm"
+	// (iTerm2 / WezTerm), "kitty" (kitty / Ghostty) or "open" (the OS image viewer).
+	ImageProtocol string `toml:"image_protocol"`
 }
 
 type AuthConfig struct {
@@ -60,6 +67,7 @@ func Default() Config {
 			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName},
 		},
 		Sync: SyncConfig{CompletedDays: 14},
+		UI:   UIConfig{ImageProtocol: "auto"},
 	}
 }
 
@@ -109,6 +117,11 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("auth.token_store: unknown value %q (want keychain, 1password or file)", c.Auth.TokenStore)
 	}
+	switch c.UI.ImageProtocol {
+	case "auto", "iterm", "kitty", "open":
+	default:
+		return fmt.Errorf("ui.image_protocol: unknown value %q (want auto, iterm, kitty or open)", c.UI.ImageProtocol)
+	}
 	if c.Auth.RedirectPort <= 0 || c.Auth.RedirectPort > 65535 {
 		return fmt.Errorf("auth.redirect_port: invalid port %d", c.Auth.RedirectPort)
 	}
@@ -120,6 +133,9 @@ func ConfigDir() string { return xdgDir("XDG_CONFIG_HOME", ".config") }
 
 // DataDir follows XDG: $XDG_DATA_HOME/asana-tui or ~/.local/share/asana-tui.
 func DataDir() string { return xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share")) }
+
+// CacheDir follows XDG: $XDG_CACHE_HOME/asana-tui or ~/.cache/asana-tui (downloaded attachments).
+func CacheDir() string { return xdgDir("XDG_CACHE_HOME", ".cache") }
 
 func FilePath() string { return filepath.Join(ConfigDir(), "config.toml") }
 

@@ -63,11 +63,12 @@ type StoryView struct {
 
 type TaskDetail struct {
 	TaskSummary
-	Notes     string        `json:"notes"`
-	CreatedAt string        `json:"created_at"`
-	Parent    *TaskRef      `json:"parent"`
-	Subtasks  []TaskSummary `json:"subtasks"`
-	Stories   []StoryView   `json:"stories"`
+	Notes       string           `json:"notes"`
+	CreatedAt   string           `json:"created_at"`
+	Parent      *TaskRef         `json:"parent"`
+	Subtasks    []TaskSummary    `json:"subtasks"`
+	Stories     []StoryView      `json:"stories"`
+	Attachments []AttachmentView `json:"attachments"`
 	// DetailsFetchedAt is when subtasks/stories were last fetched; empty if never.
 	DetailsFetchedAt string `json:"details_fetched_at,omitempty"`
 }
@@ -271,6 +272,9 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		return nil, fmt.Errorf("task %s: %w", gid, ErrNotFound)
 	}
 	d := &TaskDetail{TaskSummary: tasks[0], Subtasks: []TaskSummary{}, Stories: []StoryView{}}
+	if d.Attachments, err = s.taskAttachments(ctx, gid); err != nil {
+		return nil, err
+	}
 	if err := s.db.QueryRowContext(ctx, `SELECT t.notes, t.created_at, COALESCE(d.fetched_at, '')
 		FROM tasks t LEFT JOIN task_details d ON d.task_gid = t.gid WHERE t.gid = ?`, gid).
 		Scan(&d.Notes, &d.CreatedAt, &d.DetailsFetchedAt); err != nil {

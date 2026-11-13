@@ -46,14 +46,17 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 			return nil, err
 		}
 		names := make([]string, 0, len(sc.sections)+1)
+		keys := make([]string, 0, len(sc.sections)+1)
 		index := map[string]int{}
 		for i, s := range sc.sections {
 			names = append(names, s.Name)
+			keys = append(keys, s.GID)
 			index[s.GID] = i
 		}
 		other := len(names)
 		names = append(names, "その他")
-		return group(tasks, names, func(t store.TaskSummary) int {
+		keys = append(keys, "other")
+		return groupKeyed(tasks, names, keys, func(t store.TaskSummary) int {
 			for _, m := range t.Memberships {
 				if m.ProjectGID == sc.project {
 					if i, ok := index[m.SectionGID]; ok {
@@ -96,6 +99,12 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 
 // group buckets tasks (keeping their order) under headers, dropping empty groups.
 func group(tasks []store.TaskSummary, headers []string, bucket func(store.TaskSummary) int) []row {
+	return groupKeyed(tasks, headers, headers, bucket)
+}
+
+// groupKeyed is group with a stable key per header (section gid), used to remember
+// which groups are collapsed.
+func groupKeyed(tasks []store.TaskSummary, headers, keys []string, bucket func(store.TaskSummary) int) []row {
 	buckets := make([][]int, len(headers))
 	for i, t := range tasks {
 		b := bucket(t)
@@ -106,7 +115,7 @@ func group(tasks []store.TaskSummary, headers []string, bucket func(store.TaskSu
 		if len(idx) == 0 {
 			continue
 		}
-		rows = append(rows, row{header: headers[b]})
+		rows = append(rows, row{header: headers[b], key: keys[b], count: len(idx)})
 		for _, i := range idx {
 			rows = append(rows, row{task: &tasks[i]})
 		}

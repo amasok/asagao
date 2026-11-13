@@ -147,4 +147,21 @@ CREATE TABLE outbox (
 );
 CREATE INDEX outbox_task ON outbox(task_gid);
 `,
+	`
+-- Attachments of tasks (metadata). Files are downloaded on demand into the cache dir;
+-- local_path remembers where, so images can be viewed offline afterwards.
+CREATE TABLE attachments (
+	gid              TEXT PRIMARY KEY,
+	parent_gid       TEXT NOT NULL REFERENCES tasks(gid) ON DELETE CASCADE,
+	name             TEXT NOT NULL DEFAULT '',
+	resource_subtype TEXT NOT NULL DEFAULT '',
+	host             TEXT NOT NULL DEFAULT '',
+	view_url         TEXT NOT NULL DEFAULT '',
+	permanent_url    TEXT NOT NULL DEFAULT '',
+	size             INTEGER NOT NULL DEFAULT 0,
+	created_at       TEXT NOT NULL DEFAULT '',
+	local_path       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX attachments_parent ON attachments(parent_gid, created_at);
+`,
 }
