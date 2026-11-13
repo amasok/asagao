@@ -3,7 +3,7 @@
 ターミナルで Asana のタスクを確認・操作するための TUI / CLI / MCP サーバー。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
-- 現在の状態: M1（OAuth ログイン、ローカルストアへの同期）
+- 現在の状態: M2（CLI での一覧・詳細・全文検索、差分同期）
 
 ## インストール（開発版）
 
@@ -61,8 +61,24 @@ asana-tui sync status
 | `auth status` | ログイン状態 |
 | `auth logout` | 保存したトークンを削除 |
 | `auth migrate --to <store>` | トークンの保存先を移す |
-| `sync` | Asana からローカルストアへ同期 |
+| `sync [--full]` | Asana からローカルストアへ同期（通常は前回以降の変更分。24 時間ごとに自動で全件） |
 | `sync status` | ローカルストアの状態 |
+| `task list` | タスク一覧（デフォルトは自分の未完了タスク） |
+| `task show <gid> [--offline]` | タスク詳細（サブタスク・コメント込み）。オンラインなら最新を取得 |
+| `search <キーワード>...` | タスク名・説明・コメントを全文検索 |
+| `project list [--all]` | プロジェクトとセクションの一覧 |
+
+`task list` と `search` の絞り込み:
+
+```sh
+asana-tui task list --due-before +7d          # 7 日以内に期限
+asana-tui task list --overdue                 # 期限切れ
+asana-tui task list --project 新居 --section 家具 --assignee any
+asana-tui task list --tag 日用品 --all        # 完了済みも含む
+asana-tui search 転居 届 --json               # 複数語は AND
+```
+
+日付は `YYYY-MM-DD` / `today` / `tomorrow` / `yesterday` / `+Nd` / `-Nd` で指定できます。
 
 すべてのコマンドで `--json` を付けると JSON で出力します。
 

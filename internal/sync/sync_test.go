@@ -14,7 +14,16 @@ import (
 	"github.com/amasok/asana-tui/internal/store"
 )
 
-func TestFullSync(t *testing.T) {
+// fakeAsana serves a tiny workspace. Tasks returned for project p1 can be changed between syncs.
+type fakeAsana struct {
+	t              *testing.T
+	projectTasks   string // JSON array for GET /tasks?project=p1
+	modifiedSince  []string
+	completedSince []string
+	subtaskCalls   int
+}
+
+func (f *fakeAsana) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/users/me", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":{"gid":"u1","name":"Me","email":"me@example.com"}}`)
@@ -31,25 +40,34 @@ func TestFullSync(t *testing.T) {
 		fmt.Fprint(w, `{"data":[{"gid":"s1","name":"Todo"},{"gid":"s2","name":"Done"}]}`)
 	})
 	mux.HandleFunc("/projects/p2/sections", func(w http.ResponseWriter, r *http.Request) {
-		t.Error("non-member project should not be synced")
+		f.t.Error("non-member project should not be synced")
+	})
+	mux.HandleFunc("/tasks/t1/subtasks", func(w http.ResponseWriter, r *http.Request) {
+		f.subtaskCalls++
+		fmt.Fprint(w, `{"data":[{"gid":"t1a","name":"Sub","parent":{"gid":"t1"}}]}`)
 	})
 	mux.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("completed_since") != "2026-10-30T00:00:00Z" {
-			t.Errorf("completed_since = %q", r.URL.Query().Get("completed_since"))
-		}
+		q := r.URL.Query()
+		f.completedSince = append(f.completedSince, q.Get("completed_since"))
 		switch {
-		case r.URL.Query().Get("assignee") == "me":
-			fmt.Fprint(w, `{"data":[{"gid":"t1","name":"My task","assignee":{"gid":"u1","name":"Me"},
+		case q.Get("assignee") == "me":
+			f.modifiedSince = append(f.modifiedSince, q.Get("modified_since"))
+			fmt.Fprint(w, `{"data":[{"gid":"t1","name":"My task","num_subtasks":1,"assignee":{"gid":"u1","name":"Me"},
 				"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s1"}}],"tags":[{"gid":"g1","name":"urgent"}]}]}`)
-		case r.URL.Query().Get("project") == "p1":
-			fmt.Fprint(w, `{"data":[
-				{"gid":"t1","name":"My task","assignee":{"gid":"u1"},"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s1"}}]},
-				{"gid":"t2","name":"Done task","completed":true,"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s2"}}]}]}`)
+		case q.Get("project") == "p1":
+			fmt.Fprintf(w, `{"data":%s}`, f.projectTasks)
 		default:
-			t.Errorf("unexpected tasks query %v", r.URL.Query())
+			f.t.Errorf("unexpected tasks query %v", q)
 		}
 	})
-	srv := httptest.NewServer(mux)
+	return mux
+}
+
+func TestRunFullThenIncrementalThenPrune(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[
+		{"gid":"t1","name":"My task","num_subtasks":1,"assignee":{"gid":"u1"},"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s1"}}]},
+		{"gid":"t2","name":"Done task","completed":true,"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s2"}}]}]`}
+	srv := httptest.NewServer(fake.handler())
 	defer srv.Close()
 
 	ctx := context.Background()
@@ -63,29 +81,61 @@ func TestFullSync(t *testing.T) {
 
 	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
 	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return now }}
-	res, err := s.Full(ctx)
+
+	// 1st run: full (never synced).
+	res, err := s.Run(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Workspaces != 1 || res.Projects != 1 || res.Tasks != 3 {
-		t.Fatalf("result %+v", res)
+	if !res.Full || res.Projects != 1 {
+		t.Fatalf("first run %+v", res)
 	}
-	stats, err := st.Stats(ctx)
-	if err != nil {
-		t.Fatal(err)
+	if fake.completedSince[0] != "2026-10-30T00:00:00Z" || fake.modifiedSince[0] != "" {
+		t.Fatalf("full sync query: completed_since=%q modified_since=%q", fake.completedSince[0], fake.modifiedSince[0])
 	}
-	if stats.Projects != 2 || stats.Sections != 2 || stats.Tasks != 2 || stats.OpenTasks != 1 {
-		t.Fatalf("stats %+v", stats)
+	stats, _ := st.Stats(ctx)
+	if stats.Tasks != 3 || stats.OpenTasks != 2 || stats.Sections != 2 { // t1, t1a, t2
+		t.Fatalf("stats after full %+v", stats)
 	}
-	if stats.LastSync == nil || !stats.LastSync.Equal(now) {
-		t.Fatalf("last sync %v", stats.LastSync)
+	if me, _ := st.MeGID(ctx); me != "u1" {
+		t.Fatalf("me gid = %q", me)
 	}
 
-	// Re-running is idempotent.
-	if _, err := s.Full(ctx); err != nil {
+	// 2nd run an hour later: incremental with modified_since = last sync - margin.
+	now = now.Add(time.Hour)
+	fake.projectTasks = `[]` // nothing changed; t2 must NOT be removed by an incremental sync
+	res, err = s.Run(ctx, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := st.Stats(ctx); again.Tasks != 2 || again.Sections != 2 {
-		t.Fatalf("after second sync %+v", again)
+	if res.Full {
+		t.Fatalf("second run should be incremental")
+	}
+	if got := fake.modifiedSince[1]; got != "2026-11-12T23:58:00Z" {
+		t.Fatalf("modified_since = %q", got)
+	}
+	if stats, _ := st.Stats(ctx); stats.Tasks != 3 {
+		t.Fatalf("incremental sync removed tasks: %+v", stats)
+	}
+
+	// 3rd run, forced full: t2 is gone from Asana and gets pruned; t1's subtask is kept.
+	res, err = s.Run(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Full || res.Pruned != 1 {
+		t.Fatalf("forced full %+v", res)
+	}
+	if _, err := st.GetTask(ctx, "t2"); err == nil {
+		t.Fatal("t2 should have been pruned")
+	}
+	if d, err := st.GetTask(ctx, "t1"); err != nil || len(d.Subtasks) != 1 {
+		t.Fatalf("t1 = %+v, %v", d, err)
+	}
+
+	// Full sync happens automatically after FullSyncInterval.
+	now = now.Add(FullSyncInterval)
+	if res, err = s.Run(ctx, false); err != nil || !res.Full {
+		t.Fatalf("expected automatic full sync: %+v %v", res, err)
 	}
 }

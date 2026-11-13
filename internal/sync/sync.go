@@ -12,6 +12,14 @@ import (
 	"github.com/amasok/asana-tui/internal/store"
 )
 
+const (
+	keyLastFullSync = "last_full_sync"
+	// FullSyncInterval forces a full sync (which also removes deleted tasks) this often.
+	FullSyncInterval = 24 * time.Hour
+	// modifiedSinceMargin absorbs clock skew between this machine and Asana.
+	modifiedSinceMargin = 2 * time.Minute
+)
+
 type Syncer struct {
 	API   *asana.Client
 	Store *store.Store
@@ -22,27 +30,69 @@ type Syncer struct {
 }
 
 type Result struct {
+	Full       bool          `json:"full"`
 	Workspaces int           `json:"workspaces"`
 	Projects   int           `json:"projects"`
 	Tasks      int           `json:"tasks"`
+	Pruned     int64         `json:"pruned"`
 	Duration   time.Duration `json:"duration_ns"`
 }
 
-// Full fetches the user's tasks and the tasks of their projects in every workspace.
-// Completed tasks older than Cfg.CompletedDays are skipped.
-func (s *Syncer) Full(ctx context.Context) (Result, error) {
-	now := time.Now
+func (s *Syncer) clock() time.Time {
 	if s.now != nil {
-		now = s.now
+		return s.now()
 	}
-	started := now()
-	var res Result
+	return time.Now()
+}
+
+// Run syncs Asana into the store.
+//
+// An incremental sync fetches only tasks modified since the previous sync. A full sync
+// fetches everything in the retention window and removes tasks Asana no longer returns.
+// A full sync runs when forced, on the first sync, or when the last one is older than
+// FullSyncInterval (incremental syncs cannot see deletions).
+func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
+	started := s.clock()
+	res := Result{Full: forceFull}
+
+	lastSync, err := s.stateTime(ctx, store.KeyLastSync)
+	if err != nil {
+		return res, err
+	}
+	lastFull, err := s.stateTime(ctx, keyLastFullSync)
+	if err != nil {
+		return res, err
+	}
+	if lastSync.IsZero() || lastFull.IsZero() || started.Sub(lastFull) >= FullSyncInterval {
+		res.Full = true
+	}
+	var modifiedSince time.Time
+	if !res.Full {
+		modifiedSince = lastSync.Add(-modifiedSinceMargin)
+	}
+	completedSince := started.AddDate(0, 0, -s.Cfg.CompletedDays)
+	keep := map[string]bool{}
+	var withSubtasks []string
+
+	upsert := func(tasks []asana.Task) error {
+		for _, t := range tasks {
+			keep[t.GID] = true
+			if t.NumSubtasks > 0 {
+				withSubtasks = append(withSubtasks, t.GID)
+			}
+		}
+		res.Tasks += len(tasks)
+		return s.Store.UpsertTasks(ctx, tasks)
+	}
 
 	me, err := s.API.Me(ctx)
 	if err != nil {
 		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
 	}
 	if err := s.Store.UpsertUser(ctx, *me); err != nil {
+		return res, err
+	}
+	if err := s.Store.SetSyncState(ctx, store.KeyMeGID, me.GID); err != nil {
 		return res, err
 	}
 	workspaces, err := s.API.Workspaces(ctx)
@@ -54,17 +104,17 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 	}
 	res.Workspaces = len(workspaces)
 
-	completedSince := started.AddDate(0, 0, -s.Cfg.CompletedDays)
 	for _, w := range workspaces {
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)
-		mine, err := s.API.Tasks(ctx, asana.TaskQuery{Assignee: "me", Workspace: w.GID, CompletedSince: completedSince})
+		mine, err := s.API.Tasks(ctx, asana.TaskQuery{
+			Assignee: "me", Workspace: w.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
+		})
 		if err != nil {
 			return res, fmt.Errorf("%s の担当タスクの取得: %w", w.Name, err)
 		}
-		if err := s.Store.UpsertTasks(ctx, mine); err != nil {
+		if err := upsert(mine); err != nil {
 			return res, err
 		}
-		res.Tasks += len(mine)
 
 		projects, err := s.API.Projects(ctx, w.GID, false)
 		if err != nil {
@@ -72,6 +122,11 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 		}
 		if err := s.Store.UpsertProjects(ctx, w.GID, projects, me.GID); err != nil {
 			return res, err
+		}
+		if res.Full {
+			if err := s.Store.PruneProjects(ctx, w.GID, projects); err != nil {
+				return res, err
+			}
 		}
 		for _, p := range projects {
 			if !s.Cfg.AllProjects && !slices.ContainsFunc(p.Members, func(r asana.Ref) bool { return r.GID == me.GID }) {
@@ -85,23 +140,77 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 			if err := s.Store.ReplaceSections(ctx, p.GID, secs); err != nil {
 				return res, err
 			}
-			tasks, err := s.API.Tasks(ctx, asana.TaskQuery{Project: p.GID, CompletedSince: completedSince})
+			tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
+				Project: p.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
+			})
 			if err != nil {
 				return res, fmt.Errorf("%s のタスクの取得: %w", p.Name, err)
 			}
-			if err := s.Store.UpsertTasks(ctx, tasks); err != nil {
+			if err := upsert(tasks); err != nil {
 				return res, err
 			}
 			res.Projects++
-			res.Tasks += len(tasks)
 		}
 	}
 
+	// Subtasks are not returned by GET /tasks?project=, so fetch them per parent.
+	slices.Sort(withSubtasks)
+	for _, gid := range slices.Compact(withSubtasks) {
+		subs, err := s.API.Subtasks(ctx, gid)
+		if err != nil {
+			return res, fmt.Errorf("サブタスクの取得 (%s): %w", gid, err)
+		}
+		if err := upsert(subs); err != nil {
+			return res, err
+		}
+	}
+
+	if res.Full {
+		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
+			return res, err
+		}
+		if err := s.Store.SetSyncState(ctx, keyLastFullSync, started.UTC().Format(time.RFC3339)); err != nil {
+			return res, err
+		}
+	}
 	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, started.UTC().Format(time.RFC3339)); err != nil {
 		return res, err
 	}
-	res.Duration = now().Sub(started)
+	res.Duration = s.clock().Sub(started)
 	return res, nil
+}
+
+// FetchDetails refreshes one task with its subtasks and stories (comments and activity).
+// Comments do not change a task's modified_at, so they are fetched on demand rather than by Run.
+func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
+	t, err := s.API.Task(ctx, taskGID)
+	if err != nil {
+		return err
+	}
+	subs, err := s.API.Subtasks(ctx, taskGID)
+	if err != nil {
+		return err
+	}
+	stories, err := s.API.Stories(ctx, taskGID)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.UpsertTasks(ctx, append([]asana.Task{*t}, subs...)); err != nil {
+		return err
+	}
+	return s.Store.ReplaceStories(ctx, taskGID, stories, s.clock())
+}
+
+func (s *Syncer) stateTime(ctx context.Context, key string) (time.Time, error) {
+	v, err := s.Store.SyncState(ctx, key)
+	if err != nil || v == "" {
+		return time.Time{}, err
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, nil // corrupt value: treat as never synced
+	}
+	return t, nil
 }
 
 func (s *Syncer) progress(format string, args ...any) {

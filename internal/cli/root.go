@@ -43,7 +43,7 @@ func NewRoot() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "結果を JSON で出力する")
-	root.AddCommand(a.authCmd(), a.syncCmd())
+	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd())
 	return root
 }
 

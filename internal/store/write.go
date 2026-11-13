@@ -166,3 +166,90 @@ func formatTimePtr(t *time.Time) any {
 	}
 	return t.UTC().Format(time.RFC3339)
 }
+
+// ReplaceStories replaces the stories (comments and activity) of a task and records the fetch time.
+func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []asana.Story, fetchedAt time.Time) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ?", taskGID); err != nil {
+			return err
+		}
+		for _, st := range stories {
+			var byGID, byName string
+			if st.CreatedBy != nil {
+				byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO stories
+				(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+				st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt)); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO task_details(task_gid, fetched_at) VALUES(?, ?)
+			ON CONFLICT(task_gid) DO UPDATE SET fetched_at = excluded.fetched_at`, taskGID, formatTime(fetchedAt))
+		return err
+	})
+}
+
+// PruneTasks deletes tasks that a full sync did not return (deleted in Asana, moved out of
+// synced projects, or completed before the retention window). Subtasks of kept tasks are kept.
+func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, error) {
+	var deleted int64
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "CREATE TEMP TABLE IF NOT EXISTS keep_tasks(gid TEXT PRIMARY KEY)"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM keep_tasks"); err != nil {
+			return err
+		}
+		for gid := range keep {
+			if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO keep_tasks(gid) VALUES(?)", gid); err != nil {
+				return err
+			}
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM tasks
+			WHERE gid NOT IN (SELECT gid FROM keep_tasks)
+			  AND (parent_gid = '' OR parent_gid NOT IN (SELECT gid FROM keep_tasks))`)
+		if err != nil {
+			return err
+		}
+		deleted, _ = res.RowsAffected()
+		_, err = tx.ExecContext(ctx, "DROP TABLE keep_tasks")
+		return err
+	})
+	return deleted, err
+}
+
+// PruneProjects deletes projects (and their sections) of a workspace that are no longer returned.
+func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []asana.Project) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT gid FROM projects WHERE workspace_gid = ?", workspaceGID)
+		if err != nil {
+			return err
+		}
+		var stale []string
+		for rows.Next() {
+			var gid string
+			if err := rows.Scan(&gid); err != nil {
+				rows.Close()
+				return err
+			}
+			if !slices.ContainsFunc(keep, func(p asana.Project) bool { return p.GID == gid }) {
+				stale = append(stale, gid)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, gid := range stale {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM sections WHERE project_gid = ?", gid); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "DELETE FROM projects WHERE gid = ?", gid); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
