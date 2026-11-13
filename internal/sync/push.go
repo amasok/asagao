@@ -94,7 +94,10 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 	}()
 	verified := map[int64]bool{} // checked in Asana during this push (at most once each)
 	for _, snapshot := range ops {
-		for again := true; again; {
+		// An entry is handled a bounded number of times per push, whatever happens: send,
+		// check + send again, the follow-up move of a create, and that move's retry. What is
+		// left over waits for the next push.
+		for step, again := 0, true; again && step < maxStepsPerEntry; step++ {
 			again = false
 			if err := ctx.Err(); err != nil {
 				return res, err
@@ -189,6 +192,9 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 	}
 	return res, nil
 }
+
+// maxStepsPerEntry bounds how often Push handles one entry (see Push).
+const maxStepsPerEntry = 4
 
 // waitsForCreate reports whether op belongs to a task (or, for a subtask's create, a
 // parent) created offline whose create is still queued or failed. It waits instead of

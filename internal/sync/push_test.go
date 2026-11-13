@@ -45,7 +45,14 @@ type writeServer struct {
 	failAfter map[string]int
 	stories   map[string][]string // task gid -> story JSON objects
 	atts      map[string][]string // parent gid -> attachment JSON objects
+	statuses  map[string][]string // project gid -> status update JSON objects
+	tags      []string            // tag JSON objects
+	requests  int
 }
+
+// maxRequests stops a Push that loops: the fake server fails the test and rejects
+// everything after this many requests, which ends the loop (4xx marks entries failed).
+const maxRequests = 200
 
 func (w *writeServer) taskJSON(gid string) string {
 	st := w.tasks[gid]
@@ -102,6 +109,11 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.calls = append(w.calls, r.Method+" "+r.URL.Path+" "+strings.TrimSpace(string(b)))
 	}
+	if w.requests++; w.requests > maxRequests {
+		w.t.Errorf("more than %d requests: Push is looping (%s %s)", maxRequests, r.Method, r.URL.Path)
+		rw.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	if w.hook != nil && w.hook(rw, r) {
 		return
 	}
@@ -151,6 +163,38 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		}
 		w.atts[parent] = append(w.atts[parent], js)
 		fmt.Fprintf(rw, `{"data":%s}`, js)
+	case r.URL.Path == "/status_updates" && r.Method == http.MethodPost:
+		w.next++
+		parent, _ := body.Data["parent"].(string)
+		js := fmt.Sprintf(`{"gid":"su%d","status_type":%q,"title":%q,"text":%q,"author":{"gid":"me"},"created_at":%q}`,
+			w.next, body.Data["status_type"], body.Data["title"], body.Data["text"], time.Now().UTC().Format(time.RFC3339))
+		if w.statuses == nil {
+			w.statuses = map[string][]string{}
+		}
+		w.statuses[parent] = append(w.statuses[parent], js)
+		fmt.Fprintf(rw, `{"data":%s}`, js)
+	case r.URL.Path == "/status_updates":
+		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(w.statuses[r.URL.Query().Get("parent")], ","))
+	case r.URL.Path == "/tags" && r.Method == http.MethodPost:
+		w.next++
+		js := fmt.Sprintf(`{"gid":"tag%d","name":%q}`, w.next, body.Data["name"])
+		w.tags = append(w.tags, js)
+		fmt.Fprintf(rw, `{"data":%s}`, js)
+	case r.URL.Path == "/tags":
+		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(w.tags, ","))
+	case len(parts) == 3 && parts[0] == "tasks" && (parts[2] == "addTag" || parts[2] == "removeTag"):
+		fmt.Fprint(rw, `{"data":{}}`)
+	case len(parts) == 3 && parts[0] == "tasks" && parts[2] == "duplicate":
+		src, ok := w.tasks[parts[1]]
+		if !ok {
+			rw.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.next++
+		gid := fmt.Sprintf("dup%d", w.next)
+		name, _ := body.Data["name"].(string)
+		w.tasks[gid] = &serverTask{Name: name, Project: src.Project, Section: src.Section, Created: time.Now().UTC()}
+		fmt.Fprintf(rw, `{"data":{"gid":"job%d","new_task":{"gid":%q,"name":%q}}}`, w.next, gid, name)
 	case r.Method == http.MethodGet && r.URL.Path == "/attachments":
 		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(w.atts[r.URL.Query().Get("parent")], ","))
 	case r.Method == http.MethodGet && r.URL.Path == "/tasks":
@@ -1682,4 +1726,156 @@ func TestPushEditsWaitForFailedCreate(t *testing.T) {
 		t.Fatalf("server task = %+v", st)
 	}
 	assertOutboxEmpty(t, st)
+}
+
+// failOnce makes the first request matching method+path answer 500; if applied, the
+// request takes effect first (its answer is lost), otherwise it is not applied at all.
+func failOnce(ws *writeServer, method, path string, applied bool) {
+	if applied {
+		ws.setFailAfter(method+" "+path, 1)
+		return
+	}
+	failed := false
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == method && r.URL.Path == path && !failed {
+			failed = true
+			rw.WriteHeader(http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+}
+
+func TestPushStatusUpdate5xx(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		t.Run(fmt.Sprint("created=", created), func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			local, err := st.CreateStatusLocal(ctx, "p1", "on_track", "順調", "本文", "", store.UserRef{Name: "Me"}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failOnce(ws, http.MethodPost, "/status_updates", created)
+			if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v %v", res, err)
+			}
+			if n := len(ws.statuses["p1"]); n != 1 {
+				t.Fatalf("Asana should have the status update once, has %d", n)
+			}
+			ups, _ := st.StatusUpdates(ctx, "p1")
+			if len(ups) != 1 || ups[0].GID == local || store.IsLocalGID(ups[0].GID) {
+				t.Fatalf("local status should be replaced: %+v", ups)
+			}
+			assertOutboxEmpty(t, st)
+		})
+	}
+}
+
+func TestPushDuplicate5xx(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		t.Run(fmt.Sprint("created=", created), func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			copyGID, err := st.DuplicateTaskLocal(ctx, "t1", "コピー", now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failOnce(ws, http.MethodPost, "/tasks/t1/duplicate", created)
+			if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+			}
+			var copies []string
+			for gid, task := range ws.tasks {
+				if task.Name == "コピー" {
+					copies = append(copies, gid)
+				}
+			}
+			if len(copies) != 1 {
+				t.Fatalf("Asana should have one copy, has %v", copies)
+			}
+			if real, _ := st.RealGID(ctx, copyGID); real != copies[0] {
+				t.Fatalf("local copy should become %s, got %s", copies[0], real)
+			}
+			assertOutboxEmpty(t, st)
+		})
+	}
+}
+
+func TestPushNewTag5xx(t *testing.T) {
+	for _, created := range []bool{true, false} {
+		t.Run(fmt.Sprint("created=", created), func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			if _, err := st.AddTagLocal(ctx, "t1", "", "新タグ", now); err != nil {
+				t.Fatal(err)
+			}
+			failOnce(ws, http.MethodPost, "/tags", created)
+			if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+			}
+			if len(ws.tags) != 1 {
+				t.Fatalf("Asana should have the tag once: %v", ws.tags)
+			}
+			if tags, _ := st.TaskTags(ctx, "t1"); len(tags) != 1 || store.IsLocalGID(tags[0].GID) {
+				t.Fatalf("task tags = %+v", tags)
+			}
+			if n := ws.countCalls("POST /tasks/t1/addTag"); n != 1 {
+				t.Fatalf("addTag sent %d times", n)
+			}
+			assertOutboxEmpty(t, st)
+		})
+	}
+}
+
+// pushQuickly runs Push with a short deadline, so a loop that never ends fails the test at
+// once instead of hanging until go test's timeout.
+func pushQuickly(t *testing.T, s *Syncer) (PushResult, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := s.Push(ctx)
+	if ctx.Err() != nil {
+		t.Fatalf("Push did not finish (loop?): %+v %v", res, err)
+	}
+	return res, err
+}
+
+// Asana keeps failing and never has the result: the first push sends the entry twice
+// (send, check, send again), each later push once (check, send again); in between it waits.
+func TestPushBoundsRetriesPerPush(t *testing.T) {
+	for _, tc := range []struct {
+		name, path string
+		queue      func(t *testing.T, st *store.Store)
+	}{
+		{"create", "/tasks", func(t *testing.T, st *store.Store) {
+			_, _ = st.CreateTaskLocal(context.Background(), store.NewTask{ProjectGID: "p1", Name: "x"}, now)
+		}},
+		{"comment", "/tasks/t1/stories", func(t *testing.T, st *store.Store) {
+			_, _ = st.AddCommentLocal(context.Background(), "t1", "x", store.UserRef{GID: "me"}, now)
+		}},
+		{"update", "/tasks/t1", func(t *testing.T, st *store.Store) {
+			_ = st.UpdateTaskLocal(context.Background(), "t1", map[string]any{"name": "B"}, now)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			tc.queue(t, st)
+			ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodGet && r.URL.Path == tc.path {
+					rw.WriteHeader(http.StatusServiceUnavailable)
+					return true
+				}
+				return false
+			})
+			for push := 1; push <= 3; push++ {
+				res, err := pushQuickly(t, s)
+				if err != nil || res.Failed != 0 || res.Remaining != 1 {
+					t.Fatalf("push %d = %+v %v", push, res, err)
+				}
+				if n := len(ws.calls); n != push+1 {
+					t.Fatalf("after push %d: %d requests, want %d\n%v", push, n, push+1, ws.calls)
+				}
+			}
+		})
+	}
 }
