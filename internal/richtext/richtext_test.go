@@ -1,6 +1,9 @@
 package richtext
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestToMarkdown(t *testing.T) {
 	for _, tc := range []struct {
@@ -53,5 +56,52 @@ func TestImages(t *testing.T) {
 	got := Images(`<body><img data-asana-gid="1"><p>x</p><img src="https://app.asana.com/app/asana/-/get_asset?asset_id=2"></body>`)
 	if len(got) != 2 || got[0] != "1" || got[1] != "2" {
 		t.Fatalf("Images = %v", got)
+	}
+}
+
+func TestFromMarkdown(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"paragraphs and breaks", "一行目\n二行目\n\n次の段落", "<body>一行目\n二行目\n\n次の段落</body>"},
+		{"inline", "**太字** と *斜体* と ~~消す~~ と `code` と <tag> & 記号", "<body><strong>太字</strong> と <em>斜体</em> と <s>消す</s> と <code>code</code> と &lt;tag&gt; &amp; 記号</body>"},
+		{"heading", "# 大\n## 中\n### 小\n本文", "<body><h1>大</h1><h2>中</h2><h2>小</h2>本文</body>"},
+		{"lists", "買うもの\n\n- 牛乳\n- 卵\n  1. 赤\n  2. 白\n\n以上", "<body>買うもの\n<ul><li>牛乳</li><li>卵<ol><li>赤</li><li>白</li></ol></li></ul>以上</body>"},
+		{"links", "[サイト](https://example.com) と https://x.jp", `<body><a href="https://example.com">サイト</a> と <a href="https://x.jp">https://x.jp</a></body>`},
+		{"image and mention", "見て\n\n![画像](asana:123)\n\n[@Hanako](asana:user:9) さん", `<body>見て
+
+<img data-asana-gid="123"/>
+
+<a data-asana-gid="9"/> さん</body>`},
+		{"code and quote", "```\na < b\n```\n> 引用\n\n---\n後", "<body><pre>a &lt; b</pre><blockquote>引用</blockquote><hr/>後</body>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FromMarkdown(tc.in); got != tc.want {
+				t.Errorf("got\n%q\nwant\n%q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Editing round trip: Asana HTML -> editable Markdown -> Asana HTML keeps the content.
+func TestEditableRoundTrip(t *testing.T) {
+	in := `<body><h1>候補</h1><strong>予算</strong>は10万円
+<ul><li>ニトリ</li><li>無印</li></ul>これ
+
+<img data-asana-gid="1220507679870013" src="https://app.asana.com/app/asana/-/get_asset?asset_id=1220507679870013">
+
+<a data-asana-type="user" data-asana-gid="9" href="https://app.asana.com/0/9">@Hanako</a> よろしく</body>`
+	md := ToEditableMarkdown(in)
+	for _, want := range []string{"# 候補", "**予算**", "- ニトリ", "![画像](asana:1220507679870013)", "[@Hanako](asana:user:9)"} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("editable markdown missing %q:\n%s", want, md)
+		}
+	}
+	out := FromMarkdown(md)
+	for _, want := range []string{"<h1>候補</h1>", "<strong>予算</strong>", "<li>ニトリ</li>", `<img data-asana-gid="1220507679870013"/>`, `<a data-asana-gid="9"/>`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("html missing %q:\n%s", want, out)
+		}
+	}
+	if got := PlainFromMarkdown(md); !strings.Contains(got, "予算は10万円") || strings.Contains(got, "**") || strings.Contains(got, "asana:") {
+		t.Fatalf("plain = %q", got)
 	}
 }

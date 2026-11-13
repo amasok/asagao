@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -96,6 +97,9 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (conflict bool, er
 	current := store.TaskFieldValues(server)
 	conflicts := map[string]any{}
 	for k, local := range op.Payload {
+		if k == "html_notes" {
+			continue // the server normalizes HTML; "notes" (plain) is compared instead
+		}
 		sv := current[k]
 		if !same(sv, op.Base[k]) && !same(sv, local) {
 			conflicts[k] = sv
@@ -165,8 +169,9 @@ func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
 		return &asana.Error{Status: 404} // its create failed
 	}
 	text, _ := op.Payload["text"].(string)
+	htmlText, _ := op.Payload["html_text"].(string)
 	localGID, _ := op.Payload["story_gid"].(string)
-	st, err := s.API.AddComment(ctx, op.TaskGID, text)
+	st, err := s.API.AddComment(ctx, op.TaskGID, text, htmlText)
 	if err != nil {
 		return err
 	}
@@ -216,6 +221,10 @@ func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (conflict b
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.
 func apiFields(payload map[string]any) map[string]any {
 	out := make(map[string]any, len(payload))
+	if _, rich := payload["html_notes"]; rich {
+		payload = maps.Clone(payload)
+		delete(payload, "notes") // Asana derives the plain notes from html_notes
+	}
 	for k, v := range payload {
 		if slices.Contains([]string{"due_on", "assignee"}, k) && v == "" {
 			out[k] = nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,7 +28,7 @@ func (a *app) runTUI(ctx context.Context) error {
 	defer cancel()
 
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
-		InlineImages: a.inlineImages()}
+		InlineImages: a.inlineImages(), RunEditor: a.runEditor}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)
@@ -67,4 +68,23 @@ func (a *app) inlineImages() bool {
 		return false
 	}
 	return imageview.Resolve(a.cfg.UI.ImageProtocol) == imageview.ProtocolKitty
+}
+
+// runEditor opens path in ui.editor, $VISUAL, $EDITOR, nvim or vi (in that order) while the
+// TUI is suspended.
+func (a *app) runEditor(path string, done func(error) tea.Msg) tea.Cmd {
+	cmdline := a.cfg.UI.Editor
+	for _, env := range []string{"VISUAL", "EDITOR"} {
+		if cmdline == "" {
+			cmdline = os.Getenv(env)
+		}
+	}
+	if cmdline == "" {
+		cmdline = "vi"
+		if _, err := exec.LookPath("nvim"); err == nil {
+			cmdline = "nvim"
+		}
+	}
+	args := strings.Fields(cmdline)
+	return tea.ExecProcess(exec.Command(args[0], append(args[1:], path)...), done)
 }

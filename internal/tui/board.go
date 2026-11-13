@@ -132,16 +132,13 @@ func (m *Model) handleBoardKey(key string) (tea.Model, tea.Cmd) {
 		m.boardCol = target
 		return m, m.moveTask(*t, m.currentScope().project, cols[target].gid, cols[target].name)
 	case "enter":
-		if m.boardSelected() != nil {
-			m.zoom = true
-			m.focus = paneDetail
-		}
-		return m, nil
+		return m, m.openDetail()
 	default:
 		return m, nil
 	}
 	m.boardRow = clamp(m.boardRow, 0, len(cols[m.boardCol].tasks)-1)
 	if t := m.boardSelected(); t != nil && (prev == nil || prev.GID != t.GID) {
+		m.resetDetailNav()
 		return m, tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
 	}
 	return m, nil
@@ -294,7 +291,7 @@ func (m *Model) showTagPicker(tags []store.TagCount) {
 
 // openSectionPicker lets the user choose a section to move the selected task to.
 func (m *Model) openSectionPicker() {
-	t := m.selectedTask()
+	t := m.actionTask()
 	if t == nil {
 		return
 	}

@@ -102,7 +102,7 @@ func (m *Model) collapseOrUp() tea.Cmd {
 // --- creating subtasks ---
 
 func (m *Model) startSubtask() tea.Cmd {
-	t := m.selectedTask()
+	t := m.actionTask() // in the detail view: the task being shown
 	if t == nil || m.focus == paneSidebar {
 		return nil
 	}
@@ -121,11 +121,15 @@ func (m *Model) createSubtask(parent, input string) tea.Cmd {
 		m.expanded = map[string]bool{}
 	}
 	m.expanded[parent] = true // show the new subtask under its parent
+	selectIt := !m.inDetail() // in the detail view, stay on the parent
 	st, now := m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
 		gid, err := st.CreateTaskLocal(m.ctx, store.NewTask{ParentGID: parent, Name: name, DueOn: due}, now)
 		if err != nil {
 			return writeDoneMsg{err: err}
+		}
+		if !selectIt {
+			gid = ""
 		}
 		return writeDoneMsg{status: "サブタスクを追加しました: " + name, gid: gid}
 	}
@@ -146,7 +150,7 @@ type usersLoadedMsg struct {
 }
 
 func (m *Model) openAssigneePicker() tea.Cmd {
-	if m.selectedTask() == nil || m.focus == paneSidebar {
+	if m.actionTask() == nil || m.focus == paneSidebar {
 		return nil
 	}
 	st := m.deps.Store
@@ -157,7 +161,7 @@ func (m *Model) openAssigneePicker() tea.Cmd {
 }
 
 func (m *Model) showAssigneePicker(users []store.UserRef) {
-	t := m.selectedTask()
+	t := m.actionTask()
 	if t == nil {
 		return
 	}
@@ -195,6 +199,6 @@ func (m *Model) assign(t store.TaskSummary, userGID, label string) tea.Cmd {
 			return writeDoneMsg{err: err}
 		}
 		label = strings.TrimSuffix(label, "（自分）")
-		return writeDoneMsg{status: "担当者を変更しました: " + t.Name + " → " + label, gid: t.GID}
+		return writeDoneMsg{status: "担当者を変更しました: " + t.Name + " → " + label}
 	}
 }

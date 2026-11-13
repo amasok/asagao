@@ -1,0 +1,329 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/richtext"
+	"github.com/amasok/asana-tui/internal/store"
+)
+
+// Editing in $EDITOR: e writes the task as a Markdown file with front matter, opens the
+// editor (the TUI is suspended), and applies whatever changed when the editor exits.
+// C does the same for a new comment. The .md extension lets editor plugins (e.g. Markdown
+// preview in Neovim) work as usual.
+
+// taskDoc is the editable form of a task.
+type taskDoc struct {
+	Name       string
+	Due        string
+	Assignee   string // "me", a user name, or "" (unassigned)
+	Completed  bool
+	Section    string // only when the task is in exactly one project
+	HasSection bool
+	Body       string // editable Markdown
+}
+
+const editHelp = `# asana-tui: 保存してエディタを閉じると Asana に反映します（変えた項目だけ）。
+# due: YYYY-MM-DD / today / tomorrow / +3d、空欄で期日なし
+# assignee: me / メンバーの名前、空欄で未割り当て
+# completed: true / false
+# 本文はマークダウンで書けます。画像は ![画像](asana:ID) の行を残してください。`
+
+func (d taskDoc) String() string {
+	var b strings.Builder
+	b.WriteString("---\n" + editHelp + "\n")
+	fmt.Fprintf(&b, "name: %s\n", d.Name)
+	fmt.Fprintf(&b, "due: %s\n", d.Due)
+	fmt.Fprintf(&b, "assignee: %s\n", d.Assignee)
+	fmt.Fprintf(&b, "completed: %t\n", d.Completed)
+	if d.HasSection {
+		fmt.Fprintf(&b, "section: %s\n", d.Section)
+	}
+	b.WriteString("---\n\n")
+	b.WriteString(d.Body)
+	if d.Body != "" {
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// parseTaskDoc reads an edited file back.
+func parseTaskDoc(s string) (taskDoc, error) {
+	var d taskDoc
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return d, errors.New("先頭の --- が見つかりません")
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return d, errors.New("項目の終わりの --- が見つかりません")
+	}
+	seen := map[string]bool{}
+	for _, l := range lines[1:end] {
+		if strings.HasPrefix(strings.TrimSpace(l), "#") || strings.TrimSpace(l) == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(l, ":")
+		if !ok {
+			return d, fmt.Errorf("読めない行があります: %q", l)
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		seen[key] = true
+		switch key {
+		case "name":
+			d.Name = value
+		case "due":
+			d.Due = value
+		case "assignee":
+			d.Assignee = value
+		case "completed":
+			switch strings.ToLower(value) {
+			case "true", "yes", "x", "完了":
+				d.Completed = true
+			case "false", "no", "", "未完了":
+			default:
+				return d, fmt.Errorf("completed は true か false で書いてください: %q", value)
+			}
+		case "section":
+			d.Section, d.HasSection = value, true
+		default:
+			return d, fmt.Errorf("知らない項目です: %q", key)
+		}
+	}
+	if !seen["name"] || d.Name == "" {
+		return d, errors.New("name（タスク名）が空です")
+	}
+	d.Body = strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
+	return d, nil
+}
+
+// editableBody returns the task description as editable Markdown.
+func editableBody(htmlNotes, plain string) string {
+	if htmlNotes != "" {
+		return richtext.ToEditableMarkdown(htmlNotes)
+	}
+	md := richtext.FromPlain(store.ReplaceInlineAssets(plain, func(gid string) string {
+		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
+	}))
+	return richtext.ImageTokenRe.ReplaceAllString(md, "![画像](asana:$1)")
+}
+
+func docFor(ctx context.Context, st *store.Store, d *store.TaskDetail) taskDoc {
+	doc := taskDoc{Name: d.Name, Due: d.DueOn, Completed: d.Completed, Body: editableBody(d.HTMLNotes, d.Notes)}
+	if d.Assignee != nil {
+		doc.Assignee = d.Assignee.Name
+		if me, _ := st.MeGID(ctx); me == d.Assignee.GID {
+			doc.Assignee = "me"
+		}
+	}
+	if len(d.Memberships) == 1 {
+		doc.HasSection = true
+		doc.Section = d.Memberships[0].SectionName
+	}
+	return doc
+}
+
+type (
+	editReadyMsg struct {
+		gid, path string
+		original  taskDoc
+		err       error
+	}
+	editDoneMsg struct {
+		gid, path string
+		original  taskDoc
+		err       error
+	}
+	commentReadyMsg struct {
+		gid, path string
+		err       error
+	}
+	commentDoneMsg struct {
+		gid, path string
+		err       error
+	}
+)
+
+func (m *Model) editTask(gid string) tea.Cmd {
+	if m.deps.RunEditor == nil {
+		m.status = "エディタを起動できません"
+		return nil
+	}
+	st := m.deps.Store
+	return func() tea.Msg {
+		d, err := st.GetTask(m.ctx, gid)
+		if err != nil {
+			return editReadyMsg{err: err}
+		}
+		doc := docFor(m.ctx, st, d)
+		path, err := writeTemp("asana-tui-task-*.md", doc.String())
+		return editReadyMsg{gid: gid, path: path, original: doc, err: err}
+	}
+}
+
+func (m *Model) editComment(gid string) tea.Cmd {
+	if m.deps.RunEditor == nil {
+		m.status = "エディタを起動できません"
+		return nil
+	}
+	return func() tea.Msg {
+		path, err := writeTemp("asana-tui-comment-*.md", commentTemplate)
+		return commentReadyMsg{gid: gid, path: path, err: err}
+	}
+}
+
+const commentTemplate = "<!-- asana-tui: コメントをマークダウンで書いて保存してください。空のまま閉じると取り消します。 -->\n\n"
+
+func writeTemp(pattern, content string) (string, error) {
+	f, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
+	return f.Name(), err
+}
+
+func (m *Model) updateEdit(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case editReadyMsg:
+		if msg.err != nil {
+			m.status = "編集を開始できませんでした: " + msg.err.Error()
+			return nil, true
+		}
+		return m.deps.RunEditor(msg.path, func(err error) tea.Msg {
+			return editDoneMsg{gid: msg.gid, path: msg.path, original: msg.original, err: err}
+		}), true
+	case editDoneMsg:
+		return m.applyEdit(msg), true
+	case commentReadyMsg:
+		if msg.err != nil {
+			m.status = "編集を開始できませんでした: " + msg.err.Error()
+			return nil, true
+		}
+		return m.deps.RunEditor(msg.path, func(err error) tea.Msg {
+			return commentDoneMsg{gid: msg.gid, path: msg.path, err: err}
+		}), true
+	case commentDoneMsg:
+		return m.applyComment(msg), true
+	}
+	return nil, false
+}
+
+// applyEdit reads the edited file and queues the changes.
+func (m *Model) applyEdit(msg editDoneMsg) tea.Cmd {
+	if msg.err != nil {
+		m.status = "エディタがエラーで終了しました: " + msg.err.Error()
+		return nil
+	}
+	data, err := os.ReadFile(msg.path)
+	if err != nil {
+		m.status = err.Error()
+		return nil
+	}
+	doc, err := parseTaskDoc(string(data))
+	if err != nil {
+		m.status = "編集内容を読めませんでした（" + err.Error() + "）。内容は " + msg.path + " に残っています"
+		return nil
+	}
+	os.Remove(msg.path)
+	orig := msg.original
+	st, now, gid := m.deps.Store, m.deps.Now(), msg.gid
+	return func() tea.Msg {
+		ctx := m.ctx
+		changes := map[string]any{}
+		if doc.Name != orig.Name {
+			changes["name"] = doc.Name
+		}
+		if doc.Due != orig.Due {
+			due, err := dates.Parse(doc.Due, now)
+			if err != nil {
+				return writeDoneMsg{err: fmt.Errorf("due: %w", err)}
+			}
+			changes["due_on"] = due
+		}
+		if doc.Assignee != orig.Assignee {
+			gid, err := st.ResolveUser(ctx, doc.Assignee)
+			if err != nil {
+				return writeDoneMsg{err: fmt.Errorf("assignee: %w", err)}
+			}
+			changes["assignee"] = gid
+		}
+		if doc.Completed != orig.Completed {
+			changes["completed"] = doc.Completed
+		}
+		if strings.TrimSpace(doc.Body) != strings.TrimSpace(orig.Body) {
+			changes["notes"] = richtext.PlainFromMarkdown(doc.Body)
+			changes["html_notes"] = richtext.FromMarkdown(doc.Body)
+		}
+		moved := false
+		if doc.HasSection && orig.HasSection && doc.Section != orig.Section {
+			project, section, err := st.ResolveMove(ctx, gid, "", doc.Section)
+			if err != nil {
+				return writeDoneMsg{err: fmt.Errorf("section: %w", err)}
+			}
+			if err := st.MoveTaskLocal(ctx, gid, project, section, now); err != nil {
+				return writeDoneMsg{err: err}
+			}
+			moved = true
+		}
+		if len(changes) > 0 {
+			if err := st.UpdateTaskLocal(ctx, gid, changes, now); err != nil {
+				return writeDoneMsg{err: err}
+			}
+		}
+		if len(changes) == 0 && !moved {
+			return statusMsg("変更はありません")
+		}
+		return writeDoneMsg{status: fmt.Sprintf("タスクを更新しました（%d 項目）", len(changes)+btoi(moved)-btoi(changes["html_notes"] != nil))}
+	}
+}
+
+func (m *Model) applyComment(msg commentDoneMsg) tea.Cmd {
+	if msg.err != nil {
+		m.status = "エディタがエラーで終了しました: " + msg.err.Error()
+		return nil
+	}
+	data, err := os.ReadFile(msg.path)
+	if err != nil {
+		m.status = err.Error()
+		return nil
+	}
+	os.Remove(msg.path)
+	text := strings.TrimSpace(strings.Replace(string(data), strings.TrimSpace(commentTemplate), "", 1))
+	if text == "" {
+		m.status = "コメントを取り消しました"
+		return nil
+	}
+	st, now, gid := m.deps.Store, m.deps.Now(), msg.gid
+	return func() tea.Msg {
+		me, err := st.Me(m.ctx)
+		if err != nil {
+			return writeDoneMsg{err: err}
+		}
+		if _, err := st.AddRichCommentLocal(m.ctx, gid, richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, now); err != nil {
+			return writeDoneMsg{err: err}
+		}
+		return writeDoneMsg{status: "コメントしました"}
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}

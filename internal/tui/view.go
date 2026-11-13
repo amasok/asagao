@@ -253,6 +253,9 @@ func (m *Model) renderHelp(w, h int) string {
 		"  m                 タスクを別のセクションへ移動",
 		"  @                 担当者を変更",
 		"  S                 選択中のタスクにサブタスクを追加（例: 見積もりを取る due:+3d）",
+		"  enter             詳細を全画面で開く。詳細では J/K でサブタスクを選び enter で開く、backspace で戻る",
+		"  e                 タスクを $EDITOR（nvim）で編集（名前・期日・担当者・完了・セクション・説明）",
+		"  C                 コメントを $EDITOR（nvim）で書く（マークダウン）",
 		"  l / →             サブタスクを開く（ツリー表示）、サブタスクがなければ詳細へ",
 		"  h / ←             サブタスクを閉じる / 親タスクへ / プロジェクト一覧へ",
 		"  E                 セクション（リスト）の名前を変更",
@@ -408,6 +411,9 @@ func (m *Model) renderDetail(w int) string {
 	if d.Completed {
 		title = "☑ " + title
 	}
+	if len(m.detailStack) > 1 {
+		b.WriteString(m.st.dim.Render("← backspace で親タスクへ戻る") + "\n")
+	}
 	b.WriteString(wrap.Bold(true).Render(title) + "\n\n")
 
 	field := func(label, value string) {
@@ -467,18 +473,37 @@ func (m *Model) renderDetail(w int) string {
 			b.WriteString(wrap.Render(line) + "\n")
 		}
 	}
-	if len(d.Subtasks) > 0 {
-		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("サブタスク (%d)", len(d.Subtasks))) + "\n")
-		for _, s := range d.Subtasks {
+	m.subtaskLine = -1
+	if len(d.Subtasks) > 0 || m.inDetail() {
+		header := m.st.sectionHeader.Render(fmt.Sprintf("サブタスク (%d)", len(d.Subtasks)))
+		if m.inDetail() {
+			header += m.st.dim.Render("  J/K 選択・enter 開く・x 完了・S 追加")
+		}
+		b.WriteString("\n" + header + "\n")
+		m.subtaskLine = strings.Count(b.String(), "\n")
+		for i, s := range d.Subtasks {
 			check := "☐"
 			if s.Completed {
 				check = "☑"
 			}
 			line := check + " " + s.Name
+			if s.NumSubtasks > 0 {
+				line += fmt.Sprintf(" ↳%d", s.NumSubtasks)
+			}
+			if s.Assignee != nil {
+				line += "  " + m.st.dim.Render(s.Assignee.Name)
+			}
 			if s.DueOn != "" {
 				line += "  " + m.st.dim.Render(shortDue(s.DueOn, m.deps.Now()))
 			}
-			b.WriteString(wrap.Render(line) + "\n")
+			if s.Pending {
+				line += " ↑"
+			}
+			if m.inDetail() && i == m.detailSub {
+				b.WriteString(m.highlight(ansi.Truncate(line, w, "…"), w, true, true) + "\n")
+				continue
+			}
+			b.WriteString(ansi.Truncate(line, w, "…") + "\n")
 		}
 	}
 	var comments []store.StoryView
