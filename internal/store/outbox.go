@@ -90,14 +90,18 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 			if err != nil {
 				return err
 			}
-			if op == nil {
-				return fmt.Errorf("task %s: pending create not found", gid)
+			if op != nil {
+				maps.Copy(op.Payload, changes)
+				if err := saveOp(ctx, tx, op); err != nil {
+					return err
+				}
+				return applyFields(ctx, tx, gid, changes, now)
 			}
-			maps.Copy(op.Payload, changes)
-			if err := saveOp(ctx, tx, op); err != nil {
+			// The create is being sent or failed (or the task is a local duplicate):
+			// queue the edit as an update, sent once the task exists.
+			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
 				return err
 			}
-			return applyFields(ctx, tx, gid, changes, now)
 		}
 
 		// Join the unsent (or conflicted) entry, so its base stays the server value; an
@@ -167,11 +171,17 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 
 		if IsLocalGID(gid) {
 			op, err := findOp(ctx, tx, OpCreateTask, gid)
-			if err != nil || op == nil {
-				return fmt.Errorf("task %s: pending create not found", gid)
+			if err != nil {
+				return err
 			}
-			op.Payload["section"] = sectionGID
-			return saveOp(ctx, tx, op)
+			if op != nil {
+				op.Payload["section"] = sectionGID
+				return saveOp(ctx, tx, op)
+			}
+			// The create is being sent or failed: queue a move, sent once the task exists.
+			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
+				return err
+			}
 		}
 
 		op, err := findMoveOp(ctx, tx, gid, projectGID)
@@ -760,6 +770,22 @@ func findOp(ctx context.Context, tx *sql.Tx, kind, gid string) (*Op, error) {
 		return nil, err
 	}
 	return getOpTx(ctx, tx, id)
+}
+
+// ensureCreateQueued checks that a task with a local gid still has its create (or
+// duplicate) in the outbox, in any state. Changes queued for it keep the local gid, which
+// replaceLocalTaskGID rewrites once Asana has created the task; until then sending them
+// fails (404), and discarding the create discards them too.
+func ensureCreateQueued(ctx context.Context, tx *sql.Tx, gid string) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE task_gid = ? AND kind IN (?, ?)",
+		gid, OpCreateTask, OpDuplicateTask).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("task %s: create not found in the outbox: %w", gid, ErrNotFound)
+	}
+	return nil
 }
 
 // findUpdateOp returns the pending or conflicted update_task entry of a task.

@@ -339,3 +339,46 @@ func TestPruneProjectsRemovesRelatedRows(t *testing.T) {
 		t.Fatalf("membership in the kept project should stay: %+v", d.Memberships)
 	}
 }
+
+func TestEditLocalTaskWhileItsCreateIsSendingOrFailed(t *testing.T) {
+	for _, state := range []string{OpSending, OpFailed} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			gid, err := s.CreateTaskLocal(ctx, NewTask{ProjectGID: "p1", SectionGID: "s1", Name: "新規"}, testNow)
+			must(t, err)
+			create := onlyOp(t, s)
+			if ok, err := s.BeginSend(ctx, create.ID); !ok || err != nil {
+				t.Fatalf("begin send: %v %v", ok, err)
+			}
+			if state == OpFailed {
+				must(t, s.MarkOpUnknown(ctx, create.ID))
+			}
+			must(t, s.UpdateTaskLocal(ctx, gid, map[string]any{"name": "名前変更"}, testNow))
+			must(t, s.MoveTaskLocal(ctx, gid, "p1", "s2", testNow))
+			ops, _ := s.ListOps(ctx)
+			if len(ops) != 3 || ops[0].Payload["name"] != "新規" || ops[0].Payload["section"] != "s1" {
+				t.Fatalf("the create being sent must not change: %+v", ops)
+			}
+			if ops[1].Kind != OpUpdateTask || ops[1].TaskGID != gid || ops[1].Payload["name"] != "名前変更" ||
+				ops[2].Kind != OpMoveTask || ops[2].Payload["section"] != "s2" {
+				t.Fatalf("edits should be queued for the local task: %+v", ops)
+			}
+			if d, _ := s.GetTask(ctx, gid); d.Name != "名前変更" || d.Memberships[0].SectionGID != "s2" {
+				t.Fatalf("local task = %+v", d.TaskSummary)
+			}
+			if state == OpSending { // Asana created it: the queued edits follow the real gid
+				must(t, s.CompleteCreate(ctx, create.ID, gid, "R1", nil))
+				ops, _ = s.ListOps(ctx)
+				if len(ops) != 2 || ops[0].TaskGID != "R1" || ops[1].TaskGID != "R1" {
+					t.Fatalf("after create: %+v", ops)
+				}
+			} else { // discarding the failed create drops the edits too
+				must(t, s.DiscardOp(ctx, create.ID))
+				if ops, _ = s.ListOps(ctx); len(ops) != 0 {
+					t.Fatalf("after discard: %+v", ops)
+				}
+			}
+		})
+	}
+}
