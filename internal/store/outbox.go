@@ -311,9 +311,9 @@ func (s *Store) GetOp(ctx context.Context, id int64) (*Op, error) {
 }
 
 func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, ''), o.payload, o.base,
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, ''), o.payload, o.base,
 		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at
-		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
+		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -401,6 +401,12 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 		case OpAddComment:
 			if gid, _ := op.Payload["story_gid"].(string); gid != "" {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
+					return err
+				}
+			}
+		case OpRenameSection:
+			if name, ok := op.Base["name"].(string); ok {
+				if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {
 					return err
 				}
 			}

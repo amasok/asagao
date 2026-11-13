@@ -67,7 +67,7 @@ func (s *Store) ReplaceSections(ctx context.Context, projectGID string, secs []a
 				return err
 			}
 		}
-		return nil
+		return reapplySectionRenames(ctx, tx)
 	})
 }
 

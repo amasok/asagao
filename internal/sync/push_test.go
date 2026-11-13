@@ -3,10 +3,12 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	stdsync "sync"
@@ -408,5 +410,174 @@ func TestMoveTask(t *testing.T) {
 	// Errors: unknown section, task not in project.
 	if err := st.MoveTaskLocal(ctx, "t1", "p1", "nope", now); err == nil {
 		t.Error("unknown section should fail")
+	}
+}
+
+func TestRenameSection(t *testing.T) {
+	_, _, _, st := setupPush(t)
+	ctx := context.Background()
+	if err := st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "In Pregoress"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.RenameSectionLocal(ctx, "s1", "In Progress", now)
+	// A sync that brings the old name back keeps the unsent rename.
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "In Pregoress"}})
+	if name, _ := st.SectionName(ctx, "s1"); name != "In Progress" {
+		t.Fatalf("rename lost after sync: %q", name)
+	}
+	ops, _ := st.ListOps(ctx)
+	if len(ops) != 1 || ops[0].Kind != store.OpRenameSection || ops[0].TaskName != "In Progress" {
+		t.Fatalf("ops = %+v", ops)
+	}
+	_ = st.RenameSectionLocal(ctx, "s1", "In Pregoress", now) // back to the original
+	if p, _, _ := pendingCount(t, st); p != 0 {
+		t.Fatal("renaming back should cancel")
+	}
+	if err := st.RenameSectionLocal(ctx, "s1", "  ", now); err == nil {
+		t.Fatal("empty name should fail")
+	}
+}
+
+func TestPushRenameSection(t *testing.T) {
+	ctx := context.Background()
+	serverName := "In Pregoress"
+	var put string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			var body struct{ Data map[string]string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			put, serverName = body.Data["name"], body.Data["name"]
+		}
+		fmt.Fprintf(w, `{"data":{"gid":"s1","name":%q}}`, serverName)
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st}
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "In Pregoress"}})
+
+	_ = st.RenameSectionLocal(ctx, "s1", "In Progress", now)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || put != "In Progress" {
+		t.Fatalf("push = %+v %v put=%q", res, err, put)
+	}
+
+	// Conflict: renamed on the server to something else meanwhile.
+	_ = st.RenameSectionLocal(ctx, "s1", "Doing", now)
+	serverName = "WIP"
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
+		t.Fatalf("expected conflict: %+v %v", res, err)
+	}
+}
+
+func TestDownloadAttachment(t *testing.T) {
+	ctx := context.Background()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		fmt.Fprint(w, `{"data":{"gid":"a1","name":"receipt.png","host":"asana","download_url":"https://files.example/a1?sig=x"}}`)
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T"}})
+	_ = st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "receipt.png"}, {GID: "a2", Name: "memo.pdf"}})
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	var downloaded []string
+	s := &Syncer{API: api, Store: st, CacheDir: t.TempDir(), Download: func(_ context.Context, url string) ([]byte, error) {
+		downloaded = append(downloaded, url)
+		return []byte("PNGDATA"), nil
+	}}
+
+	path, err := s.DownloadAttachment(ctx, "t1", "a1")
+	if err != nil || !strings.HasSuffix(path, "a1-receipt.png") {
+		t.Fatalf("path %q, %v", path, err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "PNGDATA" || len(downloaded) != 1 || downloaded[0] != "https://files.example/a1?sig=x" {
+		t.Fatalf("download: %q %v", b, downloaded)
+	}
+	// Cached: no second API call or download, also when offline.
+	offline := &Syncer{Store: st}
+	if p2, err := offline.DownloadAttachment(ctx, "t1", "a1"); err != nil || p2 != path || calls != 1 {
+		t.Fatalf("cached path %q %v calls=%d", p2, err, calls)
+	}
+	// A sync of the attachment list keeps the downloaded path.
+	_ = st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "receipt.png"}})
+	d, _ := st.GetTask(ctx, "t1")
+	if len(d.Attachments) != 1 || d.Attachments[0].LocalPath != path || !d.Attachments[0].IsImage {
+		t.Fatalf("attachments %+v", d.Attachments)
+	}
+	if _, err := offline.DownloadAttachment(ctx, "t1", "a2"); err == nil {
+		t.Fatal("offline download of an uncached file should fail")
+	}
+}
+
+func TestDownloadInlineImageByGID(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/attachments/1220507679870013" {
+			t.Errorf("unexpected %s", r.URL)
+		}
+		fmt.Fprint(w, `{"data":{"gid":"1220507679870013","name":"image.png","host":"asana","download_url":"https://files.example/x"}}`)
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T"}})
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, CacheDir: t.TempDir(),
+		Download: func(context.Context, string) ([]byte, error) { return []byte("img"), nil }}
+	path, err := s.DownloadAttachment(ctx, "t1", "1220507679870013")
+	if err != nil || !strings.HasSuffix(path, "1220507679870013-image.png") {
+		t.Fatalf("path %q %v", path, err)
+	}
+	d, _ := st.GetTask(ctx, "t1")
+	if len(d.Attachments) != 1 || d.Attachments[0].LocalPath != path {
+		t.Fatalf("inline image should be recorded as an attachment: %+v", d.Attachments)
+	}
+}
+
+func TestFetchDetailsAttachmentsOptional(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/attachments":
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"errors":[{"message":"forbidden scope attachments:read"}]}`)
+		case strings.HasSuffix(r.URL.Path, "/stories"):
+			fmt.Fprint(w, `{"data":[{"gid":"c1","type":"comment","text":"hi"}]}`)
+		case strings.HasSuffix(r.URL.Path, "/subtasks"):
+			fmt.Fprint(w, `{"data":[]}`)
+		default:
+			fmt.Fprint(w, `{"data":{"gid":"t1","name":"T"}}`)
+		}
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	err = (&Syncer{API: api, Store: st}).FetchDetails(ctx, "t1")
+	var attErr *AttachmentsError
+	if !errors.As(err, &attErr) {
+		t.Fatalf("err = %v", err)
+	}
+	if d, _ := st.GetTask(ctx, "t1"); len(d.Stories) != 1 || d.DetailsFetchedAt == "" {
+		t.Fatalf("comments should still be stored: %+v", d)
 	}
 }

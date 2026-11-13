@@ -108,7 +108,7 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_task", "get_task", "list_projects", "list_tags", "list_tasks", "move_task", "search_tasks", "sync", "sync_status", "update_task"}},
+		{false, []string{"add_comment", "create_task", "get_task", "list_projects", "list_tags", "list_tasks", "move_task", "rename_section", "search_tasks", "sync", "sync_status", "update_task"}},
 		{true, []string{"get_task", "list_projects", "list_tags", "list_tasks", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})

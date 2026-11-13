@@ -58,6 +58,13 @@ func (s *Syncer) Push(ctx context.Context) (PushResult, error) {
 			err = s.pushComment(ctx, *op)
 		case store.OpMoveTask:
 			err = s.pushMove(ctx, *op)
+		case store.OpRenameSection:
+			var conflict bool
+			conflict, err = s.pushRenameSection(ctx, *op)
+			if err == nil && conflict {
+				res.Conflicts++
+				continue
+			}
 		default:
 			err = &asana.Error{Status: 400}
 		}
@@ -169,6 +176,25 @@ func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
 		return nil // moved; the next sync refreshes the task
 	}
 	return s.Store.UpsertTasks(ctx, []asana.Task{*t})
+}
+
+func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (conflict bool, err error) {
+	server, err := s.API.Section(ctx, op.TaskGID)
+	if err != nil {
+		return false, err
+	}
+	name, _ := op.Payload["name"].(string)
+	if !same(server.Name, op.Base["name"]) && !same(server.Name, name) {
+		return true, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"name": server.Name})
+	}
+	updated, err := s.API.UpdateSection(ctx, op.TaskGID, name)
+	if err != nil {
+		return false, err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return false, err
+	}
+	return false, s.Store.ApplySectionName(ctx, op.TaskGID, updated.Name)
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.

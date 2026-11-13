@@ -39,7 +39,7 @@ func (m *Model) boardColumns() []boardColumn {
 		cols = append(cols, boardColumn{gid: s.GID, name: s.Name})
 	}
 	var other []*store.TaskSummary
-	for _, r := range m.rows {
+	for _, r := range m.allRows {
 		if r.task == nil {
 			continue
 		}

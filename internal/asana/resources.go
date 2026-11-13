@@ -192,3 +192,46 @@ func (c *Client) AddComment(ctx context.Context, taskGID, text string) (*Story, 
 }
 
 func fieldsQuery(f []string) url.Values { return fields(f) }
+
+// --- sections ---
+
+func (c *Client) Section(ctx context.Context, gid string) (*Section, error) {
+	var s Section
+	return &s, c.get(ctx, "/sections/"+url.PathEscape(gid), fields(sectionFields), &s)
+}
+
+// UpdateSection renames a section (PUT /sections/{gid}).
+func (c *Client) UpdateSection(ctx context.Context, gid, name string) (*Section, error) {
+	var s Section
+	_, err := c.do(ctx, http.MethodPut, "/sections/"+url.PathEscape(gid), fields(sectionFields), map[string]any{"name": name}, &s)
+	return &s, err
+}
+
+// --- attachments ---
+
+type Attachment struct {
+	GID             string    `json:"gid"`
+	Name            string    `json:"name"`
+	ResourceSubtype string    `json:"resource_subtype"` // "asana" for uploaded files; external hosts otherwise
+	Host            string    `json:"host"`
+	DownloadURL     string    `json:"download_url"` // short-lived; fetch Attachment(gid) right before downloading
+	ViewURL         string    `json:"view_url"`
+	PermanentURL    string    `json:"permanent_url"`
+	Size            int64     `json:"size"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+var attachmentFields = []string{"name", "resource_subtype", "host", "download_url", "view_url", "permanent_url", "size", "created_at"}
+
+// Attachments lists the attachments of a task (GET /attachments?parent=).
+func (c *Client) Attachments(ctx context.Context, parentGID string) ([]Attachment, error) {
+	q := fields(attachmentFields)
+	q.Set("parent", parentGID)
+	return list[Attachment](ctx, c, "/attachments", q)
+}
+
+// Attachment returns one attachment with a fresh download_url.
+func (c *Client) Attachment(ctx context.Context, gid string) (*Attachment, error) {
+	var a Attachment
+	return &a, c.get(ctx, "/attachments/"+url.PathEscape(gid), fields(attachmentFields), &a)
+}

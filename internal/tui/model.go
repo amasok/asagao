@@ -5,6 +5,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -26,6 +28,8 @@ type Deps struct {
 	SyncInterval time.Duration
 	OpenURL      func(url string) error
 	Now          func() time.Time
+	// ViewImages shows image files (e.g. by running the image viewer with tea.ExecProcess).
+	ViewImages func(paths []string) tea.Cmd
 }
 
 type pane int
@@ -68,9 +72,15 @@ type scope struct {
 
 // row is one line of the task list: a group header or a task.
 type row struct {
-	header string
-	task   *store.TaskSummary
+	header    string
+	key       string // stable id of a group header (section gid / bucket name)
+	count     int    // tasks in the group
+	collapsed bool
+	task      *store.TaskSummary
 }
+
+// selectable rows: tasks, and collapsed group headers (so they can be expanded again).
+func (r row) selectable() bool { return r.task != nil || r.collapsed }
 
 // detailRefreshAge: details (comments) older than this are re-fetched when a task is selected.
 const detailRefreshAge = 5 * time.Minute
@@ -129,6 +139,13 @@ type Model struct {
 	boardColOffset int
 	tagFilter      string
 	picker         *picker
+
+	// collapsible groups (collapse.go)
+	allRows   []row           // every row; rows is allRows minus collapsed groups
+	collapsed map[string]bool // keys of collapsed groups in the current scope
+	renameGID string          // section being renamed (promptRenameSection)
+	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
+	collapsedScope string
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -169,9 +186,11 @@ type (
 		err      error
 	}
 	tasksLoadedMsg struct {
-		seq  int
-		rows []row
-		err  error
+		seq       int
+		rows      []row
+		err       error
+		scope     string
+		collapsed map[string]bool
 	}
 	detailLoadedMsg struct {
 		gid string
@@ -210,10 +229,15 @@ func (m *Model) loadScopes() tea.Cmd {
 func (m *Model) loadTasks() tea.Cmd {
 	m.taskSeq++
 	seq, sc, query, filter, tag := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter
-	st, now := m.deps.Store, m.deps.Now()
+	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
+	needCollapsed := scopeKey != m.collapsedScope
 	return func() tea.Msg {
 		rows, err := queryRows(m.ctx, st, sc, query, filter, tag, now)
-		return tasksLoadedMsg{seq: seq, rows: rows, err: err}
+		msg := tasksLoadedMsg{seq: seq, rows: rows, err: err, scope: scopeKey}
+		if needCollapsed {
+			msg.collapsed = loadCollapsed(m.ctx, st, scopeKey)
+		}
+		return msg
 	}
 }
 
@@ -296,7 +320,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "プロジェクトの読み込みに失敗: " + msg.err.Error()
 			return m, nil
 		}
+		before := m.currentScope().sections
 		m.setProjects(msg.projects)
+		// Group headers use section names from the scope, so reload when they changed
+		// (e.g. after a rename or a sync).
+		if !slices.Equal(before, m.currentScope().sections) {
+			return m, m.loadTasks()
+		}
 		return m, nil
 
 	case tasksLoadedMsg:
@@ -304,9 +334,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.rows = nil
+			m.rows, m.allRows = nil, nil
 			m.status = msg.err.Error()
 			return m, nil
+		}
+		if msg.collapsed != nil && msg.scope == m.scopeKey() {
+			m.collapsed, m.collapsedScope = msg.collapsed, msg.scope
 		}
 		return m, m.setRows(msg.rows)
 
@@ -338,7 +371,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fetchingFor == msg.gid {
 			m.fetchingFor = ""
 		}
-		if msg.err != nil {
+		var attErr *sync.AttachmentsError
+		if errors.As(msg.err, &attErr) {
+			m.status = attErr.Error() + attachmentsHint(attErr)
+		} else if msg.err != nil {
 			m.status = "詳細を取得できませんでした（オフライン表示）: " + msg.err.Error()
 			return m, nil
 		}
@@ -510,6 +546,13 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.writeKey(key)
 	case "z", "v", "t", "m":
 		return m, m.viewKey(key)
+	case "E":
+		if m.focus != paneSidebar || m.boardActive() {
+			return m, m.startRenameSection()
+		}
+		return m, nil
+	case "i":
+		return m, m.viewImages()
 	}
 	if m.zoom {
 		m.focus = paneDetail // in the zoomed view, keys scroll the detail
@@ -535,6 +578,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		half := max(1, m.listHeight()/2)
 		switch key {
+		case "space":
+			return m, m.toggleGroup()
+		case "-":
+			return m, m.setAllGroups(true)
+		case "=", "+":
+			return m, m.setAllGroups(false)
 		case "j", "down":
 			return m, m.moveList(1)
 		case "k", "up":
@@ -550,6 +599,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "enter", "l", "right":
 			if m.selectedTask() != nil {
 				m.focus = paneDetail
+			} else if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
+				return m, m.toggleGroup() // expand
 			}
 		case "h", "left":
 			m.focus = paneSidebar
@@ -618,7 +669,8 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	if t := m.selectedTask(); t != nil {
 		prev = t.GID
 	}
-	m.rows = rows
+	m.allRows = rows
+	m.rows = m.visibleRows()
 	if m.selectAfter != "" {
 		prev, m.selectAfter = m.selectAfter, ""
 	}
@@ -672,13 +724,16 @@ func (m *Model) moveList(delta int) tea.Cmd {
 	m.listCursor = next
 	m.ensureListVisible()
 	t := m.selectedTask()
+	if t == nil { // a collapsed group header
+		return nil
+	}
 	return tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
 }
 
 // nextTaskRow returns the first task row at or after i in direction dir, or -1.
 func (m *Model) nextTaskRow(i, dir int) int {
 	for ; i >= 0 && i < len(m.rows); i += dir {
-		if m.rows[i].task != nil {
+		if m.rows[i].selectable() {
 			return i
 		}
 	}
@@ -735,6 +790,14 @@ func (m *Model) syncStatus() (string, bool) {
 		return "● 同期済み " + m.lastSync.Format("15:04"), true
 	}
 	return "", true
+}
+
+// attachmentsHint explains the most likely fix for an attachments error.
+func attachmentsHint(e *sync.AttachmentsError) string {
+	if strings.Contains(e.Error(), "403") || strings.Contains(e.Error(), "scope") {
+		return "（Asana のアプリ設定で attachments:read の権限を追加し、config の scopes にも足してから auth login し直してください）"
+	}
+	return ""
 }
 
 func shortErr(err error) string {

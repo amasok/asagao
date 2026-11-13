@@ -179,6 +179,42 @@ func (a *app) taskMoveCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *app) sectionCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "section", Short: "セクション（リスト）"}
+	var project string
+	rename := &cobra.Command{
+		Use:     "rename <セクション> <新しい名前> --project <プロジェクト>",
+		Short:   "セクションの名前を変更する",
+		Example: `  asana-tui section rename "In Pregoress" "In Progress" --project 新居`,
+		Args:    cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			projectGID, err := st.ResolveProject(ctx, project)
+			if err != nil {
+				return err
+			}
+			gid, err := st.ResolveSection(ctx, projectGID, args[0])
+			if err != nil {
+				return err
+			}
+			name := strings.Join(args[1:], " ")
+			if err := st.RenameSectionLocal(ctx, gid, name, time.Now()); err != nil {
+				return err
+			}
+			return a.reportWrite(cmd, st, writeResult{}, "セクション名を変更しました: "+name)
+		},
+	}
+	rename.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
+	_ = rename.MarkFlagRequired("project")
+	cmd.AddCommand(rename)
+	return cmd
+}
+
 func (a *app) tagCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "tag", Short: "タグ"}
 	cmd.AddCommand(&cobra.Command{
@@ -375,6 +411,8 @@ func DescribeOp(op store.Op) string {
 		return "作成: " + name
 	case store.OpMoveTask:
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
+	case store.OpRenameSection:
+		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
 	case store.OpAddComment:
 		text, _ := op.Payload["text"].(string)
 		if r := []rune(text); len(r) > 30 {

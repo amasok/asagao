@@ -26,6 +26,11 @@ type Syncer struct {
 	Cfg   config.SyncConfig
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)
+	// CacheDir is where attachments are downloaded (default: config.CacheDir()/attachments).
+	CacheDir string
+	// Download fetches a pre-signed attachment URL. It must not add the Asana
+	// Authorization header (the storage service rejects it). Default: plain HTTP GET.
+	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
 }
 
@@ -205,11 +210,33 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
+	// Attachments are optional: if they cannot be read (e.g. the OAuth app lacks the
+	// attachments:read scope), still store everything else and report the problem.
+	atts, attErr := s.API.Attachments(ctx, taskGID)
 	if err := s.Store.UpsertTasks(ctx, append([]asana.Task{*t}, subs...)); err != nil {
 		return err
 	}
-	return s.Store.ReplaceStories(ctx, taskGID, stories, s.clock())
+	if attErr == nil {
+		if err := s.Store.ReplaceAttachments(ctx, taskGID, atts); err != nil {
+			return err
+		}
+	}
+	if err := s.Store.ReplaceStories(ctx, taskGID, stories, s.clock()); err != nil {
+		return err
+	}
+	if attErr != nil {
+		return &AttachmentsError{Err: attErr}
+	}
+	return nil
 }
+
+// AttachmentsError means a task's details were refreshed except for its attachments.
+type AttachmentsError struct{ Err error }
+
+func (e *AttachmentsError) Error() string {
+	return "添付ファイルを取得できませんでした: " + e.Err.Error()
+}
+func (e *AttachmentsError) Unwrap() error { return e.Err }
 
 func (s *Syncer) stateTime(ctx context.Context, key string) (time.Time, error) {
 	v, err := s.Store.SyncState(ctx, key)

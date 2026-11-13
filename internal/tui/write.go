@@ -20,6 +20,7 @@ const (
 	promptNone promptKind = iota
 	promptCreate
 	promptComment
+	promptRenameSection
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -62,7 +63,7 @@ func (m *Model) requestSync() tea.Cmd {
 
 // afterWrite reloads everything a write can change and asks for a sync.
 func (m *Model) afterWrite() tea.Cmd {
-	cmds := []tea.Cmd{m.loadTasks(), m.loadOutbox(), m.requestSync()}
+	cmds := []tea.Cmd{m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.requestSync()}
 	if t := m.selectedTask(); t != nil {
 		cmds = append(cmds, m.loadDetail(t.GID))
 	}
@@ -77,6 +78,8 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
 		}
 		return m, nil, true
+	case imagesReadyMsg:
+		return m, m.onImagesReady(msg), true
 	case tagsLoadedMsg:
 		if msg.err != nil {
 			m.status = "タグを読み込めませんでした: " + msg.err.Error()
@@ -146,6 +149,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptComment:
 		m.prompt.Prompt = "コメント: "
 		m.prompt.Placeholder = "Enter で投稿 / Esc で取り消し"
+	case promptRenameSection:
+		m.prompt.Prompt = "セクション名: "
+		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
 	}
 }
 
@@ -163,8 +169,11 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if value == "" {
 			return m, nil
 		}
-		if kind == promptCreate {
+		switch kind {
+		case promptCreate:
 			return m, m.createTask(value)
+		case promptRenameSection:
+			return m, m.renameSection(m.renameGID, value)
 		}
 		if t := m.selectedTask(); t != nil {
 			return m, m.addComment(*t, value)
@@ -340,6 +349,8 @@ func describeOp(op store.Op) string {
 		return "作成: " + name
 	case store.OpMoveTask:
 		return fmt.Sprintf("移動: %s → %v", name, op.Payload["section_name"])
+	case store.OpRenameSection:
+		return fmt.Sprintf("セクション名の変更: %v → %v", op.Base["name"], op.Payload["name"])
 	case store.OpAddComment:
 		text, _ := op.Payload["text"].(string)
 		return fmt.Sprintf("コメント: %s「%s」", name, text)

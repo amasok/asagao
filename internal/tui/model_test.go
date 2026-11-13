@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -505,5 +507,140 @@ func TestBoardAndZoomFitTerminal(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func projectHarness(t *testing.T, st *store.Store, viewImages func([]string) tea.Cmd) *harness {
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, ViewImages: viewImages})
+	hs := &harness{t: t, m: m}
+	hs.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	hs.run(m.Init())
+	hs.key("h", "j", "l") // open 新居プロジェクト, focus the list
+	return hs
+}
+
+func (h *harness) visibleGIDs() []string {
+	var out []string
+	for _, r := range h.m.rows {
+		if r.task != nil {
+			out = append(out, r.task.GID)
+		}
+	}
+	return out
+}
+
+func TestCollapseSections(t *testing.T) {
+	st := fixtureStore(t)
+	h := projectHarness(t, st, nil)
+	if got := h.visibleGIDs(); len(got) != 4 { // 家具: t1, 手続き: t2 t3 t4
+		t.Fatalf("visible %v", got)
+	}
+	h.key("space") // collapse 家具 (cursor on t1)
+	s := h.screen()
+	if !strings.Contains(s, "▸ 家具 (1)") || slices.Contains(h.visibleGIDs(), "t1") {
+		t.Fatalf("家具 should be collapsed:\n%s", s)
+	}
+	if h.selected() != "" || h.m.rows[h.m.listCursor].key != "s1" {
+		t.Fatal("cursor should sit on the collapsed header")
+	}
+	h.key("j")
+	if h.selected() != "t2" {
+		t.Fatalf("j should move past the collapsed group, got %q", h.selected())
+	}
+
+	// The collapsed state survives a restart (it is stored in the local store).
+	h2 := projectHarness(t, st, nil)
+	if got := h2.visibleGIDs(); len(got) != 3 {
+		t.Fatalf("collapsed state not restored: %v", got)
+	}
+	h2.key("g", "enter") // expand with enter on the header
+	if got := h2.visibleGIDs(); len(got) != 4 {
+		t.Fatalf("enter should expand: %v", got)
+	}
+
+	h2.key("-")
+	if got := h2.visibleGIDs(); len(got) != 0 || !strings.Contains(h2.screen(), "▸ 手続き (3)") {
+		t.Fatalf("- should collapse all:\n%s", h2.screen())
+	}
+	h2.key("=")
+	if got := h2.visibleGIDs(); len(got) != 4 {
+		t.Fatalf("= should expand all: %v", got)
+	}
+	if !strings.Contains(h2.screen(), "タスク (4)") {
+		t.Fatal("title counts all tasks")
+	}
+}
+
+func TestRenameSectionFromListAndBoard(t *testing.T) {
+	st := fixtureStore(t)
+	h := projectHarness(t, st, nil)
+	h.key("j", "E") // cursor in 手続き
+	if h.m.prompt.Value() != "手続き" {
+		t.Fatalf("prompt should be prefilled, got %q", h.m.prompt.Value())
+	}
+	h.typeText("（役所）")
+	h.key("enter")
+	if s := h.screen(); !strings.Contains(s, "▾ 手続き（役所）") || !strings.Contains(s, "↑ 未送信 1") {
+		t.Fatalf("renamed section:\n%s", s)
+	}
+	h.key("v", "E") // board opens on the selected task's column (手続き（役所）)
+	if h.m.prompt.Value() != "手続き（役所）" {
+		t.Fatalf("board rename should target the column, got %q", h.m.prompt.Value())
+	}
+	h.key("esc")
+	h.key("!")
+	if s := h.screen(); !strings.Contains(s, "セクション名の変更: 手続き → 手続き（役所）") {
+		t.Fatalf("outbox:\n%s", s)
+	}
+}
+
+func TestViewImages(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	cached := filepath.Join(dir, "a1-plan.png")
+	if err := os.WriteFile(cached, []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "plan.png", Size: 2048}, {GID: "a2", Name: "見積.pdf"}})
+	_ = st.SetAttachmentPath(ctx, "a1", cached)
+	_ = st.ReplaceStories(ctx, "t1", nil, testNow)
+
+	var viewed []string
+	h := projectHarness(t, st, func(paths []string) tea.Cmd { viewed = paths; return nil })
+	s := h.screen()
+	for _, want := range []string{"添付ファイル (2)", "画像 1 件（i で表示）", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("detail missing %q:\n%s", want, s)
+		}
+	}
+	h.key("i") // offline: uses the cached file, skips the non-image
+	if len(viewed) != 1 || viewed[0] != cached {
+		t.Fatalf("viewed %v", viewed)
+	}
+
+	h.key("j", "i") // t2 has no attachments
+	if !strings.Contains(h.screen(), "添付ファイルはまだ取得していません") && !strings.Contains(h.screen(), "画像はありません") {
+		t.Fatalf("status for no images:\n%s", h.screen())
+	}
+}
+
+func TestInlineImagesInNotes(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	notes := "めっちゃ見にくいな\n\nこれ\n\nhttps://app.asana.com/app/asana/-/get_asset?asset_id=1220507679870013\n\nこれ"
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", Notes: notes, DueOn: "2026-11-20",
+		Assignee: &asana.Ref{GID: "me"}, Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	var viewed []string
+	h := projectHarness(t, st, func(p []string) tea.Cmd { viewed = p; return nil })
+	s := h.screen()
+	if strings.Contains(s, "get_asset") || !strings.Contains(s, "[画像1]") || !strings.Contains(s, "画像 1 件（i で表示）") {
+		t.Fatalf("inline image link should be shown as [画像1]:\n%s", s)
+	}
+	h.key("i") // offline and not cached: cannot fetch
+	if len(viewed) != 0 || !strings.Contains(h.screen(), "オフラインのため画像を取得できません") {
+		t.Fatalf("offline inline image:\n%s", h.screen())
 	}
 }
