@@ -3,6 +3,7 @@ package imageview
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,28 +34,35 @@ func Run(paths []string, protocol string) error {
 		fmt.Fprint(out, "\x1b[2J\x1b[?25h\x1b[?1049l")
 	}()
 
-	keys := bufio.NewReader(in)
+	browse(bufio.NewReader(in), len(paths),
+		func(i int) { draw(out, paths, i, protocol, terminalBox()) },
+		func(i int) { _ = OpenExternal(paths[i]) })
+	return nil
+}
+
+// browse runs the key loop over n images: show(i) draws image i, open(i) opens it in the OS
+// viewer. It returns when the user quits or input ends.
+func browse(keys *bufio.Reader, n int, show, open func(i int)) {
 	i := 0
 	for {
-		draw(paths, i, protocol)
+		show(i)
 		switch readKey(keys) {
 		case "q", "esc", "ctrl+c":
-			return nil
+			return
 		case "n", "right", "space", "j":
-			i = (i + 1) % len(paths)
+			i = (i + 1) % n
 		case "p", "left", "k":
-			i = (i - 1 + len(paths)) % len(paths)
+			i = (i - 1 + n) % n
 		case "o":
-			_ = OpenExternal(paths[i])
+			open(i)
 		}
 	}
 }
 
-func draw(paths []string, i int, protocol string) {
-	out := os.Stdout
+// draw shows image i of paths in the terminal box b, with a caption on the last line.
+func draw(out io.Writer, paths []string, i int, protocol string, b Box) {
 	Clear(out, protocol)
 	fmt.Fprint(out, "\x1b[2J\x1b[H")
-	b := terminalBox()
 	b.Rows = max(1, b.Rows-2) // leave room for the caption
 	data, err := os.ReadFile(paths[i])
 	if err == nil {
