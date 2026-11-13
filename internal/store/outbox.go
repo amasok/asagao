@@ -460,61 +460,68 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 		if err := ensureNotSending(op); err != nil {
 			return err
 		}
-		switch op.Kind {
-		case OpCreateTask, OpDuplicateTask:
-			if err := discardLocalTask(ctx, tx, op.TaskGID, op.Kind == OpCreateTask); err != nil {
-				return err
-			}
-		case OpAddComment:
-			if gid, _ := op.Payload["story_gid"].(string); gid != "" {
-				if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
-					return err
-				}
-			}
-		case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
-			if err := applyRelation(ctx, tx, *op, true); err != nil {
-				return err
-			}
-		case OpCreateStatus:
-			gid, _ := op.Payload["status"].(string)
-			if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid); err != nil {
-				return err
-			}
-		case OpUploadAttachment:
-			gid, _ := op.Payload["attachment"].(string)
-			if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
-				return err
-			}
-		case OpAddTag, OpRemoveTag:
-			tag, _ := op.Payload["tag"].(string)
-			q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
-			if op.Kind == OpRemoveTag {
-				q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
-			}
-			if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
-				return err
-			}
-		case OpRenameSection:
-			if name, ok := op.Base["name"].(string); ok {
-				if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {
-					return err
-				}
-			}
-		case OpMoveTask:
-			project, _ := op.Payload["project"].(string)
-			section, _ := op.Base["section"].(string)
-			if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
-				return err
-			}
-		case OpUpdateTask:
-			// Restore the values from before the local edit.
-			if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
+		return discardOpTx(ctx, tx, op)
+	})
+}
+
+// discardOpTx drops entry op and undoes its local change.
+func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
+	id := op.ID
+	var err error
+	switch op.Kind {
+	case OpCreateTask, OpDuplicateTask:
+		if err := discardLocalTask(ctx, tx, op.TaskGID, op.Kind == OpCreateTask); err != nil {
+			return err
+		}
+	case OpAddComment:
+		if gid, _ := op.Payload["story_gid"].(string); gid != "" {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id)
-		return err
-	})
+	case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
+		if err := applyRelation(ctx, tx, *op, true); err != nil {
+			return err
+		}
+	case OpCreateStatus:
+		gid, _ := op.Payload["status"].(string)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid); err != nil {
+			return err
+		}
+	case OpUploadAttachment:
+		gid, _ := op.Payload["attachment"].(string)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
+			return err
+		}
+	case OpAddTag, OpRemoveTag:
+		tag, _ := op.Payload["tag"].(string)
+		q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
+		if op.Kind == OpRemoveTag {
+			q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
+		}
+		if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
+			return err
+		}
+	case OpRenameSection:
+		if name, ok := op.Base["name"].(string); ok {
+			if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {
+				return err
+			}
+		}
+	case OpMoveTask:
+		project, _ := op.Payload["project"].(string)
+		section, _ := op.Base["section"].(string)
+		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
+			return err
+		}
+	case OpUpdateTask:
+		// Restore the values from before the local edit.
+		if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id)
+	return err
 }
 
 // discardLocalTask removes a task that was never sent, its local subtasks, and every

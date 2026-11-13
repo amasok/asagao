@@ -215,4 +215,18 @@ ALTER TABLE outbox ADD COLUMN verify INTEGER NOT NULL DEFAULT 0;
 -- processing that one, so a missing result is trusted only some time after it.
 ALTER TABLE outbox ADD COLUMN last_sent_at TEXT NOT NULL DEFAULT '';
 `,
+	`
+-- Local changes dropped automatically because what they change was deleted in Asana
+-- (see discard.go). notified = 1 once a front end has shown them.
+CREATE TABLE discarded_changes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,
+    task_gid     TEXT NOT NULL DEFAULT '',
+    task_name    TEXT NOT NULL DEFAULT '',
+    summary      TEXT NOT NULL,
+    reason       TEXT NOT NULL DEFAULT '',
+    discarded_at TEXT NOT NULL,
+    notified     INTEGER NOT NULL DEFAULT 0
+);
+`,
 }

@@ -23,6 +23,9 @@ type PushResult struct {
 	Remaining int `json:"remaining"`
 	// Busy is set when another process was already sending (Push returns ErrPushBusy).
 	Busy bool `json:"busy,omitempty"`
+	// Discarded lists changes dropped because what they change was deleted in Asana. They
+	// are also kept for the front ends to show once (store.PendingDiscards).
+	Discarded []store.Discard `json:"discarded,omitempty"`
 }
 
 // ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
@@ -132,7 +135,12 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 				var m match
 				out, m, err = s.reconcile(ctx, *op)
 				switch {
-				case isRejected(err): // e.g. the task is gone (404) or not ours (403)
+				case isNotFound(err): // what it changes was deleted in Asana
+					if err := s.dropGone(ctx, *op, err, &res); err != nil {
+						return res, err
+					}
+					sendIt = false
+				case isRejected(err): // e.g. not ours (403)
 					if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
 						return res, err
 					}
@@ -192,6 +200,10 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 					return res, err
 				}
 				return res, err // offline or cancelled: keep the rest for later
+			case isNotFound(err): // what it changes was deleted in Asana
+				if err := s.dropGone(ctx, *op, err, &res); err != nil {
+					return res, err
+				}
 			default:
 				verify, ferr := s.handleError(ctx, *op, err)
 				if ferr != nil {
@@ -311,6 +323,66 @@ func (s *Syncer) handleError(ctx context.Context, op store.Op, cause error) (ver
 // maxSendAttempts is how many requests for one entry may fail with a 5xx (over all
 // pushes) before it is marked failed for the user.
 const maxSendAttempts = 5
+
+func isNotFound(err error) bool {
+	var apiErr *asana.Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+}
+
+// dropGone handles a 404 for op: Asana no longer has what it changes. A 404 does not say
+// which object is missing, so for a change to a task the task itself is looked up: if it
+// is gone, the task and every change queued for it (and its subtasks) are dropped;
+// otherwise only this change is (its section, project, tag, ... is gone). A create is
+// dropped with its local task (its parent or project is gone). Dropped changes are
+// recorded for the user and listed in res.Discarded.
+func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, res *PushResult) error {
+	reason := "Asana で削除されています (" + cause.Error() + ")"
+	now := s.clock()
+	var discards []store.Discard
+	var err error
+	switch op.Kind {
+	case store.OpCreateTask, store.OpDuplicateTask:
+		discards, err = s.Store.DiscardDeletedTask(ctx, op.TaskGID, reason, now)
+	case store.OpRenameSection, store.OpCreateStatus:
+		var d store.Discard
+		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
+		discards = []store.Discard{d}
+	default:
+		task, rerr := s.Store.RealGID(ctx, op.TaskGID)
+		if rerr != nil {
+			return rerr
+		}
+		gone := store.IsLocalGID(task) // its create is not queued any more
+		if !gone {
+			_, perr := s.API.Task(ctx, task)
+			switch {
+			case isNotFound(perr):
+				gone = true
+			case perr != nil: // cannot tell what is missing: keep it for now
+				if isNetworkError(perr) || isRateLimited(perr) {
+					if err := s.Store.ReleaseOp(context.WithoutCancel(ctx), op.ID); err != nil {
+						return err
+					}
+					return perr // offline: stop like any network error
+				}
+				res.Failed++
+				return s.Store.MarkOpFailed(ctx, op.ID, cause)
+			}
+		}
+		if gone {
+			discards, err = s.Store.DiscardDeletedTask(ctx, task, reason, now)
+		} else {
+			var d store.Discard
+			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
+			discards = []store.Discard{d}
+		}
+	}
+	if err != nil {
+		return err
+	}
+	res.Discarded = append(res.Discarded, discards...)
+	return nil
+}
 
 // isRejected reports whether Asana answered with a 4xx other than 429: the request itself
 // is not acceptable (missing, forbidden, invalid), so repeating it will not help.

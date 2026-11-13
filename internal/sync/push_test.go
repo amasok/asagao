@@ -226,7 +226,23 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 			}
 		}
 		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(list, ","))
+	case len(parts) == 3 && parts[0] == "tasks" && parts[2] == "subtasks" && r.Method == http.MethodPost:
+		if _, ok := w.tasks[parts[1]]; !ok {
+			rw.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(rw, `{"errors":[{"message":"parent not found"}]}`)
+			return
+		}
+		w.next++
+		gid := fmt.Sprintf("new%d", w.next)
+		name, _ := body.Data["name"].(string)
+		w.tasks[gid] = &serverTask{Name: name, Created: time.Now().UTC()}
+		fmt.Fprintf(rw, `{"data":%s}`, w.taskJSON(gid))
 	case len(parts) == 3 && parts[0] == "sections" && parts[2] == "addTask":
+		if parts[1] == "gone" {
+			rw.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(rw, `{"errors":[{"message":"section not found"}]}`)
+			return
+		}
 		gid, _ := body.Data["task"].(string)
 		w.tasks[gid].Section = parts[1]
 		fmt.Fprint(rw, `{"data":{}}`)
@@ -482,21 +498,6 @@ func TestPushOfflineKeepsQueue(t *testing.T) {
 	}
 	if p, _, f := pendingCount(t, st); p != 1 || f != 0 {
 		t.Fatalf("entry should stay pending: p=%d f=%d", p, f)
-	}
-}
-
-func TestPushDeletedTaskFails(t *testing.T) {
-	ws, _, s, st := setupPush(t)
-	ctx := context.Background()
-	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"completed": true}, now)
-	delete(ws.tasks, "t1")
-	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 1 {
-		t.Fatalf("push = %+v, %v", res, err)
-	}
-	ops, _ := st.ListOps(ctx)
-	if ops[0].State != store.OpFailed || !strings.Contains(ops[0].LastError, "404") {
-		t.Fatalf("op = %+v", ops[0])
 	}
 }
 
@@ -1993,8 +1994,8 @@ func TestPushVerifyRejectedFails(t *testing.T) {
 			if r.Method == http.MethodPost {
 				rw.WriteHeader(http.StatusBadGateway)
 			} else {
-				rw.WriteHeader(http.StatusNotFound)
-				fmt.Fprint(rw, `{"errors":[{"message":"task not found"}]}`)
+				rw.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(rw, `{"errors":[{"message":"forbidden"}]}`)
 			}
 			return true
 		}
@@ -2004,7 +2005,7 @@ func TestPushVerifyRejectedFails(t *testing.T) {
 	if err != nil || res.Failed != 1 || res.Remaining != 0 {
 		t.Fatalf("push = %+v %v", res, err)
 	}
-	if op := opByKind(t, st, store.OpAddComment); op == nil || op.State != store.OpFailed || !strings.Contains(op.LastError, "404") {
+	if op := opByKind(t, st, store.OpAddComment); op == nil || op.State != store.OpFailed || !strings.Contains(op.LastError, "403") {
 		t.Fatalf("entry = %+v", op)
 	}
 }
@@ -2239,5 +2240,164 @@ func TestRetryResetsAttempts(t *testing.T) {
 	}
 	if res, err := s.Push(ctx); err != nil || res.Failed != 0 {
 		t.Fatalf("one more 5xx after a retry must not fail at once: %+v %v", res, err)
+	}
+}
+
+// --- changes to things deleted in Asana are dropped and recorded ---
+
+func TestPushDropsChangesToDeletedTask(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "消されたタスク", Workspace: &asana.Ref{GID: "w1"}}})
+	_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"completed": true}, now)
+	_, _ = st.AddCommentLocal(ctx, "t2", "メモ", store.UserRef{GID: "me"}, now)
+	sub, _ := st.CreateTaskLocal(ctx, store.NewTask{ParentGID: "t2", Name: "子"}, now)
+	_, _ = st.AddCommentLocal(ctx, sub, "子へのメモ", store.UserRef{GID: "me"}, now)
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now) // unrelated
+	// t2 was deleted in Asana (the fake server never had it).
+
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 0 || res.Remaining != 0 || len(res.Discarded) != 4 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if ws.tasks["t1"].Name != "B" {
+		t.Fatal("the unrelated change should be sent")
+	}
+	if n := ws.countCalls("POST /tasks/t2/"); n != 0 {
+		t.Fatalf("nothing more should be sent for the deleted task's subtree: %v", ws.calls)
+	}
+	for _, gid := range []string{"t2", sub} {
+		if _, err := st.GetTask(ctx, gid); err == nil {
+			t.Fatalf("task %s should be removed locally", gid)
+		}
+	}
+	assertOutboxEmpty(t, st)
+	// The front ends show the dropped changes once.
+	pending, err := st.PendingDiscards(ctx)
+	if err != nil || len(pending) != 4 {
+		t.Fatalf("pending discards = %+v %v", pending, err)
+	}
+	want := []string{"完了にする", "コメント「メモ」", "サブタスク「子」の作成", "コメント「子へのメモ」"}
+	ids := []int64{}
+	for i, d := range pending {
+		if d.Summary != want[i] || !strings.Contains(d.Reason, "404") {
+			t.Fatalf("discard %d = %+v, want summary %q", i, d, want[i])
+		}
+		ids = append(ids, d.ID)
+	}
+	if pending[0].TaskName != "消されたタスク" {
+		t.Fatalf("task name = %q", pending[0].TaskName)
+	}
+	if err := st.MarkDiscardsNotified(ctx, ids); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := st.PendingDiscards(ctx); len(again) != 0 {
+		t.Fatalf("shown discards should not be pending: %+v", again)
+	}
+}
+
+// A 404 about something else than the task (here the section) drops only that change.
+func TestPushDropsOnlyChangeWhoseTargetIsGone(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "A"}, {GID: "gone", Name: "消えたセクション"}})
+	if err := st.MoveTaskLocal(ctx, "t1", "p1", "gone", now); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || len(res.Discarded) != 1 || res.Discarded[0].Kind != store.OpMoveTask {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if ws.tasks["t1"].Name != "B" {
+		t.Fatal("the task still exists: its other changes are sent")
+	}
+	d, err := st.GetTask(ctx, "t1")
+	if err != nil || d.Memberships[0].SectionGID != "s1" {
+		t.Fatalf("the dropped move is undone locally: %+v %v", d, err)
+	}
+}
+
+// A subtask created offline under a task deleted in Asana is dropped.
+func TestPushDropsSubtaskOfDeletedParent(t *testing.T) {
+	_, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "親", Workspace: &asana.Ref{GID: "w1"}}})
+	sub, _ := st.CreateTaskLocal(ctx, store.NewTask{ParentGID: "t2", Name: "子"}, now)
+	res, err := s.Push(ctx)
+	if err != nil || len(res.Discarded) != 1 || res.Discarded[0].TaskGID != sub {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if d, _ := st.GetTask(ctx, "t2"); d == nil || d.NumSubtasks != 0 {
+		t.Fatalf("parent should no longer count the dropped subtask: %+v", d)
+	}
+}
+
+// The check after a 5xx finds the task gone: everything for it is dropped.
+func TestPushVerifyFindsTaskDeleted(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.AddCommentLocal(ctx, "t1", "x", store.UserRef{GID: "me"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/tasks/t1/stories" && r.Method == http.MethodPost {
+			delete(ws.tasks, "t1") // deleted meanwhile
+			rw.WriteHeader(http.StatusBadGateway)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || len(res.Discarded) != 1 || res.Failed != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if _, err := st.GetTask(ctx, "t1"); err == nil {
+		t.Fatal("deleted task should be removed locally")
+	}
+	assertOutboxEmpty(t, st)
+}
+
+// If Asana cannot be asked whether the task still exists, nothing is dropped yet.
+func TestPushKeepsChangeWhenDeletionCannotBeChecked(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "A"}, {GID: "gone", Name: "?"}})
+	_ = st.MoveTaskLocal(ctx, "t1", "p1", "gone", now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/tasks/t1" {
+			dropConnection(rw)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err == nil || len(res.Discarded) != 0 || res.Remaining != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpMoveTask); op == nil || op.State != store.OpPending {
+		t.Fatalf("entry should stay queued: %+v", op)
+	}
+}
+
+// A status update on a project deleted in Asana is dropped.
+func TestPushDropsStatusOfDeletedProject(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	if _, err := st.CreateStatusLocal(ctx, "p1", "on_track", "順調", "本文", "", store.UserRef{Name: "Me"}, now); err != nil {
+		t.Fatal(err)
+	}
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/status_updates" {
+			rw.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(rw, `{"errors":[{"message":"project not found"}]}`)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || len(res.Discarded) != 1 || res.Discarded[0].Summary != "ステータス更新「順調」" {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if ups, _ := st.StatusUpdates(ctx, "p1"); len(ups) != 0 {
+		t.Fatalf("local status should be removed: %+v", ups)
 	}
 }
