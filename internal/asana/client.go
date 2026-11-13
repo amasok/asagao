@@ -57,7 +57,8 @@ type envelope struct {
 	} `json:"next_page"`
 }
 
-// do sends one request and decodes the "data" field into out. It retries on 429 and 5xx.
+// do sends one request and decodes the "data" field into out. It retries on 429, and on
+// 5xx for idempotent methods (see retryable).
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body, out any) (*envelope, error) {
 	u := c.BaseURL + path
 	if len(q) > 0 {
@@ -93,7 +94,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			return nil, err
 		}
 
-		if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) && attempt < c.MaxRetries {
+		if retryable(method, resp.StatusCode) && attempt < c.MaxRetries {
 			if err := c.wait(ctx, retryDelay(resp, attempt)); err != nil {
 				return nil, err
 			}
@@ -115,6 +116,16 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		}
 		return &env, nil
 	}
+}
+
+// retryable reports whether a response may be retried. 429 means the request was not
+// processed. A 5xx to a POST (create, add comment, ...) may have been applied anyway, so
+// repeating it could duplicate the change; only idempotent methods are retried then.
+func retryable(method string, status int) bool {
+	if status == http.StatusTooManyRequests {
+		return true
+	}
+	return status >= 500 && method != http.MethodPost
 }
 
 func retryDelay(resp *http.Response, attempt int) time.Duration {
