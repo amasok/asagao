@@ -36,6 +36,21 @@ const ResetReason = "ローカルのデータを初期化したため、送ら�
 // another process holds the push lock for its whole run, so Reset cannot happen between
 // its push and pull (which would bring old data back): Reset returns ErrPushBusy instead.
 func (s *Store) Reset(ctx context.Context, force bool, now time.Time) (unsent int, err error) {
+	upTo := int64(0) // no unsent change may be deleted
+	if force {
+		upTo = AnyUnsent
+	}
+	return s.ResetUpTo(ctx, upTo, now)
+}
+
+// AnyUnsent lets ResetUpTo delete every unsent change, however many there are.
+const AnyUnsent int64 = -1
+
+// ResetUpTo is Reset for a reset the user confirmed after seeing the unsent changes: it
+// deletes them only if none was queued after outbox entry upTo (the newest one shown;
+// 0 = there were none). Otherwise nothing is deleted and the error is ErrUnsentChanges,
+// so the user can be asked again. AnyUnsent deletes them all (Reset with force).
+func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsent int, err error) {
 	unlock, err := s.TryLockPush()
 	if err != nil {
 		return 0, err
@@ -43,10 +58,11 @@ func (s *Store) Reset(ctx context.Context, force bool, now time.Time) (unsent in
 	defer unlock()
 	var files []string
 	err = s.tx(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox").Scan(&unsent); err != nil {
+		var maxID int64
+		if err := tx.QueryRowContext(ctx, "SELECT count(*), COALESCE(max(id), 0) FROM outbox").Scan(&unsent, &maxID); err != nil {
 			return err
 		}
-		if unsent > 0 && !force {
+		if upTo != AnyUnsent && maxID > upTo {
 			return ErrUnsentChanges
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT local_path FROM attachments WHERE local_path <> ''

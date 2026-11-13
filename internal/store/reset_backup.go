@@ -30,24 +30,33 @@ type ResetResult struct {
 
 // UnsentCount is the number of outbox entries not in Asana (any state).
 func (s *Store) UnsentCount(ctx context.Context) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox").Scan(&n)
+	n, _, err := s.UnsentState(ctx)
 	return n, err
 }
 
-// ResetWithBackup resets the store (see Reset). Unless confirmed, it refuses with
-// ErrUnsentChanges (and their number) when there are unsent changes. Before deleting
-// anything it writes the unsent changes and dropped changes to a new file in backupDir;
-// if that fails nothing is deleted.
-func (s *Store) ResetWithBackup(ctx context.Context, backupDir string, confirmed bool, now time.Time) (ResetResult, error) {
+// UnsentState is the number of unsent changes and the id of the newest one (0 if none):
+// what a user confirms before a reset (see ResetUpTo).
+func (s *Store) UnsentState(ctx context.Context) (n int, newest int64, err error) {
+	err = s.db.QueryRowContext(ctx, "SELECT count(*), COALESCE(max(id), 0) FROM outbox").Scan(&n, &newest)
+	return n, newest, err
+}
+
+// ResetWithBackup resets the store (see ResetUpTo). upTo is the newest unsent change the
+// user agreed to delete (0: none, AnyUnsent: whatever there is); if a newer one exists,
+// nothing is deleted and the error is ErrUnsentChanges (with their number), so the user
+// can be asked again. Before deleting anything it writes the unsent changes and dropped
+// changes to a new file in backupDir; if that fails nothing is deleted.
+func (s *Store) ResetWithBackup(ctx context.Context, backupDir string, upTo int64, now time.Time) (ResetResult, error) {
 	var res ResetResult
 	ops, err := s.ListOps(ctx)
 	if err != nil {
 		return res, err
 	}
-	if len(ops) > 0 && !confirmed {
-		res.Unsent = len(ops)
-		return res, fmt.Errorf("%d 件: %w", len(ops), ErrUnsentChanges)
+	for _, op := range ops {
+		if upTo != AnyUnsent && op.ID > upTo {
+			res.Unsent = len(ops)
+			return res, fmt.Errorf("%d 件: %w", len(ops), ErrUnsentChanges)
+		}
 	}
 	discarded, err := s.RecentDiscards(ctx, -1)
 	if err != nil {
@@ -61,8 +70,8 @@ func (s *Store) ResetWithBackup(ctx context.Context, backupDir string, confirmed
 		}
 		res.BackupPath = path
 	}
-	res.Unsent, err = s.Reset(ctx, confirmed, now)
-	if errors.Is(err, ErrUnsentChanges) { // added after we looked (another process)
+	res.Unsent, err = s.ResetUpTo(ctx, upTo, now)
+	if errors.Is(err, ErrUnsentChanges) { // queued after we looked (another process)
 		return res, fmt.Errorf("%d 件: %w", res.Unsent, err)
 	}
 	return res, err

@@ -16,6 +16,7 @@ import (
 type (
 	resetAskMsg struct {
 		unsent int
+		newest int64 // the newest unsent change: the reset deletes none queued after it
 		err    error
 	}
 	resetDoneMsg struct {
@@ -27,12 +28,12 @@ type (
 func (m *Model) startReset() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		n, err := st.UnsentCount(m.ctx)
-		return resetAskMsg{unsent: n, err: err}
+		n, newest, err := st.UnsentState(m.ctx)
+		return resetAskMsg{unsent: n, newest: newest, err: err}
 	}
 }
 
-func (m *Model) showResetConfirm(unsent int) {
+func (m *Model) showResetConfirm(unsent int, newest int64) {
 	title := "ローカルのデータを初期化しますか？（ログイン情報は残り、次の同期でログイン中のアカウントのデータを取り込みます）"
 	confirm := "初期化する"
 	if unsent > 0 {
@@ -41,19 +42,23 @@ func (m *Model) showResetConfirm(unsent int) {
 		confirm = fmt.Sprintf("未送信の %d 件ごと初期化する", unsent)
 	}
 	m.picker = &picker{kind: pickReset, title: title,
-		items: []pickerItem{{label: "やめる"}, {label: confirm, value: strconv.Itoa(unsent)}}}
+		items: []pickerItem{{label: "やめる"}, {label: confirm, value: strconv.FormatInt(newest, 10)}}}
 }
 
-// reset runs after the confirmation; value is the number of unsent changes the user agreed
-// to lose ("" = cancelled). If more appeared since, the store refuses and we ask again.
+// reset runs after the confirmation; value is the newest unsent change the user agreed to
+// lose ("" = cancelled). If a change was queued after it, the store deletes nothing and
+// we ask again with the new count.
 func (m *Model) reset(value string) tea.Cmd {
 	if value == "" {
 		return nil
 	}
-	agreed, _ := strconv.Atoi(value)
+	upTo, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return nil
+	}
 	st, dir, now := m.deps.Store, m.deps.BackupDir, m.deps.Now()
 	return func() tea.Msg {
-		res, err := st.ResetWithBackup(m.ctx, dir, agreed > 0, now)
+		res, err := st.ResetWithBackup(m.ctx, dir, upTo, now)
 		return resetDoneMsg{res: res, err: err}
 	}
 }
@@ -64,15 +69,14 @@ func (m *Model) updateReset(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
 		} else {
-			m.showResetConfirm(msg.unsent)
+			m.showResetConfirm(msg.unsent, msg.newest)
 		}
 		return nil, true
 	case resetDoneMsg:
 		switch {
 		case errors.Is(msg.err, store.ErrUnsentChanges):
-			m.status = "未送信の変更が増えたため、初期化をやめました。もう一度確かめてください"
-			m.showResetConfirm(msg.res.Unsent)
-			return nil, true
+			m.status = "未送信の変更が増えたため、何も消さずに初期化をやめました。もう一度確かめてください"
+			return m.startReset(), true
 		case errors.Is(msg.err, store.ErrPushBusy):
 			m.status = "別の asana-tui が同期・送信中のため初期化できません。終わってからやり直してください"
 			return nil, true

@@ -34,7 +34,13 @@ func (a *app) resetCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			res, err := st.ResetWithBackup(ctx, backupDir(), force, time.Now())
+			// --force agrees to delete whatever is unsent when it runs (the count is shown
+			// without it, and afterwards with the backup and in `outbox discarded`).
+			upTo := int64(0)
+			if force {
+				upTo = store.AnyUnsent
+			}
+			res, err := st.ResetWithBackup(ctx, backupDir(), upTo, time.Now())
 			switch {
 			case errors.Is(err, store.ErrUnsentChanges):
 				return fmt.Errorf("Asana に送っていない変更が %d 件あり、初期化すると消えます。"+

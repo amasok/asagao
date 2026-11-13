@@ -70,24 +70,36 @@ func TestResetAsksWithUnsentCount(t *testing.T) {
 }
 
 // If changes are added between the question and the answer, nothing is deleted and the
-// user is asked again with the new count.
+// user is asked again with the new count, both with none and with some unsent changes.
 func TestResetAsksAgainWhenChangesAppear(t *testing.T) {
-	h, dir := resetHarness(t)
-	ctx, st := context.Background(), h.m.deps.Store
-	h.run(h.m.startReset())
-	if !strings.Contains(h.m.picker.title, "ログイン情報は残り") {
-		t.Fatalf("no unsent changes: %q", h.m.picker.title)
-	}
-	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow) // meanwhile
-	h.key("j", "enter")
-	if h.m.picker == nil || !strings.Contains(h.m.picker.title, "1 件") || !strings.Contains(h.m.status, "増えた") {
-		t.Fatalf("should ask again: status=%q picker=%+v", h.m.status, h.m.picker)
-	}
-	if _, err := st.GetTask(ctx, "t1"); err != nil {
-		t.Fatalf("nothing should be deleted: %v", err)
-	}
-	if files, _ := os.ReadDir(dir); len(files) != 0 {
-		t.Fatalf("no backup yet: %v", files)
+	for _, before := range []int{0, 1} {
+		t.Run(fmt.Sprint(before, " unsent"), func(t *testing.T) {
+			h, dir := resetHarness(t)
+			ctx, st := context.Background(), h.m.deps.Store
+			if before == 1 {
+				_, _ = st.AddCommentLocal(ctx, "t2", "確認したメモ", store.UserRef{GID: "me"}, testNow)
+			}
+			h.run(h.m.startReset())
+			if want := fmt.Sprintf("%d 件", before); before > 0 && !strings.Contains(h.m.picker.title, want) {
+				t.Fatalf("title = %q, want %q", h.m.picker.title, want)
+			}
+			_, _ = st.AddCommentLocal(ctx, "t2", "あとから足したメモ", store.UserRef{GID: "me"}, testNow) // meanwhile
+			h.key("j", "enter")
+			want := fmt.Sprintf("%d 件", before+1)
+			if h.m.picker == nil || !strings.Contains(h.m.picker.title, want) || !strings.Contains(h.m.status, "増えた") {
+				t.Fatalf("should ask again with %s: status=%q picker=%+v", want, h.m.status, h.m.picker)
+			}
+			if n, _ := st.UnsentCount(ctx); n != before+1 {
+				t.Fatalf("nothing should be deleted: %d unsent", n)
+			}
+			if files, _ := os.ReadDir(dir); len(files) != 0 {
+				t.Fatalf("no backup yet: %v", files)
+			}
+			h.key("j", "enter") // confirmed with the new count
+			if n, _ := st.UnsentCount(ctx); n != 0 {
+				t.Fatalf("now everything confirmed is deleted: %d", n)
+			}
+		})
 	}
 }
 
