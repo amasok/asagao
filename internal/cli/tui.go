@@ -2,12 +2,16 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/spf13/cobra"
 
 	"github.com/amasok/asana-tui/internal/browser"
 	"github.com/amasok/asana-tui/internal/imageview"
@@ -27,8 +31,18 @@ func (a *app) runTUI(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	keys, err := a.cfg.KeyBindings()
+	if err != nil {
+		return err
+	}
+	for id := range keys {
+		if !slices.Contains(tui.ActionIDs(), id) {
+			return fmt.Errorf("config [keys]: unknown action %q (see `asana-tui keys`)", id)
+		}
+	}
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
-		InlineImages: a.inlineImages(), RunEditor: a.runEditor}
+		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
+		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)
@@ -87,4 +101,18 @@ func (a *app) runEditor(path string, done func(error) tea.Msg) tea.Cmd {
 	}
 	args := strings.Fields(cmdline)
 	return tea.ExecProcess(exec.Command(args[0], append(args[1:], path)...), done)
+}
+
+func (a *app) keysCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "keys",
+		Short: "TUI の操作名の一覧（config.toml の [keys] でキーを変えるときに使う）",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), "config.toml の例:\n\n[keys]\ncomplete = \"d\"\ndue = [\"D\", \"ctrl+t\"]\n\n使える操作名:")
+			for _, id := range tui.ActionIDs() {
+				fmt.Fprintln(cmd.OutOrStdout(), "  "+id)
+			}
+			return nil
+		},
+	}
 }

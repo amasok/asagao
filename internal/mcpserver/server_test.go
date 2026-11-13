@@ -374,3 +374,19 @@ func TestGetAttachmentReturnsImage(t *testing.T) {
 		t.Fatalf("first content should be the PNG image: %T", res.Content[0])
 	}
 }
+
+func TestListRecentlyModified(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	_ = st.UpsertTasks(ctx, []asana.Task{
+		{GID: "t1", Name: "ソファを買う", Assignee: &asana.Ref{GID: "me"}, ModifiedAt: testNow.Add(-2 * time.Hour)},
+		{GID: "t2", Name: "転居届を出す", Completed: true, Assignee: &asana.Ref{GID: "me"}, ModifiedAt: testNow.Add(-time.Hour)},
+		{GID: "t3", Name: "電気の契約", ModifiedAt: testNow.AddDate(0, 0, -30)},
+	})
+	cs := connect(t, &Server{Store: st})
+	var tasks TasksOutput
+	call(t, cs, "list_tasks", map[string]any{"assignee": "any", "modified_within_days": 7}, &tasks)
+	if got := names(tasks.Tasks); !slices.Equal(got, []string{"転居届を出す", "ソファを買う"}) {
+		t.Fatalf("recent = %v", got)
+	}
+}

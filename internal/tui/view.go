@@ -101,6 +101,19 @@ func (m *Model) ensureListVisible() {
 
 func (m *Model) renderBody(h int) string {
 	sw, lw, dw := m.paneWidths()
+	if m.calendarActive() && !m.zoom {
+		if m.narrow() {
+			if m.focus == paneSidebar {
+				return m.pane("プロジェクト", m.sidebarLines(m.width-4, h-3), m.width, h, true)
+			}
+			return m.renderCalendar(m.width, h)
+		}
+		if sw == 0 {
+			return m.renderCalendar(m.width, h)
+		}
+		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
+		return lipgloss.JoinHorizontal(lipgloss.Top, side, m.renderCalendar(m.width-sw, h))
+	}
 	if m.boardActive() && !m.zoom {
 		// The board takes the list and detail area; enter opens the zoomed detail.
 		if m.narrow() {
@@ -174,6 +187,9 @@ func (m *Model) renderHeader() string {
 	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
+	}
+	if m.calendarActive() {
+		left += "  " + m.st.headerFilter.Render("[カレンダー]")
 	}
 	if m.query != "" {
 		left += "  " + m.st.headerFilter.Render("検索: "+m.query)
@@ -266,9 +282,12 @@ func (m *Model) sidebarLines(w, h int) []string {
 	lines := make([]string, 0, len(m.scopes))
 	for i, s := range m.scopes {
 		label := s.name
-		if s.kind == scopeMyTasks {
+		switch s.kind {
+		case scopeMyTasks:
 			label = "★ " + label
-		} else {
+		case scopeRecent:
+			label = "◷ " + label
+		default:
 			label = "  " + label
 		}
 		lines = append(lines, m.highlight(label, w, i == m.scopeCursor, m.focus == paneSidebar))

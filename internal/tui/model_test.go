@@ -164,7 +164,7 @@ func TestNavigation(t *testing.T) {
 	}
 
 	// Switch to the project in the sidebar: tasks grouped by section, all assignees.
-	h.key("h", "j")
+	h.key("h", "j", "j")
 	s := h.screen()
 	for _, want := range []string{"家具", "手続き", "ガスの契約"} {
 		if !strings.Contains(s, want) {
@@ -287,7 +287,7 @@ func TestToggleCompleteOffline(t *testing.T) {
 
 func TestCreateTaskInProject(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	h.key("h", "j", "l") // project 新居プロジェクト, focus list (first task is in 家具)
+	h.key("h", "j", "j", "l") // project 新居プロジェクト, focus list (first task is in 家具)
 	h.key("a")
 	h.typeText("カーテンを買う due:明日")
 	h.key("enter")
@@ -389,11 +389,12 @@ func newHarnessWithExtras(t *testing.T, w, h int) *harness {
 
 func TestBoardViewAndCardMoves(t *testing.T) {
 	h := newHarnessWithExtras(t, 140, 30)
-	h.key("v")
-	if h.m.board && h.m.boardActive() {
-		t.Fatal("board should not be available in My Tasks")
+	h.key("v") // My Tasks: list -> calendar (no board outside projects)
+	if h.m.boardActive() || !h.m.calendarActive() {
+		t.Fatal("v in My Tasks should switch to the calendar")
 	}
-	h.key("h", "j", "l", "v") // open the project, show the board
+	h.key("v")                     // back to the list
+	h.key("h", "j", "j", "l", "v") // open the project, show the board
 	if !h.m.boardActive() {
 		t.Fatal("board should be active")
 	}
@@ -425,7 +426,7 @@ func TestBoardViewAndCardMoves(t *testing.T) {
 	if !h.m.zoom || !strings.Contains(h.screen(), "詳細（z / esc で戻る）") {
 		t.Fatalf("enter on a card should open the zoomed detail:\n%s", h.screen())
 	}
-	h.key("esc", "v")
+	h.key("esc", "v", "v") // board -> calendar -> list
 	if h.m.boardActive() || h.selected() != "t3" {
 		t.Fatalf("v should go back to the list keeping the selection, got %q", h.selected())
 	}
@@ -461,7 +462,7 @@ func TestTagFilter(t *testing.T) {
 	if tag == "" {
 		t.Fatal("tag filter should be set")
 	}
-	h.key("h", "j", "l") // project view shows all assignees
+	h.key("h", "j", "j", "l") // project view shows all assignees
 	var gids []string
 	for _, r := range h.m.rows {
 		if r.task != nil {
@@ -495,7 +496,7 @@ func TestMoveWithSectionPicker(t *testing.T) {
 func TestBoardAndZoomFitTerminal(t *testing.T) {
 	for _, size := range [][2]int{{140, 30}, {90, 20}} {
 		h := newHarnessWithExtras(t, size[0], size[1])
-		h.key("h", "j", "l", "v")
+		h.key("h", "j", "j", "l", "v")
 		for _, step := range []string{"board", "zoom"} {
 			if step == "zoom" {
 				h.key("enter")
@@ -518,7 +519,7 @@ func projectHarness(t *testing.T, st *store.Store, viewImages func([]string) tea
 	hs := &harness{t: t, m: m}
 	hs.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	hs.run(m.Init())
-	hs.key("h", "j", "l") // open 新居プロジェクト, focus the list
+	hs.key("h", "j", "j", "l") // open 新居プロジェクト, focus the list
 	return hs
 }
 
@@ -735,7 +736,7 @@ func TestInlineImagePlaceholders(t *testing.T) {
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
-	h.key("h", "j", "l")
+	h.key("h", "j", "j", "l")
 
 	out := h.m.render()
 	if !strings.Contains(out, "\U0010EEEE") {
@@ -963,7 +964,7 @@ func TestEditTaskInEditor(t *testing.T) {
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
-	h.key("h", "j", "l", "e")
+	h.key("h", "j", "j", "l", "e")
 
 	for _, want := range []string{"name: ソファを買う\n", "due: 2026-11-20\n", "assignee: me\n", "completed: false\n", "section: 家具\n", "候補は**ニトリ**"} {
 		if !strings.Contains(seen, want) {
@@ -1041,7 +1042,7 @@ func TestWhichKeyMenu(t *testing.T) {
 	h := projectHarness(t, st, nil)
 	h.key("space")
 	s := h.screen()
-	for _, want := range []string{"メニュー", "タスク", "表示", "その他", "期日を変更", "担当者を変更", "タグを付ける / 外す", "ボード / リスト", "今すぐ同期"} {
+	for _, want := range []string{"メニュー", "タスク", "表示", "その他", "期日を変更", "担当者を変更", "タグを付ける / 外す", "表示を切り替え", "今すぐ同期"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("menu missing %q:\n%s", want, s)
 		}
@@ -1192,5 +1193,115 @@ func TestEditFileUsesLocalImagePaths(t *testing.T) {
 	h.key("e")
 	if !strings.Contains(seen, "![画像]("+path+")") {
 		t.Fatalf("editor file should reference the local image file:\n%s", seen)
+	}
+}
+
+func TestCalendarView(t *testing.T) {
+	st := fixtureStore(t) // my tasks: t2 due 11/10, t3 due 11/13 (today), t1 due 11/20
+	_ = st.UpsertWorkspaces(context.Background(), []asana.Workspace{{GID: "w1", Name: "WS"}})
+	h := projectHarness(t, st, nil)
+	h.key("h", "g", "l") // back to My Tasks
+	h.key("v")
+	s := h.screen()
+	for _, want := range []string{"[カレンダー]", "カレンダー 2026年11月", "13 今日", "電気の契約", "転居届を出す", "ソファを買う"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("calendar missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "ガスの契約") {
+		t.Fatal("calendar should show only my tasks with a due date")
+	}
+	h.key("enter") // today: 電気の契約
+	if h.m.picker == nil || h.m.picker.kind != pickDayTask || !strings.Contains(h.screen(), "電気の契約") {
+		t.Fatalf("enter should list the day's tasks:\n%s", h.screen())
+	}
+	h.key("enter")
+	if !h.m.zoom || h.m.detailGID() != "t3" || !strings.Contains(h.screen(), "電気の契約") {
+		t.Fatalf("choosing a task should open its detail:\n%s", h.screen())
+	}
+	h.key("esc")
+	if h.m.zoom || !h.m.calendarActive() {
+		t.Fatal("esc should go back to the calendar")
+	}
+	h.key("j") // +7 days: 11/20
+	if h.m.calDay.Format(time.DateOnly) != "2026-11-20" {
+		t.Fatalf("j should move a week, got %s", h.m.calDay.Format(time.DateOnly))
+	}
+	h.key("a")
+	h.typeText("内見")
+	h.key("enter")
+	if s := h.screen(); !strings.Contains(s, "内見") {
+		t.Fatalf("a in the calendar should add a task on the selected day:\n%s", s)
+	}
+	h.key("n") // next month
+	if s := h.screen(); !strings.Contains(s, "2026年12月") || strings.Contains(s, "内見") {
+		t.Fatalf("n should show December:\n%s", s)
+	}
+	h.key(".")
+	if !strings.Contains(h.screen(), "2026年11月") {
+		t.Fatal(". should return to today")
+	}
+	h.key("v")
+	if h.m.calendarActive() {
+		t.Fatal("v should go back to the list")
+	}
+}
+
+func TestRecentUpdates(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	ref := func(gid string) *asana.Ref { return &asana.Ref{GID: gid} }
+	_ = st.UpsertTasks(ctx, []asana.Task{
+		{GID: "t2", Name: "転居届を出す", Assignee: ref("me"), ModifiedAt: testNow.Add(-time.Hour)},
+		{GID: "t5", Name: "年末調整", Completed: true, Assignee: ref("me"), ModifiedAt: testNow.Add(-26 * time.Hour)},
+		{GID: "t3", Name: "電気の契約", Assignee: ref("u2"), ModifiedAt: testNow.AddDate(0, 0, -10)},
+	})
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("h", "j", "l") // 最近の更新
+	s := h.screen()
+	for _, want := range []string{"最近の更新", "▾ 今日", "転居届を出す", "▾ 昨日", "年末調整"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("recent updates missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "電気の契約") {
+		t.Fatal("tasks modified more than 7 days ago should not be listed")
+	}
+	if got := h.visibleGIDs(); len(got) != 2 || got[0] != "t2" {
+		t.Fatalf("newest first: %v", got)
+	}
+}
+
+func TestKeyBindingsAndTheme(t *testing.T) {
+	st := fixtureStore(t)
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
+		KeyBindings: map[string][]string{"complete": {"d"}}, Theme: "light", Accent: "#123456"})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("x")
+	if d, _ := st.GetTask(context.Background(), "t2"); d.Completed {
+		t.Fatal("x should no longer complete after rebinding")
+	}
+	h.key("d")
+	if d, _ := st.GetTask(context.Background(), "t2"); !d.Completed {
+		t.Fatal("d should complete after rebinding complete = d")
+	}
+	h.key("?")
+	if !strings.Contains(h.screen(), "d / space x") {
+		t.Fatalf("help should show the rebound key:\n%s", h.screen())
+	}
+	h.send(tea.BackgroundColorMsg{})
+	if m.dark {
+		t.Fatal("theme = light must not follow the terminal background")
+	}
+	if fmt.Sprint(m.st.accent) == fmt.Sprint(newStyles(false, "").accent) {
+		t.Fatal("accent override not applied")
+	}
+	if !slices.Contains(ActionIDs(), "complete") || !slices.Contains(ActionIDs(), "due") {
+		t.Fatalf("ActionIDs = %v", ActionIDs())
 	}
 }

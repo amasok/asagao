@@ -252,6 +252,7 @@ const (
 	pickDue
 	pickFilter
 	pickTags
+	pickDayTask
 )
 
 type pickerItem struct {
@@ -365,6 +366,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.picker = nil
 		switch p.kind {
+		case pickDayTask:
+			return m, m.openTaskDetail(item.value)
 		case pickDue:
 			if item.value == "?" {
 				return m, m.startDuePrompt(p.task)
@@ -428,23 +431,34 @@ func (m *Model) viewKey(key string) tea.Cmd {
 			m.focus = paneDetail
 		}
 	case "v":
-		if m.currentScope().kind != scopeProject {
-			m.status = "ボード表示はプロジェクトを開いているときに使えます"
+		// list -> board (projects only) -> calendar -> list
+		if m.query != "" {
+			m.status = "検索中は表示を切り替えられません（esc で検索を解除）"
 			return nil
 		}
-		if m.query != "" {
-			m.status = "検索中はボード表示にできません（esc で検索を解除）"
+		if m.currentScope().kind == scopeRecent {
+			m.status = "最近の更新はリスト表示だけです"
 			return nil
 		}
 		selected := m.selectedTask()
-		m.board = !m.board
+		switch {
+		case m.calendar:
+			m.calendar, m.board = false, false
+		case m.board || m.currentScope().kind != scopeProject:
+			m.calendar, m.board = true, false
+		default:
+			m.board = true
+		}
 		m.focus = paneList
 		if selected != nil {
-			if m.board {
+			if m.boardActive() {
 				m.selectInBoard(selected.GID)
 			} else {
 				m.selectInList(selected.GID)
 			}
+		}
+		if m.calendarActive() {
+			return m.loadCalendar()
 		}
 	case "t":
 		return m.openTagPicker()

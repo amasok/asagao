@@ -241,6 +241,9 @@ func (m *Model) createTask(input string) tea.Cmd {
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
 	}
+	if due == "" && m.calendarActive() {
+		due = m.calDay.Format(time.DateOnly) // the day selected in the calendar
+	}
 	sc := m.currentScope()
 	var section string
 	if sc.kind == scopeProject {

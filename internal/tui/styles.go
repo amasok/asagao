@@ -20,7 +20,7 @@ type styles struct {
 	border                            lipgloss.Border
 }
 
-func newStyles(dark bool) styles {
+func newStyles(dark bool, accent string) styles {
 	ld := lipgloss.LightDark(dark)
 	s := styles{
 		accent: ld(lipgloss.Color("#d1407a"), lipgloss.Color("#f06a99")), // Asana-ish coral pink
@@ -29,6 +29,9 @@ func newStyles(dark bool) styles {
 		warn:   ld(lipgloss.Color("#b26a00"), lipgloss.Color("#ffb74d")),
 		ok:     ld(lipgloss.Color("#2e7d32"), lipgloss.Color("#81c784")),
 		border: lipgloss.RoundedBorder(),
+	}
+	if accent != "" {
+		s.accent = lipgloss.Color(accent)
 	}
 	fg := ld(lipgloss.Color("#1a1a1a"), lipgloss.Color("#e6e6e6"))
 	selBg := ld(lipgloss.Color("#f8d7e3"), lipgloss.Color("#4a2433"))

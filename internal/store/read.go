@@ -112,7 +112,11 @@ type TaskFilter struct {
 	Completed *bool
 	DueBefore string // inclusive, YYYY-MM-DD
 	DueAfter  string // inclusive, YYYY-MM-DD
-	Tag       string // tag name or gid
+	// ModifiedAfter keeps tasks modified at or after this time (RFC 3339).
+	ModifiedAfter string
+	// SortByModified orders by last modification, newest first (instead of due date).
+	SortByModified bool
+	Tag            string // tag name or gid
 	// Query is a full-text search over task name, notes and comments.
 	Query string
 	Limit int
@@ -150,6 +154,9 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 	if f.DueBefore != "" {
 		add("t.due_on <> '' AND t.due_on <= ?", f.DueBefore)
 	}
+	if f.ModifiedAfter != "" {
+		add("t.modified_at >= ?", f.ModifiedAfter)
+	}
 	if f.DueAfter != "" {
 		add("t.due_on <> '' AND t.due_on >= ?", f.DueAfter)
 	}
@@ -166,7 +173,11 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY t.completed, t.due_on = '', t.due_on, t.due_at IS NULL, t.due_at, t.name"
+	if f.SortByModified {
+		q += " ORDER BY t.modified_at DESC, t.name"
+	} else {
+		q += " ORDER BY t.completed, t.due_on = '', t.due_on, t.due_at IS NULL, t.due_at, t.name"
+	}
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}

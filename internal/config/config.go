@@ -25,6 +25,30 @@ type Config struct {
 	Auth AuthConfig `toml:"auth"`
 	Sync SyncConfig `toml:"sync"`
 	UI   UIConfig   `toml:"ui"`
+	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asana-tui keys`).
+	Keys map[string]any `toml:"keys"`
+}
+
+// KeyBindings returns [keys] as action -> keys.
+func (c Config) KeyBindings() (map[string][]string, error) {
+	out := map[string][]string{}
+	for action, v := range c.Keys {
+		switch v := v.(type) {
+		case string:
+			out[action] = []string{v}
+		case []any:
+			for _, k := range v {
+				s, ok := k.(string)
+				if !ok {
+					return nil, fmt.Errorf("keys.%s: keys must be strings", action)
+				}
+				out[action] = append(out[action], s)
+			}
+		default:
+			return nil, fmt.Errorf("keys.%s: want a string or a list of strings", action)
+		}
+	}
+	return out, nil
 }
 
 type UIConfig struct {
@@ -36,6 +60,10 @@ type UIConfig struct {
 	InlineImages string `toml:"inline_images"`
 	// Editor is the command used to edit tasks and comments (default: $VISUAL, $EDITOR, nvim).
 	Editor string `toml:"editor"`
+	// Theme is "auto" (follow the terminal background), "dark" or "light".
+	Theme string `toml:"theme"`
+	// Accent is the accent color, e.g. "#7aa2f7" ("" = default).
+	Accent string `toml:"accent"`
 }
 
 type AuthConfig struct {
@@ -126,6 +154,14 @@ func (c Config) validate() error {
 	case "auto", "iterm", "kitty", "open":
 	default:
 		return fmt.Errorf("ui.image_protocol: unknown value %q (want auto, iterm, kitty or open)", c.UI.ImageProtocol)
+	}
+	switch c.UI.Theme {
+	case "", "auto", "dark", "light":
+	default:
+		return fmt.Errorf("ui.theme: unknown value %q (want auto, dark or light)", c.UI.Theme)
+	}
+	if _, err := c.KeyBindings(); err != nil {
+		return err
 	}
 	switch c.UI.InlineImages {
 	case "auto", "on", "off":
