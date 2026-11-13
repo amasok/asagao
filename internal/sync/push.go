@@ -45,7 +45,7 @@ const (
 type sentNotSavedError struct{ err error }
 
 func (e *sentNotSavedError) Error() string {
-	return "Asana には送信済みですが、ローカルへの反映に失敗しました（次の同期で確かめます）: " + e.err.Error()
+	return "Asana には送信済みですが、ローカルへの反映に失敗しました: " + e.err.Error()
 }
 func (e *sentNotSavedError) Unwrap() error { return e.err }
 
@@ -147,7 +147,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 					res.Failed++
 					sendIt = false
 				case err != nil: // could not check: try again on the next push
-					note := "Asana に届いたか確かめられませんでした（次の同期で確かめます）: " + err.Error()
+					note := "Asana に届いたか確かめられませんでした: " + err.Error()
 					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, note); rerr != nil {
 						return res, rerr
 					}
@@ -156,7 +156,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 					}
 					sendIt = false
 				case m == tooEarly: // Asana may not list it yet: check again on the next push
-					if err := s.Store.MarkOpVerify(ctx, op.ID, "Asana への反映を待っています（次の同期で確かめます）"); err != nil {
+					if err := s.Store.MarkOpVerify(ctx, op.ID, "Asana への反映を待っています"); err != nil {
 						return res, err
 					}
 					sendIt = false
