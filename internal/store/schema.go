@@ -130,4 +130,21 @@ CREATE TRIGGER stories_fts_au AFTER UPDATE OF text ON stories BEGIN
 	INSERT INTO stories_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
 `,
+	`
+-- Local changes waiting to be sent to Asana (offline edits). See outbox.go.
+CREATE TABLE outbox (
+	id               INTEGER PRIMARY KEY AUTOINCREMENT,
+	kind             TEXT NOT NULL,              -- update_task | create_task | add_comment
+	task_gid         TEXT NOT NULL,              -- real gid, or "local:..." for a task created offline
+	payload          TEXT NOT NULL,              -- JSON
+	base             TEXT NOT NULL DEFAULT '{}', -- JSON: field values before the local edit (conflict detection)
+	base_modified_at TEXT NOT NULL DEFAULT '',
+	state            TEXT NOT NULL DEFAULT 'pending', -- pending | conflict | failed
+	conflict         TEXT NOT NULL DEFAULT '{}', -- JSON: server values of conflicting fields
+	last_error       TEXT NOT NULL DEFAULT '',
+	attempts         INTEGER NOT NULL DEFAULT 0,
+	created_at       TEXT NOT NULL
+);
+CREATE INDEX outbox_task ON outbox(task_gid);
+`,
 }

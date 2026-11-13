@@ -40,6 +40,12 @@ func (a *app) syncCmd() *cobra.Command {
 			if res.Full {
 				kind = "全件"
 			}
+			if p := res.Push; p.Sent+p.Conflicts+p.Failed > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "未送信の変更: 送信 %d / 競合 %d / 失敗 %d\n", p.Sent, p.Conflicts, p.Failed)
+				if p.Conflicts+p.Failed > 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "  → `asana-tui outbox list` で確認してください")
+				}
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d / 取得したタスク %d / 削除 %d（%s）\n",
 				kind, res.Workspaces, res.Projects, res.Tasks, res.Pruned, res.Duration.Round(100*time.Millisecond))
 			return nil
@@ -68,6 +74,9 @@ func (a *app) syncCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "最終同期: %s\nワークスペース %d / プロジェクト %d / セクション %d / タスク %d（未完了 %d）\n",
 				last, stats.Workspaces, stats.Projects, stats.Sections, stats.Tasks, stats.OpenTasks)
+			if p, c, f, err := st.OutboxCounts(cmd.Context()); err == nil && p+c+f > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "未送信 %d / 競合 %d / 失敗 %d（`asana-tui outbox list`）\n", p, c, f)
+			}
 			return nil
 		},
 	})

@@ -31,6 +31,7 @@ type Syncer struct {
 
 type Result struct {
 	Full       bool          `json:"full"`
+	Push       PushResult    `json:"push"`
 	Workspaces int           `json:"workspaces"`
 	Projects   int           `json:"projects"`
 	Tasks      int           `json:"tasks"`
@@ -70,6 +71,12 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if !res.Full {
 		modifiedSince = lastSync.Add(-modifiedSinceMargin)
 	}
+	// Send local changes first, so the pull below sees them and a network error means
+	// we are offline before anything else is attempted.
+	if res.Push, err = s.Push(ctx); err != nil {
+		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
+	}
+
 	completedSince := started.AddDate(0, 0, -s.Cfg.CompletedDays)
 	keep := map[string]bool{}
 	var withSubtasks []string
@@ -183,6 +190,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 // FetchDetails refreshes one task with its subtasks and stories (comments and activity).
 // Comments do not change a task's modified_at, so they are fetched on demand rather than by Run.
 func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
+	if store.IsLocalGID(taskGID) {
+		return nil // created offline; nothing on the server yet
+	}
 	t, err := s.API.Task(ctx, taskGID)
 	if err != nil {
 		return err

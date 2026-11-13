@@ -47,6 +47,8 @@ type TaskSummary struct {
 	NumSubtasks     int              `json:"num_subtasks"`
 	PermalinkURL    string           `json:"permalink_url"`
 	ModifiedAt      string           `json:"modified_at"`
+	// Pending is true while local changes to this task have not been sent to Asana.
+	Pending bool `json:"pending"`
 }
 
 type StoryView struct {
@@ -56,6 +58,7 @@ type StoryView struct {
 	Text            string   `json:"text"`
 	CreatedBy       *UserRef `json:"created_by"`
 	CreatedAt       string   `json:"created_at"`
+	Pending         bool     `json:"pending"`
 }
 
 type TaskDetail struct {
@@ -111,7 +114,8 @@ type TaskFilter struct {
 
 const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.completed_at, ''),
 	t.due_on, COALESCE(t.due_at, ''), t.start_on, t.assignee_gid, COALESCE(u.name, ''),
-	t.parent_gid, t.num_subtasks, t.permalink_url, t.modified_at`
+	t.parent_gid, t.num_subtasks, t.permalink_url, t.modified_at,
+	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid)`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string
@@ -190,7 +194,7 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 		var assigneeGID, assigneeName string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
-			&t.ParentGID, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt); err != nil {
+			&t.ParentGID, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending); err != nil {
 			return nil, err
 		}
 		if assigneeGID != "" {
@@ -300,6 +304,7 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		if byGID != "" {
 			st.CreatedBy = &UserRef{GID: byGID, Name: byName}
 		}
+		st.Pending = IsLocalGID(st.GID)
 		d.Stories = append(d.Stories, st)
 	}
 	return d, rows.Err()
@@ -397,6 +402,40 @@ func (s *Store) ResolveSection(ctx context.Context, projectGID, arg string) (str
 }
 
 // MeGID returns the logged-in user's gid recorded by the last sync.
+// Me returns the logged-in user recorded by the last sync.
+func (s *Store) Me(ctx context.Context) (UserRef, error) {
+	gid, err := s.MeGID(ctx)
+	if err != nil {
+		return UserRef{}, err
+	}
+	u := UserRef{GID: gid}
+	err = s.db.QueryRowContext(ctx, "SELECT name FROM users WHERE gid = ?", gid).Scan(&u.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return u, err
+}
+
+// DefaultWorkspace returns the only (or first) workspace, for creating tasks outside a project.
+func (s *Store) DefaultWorkspace(ctx context.Context) (string, error) {
+	var gid string
+	err := s.db.QueryRowContext(ctx, "SELECT gid FROM workspaces ORDER BY name LIMIT 1").Scan(&gid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("ワークスペースがありません。先に `asana-tui sync` を実行してください")
+	}
+	return gid, err
+}
+
+// FirstSection returns the first section of a project ("" if it has none).
+func (s *Store) FirstSection(ctx context.Context, projectGID string) (string, error) {
+	var gid string
+	err := s.db.QueryRowContext(ctx, "SELECT gid FROM sections WHERE project_gid = ? ORDER BY position LIMIT 1", projectGID).Scan(&gid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return gid, err
+}
+
 func (s *Store) MeGID(ctx context.Context) (string, error) {
 	gid, err := s.SyncState(ctx, KeyMeGID)
 	if err == nil && gid == "" {

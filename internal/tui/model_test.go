@@ -243,3 +243,103 @@ func TestShortDue(t *testing.T) {
 		}
 	}
 }
+
+func (h *harness) typeText(s string) {
+	for _, r := range s {
+		if r == ' ' {
+			h.send(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+			continue
+		}
+		h.send(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+}
+
+func TestToggleCompleteOffline(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.key("x") // complete 転居届を出す (t2)
+	s := h.screen()
+	for _, r := range h.m.rows {
+		if r.task != nil && r.task.GID == "t2" {
+			t.Fatalf("completed task should leave the open-tasks list:\n%s", s)
+		}
+	}
+	if !strings.Contains(s, "↑ 未送信 1") {
+		t.Fatalf("header should show the pending change:\n%s", s)
+	}
+	h.key("f", "f", "f") // 完了済み
+	if !strings.Contains(h.screen(), "転居届を出す ↑") {
+		t.Fatalf("completed task should be marked as unsent:\n%s", h.screen())
+	}
+	h.key("x") // reopen: reverts the change entirely
+	if strings.Contains(h.screen(), "未送信") {
+		t.Fatalf("reverting should clear the pending change:\n%s", h.screen())
+	}
+}
+
+func TestCreateTaskInProject(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.key("h", "j", "l") // project 新居プロジェクト, focus list (first task is in 家具)
+	h.key("a")
+	h.typeText("カーテンを買う due:明日")
+	h.key("enter")
+	s := h.screen()
+	if !strings.Contains(s, "カーテンを買う ↑") {
+		t.Fatalf("created task should appear, marked unsent:\n%s", s)
+	}
+	if got := h.m.selectedTask(); got == nil || got.Name != "カーテンを買う" || got.DueOn != "2026-11-14" {
+		t.Fatalf("new task should be selected with due date: %+v", got)
+	}
+	if ms := h.m.selectedTask().Memberships; len(ms) != 1 || ms[0].SectionName != "家具" {
+		t.Fatalf("new task should go to the section of the selected task: %+v", ms)
+	}
+}
+
+func TestCommentAndOutboxOverlay(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.key("c")
+	h.typeText("区役所は9時から")
+	h.key("enter")
+	if s := h.screen(); !strings.Contains(s, "区役所は9時から") || !strings.Contains(s, "（未送信）") {
+		t.Fatalf("comment should show in detail as unsent:\n%s", s)
+	}
+	h.key("!")
+	s := h.screen()
+	if !strings.Contains(s, "未送信の変更") || !strings.Contains(s, "コメント: 転居届を出す「区役所は9時から」") {
+		t.Fatalf("outbox overlay:\n%s", s)
+	}
+	h.key("d") // discard
+	if s := h.screen(); !strings.Contains(s, "未送信の変更はありません") {
+		t.Fatalf("discard should empty the outbox:\n%s", s)
+	}
+	h.key("esc")
+	if s := h.screen(); strings.Contains(s, "区役所は9時から") {
+		t.Fatalf("discarded comment should be gone:\n%s", s)
+	}
+}
+
+func TestPromptEscCancels(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.key("a")
+	h.typeText("やめる")
+	h.key("esc")
+	if h.m.promptMode != promptNone || strings.Contains(h.screen(), "やめる") {
+		t.Fatal("esc should cancel without creating")
+	}
+}
+
+func TestParseCreateInput(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"牛乳を買う":              {"牛乳を買う", ""},
+		"牛乳を買う due:明日":       {"牛乳を買う", "2026-11-14"},
+		"due:+3d 歯医者 予約":     {"歯医者 予約", "2026-11-16"},
+		"年賀状 due:2026-12-20": {"年賀状", "2026-12-20"},
+	} {
+		name, due, err := parseCreateInput(in, testNow)
+		if err != nil || name != want[0] || due != want[1] {
+			t.Errorf("parseCreateInput(%q) = %q, %q, %v", in, name, due, err)
+		}
+	}
+	if _, _, err := parseCreateInput("x due:来週", testNow); err == nil {
+		t.Error("invalid due should fail")
+	}
+}

@@ -78,6 +78,10 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 			if err := upsertTask(ctx, tx, t); err != nil {
 				return err
 			}
+			// Unsent local edits win over what the server returned until they are pushed.
+			if err := reapplyUpdates(ctx, tx, t.GID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -170,7 +174,8 @@ func formatTimePtr(t *time.Time) any {
 // ReplaceStories replaces the stories (comments and activity) of a task and records the fetch time.
 func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []asana.Story, fetchedAt time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ?", taskGID); err != nil {
+		// Keep comments posted offline ("local:" gids) until they are sent.
+		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ? AND gid NOT LIKE 'local:%'", taskGID); err != nil {
 			return err
 		}
 		for _, st := range stories {
@@ -209,6 +214,7 @@ func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, er
 		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM tasks
 			WHERE gid NOT IN (SELECT gid FROM keep_tasks)
+			  AND gid NOT IN (SELECT task_gid FROM outbox)
 			  AND (parent_gid = '' OR parent_gid NOT IN (SELECT gid FROM keep_tasks))`)
 		if err != nil {
 			return err
