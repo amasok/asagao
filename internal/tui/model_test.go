@@ -84,7 +84,10 @@ func (h *harness) run(cmd tea.Cmd) {
 		default:
 			h.send(msg)
 		}
-	case <-time.After(50 * time.Millisecond): // a timer; ignore
+	case <-time.After(5 * time.Second):
+		// Tests run without a syncer and without background sync, so no command should
+		// be a timer; anything this slow is a hang.
+		h.t.Fatalf("command did not return within 5s")
 	}
 }
 
