@@ -22,22 +22,36 @@ func OpStateLabel(state string) string {
 	return state
 }
 
+// VerifyNote tells the user that an entry being checked against Asana needs nothing from them.
+const VerifyNote = "操作は不要です。次の同期で自動的に確認します"
+
 // OpLabel is OpStateLabel, except that a queued entry Asana may already have applied
-// (Verify: Push checks Asana before sending it again) is "確認待ち".
+// (Verify: Push checks Asana by itself before sending it again) is "自動確認中".
 func OpLabel(op Op) string {
 	if op.State == OpPending && op.Verify {
-		return "確認待ち"
+		return "自動確認中"
 	}
 	return OpStateLabel(op.State)
 }
 
-// OpNoteLabel is the heading for op.LastError: an error for a failed entry, otherwise a
-// note on what Push is waiting for.
-func OpNoteLabel(op Op) string {
+// OpNote is the note to show under an entry ("" for none): heading is "エラー" for a
+// failed entry and "状況" otherwise. An entry being checked always gets a note saying
+// that the user does not need to do anything.
+func OpNote(op Op) (heading, text string) {
 	if op.State == OpFailed {
-		return "エラー"
+		return "エラー", op.LastError
 	}
-	return "状況"
+	text = op.LastError
+	if op.Verify {
+		if text == "" {
+			text = "Asana への反映を自動で確認しています"
+		}
+		text += "。" + VerifyNote
+	}
+	if text == "" {
+		return "", ""
+	}
+	return "状況", text
 }
 
 // FieldLabel is the label of an update_task field ("" for unknown keys).

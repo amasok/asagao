@@ -501,8 +501,8 @@ func (a *app) outboxCmd() *cobra.Command {
 				for k, v := range op.Conflict {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s: こちら=%v / Asana=%v\n", store.FieldLabel(k), op.Payload[k], v)
 				}
-				if op.LastError != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", store.OpNoteLabel(op), op.LastError)
+				if heading, text := store.OpNote(op); text != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", heading, text)
 				}
 			}
 			return nil

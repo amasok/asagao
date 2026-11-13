@@ -42,24 +42,29 @@ func TestDescribeOp(t *testing.T) {
 
 func TestOpLabels(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		op          Op
-		label, note string
+		name    string
+		op      Op
+		label   string
+		heading string
+		note    string
 	}{
-		{"pending", Op{State: OpPending}, "未送信", "状況"},
-		{"waiting to check Asana", Op{State: OpPending, Verify: true, LastError: "Asana への反映を待っています"}, "確認待ち", "状況"},
-		{"sending", Op{State: OpSending}, "送信中", "状況"},
-		{"sending while verifying", Op{State: OpSending, Verify: true}, "送信中", "状況"},
-		{"conflict", Op{State: OpConflict}, "競合", "状況"},
-		{"failed", Op{State: OpFailed, LastError: "boom"}, "失敗", "エラー"},
-		{"unknown state", Op{State: "weird"}, "weird", "状況"},
+		{"pending", Op{State: OpPending}, "未送信", "", ""},
+		{"being checked", Op{State: OpPending, Verify: true, LastError: "Asana への反映を待っています"},
+			"自動確認中", "状況", "Asana への反映を待っています。" + VerifyNote},
+		{"being checked, no note from push", Op{State: OpPending, Verify: true},
+			"自動確認中", "状況", "Asana への反映を自動で確認しています。" + VerifyNote},
+		{"sending", Op{State: OpSending}, "送信中", "", ""},
+		{"sending while checked", Op{State: OpSending, Verify: true}, "送信中", "状況", "Asana への反映を自動で確認しています。" + VerifyNote},
+		{"conflict", Op{State: OpConflict}, "競合", "", ""},
+		{"failed", Op{State: OpFailed, LastError: "boom"}, "失敗", "エラー", "boom"},
+		{"unknown state", Op{State: "weird"}, "weird", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := OpLabel(tc.op); got != tc.label {
 				t.Errorf("OpLabel = %q, want %q", got, tc.label)
 			}
-			if got := OpNoteLabel(tc.op); got != tc.note {
-				t.Errorf("OpNoteLabel = %q, want %q", got, tc.note)
+			if h, n := OpNote(tc.op); h != tc.heading || n != tc.note {
+				t.Errorf("OpNote = %q, %q; want %q, %q", h, n, tc.heading, tc.note)
 			}
 		})
 	}

@@ -111,13 +111,20 @@ func TestOutboxShowsSendingAndVerify(t *testing.T) {
 	}
 	h.key("!")
 	s := h.screen()
-	for _, want := range []string{"[送信中]", "[確認待ち]", "Asana への反映を待っています"} {
+	for _, want := range []string{"[送信中]", "[自動確認中]", "Asana への反映を待っています", "操作は不要です"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("outbox missing %q:\n%s", want, s)
 		}
 	}
-	// the entry being sent cannot be resolved
-	if msg := outboxAction(t, h, 0, "d"); msg.err == nil || !strings.Contains(msg.err.Error(), "送信中") {
-		t.Fatalf("discarding a sending entry = %+v", msg)
+	// the resolve keys do nothing on the entry being sent
+	h.m.opCursor = 0
+	for _, key := range []string{"l", "s", "d", "R"} {
+		h.m.status = ""
+		if _, cmd := h.m.handleOutboxKey(key); cmd != nil || !strings.Contains(h.m.status, "送信中") {
+			t.Errorf("%q on a sending entry: cmd=%v status=%q", key, cmd != nil, h.m.status)
+		}
+	}
+	if op, _ := st.GetOp(ctx, ops[0].ID); op.State != store.OpSending {
+		t.Fatalf("the sending entry must be left alone: %+v", op)
 	}
 }

@@ -361,6 +361,10 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 		if op == nil {
 			return nil
 		}
+		if op.State == store.OpSending { // the keys do nothing while Push has it
+			m.status = "送信中の変更は操作できません（送信が終わると結果が表示されます）"
+			return nil
+		}
 		st, id := m.deps.Store, op.ID
 		return func() tea.Msg {
 			r, err := sync.Resolve(m.ctx, st, id, action)
@@ -406,17 +410,17 @@ func (m *Model) renderOutbox(w, h int) string {
 		case store.OpFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+store.OpLabel(op)+"]", 10)) + " " + store.DescribeOp(op)
+		line := style.Render(padRight("["+store.OpLabel(op)+"]", 12)) + " " + store.DescribeOp(op)
 		lines = append(lines, m.highlight(line, w-4, i == m.opCursor, true))
 		for k, v := range op.Conflict {
 			lines = append(lines, fmt.Sprintf("           %s: こちら=%v / Asana=%v", store.FieldLabel(k), op.Payload[k], v))
 		}
-		if op.LastError != "" {
-			note := m.st.dim // e.g. waiting to check Asana
+		if _, text := store.OpNote(op); text != "" {
+			note := m.st.dim // e.g. being checked against Asana: nothing to do
 			if op.State == store.OpFailed {
 				note = m.st.errorText
 			}
-			lines = append(lines, note.Render("           "+op.LastError))
+			lines = append(lines, note.Render("           "+text))
 		}
 	}
 	return m.pane("未送信の変更", lines, w, h, true)
