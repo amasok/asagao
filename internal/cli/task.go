@@ -26,7 +26,7 @@ func (a *app) taskCmd() *cobra.Command {
 type listFlags struct {
 	assignee, project, section, tag, dueBefore, dueAfter string
 	completed, all, overdue                              bool
-	limit                                                int
+	limit, modifiedWithin                                int
 }
 
 func (f *listFlags) register(cmd *cobra.Command, defaultAssignee string) {
@@ -40,6 +40,7 @@ func (f *listFlags) register(cmd *cobra.Command, defaultAssignee string) {
 	cmd.Flags().BoolVar(&f.completed, "completed", false, "完了済みのタスクだけ")
 	cmd.Flags().BoolVar(&f.all, "all", false, "完了・未完了の両方")
 	cmd.Flags().IntVar(&f.limit, "limit", 0, "最大件数（0 = 無制限）")
+	cmd.Flags().IntVar(&f.modifiedWithin, "modified-within", 0, "直近 N 日に更新されたタスクを新しい順に（最近の更新）")
 }
 
 // filter converts flags to a store filter. The default assignee is "me" unless a project is given.
@@ -95,6 +96,13 @@ func (f *listFlags) filter(ctx context.Context, st *store.Store, cmd *cobra.Comm
 		tf.Completed = &v
 	}
 	tf.Limit = f.limit
+	if f.modifiedWithin > 0 {
+		tf.ModifiedAfter = now.AddDate(0, 0, -f.modifiedWithin).UTC().Format(time.RFC3339)
+		tf.SortByModified = true
+		if !cmd.Flags().Changed("completed") && !cmd.Flags().Changed("all") {
+			tf.Completed = nil
+		}
+	}
 	return tf, nil
 }
 

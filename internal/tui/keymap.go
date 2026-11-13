@@ -27,9 +27,10 @@ const (
 	ctxList
 	ctxBoard
 	ctxDetail
+	ctxCalendar
 
 	ctxTask = ctxList | ctxBoard | ctxDetail // a task is selected / shown
-	ctxAll  = ctxSidebar | ctxTask
+	ctxAll  = ctxSidebar | ctxTask | ctxCalendar
 )
 
 func (m *Model) keyContext() keyCtx {
@@ -40,11 +41,14 @@ func (m *Model) keyContext() keyCtx {
 		return ctxSidebar
 	case m.boardActive():
 		return ctxBoard
+	case m.calendarActive():
+		return ctxCalendar
 	}
 	return ctxList
 }
 
 type action struct {
+	id       string   // name used in config.toml [keys] to rebind the shortcut
 	key      string   // key in the space menu
 	shortcut []string // keys that work directly
 	group    string
@@ -66,37 +70,56 @@ var groupOrder = []string{groupTask, groupView, groupProject, groupOther}
 func (m *Model) actions() []action {
 	return []action{
 		// task
-		{key: "a", shortcut: []string{"a"}, group: groupTask, label: "タスクを追加", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("a") }},
-		{key: "s", shortcut: []string{"S"}, group: groupTask, label: "サブタスクを追加", ctx: ctxTask, needTask: true, run: (*Model).startSubtask},
-		{key: "x", shortcut: []string{"x"}, group: groupTask, label: "完了 / 未完了", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("x") }},
-		{key: "e", shortcut: []string{"e"}, group: groupTask, label: "名前・説明をエディタで編集", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("e") }},
-		{key: "d", group: groupTask, label: "期日を変更", ctx: ctxTask, needTask: true, run: (*Model).openDuePicker},
-		{key: "u", shortcut: []string{"@"}, group: groupTask, label: "担当者を変更", ctx: ctxTask, needTask: true, run: (*Model).openAssigneePicker},
-		{key: "t", group: groupTask, label: "タグを付ける / 外す", ctx: ctxTask, needTask: true, run: (*Model).openTagEditor},
-		{key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { m.openSectionPicker(); return nil }},
-		{key: "c", shortcut: []string{"c"}, group: groupTask, label: "コメント（1 行）", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("c") }},
-		{key: "C", shortcut: []string{"C"}, group: groupTask, label: "コメントをエディタで書く", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("C") }},
-		{key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
-		{key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
+		{id: "add_task", key: "a", shortcut: []string{"a"}, group: groupTask, label: "タスクを追加", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("a") }},
+		{id: "add_subtask", key: "s", shortcut: []string{"S"}, group: groupTask, label: "サブタスクを追加", ctx: ctxTask, needTask: true, run: (*Model).startSubtask},
+		{id: "complete", key: "x", shortcut: []string{"x"}, group: groupTask, label: "完了 / 未完了", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("x") }},
+		{id: "edit", key: "e", shortcut: []string{"e"}, group: groupTask, label: "名前・説明をエディタで編集", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("e") }},
+		{id: "due", key: "d", group: groupTask, label: "期日を変更", ctx: ctxTask, needTask: true, run: (*Model).openDuePicker},
+		{id: "assignee", key: "u", shortcut: []string{"@"}, group: groupTask, label: "担当者を変更", ctx: ctxTask, needTask: true, run: (*Model).openAssigneePicker},
+		{id: "tags", key: "t", group: groupTask, label: "タグを付ける / 外す", ctx: ctxTask, needTask: true, run: (*Model).openTagEditor},
+		{id: "move", key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { m.openSectionPicker(); return nil }},
+		{id: "comment", key: "c", shortcut: []string{"c"}, group: groupTask, label: "コメント（1 行）", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("c") }},
+		{id: "comment_editor", key: "C", shortcut: []string{"C"}, group: groupTask, label: "コメントをエディタで書く", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("C") }},
+		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
+		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
 		// view
-		{key: "f", shortcut: []string{"f"}, group: groupView, label: "絞り込み（未完了・期限切れ…）", ctx: ctxAll, run: (*Model).openFilterPicker},
-		{key: "T", shortcut: []string{"T"}, group: groupView, label: "タグで絞り込む", ctx: ctxAll, run: (*Model).openTagPicker},
-		{key: "v", shortcut: []string{"v"}, group: groupView, label: "ボード / リスト", ctx: ctxList | ctxBoard, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},
-		{key: "z", shortcut: []string{"z"}, group: groupView, label: "詳細を全画面 / 戻す", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.viewKey("z") }},
-		{key: "-", shortcut: []string{"-"}, group: groupView, label: "このセクションを折りたたむ / 開く", ctx: ctxList, run: (*Model).toggleGroup},
-		{key: "_", shortcut: []string{"_"}, group: groupView, label: "すべて折りたたむ", ctx: ctxList, run: func(m *Model) tea.Cmd { return m.setAllGroups(true) }},
-		{key: "+", shortcut: []string{"+", "="}, group: groupView, label: "すべて開く", ctx: ctxList, run: func(m *Model) tea.Cmd { return m.setAllGroups(false) }},
-		{key: "b", shortcut: []string{"b"}, group: groupView, label: "プロジェクト一覧を隠す / 出す", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("b") }},
-		{key: ">", shortcut: []string{">"}, group: groupView, label: "詳細を広く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey(">") }},
-		{key: "<", shortcut: []string{"<"}, group: groupView, label: "詳細を狭く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("<") }},
+		{id: "filter", key: "f", shortcut: []string{"f"}, group: groupView, label: "絞り込み（未完了・期限切れ…）", ctx: ctxAll, run: (*Model).openFilterPicker},
+		{id: "tag_filter", key: "T", shortcut: []string{"T"}, group: groupView, label: "タグで絞り込む", ctx: ctxAll, run: (*Model).openTagPicker},
+		{id: "view", key: "v", shortcut: []string{"v"}, group: groupView, label: "表示を切り替え（リスト→ボード→カレンダー）", ctx: ctxList | ctxBoard | ctxCalendar, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},
+		{id: "zoom", key: "z", shortcut: []string{"z"}, group: groupView, label: "詳細を全画面 / 戻す", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.viewKey("z") }},
+		{id: "collapse", key: "-", shortcut: []string{"-"}, group: groupView, label: "このセクションを折りたたむ / 開く", ctx: ctxList, run: (*Model).toggleGroup},
+		{id: "collapse_all", key: "_", shortcut: []string{"_"}, group: groupView, label: "すべて折りたたむ", ctx: ctxList, run: func(m *Model) tea.Cmd { return m.setAllGroups(true) }},
+		{id: "expand_all", key: "+", shortcut: []string{"+", "="}, group: groupView, label: "すべて開く", ctx: ctxList, run: func(m *Model) tea.Cmd { return m.setAllGroups(false) }},
+		{id: "sidebar", key: "b", shortcut: []string{"b"}, group: groupView, label: "プロジェクト一覧を隠す / 出す", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("b") }},
+		{id: "wider", key: ">", shortcut: []string{">"}, group: groupView, label: "詳細を広く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey(">") }},
+		{id: "narrower", key: "<", shortcut: []string{"<"}, group: groupView, label: "詳細を狭く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("<") }},
 		// project
-		{key: "E", shortcut: []string{"E"}, group: groupProject, label: "セクション名を変更", ctx: ctxList | ctxBoard | ctxDetail, run: (*Model).startRenameSection},
+		{id: "rename_section", key: "E", shortcut: []string{"E"}, group: groupProject, label: "セクション名を変更", ctx: ctxList | ctxBoard | ctxDetail, run: (*Model).startRenameSection},
 		// other
-		{key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},
-		{key: "!", shortcut: []string{"!"}, group: groupOther, label: "未送信の変更・競合", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("!") }},
-		{key: "?", group: groupOther, label: "ヘルプ（すべてのキー）", ctx: ctxAll, run: func(m *Model) tea.Cmd { m.showHelp = true; return nil }},
-		{key: "q", group: groupOther, label: "終了", ctx: ctxAll, run: func(*Model) tea.Cmd { return tea.Quit }},
+		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},
+		{id: "outbox", key: "!", shortcut: []string{"!"}, group: groupOther, label: "未送信の変更・競合", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("!") }},
+		{id: "help", key: "?", group: groupOther, label: "ヘルプ（すべてのキー）", ctx: ctxAll, run: func(m *Model) tea.Cmd { m.showHelp = true; return nil }},
+		{id: "quit", key: "q", group: groupOther, label: "終了", ctx: ctxAll, run: func(*Model) tea.Cmd { return tea.Quit }},
 	}
+}
+
+// withBindings applies the user's [keys] overrides to the shortcuts.
+func (m *Model) withBindings(actions []action) []action {
+	for i, a := range actions {
+		if keys, ok := m.deps.KeyBindings[a.id]; ok {
+			actions[i].shortcut = keys
+		}
+	}
+	return actions
+}
+
+// ActionIDs lists the names that can be used in config.toml [keys].
+func ActionIDs() []string {
+	var ids []string
+	for _, a := range (&Model{}).actions() {
+		ids = append(ids, a.id)
+	}
+	return ids
 }
 
 // available returns the actions usable right now, in menu order.
@@ -104,7 +127,7 @@ func (m *Model) available() []action {
 	ctx := m.keyContext()
 	hasTask := m.actionTask() != nil
 	var out []action
-	for _, a := range m.actions() {
+	for _, a := range m.withBindings(m.actions()) {
 		if a.ctx&ctx == 0 || (a.needTask && !hasTask) {
 			continue
 		}
@@ -236,6 +259,9 @@ func (m *Model) navHelp() [][2]string {
 		return [][2]string{{"h / l", "列を移動"}, {"j / k", "カードを移動"}, {"H / L", "カードを左右の列へ移す"}, {"enter", "詳細を開く"}}
 	case ctxSidebar:
 		return [][2]string{{"j / k", "プロジェクトを選ぶ"}, {"enter / l", "タスク一覧へ"}}
+	case ctxCalendar:
+		return [][2]string{{"h / l", "前日 / 翌日"}, {"j / k", "1 週間後 / 前"}, {"n / p", "翌月 / 前月"}, {".", "今日"},
+			{"enter", "その日のタスク（選ぶと詳細）"}, {"a", "その日が期日のタスクを追加"}}
 	}
 	return [][2]string{{"j / k", "タスクを移動"}, {"l / →", "サブタスクを開く"}, {"h / ←", "閉じる / 親へ / プロジェクト一覧へ"},
 		{"enter", "詳細を開く"}, {"g / G", "先頭 / 末尾"}, {"tab", "ペインを切り替え"}}
@@ -251,6 +277,8 @@ func (m *Model) footerHints() [][2]string {
 		return append([][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "移す"}, {"enter", "詳細"}, {"x", "完了"}, {"a", "追加"}}, common...)
 	case ctxSidebar:
 		return append([][2]string{{"j/k", "選ぶ"}, {"enter", "開く"}, {"/", "検索"}}, common...)
+	case ctxCalendar:
+		return append([][2]string{{"h/l", "日"}, {"j/k", "週"}, {"n/p", "月"}, {".", "今日"}, {"enter", "その日のタスク"}, {"a", "追加"}, {"v", "表示"}}, common...)
 	}
 	return append([][2]string{{"j/k", "移動"}, {"l/h", "サブタスク"}, {"enter", "詳細"}, {"x", "完了"}, {"a", "追加"}, {"e", "編集"}, {"/", "検索"}}, common...)
 }

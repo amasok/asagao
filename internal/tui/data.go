@@ -39,6 +39,26 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 	}
 
 	switch sc.kind {
+	case scopeRecent:
+		f.ModifiedAfter = now.AddDate(0, 0, -7).UTC().Format(time.RFC3339)
+		f.SortByModified = true
+		if filter == filterOpen {
+			f.Completed = nil // recent changes include completions
+		}
+		tasks, err := st.ListTasks(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		var labels []string
+		index := map[string]int{}
+		for _, t := range tasks {
+			l := modifiedDay(t.ModifiedAt, now)
+			if _, ok := index[l]; !ok {
+				index[l] = len(labels)
+				labels = append(labels, l)
+			}
+		}
+		return groupKeyed(tasks, labels, labels, func(t store.TaskSummary) int { return index[modifiedDay(t.ModifiedAt, now)] }), nil
 	case scopeProject:
 		f.ProjectGID = sc.project
 		tasks, err := st.ListTasks(ctx, f)
@@ -124,3 +144,19 @@ func groupKeyed(tasks []store.TaskSummary, headers, keys []string, bucket func(s
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// modifiedDay labels a modification time: 今日 / 昨日 / 11/10(火).
+func modifiedDay(modifiedAt string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, modifiedAt)
+	if err != nil {
+		return "日時不明"
+	}
+	t = t.In(now.Location())
+	switch d := t.Format(time.DateOnly); d {
+	case now.Format(time.DateOnly):
+		return "今日"
+	case now.AddDate(0, 0, -1).Format(time.DateOnly):
+		return "昨日"
+	}
+	return t.Format("1/2") + "(" + weekdays[t.Weekday()] + ")"
+}

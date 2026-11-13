@@ -33,6 +33,12 @@ type Deps struct {
 	ViewImages func(paths []string) tea.Cmd
 	// InlineImages draws images inside the detail pane with kitty Unicode placeholders.
 	InlineImages bool
+	// Theme forces "dark" or "light" colors ("" / "auto": follow the terminal background).
+	Theme string
+	// Accent overrides the accent color (e.g. "#7aa2f7").
+	Accent string
+	// KeyBindings rebinds action shortcuts: action id -> keys (see ActionIDs).
+	KeyBindings map[string][]string
 	// RunEditor opens path in the user's editor and reports back with done
 	// (production: tea.ExecProcess with $EDITOR).
 	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
@@ -67,6 +73,7 @@ type scopeKind int
 const (
 	scopeMyTasks scopeKind = iota
 	scopeProject
+	scopeRecent // tasks modified in the last 7 days (instead of an inbox)
 )
 
 type scope struct {
@@ -166,6 +173,12 @@ type Model struct {
 	detailRatio int // detail pane width in % of the area right of the sidebar
 	hideSidebar bool
 
+	// calendar (calendar.go)
+	calendar bool
+	calDay   time.Time // selected day
+	calMonth time.Time // month of calTasks
+	calTasks map[string][]store.TaskSummary
+
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
 	subtaskParent string          // parent for promptSubtask
@@ -194,7 +207,7 @@ func New(ctx context.Context, deps Deps) *Model {
 	m := &Model{
 		deps:        deps,
 		ctx:         ctx,
-		st:          newStyles(true),
+		st:          newStyles(true, deps.Accent),
 		focus:       paneList,
 		scopes:      []scope{{kind: scopeMyTasks, name: "My Tasks"}},
 		detailView:  viewport.New(),
@@ -206,6 +219,10 @@ func New(ctx context.Context, deps Deps) *Model {
 	if deps.InlineImages {
 		m.cellW, m.cellH = imageview.CellSize()
 	}
+	if deps.Theme == "light" {
+		m.dark = false
+	}
+	m.st = newStyles(m.dark, deps.Accent)
 	return m
 }
 
@@ -268,6 +285,10 @@ func (m *Model) loadScopes() tea.Cmd {
 }
 
 func (m *Model) loadTasks() tea.Cmd {
+	return tea.Batch(m.loadList(), m.loadCalendar())
+}
+
+func (m *Model) loadList() tea.Cmd {
 	m.taskSeq++
 	seq, sc, query, filter, tag := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
@@ -378,12 +399,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case inlineLoadedMsg:
 		m.onInlineLoaded(msg)
 		return m, nil
+	case calendarLoadedMsg:
+		m.onCalendarLoaded(msg)
+		return m, nil
 	case layoutLoadedMsg:
 		m.applyLayout(msg)
 		return m, nil
 	case tea.BackgroundColorMsg:
+		if m.deps.Theme == "dark" || m.deps.Theme == "light" {
+			return m, nil // fixed by config
+		}
 		m.dark = msg.IsDark()
-		m.st = newStyles(msg.IsDark())
+		m.st = newStyles(m.dark, m.deps.Accent)
 		m.refreshDetailView()
 		return m, nil
 
@@ -583,6 +610,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case ctxBoard:
 		return m.handleBoardKey(key)
+	case ctxCalendar:
+		return m.handleCalendarKey(key)
 	case ctxList:
 		half := max(1, m.listHeight()/2)
 		switch key {
@@ -625,6 +654,12 @@ func (m *Model) back(key string) tea.Cmd {
 	case m.zoom:
 		m.zoom = false
 		m.focus = paneList
+		if t := m.selectedTask(); t == nil || len(m.detailStack) > 0 {
+			m.detailStack = nil // opened from the calendar or a subtask: back to the list's task
+			if t != nil {
+				return m.loadDetail(t.GID)
+			}
+		}
 		return nil
 	case key != "q" && m.query != "":
 		m.query = ""
@@ -683,7 +718,7 @@ func (m *Model) currentScope() scope {
 
 func (m *Model) setProjects(ps []store.ProjectView) {
 	current := m.currentScope()
-	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}}
+	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, {kind: scopeRecent, name: "最近の更新"}}
 	for _, p := range ps {
 		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections})
 	}

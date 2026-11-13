@@ -120,6 +120,8 @@ type TaskFilterInput struct {
 	Overdue    bool   `json:"overdue,omitempty" jsonschema:"only incomplete tasks whose due date has passed"`
 	Tag        string `json:"tag,omitempty" jsonschema:"tag name or gid"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"maximum number of tasks (default 100)"`
+	// recent updates (an inbox substitute)
+	ModifiedWithinDays int `json:"modified_within_days,omitempty" jsonschema:"only tasks modified in the last N days, newest first (what changed recently)"`
 }
 
 type SearchInput struct {
@@ -335,6 +337,13 @@ func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee
 	if in.Overdue {
 		f.DueBefore = now.AddDate(0, 0, -1).Format(time.DateOnly)
 		f.Completed = ptr(false)
+	}
+	if in.ModifiedWithinDays > 0 {
+		f.ModifiedAfter = now.AddDate(0, 0, -in.ModifiedWithinDays).UTC().Format(time.RFC3339)
+		f.SortByModified = true
+		if in.Completion == "" {
+			f.Completed = nil // recent changes include completions
+		}
 	}
 	return f, nil
 }
