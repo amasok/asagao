@@ -183,8 +183,14 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 
 	// Subtasks are not returned by GET /tasks?project=, so fetch them per parent.
-	slices.Sort(withSubtasks)
-	for _, gid := range slices.Compact(withSubtasks) {
+	// upsert appends subtasks that have subtasks of their own, so nested levels are fetched too.
+	fetched := map[string]bool{}
+	for i := 0; i < len(withSubtasks); i++ {
+		gid := withSubtasks[i]
+		if fetched[gid] {
+			continue
+		}
+		fetched[gid] = true
 		subs, err := s.API.Subtasks(ctx, gid)
 		if err != nil {
 			return res, fmt.Errorf("サブタスクの取得 (%s): %w", gid, err)

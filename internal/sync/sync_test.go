@@ -21,6 +21,7 @@ type fakeAsana struct {
 	modifiedSince  []string
 	completedSince []string
 	subtaskCalls   int
+	t1aSubtasks    string // JSON array: if set, t1a has these subtasks (grandchildren of t1)
 }
 
 func (f *fakeAsana) handler() http.Handler {
@@ -44,7 +45,14 @@ func (f *fakeAsana) handler() http.Handler {
 	})
 	mux.HandleFunc("/tasks/t1/subtasks", func(w http.ResponseWriter, r *http.Request) {
 		f.subtaskCalls++
-		fmt.Fprint(w, `{"data":[{"gid":"t1a","name":"Sub","parent":{"gid":"t1"}}]}`)
+		n := 0
+		if f.t1aSubtasks != "" {
+			n = 1
+		}
+		fmt.Fprintf(w, `{"data":[{"gid":"t1a","name":"Sub","num_subtasks":%d,"parent":{"gid":"t1"}}]}`, n)
+	})
+	mux.HandleFunc("/tasks/t1a/subtasks", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"data":%s}`, f.t1aSubtasks)
 	})
 	mux.HandleFunc("/tasks", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -137,5 +145,31 @@ func TestRunFullThenIncrementalThenPrune(t *testing.T) {
 	now = now.Add(FullSyncInterval)
 	if res, err = s.Run(ctx, false); err != nil || !res.Full {
 		t.Fatalf("expected automatic full sync: %+v %v", res, err)
+	}
+}
+
+func TestRunFetchesNestedSubtasks(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`,
+		t1aSubtasks: `[{"gid":"t1a1","name":"孫","parent":{"gid":"t1a"}}]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	if _, err := s.Run(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := st.GetTask(ctx, "t1a"); err != nil || len(d.Subtasks) != 1 || d.Subtasks[0].GID != "t1a1" {
+		t.Fatalf("grandchild not synced: %+v %v", d, err)
+	}
+	// A full sync keeps (does not prune) the grandchild.
+	if res, err := s.Run(ctx, true); err != nil || res.Pruned != 0 {
+		t.Fatalf("second full sync = %+v %v", res, err)
 	}
 }

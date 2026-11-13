@@ -319,3 +319,23 @@ func TestDiscardOpByKind(t *testing.T) {
 		})
 	}
 }
+
+func TestPruneProjectsRemovesRelatedRows(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	must(t, s.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p3", Name: "仕事", Members: []asana.Ref{{GID: "u2"}}}}, "me"))
+	must(t, s.ReplaceStatusUpdates(ctx, "p3", []asana.StatusUpdate{{GID: "su1", StatusType: "on_track", Title: "t"}}))
+	must(t, s.UpsertTasks(ctx, []asana.Task{{GID: "t9", Name: "x",
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p3"}}, {Project: &asana.Ref{GID: "p1"}}}}}))
+	must(t, s.PruneProjects(ctx, "w1", []asana.Project{{GID: "p1"}, {GID: "p2"}}))
+	for table, col := range map[string]string{"project_members": "project_gid", "status_updates": "project_gid", "task_memberships": "project_gid", "sections": "project_gid", "projects": "gid"} {
+		var n int
+		must(t, s.db.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE "+col+" = 'p3'").Scan(&n))
+		if n != 0 {
+			t.Errorf("%s still has %d rows of the pruned project", table, n)
+		}
+	}
+	if d, _ := s.GetTask(ctx, "t9"); len(d.Memberships) != 1 {
+		t.Fatalf("membership in the kept project should stay: %+v", d.Memberships)
+	}
+}
