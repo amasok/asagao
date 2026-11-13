@@ -59,6 +59,8 @@ func (s *Syncer) Push(ctx context.Context) (PushResult, error) {
 			err = s.pushComment(ctx, *op)
 		case store.OpMoveTask:
 			err = s.pushMove(ctx, *op)
+		case store.OpAddTag, store.OpRemoveTag:
+			err = s.pushTag(ctx, *op)
 		case store.OpRenameSection:
 			var conflict bool
 			conflict, err = s.pushRenameSection(ctx, *op)
@@ -216,6 +218,39 @@ func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (conflict b
 		return false, err
 	}
 	return false, s.Store.ApplySectionName(ctx, op.TaskGID, updated.Name)
+}
+
+func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
+	if store.IsLocalGID(op.TaskGID) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	tag, _ := op.Payload["tag"].(string)
+	tag, err := s.Store.RealTagGID(ctx, tag)
+	if err != nil {
+		return err
+	}
+	if op.Kind == store.OpRemoveTag {
+		if err := s.API.RemoveTag(ctx, op.TaskGID, tag); err != nil {
+			return err
+		}
+		return s.Store.CompleteOp(ctx, op.ID)
+	}
+	if store.IsLocalGID(tag) { // created offline: create it in Asana first
+		name, _ := op.Payload["tag_name"].(string)
+		workspace, _ := op.Payload["workspace"].(string)
+		created, err := s.API.CreateTag(ctx, workspace, name)
+		if err != nil {
+			return err
+		}
+		if err := s.Store.ReplaceLocalTagGID(ctx, tag, created.GID); err != nil {
+			return err
+		}
+		tag = created.GID
+	}
+	if err := s.API.AddTag(ctx, op.TaskGID, tag); err != nil {
+		return err
+	}
+	return s.Store.CompleteOp(ctx, op.ID)
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.

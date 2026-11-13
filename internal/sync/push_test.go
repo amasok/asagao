@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	stdsync "sync"
 	"testing"
@@ -664,5 +665,55 @@ func TestPushRichNotesAndComment(t *testing.T) {
 	}
 	if !strings.Contains(bodies[1], `"html_text"`) || strings.Contains(bodies[1], `"text":"hi"`) {
 		t.Fatalf("comment should send html_text: %s", bodies[1])
+	}
+}
+
+func TestPushTags(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+string(b))
+		if r.URL.Path == "/tags" {
+			fmt.Fprint(w, `{"data":{"gid":"G9","name":"新タグ"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T", Workspace: &asana.Ref{GID: "w1"}, Tags: []asana.Ref{{GID: "g1", Name: "旧"}}}})
+	if _, err := st.AddTagLocal(ctx, "t1", "", "新タグ", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RemoveTagLocal(ctx, "t1", "g1", now); err != nil {
+		t.Fatal(err)
+	}
+	// A sync that still has the old tags keeps the local changes.
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T", Workspace: &asana.Ref{GID: "w1"}, Tags: []asana.Ref{{GID: "g1", Name: "旧"}}}})
+	if d, _ := st.GetTask(ctx, "t1"); !slices.Equal(d.Tags, []string{"新タグ"}) {
+		t.Fatalf("tags after pull = %v", d.Tags)
+	}
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	if err != nil || res.Sent != 2 {
+		t.Fatalf("push = %+v %v (%v)", res, err, calls)
+	}
+	want := []string{"POST /tags", "POST /tasks/t1/addTag", "POST /tasks/t1/removeTag"}
+	for i, w := range want {
+		if !strings.HasPrefix(calls[i], w) {
+			t.Fatalf("call %d = %q, want %q", i, calls[i], w)
+		}
+	}
+	if !strings.Contains(calls[1], `"tag":"G9"`) {
+		t.Fatalf("addTag should use the created tag's gid: %s", calls[1])
+	}
+	if tags, _ := st.TaskTags(ctx, "t1"); len(tags) != 1 || tags[0].GID != "G9" {
+		t.Fatalf("local tag gid should be replaced: %+v", tags)
 	}
 }

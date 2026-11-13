@@ -197,15 +197,15 @@ func TestSearchAndFilter(t *testing.T) {
 		t.Fatalf("esc should clear the search")
 	}
 
-	h.key("f") // 7日以内
+	h.chooseFilter(filterDueWeek)
 	if s := h.screen(); strings.Contains(s, "ソファを買う") == false || !strings.Contains(s, "[7日以内が期限]") {
 		t.Fatalf("due-within-week filter:\n%s", s)
 	}
-	h.key("f") // 期限切れ
+	h.chooseFilter(filterOverdue)
 	if s := h.screen(); strings.Contains(s, "ソファを買う") || !strings.Contains(s, "転居届を出す") {
 		t.Fatalf("overdue filter:\n%s", s)
 	}
-	h.key("f") // 完了済み
+	h.chooseFilter(filterCompleted)
 	if s := h.screen(); !strings.Contains(s, "年末調整") {
 		t.Fatalf("completed filter:\n%s", s)
 	}
@@ -214,7 +214,7 @@ func TestSearchAndFilter(t *testing.T) {
 func TestNarrowLayoutShowsOnePane(t *testing.T) {
 	h := newHarness(t, 60, 20)
 	s := h.screen()
-	if strings.Contains(s, "プロジェクト") && strings.Contains(s, "詳細") {
+	if strings.Count(s, "╭") != 1 {
 		t.Fatalf("narrow layout should show only the focused pane:\n%s", s)
 	}
 	h.key("enter")
@@ -275,7 +275,7 @@ func TestToggleCompleteOffline(t *testing.T) {
 	if !strings.Contains(s, "↑ 未送信 1") {
 		t.Fatalf("header should show the pending change:\n%s", s)
 	}
-	h.key("f", "f", "f") // 完了済み
+	h.chooseFilter(filterCompleted)
 	if !strings.Contains(h.screen(), "転居届を出す ↑") {
 		t.Fatalf("completed task should be marked as unsent:\n%s", h.screen())
 	}
@@ -451,7 +451,7 @@ func TestZoomShowsAllComments(t *testing.T) {
 
 func TestTagFilter(t *testing.T) {
 	h := newHarnessWithExtras(t, 140, 30)
-	h.key("t")
+	h.key("T")
 	s := h.screen()
 	if !strings.Contains(s, "タグで絞り込む") || !strings.Contains(s, "#買い物") || !strings.Contains(s, "#手続き系") {
 		t.Fatalf("tag picker:\n%s", s)
@@ -472,7 +472,7 @@ func TestTagFilter(t *testing.T) {
 	if len(gids) != 1 || gids[0] != want || !strings.Contains(h.screen(), "#"+tag) {
 		t.Fatalf("tag %q: rows %v", tag, gids)
 	}
-	h.key("t", "g", "enter") // "（すべてのタスク）"
+	h.key("T", "g", "enter") // "（すべてのタスク）"
 	if h.m.tagFilter != "" {
 		t.Fatal("first picker item should clear the filter")
 	}
@@ -538,7 +538,7 @@ func TestCollapseSections(t *testing.T) {
 	if got := h.visibleGIDs(); len(got) != 4 { // 家具: t1, 手続き: t2 t3 t4
 		t.Fatalf("visible %v", got)
 	}
-	h.key("space") // collapse 家具 (cursor on t1)
+	h.key("-") // collapse 家具 (cursor on t1)
 	s := h.screen()
 	if !strings.Contains(s, "▸ 家具 (1)") || slices.Contains(h.visibleGIDs(), "t1") {
 		t.Fatalf("家具 should be collapsed:\n%s", s)
@@ -561,9 +561,9 @@ func TestCollapseSections(t *testing.T) {
 		t.Fatalf("enter should expand: %v", got)
 	}
 
-	h2.key("-")
+	h2.key("_")
 	if got := h2.visibleGIDs(); len(got) != 0 || !strings.Contains(h2.screen(), "▸ 手続き (3)") {
-		t.Fatalf("- should collapse all:\n%s", h2.screen())
+		t.Fatalf("_ should collapse all:\n%s", h2.screen())
 	}
 	h2.key("=")
 	if got := h2.visibleGIDs(); len(got) != 4 {
@@ -612,7 +612,7 @@ func TestViewImages(t *testing.T) {
 	var viewed []string
 	h := projectHarness(t, st, func(paths []string) tea.Cmd { viewed = paths; return nil })
 	s := h.screen()
-	for _, want := range []string{"添付ファイル (2)", "画像 1 件（i で全画面表示）", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
+	for _, want := range []string{"添付ファイル (2)", "画像 1 件（space i で全画面表示）", "[画像] plan.png", "2KB", "✓保存済み", "[ファイル] 見積.pdf"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("detail missing %q:\n%s", want, s)
 		}
@@ -639,7 +639,7 @@ func TestInlineImagesInNotes(t *testing.T) {
 	var viewed []string
 	h := projectHarness(t, st, func(p []string) tea.Cmd { viewed = p; return nil })
 	s := h.screen()
-	if strings.Contains(s, "get_asset") || !strings.Contains(s, "[画像1]") || !strings.Contains(s, "画像 1 件（i で全画面表示）") {
+	if strings.Contains(s, "get_asset") || !strings.Contains(s, "[画像1]") || !strings.Contains(s, "画像 1 件（space i で全画面表示）") {
 		t.Fatalf("inline image link should be shown as [画像1]:\n%s", s)
 	}
 	h.key("i") // offline and not cached: cannot fetch
@@ -869,23 +869,21 @@ func TestDetailSubtaskNavigation(t *testing.T) {
 	addSubtasks(t, st)
 	h := projectHarness(t, st, nil) // ソファを買う
 	h.key("enter")
-	if !h.m.zoom || !strings.Contains(h.screen(), "J/K 選択・enter 開く・x 完了・S 追加") {
+	if !h.m.zoom || !strings.Contains(h.screen(), "＋ サブタスクを追加") {
 		t.Fatalf("enter in the list should open the detail full screen:\n%s", h.screen())
 	}
-	h.key("J", "J") // サイズを測る, 予算を決める
-	if sub := h.m.selectedSubtask(); sub == nil || sub.GID != "t1b" {
-		t.Fatalf("selected subtask = %+v", sub)
-	}
-	h.key("x") // completes the selected subtask, not the parent
+	h.cursorToSubtask("t1b") // 予算を決める
+	h.key("x")               // completes the selected subtask, not the parent
 	if d, _ := st.GetTask(context.Background(), "t1b"); !d.Completed {
 		t.Fatal("x should complete the selected subtask")
 	}
 	if d, _ := st.GetTask(context.Background(), "t1"); d.Completed {
 		t.Fatal("parent must stay open")
 	}
-	h.key("K", "enter") // open サイズを測る
+	h.cursorToSubtask("t1a")
+	h.key("enter") // open サイズを測る
 	s := h.screen()
-	if !strings.Contains(s, "← backspace で親タスクへ戻る") || !strings.Contains(s, "サイズを測る") || !strings.Contains(s, "メジャーを買う") {
+	if !strings.Contains(s, "← backspace で戻る") || !strings.Contains(s, "サイズを測る") || !strings.Contains(s, "メジャーを買う") {
 		t.Fatalf("subtask detail:\n%s", s)
 	}
 	h.key("S")
@@ -902,10 +900,32 @@ func TestDetailSubtaskNavigation(t *testing.T) {
 	if h.m.detailGID() != "t1" || h.m.selectedSubtask() == nil || h.m.selectedSubtask().GID != "t1a" {
 		t.Fatalf("backspace should return to the parent with the subtask selected: %q %+v", h.m.detailGID(), h.m.selectedSubtask())
 	}
-	h.key("esc", "esc") // deselect, then leave the full screen
+	h.key("esc")
 	if h.m.zoom {
 		t.Fatal("esc should close the full screen detail")
 	}
+}
+
+// chooseFilter picks a filter from the f chooser.
+func (h *harness) chooseFilter(f filterMode) {
+	h.key("f", "g")
+	for range int(f) {
+		h.key("j")
+	}
+	h.key("enter")
+}
+
+// cursorToSubtask moves the detail cursor onto a subtask.
+func (h *harness) cursorToSubtask(gid string) {
+	h.t.Helper()
+	h.key("g")
+	for range 40 {
+		if sub := h.m.selectedSubtask(); sub != nil && sub.GID == gid {
+			return
+		}
+		h.key("j")
+	}
+	h.t.Fatalf("subtask %s not reachable in the detail", gid)
 }
 
 // fakeEditor replaces the file content when "run".
@@ -1012,5 +1032,165 @@ func TestCommentInEditor(t *testing.T) {
 	}
 	if s := h.screen(); !strings.Contains(s, "明日行きます") || !strings.Contains(s, "• 印鑑") {
 		t.Fatalf("comment should render as markdown:\n%s", s)
+	}
+}
+
+func TestWhichKeyMenu(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	h := projectHarness(t, st, nil)
+	h.key("space")
+	s := h.screen()
+	for _, want := range []string{"メニュー", "タスク", "表示", "その他", "期日を変更", "担当者を変更", "タグを付ける / 外す", "ボード / リスト", "今すぐ同期"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("menu missing %q:\n%s", want, s)
+		}
+	}
+	h.key("d") // space d: due date chooser
+	if h.m.picker == nil || h.m.picker.kind != pickDue {
+		t.Fatalf("space d should open the due chooser:\n%s", h.screen())
+	}
+	h.key("esc", "space", "esc")
+	if h.m.leader || h.m.picker != nil {
+		t.Fatal("esc should close the menu")
+	}
+
+	// In the sidebar there is no task: task actions are not offered.
+	h.key("h", "space")
+	if s := h.screen(); strings.Contains(s, "期日を変更") || !strings.Contains(s, "絞り込み") {
+		t.Fatalf("sidebar menu should only offer what applies there:\n%s", s)
+	}
+	h.key("Z")
+	if !strings.Contains(h.screen(), "「Z」はここでは使えません") {
+		t.Fatal("unknown menu key should be reported")
+	}
+
+	h.key("?")
+	if s := h.screen(); !strings.Contains(s, "ヘルプ") || !strings.Contains(s, "移動（この画面）") {
+		t.Fatalf("help:\n%s", s)
+	}
+}
+
+func TestDetailFieldsAreChosenFromLists(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	ctx := context.Background()
+	h := projectHarness(t, st, nil) // ソファを買う, due 11/20, assignee Me
+	h.key("enter")
+	cursorTo := func(kind itemKind) {
+		t.Helper()
+		h.key("g")
+		for range 20 {
+			if it := h.m.currentItem(); it != nil && it.kind == kind {
+				return
+			}
+			h.key("j")
+		}
+		t.Fatalf("item %d not reachable", kind)
+	}
+
+	cursorTo(itemDue)
+	h.key("enter")
+	if s := h.screen(); !strings.Contains(s, "明日") || !strings.Contains(s, "日付を入力…") || !strings.Contains(s, "期日なし") {
+		t.Fatalf("due chooser:\n%s", s)
+	}
+	h.key("g", "j", "enter") // 明日
+	if d, _ := st.GetTask(ctx, "t1"); d.DueOn != "2026-11-14" {
+		t.Fatalf("due = %q", d.DueOn)
+	}
+	cursorTo(itemDue)
+	h.key("enter", "G", "k", "enter") // 日付を入力…
+	h.m.prompt.SetValue("")
+	h.typeText("2026-12-24")
+	h.key("enter")
+	if d, _ := st.GetTask(ctx, "t1"); d.DueOn != "2026-12-24" {
+		t.Fatalf("typed due = %q", d.DueOn)
+	}
+	cursorTo(itemDue)
+	h.key("enter", "G", "enter") // 期日なし
+	if d, _ := st.GetTask(ctx, "t1"); d.DueOn != "" {
+		t.Fatalf("due should be cleared: %q", d.DueOn)
+	}
+
+	cursorTo(itemAssignee)
+	h.key("enter")
+	if h.m.picker == nil || h.m.picker.kind != pickAssignee {
+		t.Fatal("enter on 担当 should open the member chooser")
+	}
+	h.key("esc")
+
+	cursorTo(itemCompleted)
+	h.key("enter")
+	if d, _ := st.GetTask(ctx, "t1"); !d.Completed {
+		t.Fatal("enter on 状態 should toggle completion")
+	}
+}
+
+func TestTagEditor(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	ctx := context.Background()
+	_ = st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1"}})
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20", NumSubtasks: 2, Workspace: &asana.Ref{GID: "w1"},
+		Assignee: &asana.Ref{GID: "me"}, Tags: []asana.Ref{{GID: "g1", Name: "買い物"}},
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
+	_ = st.UpsertTags(ctx, []asana.Ref{{GID: "g2", Name: "急ぎ"}}) // a workspace tag no task uses yet
+	h := projectHarness(t, st, nil)
+	h.key("space", "t")
+	s := h.screen()
+	if !strings.Contains(s, "[✓] #買い物") || !strings.Contains(s, "[ ] #急ぎ") || !strings.Contains(s, "＋ 新しいタグを作る…") {
+		t.Fatalf("tag chooser:\n%s", s)
+	}
+	h.key("g", "enter") // 急ぎ (sorted: 急ぎ, 買い物) — toggles on, chooser stays open
+	if h.m.picker == nil || !strings.Contains(h.screen(), "[✓] #急ぎ") {
+		t.Fatalf("toggle should keep the chooser open with the new state:\n%s", h.screen())
+	}
+	h.key("j", "space") // 買い物 off
+	h.key("G", "enter")
+	h.typeText("家具")
+	h.key("enter")
+	tags, _ := st.TaskTags(ctx, "t1")
+	var names []string
+	for _, tg := range tags {
+		names = append(names, tg.Name)
+	}
+	if !slices.Equal(names, []string{"家具", "急ぎ"}) {
+		t.Fatalf("tags = %v", names)
+	}
+	ops, _ := st.ListOps(ctx)
+	var kinds []string
+	for _, op := range ops {
+		kinds = append(kinds, op.Kind)
+	}
+	if !slices.Equal(kinds, []string{store.OpAddTag, store.OpRemoveTag, store.OpAddTag}) {
+		t.Fatalf("ops = %v", kinds)
+	}
+	// Toggling back cancels instead of queueing another change.
+	h.key("space", "t", "g", "enter")
+	if ops, _ := st.ListOps(ctx); len(ops) != 2 {
+		t.Fatalf("removing a just-added tag should cancel it: %d ops", len(ops))
+	}
+}
+
+func TestEditFileUsesLocalImagePaths(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "attachments", "55-plan.png")
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, []byte("png"), 0o600)
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "転居届を出す", DueOn: "2026-11-10", Assignee: &asana.Ref{GID: "me"},
+		HTMLNotes: `<body>図<img data-asana-gid="55"></body>`}})
+	_ = st.UpsertAttachment(ctx, "t2", asana.Attachment{GID: "55", Name: "plan.png"})
+	_ = st.SetAttachmentPath(ctx, "55", path)
+	var seen string
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow },
+		RunEditor: fakeEditor(t, func(s string) string { seen = s; return s })})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("e")
+	if !strings.Contains(seen, "![画像]("+path+")") {
+		t.Fatalf("editor file should reference the local image file:\n%s", seen)
 	}
 }

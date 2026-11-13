@@ -2,6 +2,7 @@ package richtext
 
 import (
 	"html"
+	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -212,7 +213,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 		w.tag("</a>")
 	case *gast.Image:
 		dest := string(n.Destination)
-		if gid, ok := strings.CutPrefix(dest, assetScheme); ok && !strings.HasPrefix(dest, mentionScheme) {
+		if gid, ok := ImageGID(dest); ok {
 			if !w.plain {
 				w.b.WriteString(`<img data-asana-gid="` + html.EscapeString(gid) + `"/>`)
 			}
@@ -230,4 +231,21 @@ func (w *htmlWriter) inline(n gast.Node) {
 	default:
 		w.inlines(n)
 	}
+}
+
+// cachedAttachment matches files downloaded by asana-tui (".../attachments/<gid>-name").
+var cachedAttachment = regexp.MustCompile(`(?:^|/)attachments/(\d+)-[^/]*$`)
+
+// ImageGID returns the attachment gid an editable image link refers to.
+func ImageGID(dest string) (string, bool) {
+	if strings.HasPrefix(dest, mentionScheme) {
+		return "", false
+	}
+	if gid, ok := strings.CutPrefix(dest, assetScheme); ok {
+		return gid, true
+	}
+	if m := cachedAttachment.FindStringSubmatch(strings.TrimPrefix(dest, "file://")); m != nil {
+		return m[1], true
+	}
+	return "", false
 }

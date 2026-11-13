@@ -122,6 +122,11 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				return res, err
 			}
 		}
+		if tags, err := s.API.Tags(ctx, w.GID); err == nil { // all tags, for the tag picker
+			if err := s.Store.UpsertTags(ctx, tags); err != nil {
+				return res, err
+			}
+		}
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)
 		mine, err := s.API.Tasks(ctx, asana.TaskQuery{
 			Assignee: "me", Workspace: w.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,

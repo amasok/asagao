@@ -38,6 +38,10 @@ func (m *Model) render() string {
 		body = m.renderOutbox(m.width, bodyH)
 	} else if m.picker != nil {
 		body = m.renderPicker(m.width, bodyH)
+	} else if m.leader {
+		menu := m.renderMenu(m.width)
+		menuH := min(len(menu)+3, bodyH-3)
+		body = lipgloss.JoinVertical(lipgloss.Left, m.renderBody(bodyH-menuH), m.pane("メニュー（キーを押す・esc で閉じる）", menu, m.width, menuH, true))
 	} else {
 		body = m.renderBody(bodyH)
 	}
@@ -209,10 +213,10 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	keys := [][2]string{{"j/k", "移動"}, {"l/h", "サブタスク"}, {"space", "折りたたみ"}, {"x", "完了"}, {"a", "追加"}, {"S", "サブタスク追加"}, {"@", "担当"}, {"c", "コメント"}, {"m", "移動先"}, {"z", "拡大"}, {"<>", "詳細の幅"}, {"v", "ボード"}, {"/", "検索"}, {"f", "絞り込み"}, {"t", "タグ"}, {"?", "ヘルプ"}, {"q", "終了"}}
-	if m.boardActive() && !m.zoom {
-		keys = [][2]string{{"h/l", "列"}, {"j/k", "カード"}, {"H/L", "カードを左右の列へ"}, {"enter", "詳細"}, {"E", "列名を変更"}, {"x", "完了"}, {"a", "追加"}, {"c", "コメント"}, {"v", "リスト表示"}, {"?", "ヘルプ"}}
+	if m.leader {
+		return " " + m.st.footer.Render("メニュー: キーを押してください（esc で閉じる）")
 	}
+	keys := m.footerHints()
 	var parts []string
 	for _, k := range keys {
 		parts = append(parts, m.st.footerKey.Render(k[0])+" "+m.st.footer.Render(k[1]))
@@ -221,49 +225,38 @@ func (m *Model) renderFooter() string {
 }
 
 func (m *Model) renderHelp(w, h int) string {
-	lines := []string{
-		"移動",
-		"  j / k, ↓ / ↑      上下に移動",
-		"  g / G             先頭 / 末尾",
-		"  ctrl+d / ctrl+u   半ページ移動",
-		"  tab / shift+tab   ペインを切り替え",
-		"  h / l, ← / →      左右のペインへ",
-		"  enter             選択 / 詳細を開く",
-		"",
-		"表示",
-		"  /                 検索（タスク名・説明・コメント。全プロジェクトが対象）",
-		"  esc               検索を解除 / 戻る",
-		"  f / F             絞り込みを切り替え（未完了 → 7日以内 → 期限切れ → 完了済み → すべて）",
-		"  t                 タグで絞り込む",
-		"  z                 詳細を全画面で表示（コメントを全部読む）",
-		"  < / >             詳細ペインを狭く / 広く",
-		"  b                 プロジェクト一覧を隠す / 出す",
-		"  i                 添付された画像を表示（n/p で切り替え、q で戻る）",
-		"  space             リストでセクションを折りたたむ / 開く（- ですべて折りたたむ、= ですべて開く）",
-		"  v                 ボード表示 / リスト表示（プロジェクトを開いているとき）",
-		"                    ボードでは h/l で列、j/k でカード、H/L でカードを左右の列へ移動",
-		"  o                 選択中のタスクをブラウザで開く",
-		"  r                 今すぐ同期",
-		"",
-		"編集（オフラインでも可。オンラインになったら自動で送信）",
-		"  x                 完了 / 未完了を切り替え",
-		"  a                 タスクを追加（例: 牛乳を買う due:明日）",
-		"                    プロジェクト表示中はそのプロジェクトに、My Tasks では自分に割り当て",
-		"  c                 コメントを追加",
-		"  m                 タスクを別のセクションへ移動",
-		"  @                 担当者を変更",
-		"  S                 選択中のタスクにサブタスクを追加（例: 見積もりを取る due:+3d）",
-		"  enter             詳細を全画面で開く。詳細では J/K でサブタスクを選び enter で開く、backspace で戻る",
-		"  e                 タスクを $EDITOR（nvim）で編集（名前・期日・担当者・完了・セクション・説明）",
-		"  C                 コメントを $EDITOR（nvim）で書く（マークダウン）",
-		"  l / →             サブタスクを開く（ツリー表示）、サブタスクがなければ詳細へ",
-		"  h / ←             サブタスクを閉じる / 親タスクへ / プロジェクト一覧へ",
-		"  E                 セクション（リスト）の名前を変更",
-		"  !                 未送信の変更・競合を確認して解決",
-		"",
-		"  q                 終了（狭い画面では 1 つ前のペインへ）",
-		"  ?                 このヘルプ（何かキーを押すと閉じる）",
+	// block renders a titled list of (keys, label) rows with the key column aligned.
+	block := func(title string, rows [][2]string) []string {
+		kw := 0
+		for _, r := range rows {
+			kw = max(kw, ansi.StringWidth(r[0]))
+		}
+		out := []string{m.st.paneTitle.Render(title)}
+		for _, r := range rows {
+			out = append(out, m.st.footerKey.Render(padRight(r[0], kw))+"  "+r[1])
+		}
+		return out
 	}
+	nav := block("移動（この画面）", m.navHelp())
+	nav = append(nav, "")
+	nav = append(nav, block("どこでも", [][2]string{{"space", "メニュー（ここでできる操作）"}, {"/", "検索"},
+		{"esc / q", "戻る / 終了"}, {"?", "このヘルプ"}})...)
+	groups := map[string][][2]string{}
+	for _, a := range m.available() {
+		keys := "space " + a.key
+		if len(a.shortcut) > 0 {
+			keys = a.shortcut[0] + " / " + keys
+		}
+		groups[a.group] = append(groups[a.group], [2]string{keys, a.label})
+	}
+	cols := [][]string{nav}
+	for _, g := range groupOrder {
+		if len(groups[g]) > 0 {
+			cols = append(cols, block(g, groups[g]))
+		}
+	}
+	lines := append([]string{m.st.dim.Render("「x / space x」は x を直接押しても、space のあと x を押しても同じです。何かキーを押すと閉じます。"), ""},
+		layoutColumns(cols, w-4)...)
 	return m.pane("ヘルプ", lines, w, h, true)
 }
 
@@ -402,120 +395,171 @@ func (m *Model) refreshDetailView() {
 
 func (m *Model) renderDetail(w int) string {
 	d := m.detail
+	m.detailItems = m.detailItems[:0]
 	if d == nil {
 		return m.st.dim.Render("タスクを選択してください")
 	}
+	active := m.inDetail() // items are selectable (and empty fields shown)
+	m.renderedActive = active
 	var b strings.Builder
-	wrap := lipgloss.NewStyle().Width(w)
+	line := func() int { return strings.Count(b.String(), "\n") }
+	// item marks the next line as a selectable item and returns whether it is selected.
+	item := func(kind itemKind, sub int) bool {
+		m.detailItems = append(m.detailItems, detailItem{kind: kind, sub: sub, line: line()})
+		return active && len(m.detailItems)-1 == m.detailCursor
+	}
+	row := func(selected bool, text string) {
+		if selected {
+			b.WriteString(m.highlight(ansi.Truncate(text, w, "…"), w, true, true) + "\n")
+		} else {
+			b.WriteString(text + "\n")
+		}
+	}
+
+	if len(m.detailStack) > 1 {
+		b.WriteString(m.st.dim.Render("← backspace で戻る") + "\n")
+	}
 	title := d.Name
 	if d.Completed {
 		title = "☑ " + title
 	}
-	if len(m.detailStack) > 1 {
-		b.WriteString(m.st.dim.Render("← backspace で親タスクへ戻る") + "\n")
-	}
-	b.WriteString(wrap.Bold(true).Render(title) + "\n\n")
-
-	field := func(label, value string) {
-		if value == "" {
-			return
-		}
-		const labelW = 12 // display width; "プロジェクト" is 12 columns
-		value = lipgloss.NewStyle().Width(max(1, w-labelW-1)).Render(value)
-		value = strings.ReplaceAll(value, "\n", "\n"+strings.Repeat(" ", labelW+1))
-		b.WriteString(m.st.label.Render(padRight(label, labelW)) + " " + value + "\n")
-	}
-	if d.Assignee != nil {
-		field("担当", d.Assignee.Name)
+	sel := item(itemName, 0)
+	if sel {
+		row(true, title+m.st.dim.Render("  enter で名前・説明を編集"))
 	} else {
-		field("担当", m.st.dim.Render("未割り当て"))
+		b.WriteString(lipgloss.NewStyle().Width(w).Bold(true).Render(title) + "\n")
 	}
-	field("期日", longDue(d.DueOn, d.DueAt))
-	field("開始日", d.StartOn)
+	b.WriteString("\n")
+
+	const labelW = 12 // display width; "プロジェクト" is 12 columns
+	field := func(kind itemKind, label, value, empty string) {
+		if value == "" {
+			if !active {
+				return
+			}
+			value = m.st.dim.Render(empty)
+		}
+		text := m.st.label.Render(padRight(label, labelW)) + " " + value
+		row(item(kind, 0), text)
+	}
+	assignee := ""
+	if d.Assignee != nil {
+		assignee = d.Assignee.Name
+	}
+	field(itemAssignee, "担当", assignee, "未割り当て")
+	field(itemDue, "期日", longDue(d.DueOn, d.DueAt), "なし")
+	if d.StartOn != "" {
+		b.WriteString(m.st.label.Render(padRight("開始日", labelW)) + " " + d.StartOn + "\n")
+	}
 	for _, ms := range d.Memberships {
 		v := ms.ProjectName
 		if ms.SectionName != "" && ms.SectionName != "(no section)" && ms.SectionName != "Untitled section" {
 			v += " / " + ms.SectionName
 		}
-		field("プロジェクト", v)
+		if len(d.Memberships) == 1 {
+			field(itemSection, "プロジェクト", v, "")
+		} else {
+			b.WriteString(m.st.label.Render(padRight("プロジェクト", labelW)) + " " + v + "\n")
+		}
 	}
+	tags := ""
 	if len(d.Tags) > 0 {
-		field("タグ", m.st.tag.Render("#"+strings.Join(d.Tags, " #")))
+		tags = m.st.tag.Render("#" + strings.Join(d.Tags, " #"))
+	}
+	field(itemTags, "タグ", tags, "なし")
+	if active {
+		done := "☐ 未完了"
+		if d.Completed {
+			done = "☑ 完了"
+		}
+		field(itemCompleted, "状態", done, "")
 	}
 	if d.Parent != nil {
-		field("親タスク", d.Parent.Name)
+		field(itemParent, "親タスク", d.Parent.Name, "")
 	}
+
 	imageNo := map[string]int{}
 	for i, gid := range taskImages(d) {
 		imageNo[gid] = i + 1
 	}
-	if md := textMarkdown(d.HTMLNotes, d.Notes); md != "" {
-		b.WriteString("\n" + m.withImages(m.markdown(md, w), w, imageNo) + "\n")
+	md := textMarkdown(d.HTMLNotes, d.Notes)
+	if active {
+		b.WriteString("\n")
+		hint := "説明"
+		if md == "" {
+			hint += m.st.dim.Render("  なし（enter で書く）")
+		}
+		row(item(itemNotes, 0), m.st.sectionHeader.Render(hint))
+	}
+	if md != "" {
+		if !active {
+			b.WriteString("\n")
+		}
+		b.WriteString(m.withImages(m.markdown(md, w), w, imageNo) + "\n")
 	}
 	if n := len(imageNo); n > 0 {
-		b.WriteString(m.st.dim.Render(fmt.Sprintf("画像 %d 件（i で全画面表示）", n)) + "\n")
+		b.WriteString(m.st.dim.Render(fmt.Sprintf("画像 %d 件（space i で全画面表示）", n)) + "\n")
 	}
 	if len(d.Attachments) > 0 {
-		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("添付ファイル (%d)", len(d.Attachments))))
-		b.WriteString("\n")
+		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("添付ファイル (%d)", len(d.Attachments))) + "\n")
 		for _, a := range d.Attachments {
 			kind := "[ファイル]"
 			if a.IsImage {
 				kind = "[画像]"
 			}
-			line := kind + " " + a.Name
+			text := kind + " " + a.Name
 			if sz := formatSize(a.Size); sz != "" {
-				line += "  " + m.st.dim.Render(sz)
+				text += "  " + m.st.dim.Render(sz)
 			}
 			if a.LocalPath != "" {
-				line += m.st.dim.Render("  ✓保存済み")
+				text += m.st.dim.Render("  ✓保存済み")
 			}
-			b.WriteString(wrap.Render(line) + "\n")
+			b.WriteString(ansi.Truncate(text, w, "…") + "\n")
 		}
 	}
-	m.subtaskLine = -1
-	if len(d.Subtasks) > 0 || m.inDetail() {
-		header := m.st.sectionHeader.Render(fmt.Sprintf("サブタスク (%d)", len(d.Subtasks)))
-		if m.inDetail() {
-			header += m.st.dim.Render("  J/K 選択・enter 開く・x 完了・S 追加")
-		}
-		b.WriteString("\n" + header + "\n")
-		m.subtaskLine = strings.Count(b.String(), "\n")
+
+	if len(d.Subtasks) > 0 || active {
+		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("サブタスク (%d)", len(d.Subtasks))) + "\n")
 		for i, s := range d.Subtasks {
 			check := "☐"
 			if s.Completed {
 				check = "☑"
 			}
-			line := check + " " + s.Name
+			text := check + " " + s.Name
 			if s.NumSubtasks > 0 {
-				line += fmt.Sprintf(" ↳%d", s.NumSubtasks)
+				text += fmt.Sprintf(" ↳%d", s.NumSubtasks)
 			}
 			if s.Assignee != nil {
-				line += "  " + m.st.dim.Render(s.Assignee.Name)
+				text += "  " + m.st.dim.Render(s.Assignee.Name)
 			}
 			if s.DueOn != "" {
-				line += "  " + m.st.dim.Render(shortDue(s.DueOn, m.deps.Now()))
+				text += "  " + m.st.dim.Render(shortDue(s.DueOn, m.deps.Now()))
 			}
 			if s.Pending {
-				line += " ↑"
+				text += " ↑"
 			}
-			if m.inDetail() && i == m.detailSub {
-				b.WriteString(m.highlight(ansi.Truncate(line, w, "…"), w, true, true) + "\n")
-				continue
-			}
-			b.WriteString(ansi.Truncate(line, w, "…") + "\n")
+			row(item(itemSubtask, i), ansi.Truncate(text, w, "…"))
+		}
+		if active {
+			row(item(itemAddSubtask, 0), m.st.dim.Render("＋ サブタスクを追加"))
 		}
 	}
+
 	var comments []store.StoryView
 	for _, s := range d.Stories {
 		if s.Type == "comment" {
 			comments = append(comments, s)
 		}
 	}
+	if len(comments) > 0 || active {
+		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("コメント (%d)", len(comments))) + "\n")
+		if active {
+			row(item(itemAddComment, 0), m.st.dim.Render("＋ コメントを書く（エディタ）"))
+		}
+	}
 	switch {
 	case len(comments) > 0:
-		b.WriteString("\n" + m.st.sectionHeader.Render(fmt.Sprintf("コメント (%d)", len(comments))) + "\n")
-		// In the side pane show only the latest few; the zoomed view (z) shows them all.
+		// In the side pane show only the latest few; the full-screen view shows them all.
 		shown := comments
 		if !m.zoom && len(comments) > sidePaneComments {
 			shown = comments[len(comments)-sidePaneComments:]
@@ -539,7 +583,7 @@ func (m *Model) renderDetail(w int) string {
 			b.WriteString(indentLines(text, 2) + "\n")
 		}
 	case d.DetailsFetchedAt == "":
-		b.WriteString("\n" + m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")
+		b.WriteString(m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")
 	}
 	return b.String()
 }

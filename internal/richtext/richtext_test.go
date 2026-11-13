@@ -105,3 +105,35 @@ func TestEditableRoundTrip(t *testing.T) {
 		t.Fatalf("plain = %q", got)
 	}
 }
+
+func TestEditableImagesAsLocalPaths(t *testing.T) {
+	in := `<body>前<img data-asana-gid="111">後</body>`
+	path := "/Users/me/.cache/asana-tui/attachments/111-photo.png"
+	md := ToEditableMarkdownWith(in, func(gid string) string {
+		if gid == "111" {
+			return path
+		}
+		return ""
+	})
+	if !strings.Contains(md, "![画像]("+path+")") {
+		t.Fatalf("image should link to the local file: %s", md)
+	}
+	if out := FromMarkdown(md); !strings.Contains(out, `<img data-asana-gid="111"/>`) {
+		t.Fatalf("local path should map back to the attachment: %s", out)
+	}
+	if md2 := ToEditableMarkdownWith(in, func(string) string { return "" }); !strings.Contains(md2, "(asana:111)") {
+		t.Fatalf("fallback to asana: link: %s", md2)
+	}
+	for dest, want := range map[string]string{
+		"asana:5": "5", "file:///x/attachments/77-a.png": "77", "/tmp/attachments/9-b c.jpg": "9",
+	} {
+		if gid, ok := ImageGID(dest); !ok || gid != want {
+			t.Errorf("ImageGID(%q) = %q %v", dest, gid, ok)
+		}
+	}
+	for _, dest := range []string{"https://example.com/a.png", "asana:user:3", "/tmp/photos/9-b.jpg"} {
+		if _, ok := ImageGID(dest); ok {
+			t.Errorf("ImageGID(%q) should be false", dest)
+		}
+	}
+}

@@ -428,6 +428,15 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 					return err
 				}
 			}
+		case OpAddTag, OpRemoveTag:
+			tag, _ := op.Payload["tag"].(string)
+			q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
+			if op.Kind == OpRemoveTag {
+				q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
+			}
+			if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
+				return err
+			}
 		case OpRenameSection:
 			if name, ok := op.Base["name"].(string); ok {
 				if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {

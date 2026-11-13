@@ -171,11 +171,17 @@ type Model struct {
 	subtaskParent string          // parent for promptSubtask
 
 	// detail navigation (detailnav.go)
-	detailStack []string // tasks opened from the detail view (subtasks); top is shown
-	detailSub   int      // selected subtask in the detail view (-1 = none)
-	returnTo    string   // subtask to reselect after going back to its parent
-	subtaskLine int      // line of the first subtask in the rendered detail (-1 = none)
-	commentGID  string   // task the comment prompt posts to
+	detailStack  []string     // tasks opened from the detail view (subtasks); top is shown
+	detailCursor int          // selected item in the detail view
+	detailItems  []detailItem // items of the rendered detail (fields, subtasks, add rows)
+	returnTo     string       // subtask to reselect after going back to its parent
+	commentGID   string       // task the comment prompt posts to
+
+	// keys (keymap.go) and choosers (pickers.go)
+	leader         bool              // space was pressed: the menu is open
+	renderedActive bool              // the detail was last rendered with selectable items
+	dueTask        store.TaskSummary // task for promptDue
+	tagTask        store.TaskSummary // task for promptNewTag
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -196,8 +202,6 @@ func New(ctx context.Context, deps Deps) *Model {
 		prompt:      newInput(),
 		dark:        true,
 		detailRatio: defaultDetailRatio,
-		detailSub:   -1,
-		subtaskLine: -1,
 	}
 	if deps.InlineImages {
 		m.cellW, m.cellH = imageview.CellSize()
@@ -359,6 +363,9 @@ func (m *Model) openURL(url string) tea.Cmd {
 // sends any inline images that need (re)sending.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	if m.inDetail() != m.renderedActive {
+		m.refreshDetailView() // items appear / disappear with the detail focus
+	}
 	m.syncDetailWidth()
 	return model, tea.Batch(cmd, m.flushInline())
 }
@@ -423,23 +430,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			keepScroll := m.detail != nil && m.detail.GID == msg.gid
 			m.detail = msg.d
-			if m.returnTo != "" { // back from a subtask: keep it selected
-				m.detailSub = -1
-				for i, s := range m.detail.Subtasks {
-					if s.GID == m.returnTo {
-						m.detailSub = i
-					}
-				}
-				m.returnTo = ""
-			} else if !keepScroll {
-				m.detailSub = -1
-			}
-			m.detailSub = min(m.detailSub, len(m.detail.Subtasks)-1)
+			m.placeCursorAfterLoad(keepScroll)
 			m.refreshDetailView()
+			m.detailCursor = clamp(m.detailCursor, 0, len(m.detailItems)-1)
 			if !keepScroll {
 				m.detailView.GotoTop()
 			}
-			m.scrollToSubtask()
+			m.scrollToCursor()
 			return m, m.prepareInline()
 		}
 		return m, nil
@@ -519,145 +516,59 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	m.status = ""
 
-	if m.promptMode != promptNone {
+	// modal layers first: text input, overlays, the space menu
+	switch {
+	case m.promptMode != promptNone:
 		return m.handlePromptKey(msg)
-	}
-	if m.showOutbox {
+	case m.showOutbox:
 		return m.handleOutboxKey(key)
-	}
-	if m.picker != nil {
+	case m.picker != nil:
 		return m.handlePickerKey(key)
-	}
-
-	if m.searching {
-		switch key {
-		case "esc":
-			m.searching = false
-			m.search.Blur()
-			m.search.Reset()
-			if m.query != "" {
-				m.query = ""
-				return m, m.loadTasks()
-			}
-			return m, nil
-		case "enter":
-			m.searching = false
-			m.search.Blur()
-			m.focus = paneList
-			return m, nil
-		case "up", "down", "ctrl+n", "ctrl+p":
-			// let the user move through results while typing
-			if key == "up" || key == "ctrl+p" {
-				return m, m.moveList(-1)
-			}
-			return m, m.moveList(1)
-		}
-		var cmd tea.Cmd
-		m.search, cmd = m.search.Update(msg)
-		if q := m.search.Value(); q != m.query {
-			m.query = q
-			return m, tea.Batch(cmd, m.loadTasks())
-		}
-		return m, cmd
-	}
-
-	if m.showHelp {
+	case m.searching:
+		return m.handleSearchKey(msg)
+	case m.leader:
+		m.leader = false
+		return m, m.runMenuKey(key)
+	case m.showHelp:
 		m.showHelp = false
 		return m, nil
 	}
-	if m.inDetail() {
-		if cmd, ok := m.handleDetailNavKey(key); ok {
-			return m, cmd
-		}
-	}
 
+	// keys that mean the same everywhere
 	switch key {
+	case "space":
+		m.leader = true
+		return m, nil
 	case "?":
 		m.showHelp = true
 		return m, nil
-	case "q":
-		if m.zoom {
-			m.zoom = false
-			m.focus = paneList
-			return m, nil
-		}
-		if m.narrow() && m.focus != paneSidebar {
-			m.focus--
-			return m, nil
-		}
-		return m, tea.Quit
 	case "/":
 		m.searching = true
 		m.search.SetValue(m.query)
 		m.search.CursorEnd()
 		return m, m.search.Focus()
-	case "esc":
-		if m.zoom {
-			m.zoom = false
-			m.focus = paneList
-			return m, nil
-		}
-		if m.query != "" {
-			m.query = ""
-			m.search.Reset()
-			return m, m.loadTasks()
-		}
-		if m.focus == paneDetail {
-			m.focus = paneList
-		}
-		return m, nil
-	case "f":
-		m.filter = (m.filter + 1) % filterCount
-		return m, m.loadTasks()
-	case "F":
-		m.filter = (m.filter + filterCount - 1) % filterCount
-		return m, m.loadTasks()
-	case "r":
-		if m.syncing {
-			m.status = "同期中です"
-			return m, nil
-		}
-		m.status = "同期しています…"
-		return m, m.startSync()
+	case "esc", "backspace", "q":
+		return m, m.back(key)
 	case "tab":
-		m.focus = (m.focus + 1) % 3
+		if !m.zoom {
+			m.focus = (m.focus + 1) % 3
+		}
 		return m, nil
 	case "shift+tab":
-		m.focus = (m.focus + 2) % 3
-		return m, nil
-	case "o":
-		if t := m.actionTask(); t != nil && m.focus != paneSidebar {
-			if store.IsLocalGID(t.GID) {
-				m.status = "まだ Asana に送信されていないタスクです"
-				return m, nil
-			}
-			return m, m.openURL(t.PermalinkURL)
+		if !m.zoom {
+			m.focus = (m.focus + 2) % 3
 		}
 		return m, nil
-	case "x", "a", "c", "!", "e", "C":
-		return m, m.writeKey(key)
-	case "z", "v", "t", "m":
-		return m, m.viewKey(key)
-	case "@":
-		return m, m.openAssigneePicker()
-	case "S":
-		return m, m.startSubtask()
-	case "<", ">", "b":
-		return m, m.layoutKey(key)
-	case "E":
-		if m.focus != paneSidebar || m.boardActive() {
-			return m, m.startRenameSection()
-		}
-		return m, nil
-	case "i":
-		return m, m.viewImages()
 	}
-	if m.zoom {
-		m.focus = paneDetail // in the zoomed view, keys scroll the detail
+	if cmd, ok := m.runShortcut(key); ok {
+		return m, cmd
 	}
 
-	switch m.focus {
-	case paneSidebar:
+	// movement, by context
+	switch m.keyContext() {
+	case ctxDetail:
+		return m, m.handleDetailKey(key)
+	case ctxSidebar:
 		switch key {
 		case "j", "down":
 			return m, m.moveScope(1)
@@ -670,18 +581,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "enter", "l", "right":
 			m.focus = paneList
 		}
-	case paneList:
-		if m.boardActive() {
-			return m.handleBoardKey(key)
-		}
+	case ctxBoard:
+		return m.handleBoardKey(key)
+	case ctxList:
 		half := max(1, m.listHeight()/2)
 		switch key {
-		case "space":
-			return m, m.toggleGroup()
-		case "-":
-			return m, m.setAllGroups(true)
-		case "=", "+":
-			return m, m.setAllGroups(false)
 		case "j", "down":
 			return m, m.moveList(1)
 		case "k", "up":
@@ -705,27 +609,67 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "h", "left":
 			return m, m.collapseOrUp()
 		}
-	case paneDetail:
-		switch key {
-		case "j", "down":
-			m.detailView.ScrollDown(1)
-		case "k", "up":
-			m.detailView.ScrollUp(1)
-		case "ctrl+d", "pgdown", "space":
-			m.detailView.HalfPageDown()
-		case "ctrl+u", "pgup":
-			m.detailView.HalfPageUp()
-		case "g", "home":
-			m.detailView.GotoTop()
-		case "G", "end":
-			m.detailView.GotoBottom()
-		case "h", "left":
-			if !m.zoom {
-				m.focus = paneList
-			}
-		}
 	}
 	return m, nil
+}
+
+// back handles esc / backspace / q: leave the innermost thing (a subtask opened in the
+// detail, the full-screen detail, the search, the detail focus); q quits at the top.
+func (m *Model) back(key string) tea.Cmd {
+	if m.inDetail() {
+		if cmd, ok := m.popDetail(); ok {
+			return cmd
+		}
+	}
+	switch {
+	case m.zoom:
+		m.zoom = false
+		m.focus = paneList
+		return nil
+	case key != "q" && m.query != "":
+		m.query = ""
+		m.search.Reset()
+		return m.loadTasks()
+	case m.focus == paneDetail:
+		m.focus = paneList
+		return nil
+	case key == "q" && m.narrow() && m.focus != paneSidebar:
+		m.focus--
+		return nil
+	case key == "q":
+		return tea.Quit
+	}
+	return nil
+}
+
+func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key := msg.String(); key {
+	case "esc":
+		m.searching = false
+		m.search.Blur()
+		m.search.Reset()
+		if m.query != "" {
+			m.query = ""
+			return m, m.loadTasks()
+		}
+		return m, nil
+	case "enter":
+		m.searching = false
+		m.search.Blur()
+		m.focus = paneList
+		return m, nil
+	case "up", "ctrl+p":
+		return m, m.moveList(-1) // move through results while typing
+	case "down", "ctrl+n":
+		return m, m.moveList(1)
+	}
+	var cmd tea.Cmd
+	m.search, cmd = m.search.Update(msg)
+	if q := m.search.Value(); q != m.query {
+		m.query = q
+		return m, tea.Batch(cmd, m.loadTasks())
+	}
+	return m, cmd
 }
 
 // --- state helpers ---
