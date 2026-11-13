@@ -108,8 +108,8 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_task", "get_task", "list_projects", "list_tags", "list_tasks", "move_task", "rename_section", "search_tasks", "sync", "sync_status", "update_task"}},
-		{true, []string{"get_task", "list_projects", "list_tags", "list_tasks", "search_tasks", "sync", "sync_status"}},
+		{false, []string{"add_comment", "create_task", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "search_tasks", "sync", "sync_status", "update_task"}},
+		{true, []string{"get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
@@ -258,5 +258,28 @@ func TestWritesOnlineAreSent(t *testing.T) {
 	call(t, cs, "sync_status", nil, &status)
 	if status.Pending != 0 {
 		t.Errorf("outbox should be empty: %+v", status)
+	}
+}
+
+func TestCreateSubtaskAndAssignByName(t *testing.T) {
+	st := seed(t)
+	_ = st.UpsertUsers(context.Background(), []asana.User{{GID: "u2", Name: "Partner"}})
+	cs := connect(t, &Server{Store: st})
+	var w WriteOutput
+	call(t, cs, "create_task", map[string]any{"name": "採寸", "parent": "t1"}, &w)
+	var task GetTaskOutput
+	call(t, cs, "get_task", map[string]any{"gid": "t1", "offline": true}, &task)
+	if len(task.Task.Subtasks) != 1 || task.Task.Subtasks[0].Name != "採寸" {
+		t.Fatalf("subtask not created: %+v", task.Task.Subtasks)
+	}
+	call(t, cs, "update_task", map[string]any{"gid": "t1", "assignee": "Partner"}, &w)
+	call(t, cs, "get_task", map[string]any{"gid": "t1", "offline": true}, &task)
+	if task.Task.Assignee == nil || task.Task.Assignee.GID != "u2" {
+		t.Fatalf("assignee by name: %+v", task.Task.Assignee)
+	}
+	var users UsersOutput
+	call(t, cs, "list_users", nil, &users)
+	if len(users.Users) < 2 || users.Users[0].GID != "me" {
+		t.Fatalf("users (me first): %+v", users.Users)
 	}
 }

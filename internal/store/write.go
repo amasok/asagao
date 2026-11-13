@@ -260,3 +260,18 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 		return nil
 	})
 }
+
+// UpsertUsers stores workspace members.
+func (s *Store) UpsertUsers(ctx context.Context, users []asana.User) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		for _, u := range users {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name, email) VALUES(?, ?, ?)
+				ON CONFLICT(gid) DO UPDATE SET name = excluded.name,
+					email = CASE WHEN excluded.email <> '' THEN excluded.email ELSE users.email END`,
+				u.GID, u.Name, u.Email); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

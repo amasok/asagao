@@ -237,3 +237,17 @@ func (c *Client) Attachment(ctx context.Context, gid string) (*Attachment, error
 	var a Attachment
 	return &a, c.get(ctx, "/attachments/"+url.PathEscape(gid), fields(attachmentFields), &a)
 }
+
+// Users lists the members of a workspace (for choosing an assignee).
+func (c *Client) Users(ctx context.Context, workspaceGID string) ([]User, error) {
+	q := fields([]string{"name", "email"})
+	q.Set("workspace", workspaceGID)
+	return list[User](ctx, c, "/users", q)
+}
+
+// CreateSubtask creates a subtask under parentGID (POST /tasks/{gid}/subtasks).
+func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*Task, error) {
+	var t Task
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(TaskFields), fields, &t)
+	return &t, err
+}

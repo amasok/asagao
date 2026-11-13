@@ -44,6 +44,7 @@ type TaskSummary struct {
 	Memberships     []MembershipView `json:"memberships"`
 	Tags            []string         `json:"tags"`
 	ParentGID       string           `json:"parent_gid,omitempty"`
+	ParentName      string           `json:"parent_name,omitempty"`
 	NumSubtasks     int              `json:"num_subtasks"`
 	PermalinkURL    string           `json:"permalink_url"`
 	ModifiedAt      string           `json:"modified_at"`
@@ -119,7 +120,8 @@ type TaskFilter struct {
 
 const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.completed_at, ''),
 	t.due_on, COALESCE(t.due_at, ''), t.start_on, t.assignee_gid, COALESCE(u.name, ''),
-	t.parent_gid, t.num_subtasks, t.permalink_url, t.modified_at,
+	t.parent_gid, COALESCE((SELECT p.name FROM tasks p WHERE p.gid = t.parent_gid), ''),
+	t.num_subtasks, t.permalink_url, t.modified_at,
 	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid)`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
@@ -199,7 +201,7 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 		var assigneeGID, assigneeName string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
-			&t.ParentGID, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending); err != nil {
+			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending); err != nil {
 			return nil, err
 		}
 		if assigneeGID != "" {
@@ -430,6 +432,63 @@ func (s *Store) ResolveMove(ctx context.Context, taskGID, project, section strin
 	}
 	sectionGID, err = s.ResolveSection(ctx, projectGID, section)
 	return projectGID, sectionGID, err
+}
+
+// ListUsers returns known users (workspace members and people seen on tasks), me first.
+func (s *Store) ListUsers(ctx context.Context) ([]UserRef, error) {
+	me, _ := s.SyncState(ctx, KeyMeGID)
+	rows, err := s.db.QueryContext(ctx, `SELECT gid, CASE WHEN name <> '' THEN name ELSE email END FROM users
+		WHERE name <> '' OR email <> '' ORDER BY gid = ? DESC, name`, me)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []UserRef{}
+	for rows.Next() {
+		var u UserRef
+		if err := rows.Scan(&u.GID, &u.Name); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+// ResolveUser turns "me", "none"/"" (unassigned), a gid, or a unique (partial) name or
+// email into a user gid ("" for unassigned).
+func (s *Store) ResolveUser(ctx context.Context, arg string) (string, error) {
+	switch arg {
+	case "", "none":
+		return "", nil
+	case "me":
+		return s.MeGID(ctx)
+	}
+	like := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(arg) + "%"
+	rows, err := s.db.QueryContext(ctx, `SELECT gid, name FROM users
+		WHERE gid = ? OR name = ? OR email = ? OR name LIKE ? ESCAPE '\' OR email LIKE ? ESCAPE '\' LIMIT 5`,
+		arg, arg, arg, like, like)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var gids, names []string
+	for rows.Next() {
+		var g, n string
+		if err := rows.Scan(&g, &n); err != nil {
+			return "", err
+		}
+		if g == arg || n == arg {
+			return g, nil
+		}
+		gids, names = append(gids, g), append(names, n)
+	}
+	switch len(gids) {
+	case 0:
+		return "", fmt.Errorf("user %q: %w", arg, ErrNotFound)
+	case 1:
+		return gids[0], nil
+	}
+	return "", fmt.Errorf("user %q matches %s: %w", arg, strings.Join(names, ", "), ErrAmbiguous)
 }
 
 // TagCount is a tag with the number of incomplete tasks that have it.

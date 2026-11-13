@@ -21,6 +21,7 @@ const (
 	promptCreate
 	promptComment
 	promptRenameSection
+	promptSubtask
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -80,6 +81,13 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case imagesReadyMsg:
 		return m, m.onImagesReady(msg), true
+	case usersLoadedMsg:
+		if msg.err != nil {
+			m.status = "メンバーを読み込めませんでした: " + msg.err.Error()
+		} else {
+			m.showAssigneePicker(msg.users)
+		}
+		return m, nil, true
 	case tagsLoadedMsg:
 		if msg.err != nil {
 			m.status = "タグを読み込めませんでした: " + msg.err.Error()
@@ -152,6 +160,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptRenameSection:
 		m.prompt.Prompt = "セクション名: "
 		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+	case promptSubtask:
+		m.prompt.Prompt = "サブタスク: "
+		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る due:+3d）"
 	}
 }
 
@@ -174,6 +185,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.createTask(value)
 		case promptRenameSection:
 			return m, m.renameSection(m.renameGID, value)
+		case promptSubtask:
+			return m, m.createSubtask(m.subtaskParent, value)
 		}
 		if t := m.selectedTask(); t != nil {
 			return m, m.addComment(*t, value)

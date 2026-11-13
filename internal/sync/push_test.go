@@ -581,3 +581,47 @@ func TestFetchDetailsAttachmentsOptional(t *testing.T) {
 		t.Fatalf("comments should still be stored: %+v", d)
 	}
 }
+
+func TestPushSubtaskOfOfflineParent(t *testing.T) {
+	ctx := context.Background()
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+string(b))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/tasks":
+			fmt.Fprint(w, `{"data":{"gid":"P1","name":"親"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/tasks/P1/subtasks":
+			fmt.Fprint(w, `{"data":{"gid":"C1","name":"子","parent":{"gid":"P1","name":"親"}}}`)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+		}
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1"}})
+	parent, _ := st.CreateTaskLocal(ctx, store.NewTask{WorkspaceGID: "w1", Name: "親"}, now)
+	child, err := st.CreateTaskLocal(ctx, store.NewTask{ParentGID: parent, Name: "子"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := st.GetTask(ctx, parent); d.NumSubtasks != 1 || len(d.Subtasks) != 1 || d.Subtasks[0].GID != child {
+		t.Fatalf("local parent should list the subtask: %+v", d)
+	}
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	if err != nil || res.Sent != 2 {
+		t.Fatalf("push = %+v %v (%v)", res, err, calls)
+	}
+	if !strings.Contains(calls[1], "POST /tasks/P1/subtasks") || strings.Contains(calls[1], "workspace") {
+		t.Fatalf("subtask should be created under the real parent gid: %v", calls)
+	}
+	if d, err := st.GetTask(ctx, "C1"); err != nil || d.ParentGID != "P1" || d.ParentName != "親" {
+		t.Fatalf("subtask after push: %+v %v", d, err)
+	}
+}

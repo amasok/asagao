@@ -755,3 +755,111 @@ func TestInlineImagePlaceholders(t *testing.T) {
 		}
 	}
 }
+
+func addSubtasks(t *testing.T, st *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	ref := func(gid, name string) *asana.Ref { return &asana.Ref{GID: gid, Name: name} }
+	if err := st.UpsertTasks(ctx, []asana.Task{
+		{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20", Assignee: ref("me", "Me"), NumSubtasks: 2,
+			Memberships: []asana.Membership{{Project: ref("p1", ""), Section: ref("s1", "")}}},
+		{GID: "t1a", Name: "サイズを測る", Parent: ref("t1", ""), NumSubtasks: 1},
+		{GID: "t1b", Name: "予算を決める", Parent: ref("t1", ""), Assignee: ref("me", "Me")},
+		{GID: "t1a1", Name: "メジャーを買う", Parent: ref("t1a", "")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.UpsertUsers(ctx, []asana.User{{GID: "me", Name: "Me"}, {GID: "u2", Name: "Partner"}})
+}
+
+func TestSubtaskTree(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	h := projectHarness(t, st, nil) // cursor on ソファを買う (t1)
+	if !strings.Contains(h.screen(), "ソファを買う ↳2") {
+		t.Fatalf("subtask count:\n%s", h.screen())
+	}
+	h.key("l") // expand
+	s := h.screen()
+	for _, want := range []string{"ソファを買う ▾2", "└ ☐ サイズを測る ↳1", "└ ☐ 予算を決める"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("expanded tree missing %q:\n%s", want, s)
+		}
+	}
+	if !strings.Contains(s, "タスク (4)") {
+		t.Fatal("expanded subtasks should not change the task count")
+	}
+	h.key("j", "l") // into サイズを測る, expand it
+	if !strings.Contains(h.screen(), "  └ ☐ メジャーを買う") {
+		t.Fatalf("nested subtask:\n%s", h.screen())
+	}
+	h.key("j", "h") // on メジャーを買う: h jumps to its parent
+	if h.selected() != "t1a" {
+		t.Fatalf("h should move to the parent, got %q", h.selected())
+	}
+	h.key("h") // collapse t1a
+	if slices.Contains(h.visibleGIDs(), "t1a1") {
+		t.Fatal("h on an expanded task should collapse it")
+	}
+	h.key("x") // complete a subtask from the tree
+	if d, _ := st.GetTask(context.Background(), "t1a"); !d.Completed || !d.Pending {
+		t.Fatalf("subtask should be completed locally: %+v", d.TaskSummary)
+	}
+	h.key("v") // board: subtasks are not cards
+	if strings.Contains(h.screen(), "予算を決める") {
+		t.Fatalf("board should not show subtasks as cards:\n%s", h.screen())
+	}
+}
+
+func TestSubtaskShownWithParentInMyTasks(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 160, Height: 30})
+	h.run(m.Init())
+	if !strings.Contains(h.screen(), "予算を決める  ⊂ ソファを買う") {
+		t.Fatalf("subtask in My Tasks should show its parent:\n%s", h.screen())
+	}
+}
+
+func TestCreateSubtask(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	h := projectHarness(t, st, nil)
+	h.key("S")
+	if !strings.Contains(h.screen(), "サブタスク（ソファを買う）") {
+		t.Fatalf("prompt:\n%s", h.screen())
+	}
+	h.typeText("配送日を決める due:明日")
+	h.key("enter")
+	s := h.screen()
+	if !strings.Contains(s, "ソファを買う ▾3") || !strings.Contains(s, "└ ☐ 配送日を決める ↑") {
+		t.Fatalf("new subtask should appear under its expanded parent:\n%s", s)
+	}
+	if got := h.m.selectedTask(); got == nil || got.Name != "配送日を決める" || got.DueOn != "2026-11-14" || got.ParentGID != "t1" {
+		t.Fatalf("new subtask should be selected: %+v", got)
+	}
+}
+
+func TestChangeAssignee(t *testing.T) {
+	st := fixtureStore(t)
+	addSubtasks(t, st)
+	h := projectHarness(t, st, nil) // ソファを買う, assigned to Me
+	h.key("@")
+	s := h.screen()
+	for _, want := range []string{"担当者（ソファを買う）", "Me（自分）  現在", "Partner", "（未割り当て）"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("assignee picker missing %q:\n%s", want, s)
+		}
+	}
+	h.key("j", "enter") // Partner
+	d, _ := st.GetTask(context.Background(), "t1")
+	if d.Assignee == nil || d.Assignee.GID != "u2" || !d.Pending {
+		t.Fatalf("assignee should be Partner: %+v", d.Assignee)
+	}
+	h.key("@", "G", "enter") // unassign
+	if d, _ := st.GetTask(context.Background(), "t1"); d.Assignee != nil {
+		t.Fatalf("should be unassigned: %+v", d.Assignee)
+	}
+}

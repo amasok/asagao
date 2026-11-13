@@ -117,6 +117,11 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	res.Workspaces = len(workspaces)
 
 	for _, w := range workspaces {
+		if users, err := s.API.Users(ctx, w.GID); err == nil { // members, for choosing an assignee
+			if err := s.Store.UpsertUsers(ctx, users); err != nil {
+				return res, err
+			}
+		}
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)
 		mine, err := s.API.Tasks(ctx, asana.TaskQuery{
 			Assignee: "me", Workspace: w.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
