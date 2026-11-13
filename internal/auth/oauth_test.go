@@ -53,14 +53,15 @@ func TestCallbackHandler(t *testing.T) {
 	for _, tc := range []struct {
 		name, query string
 		status      int
+		reported    bool // a result is sent (the login ends)
 		code        string
 		errPart     string
 	}{
-		{"ok", "state=s1&code=abc", http.StatusOK, "abc", ""},
-		{"state mismatch", "state=other&code=abc", http.StatusBadRequest, "", "state"},
-		{"missing state", "code=abc", http.StatusBadRequest, "", "state"},
-		{"error from Asana", "state=s1&error=access_denied&error_description=nope", http.StatusBadRequest, "", "access_denied nope"},
-		{"error with wrong state is a state error", "state=x&error=access_denied", http.StatusBadRequest, "", "state"},
+		{"ok", "state=s1&code=abc", http.StatusOK, true, "abc", ""},
+		{"error from Asana", "state=s1&error=access_denied&error_description=nope", http.StatusBadRequest, true, "", "access_denied nope"},
+		{"state mismatch is ignored", "state=other&code=abc", http.StatusBadRequest, false, "", ""},
+		{"missing state is ignored", "code=abc", http.StatusBadRequest, false, "", ""},
+		{"error with wrong state is ignored", "state=x&error=access_denied", http.StatusBadRequest, false, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, results := callbackHandler("s1")
@@ -71,8 +72,14 @@ func TestCallbackHandler(t *testing.T) {
 			var r callbackResult
 			select {
 			case r = <-results:
+				if !tc.reported {
+					t.Fatalf("unexpected result %+v: the login should keep waiting", r)
+				}
 			default:
-				t.Fatal("no result reported")
+				if tc.reported {
+					t.Fatal("no result reported")
+				}
+				return
 			}
 			if r.code != tc.code {
 				t.Fatalf("code = %q, want %q", r.code, tc.code)
@@ -84,6 +91,32 @@ func TestCallbackHandler(t *testing.T) {
 				t.Fatalf("err = %v, want it to mention %q", r.err, tc.errPart)
 			}
 		})
+	}
+}
+
+// A request with the wrong state (a stale tab, a forged link) does not end the login: the
+// real callback that follows still succeeds.
+func TestCallbackHandlerMismatchThenOK(t *testing.T) {
+	h, results := callbackHandler("s1")
+	for _, q := range []string{"state=stale&code=old", "code=nostate", "state=x&error=access_denied"} {
+		if rec := callback(t, h, q); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%q: status = %d, want 400", q, rec.Code)
+		}
+	}
+	if rec := callback(t, h, "state=s1&code=good"); rec.Code != http.StatusOK {
+		t.Fatalf("real callback: status = %d (%s)", rec.Code, rec.Body)
+	}
+	if r := <-results; r.code != "good" || r.err != nil {
+		t.Fatalf("result = %+v, want code good", r)
+	}
+	// After the login, a wrong state is still a 400 (not a 409 or a second result).
+	if rec := callback(t, h, "state=stale&code=old"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("stale after login: status = %d", rec.Code)
+	}
+	select {
+	case r := <-results:
+		t.Fatalf("unexpected result %+v", r)
+	default:
 	}
 }
 
@@ -148,6 +181,19 @@ func TestReceiveCode(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("receiveCode did not print the URL")
+	}
+	stale, err := http.Get(LocalRedirectURL(port) + "?state=old&code=stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.Body.Close()
+	if stale.StatusCode != http.StatusBadRequest {
+		t.Fatalf("stale callback: status = %d", stale.StatusCode)
+	}
+	select {
+	case r := <-done:
+		t.Fatalf("a stale callback ended the login: %q, %v", r.code, r.err)
+	default:
 	}
 	resp, err := http.Get(LocalRedirectURL(port) + "?state=st&code=xyz")
 	if err != nil {

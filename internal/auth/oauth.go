@@ -129,29 +129,31 @@ type callbackResult struct {
 	err  error
 }
 
-// callbackHandler handles the OAuth redirect to /callback. The first callback is checked
-// (state, error) and reported on the returned channel; later callbacks (a reload, a second
-// tab) only get an error page, so they never block on the channel nobody reads any more.
+// callbackHandler handles the OAuth redirect to /callback. Requests whose state does not
+// match (a stale tab, a forged link) get an error page and are ignored, so the login keeps
+// waiting for the real callback. The first matching callback is reported on the returned
+// channel; later ones (a reload, a second tab) only get an error page, so they never block
+// on the channel nobody reads any more.
 func callbackHandler(state string) (http.Handler, <-chan callbackResult) {
 	ch := make(chan callbackResult, 1)
 	var once sync.Once
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("state") != state {
+			http.Error(w, "asana-tui: state が一致しません。asana-tui に表示された URL からログインし直してください。", http.StatusBadRequest)
+			return
+		}
 		first := false
 		once.Do(func() { first = true })
 		if !first {
 			http.Error(w, "asana-tui: このログインはすでに処理されています。", http.StatusConflict)
 			return
 		}
-		q := r.URL.Query()
 		var res callbackResult
-		switch {
-		case q.Get("state") != state:
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			res.err = errors.New("state が一致しません")
-		case q.Get("error") != "":
-			http.Error(w, q.Get("error"), http.StatusBadRequest)
-			res.err = fmt.Errorf("認可が拒否されました: %s %s", q.Get("error"), q.Get("error_description"))
-		default:
+		if e := q.Get("error"); e != "" {
+			http.Error(w, e, http.StatusBadRequest)
+			res.err = fmt.Errorf("認可が拒否されました: %s %s", e, q.Get("error_description"))
+		} else {
 			fmt.Fprintln(w, "asana-tui: ログインしました。このタブは閉じて構いません。")
 			res.code = q.Get("code")
 		}
