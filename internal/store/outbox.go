@@ -65,6 +65,7 @@ type NewTask struct {
 	SectionGID   string
 	Name         string
 	Notes        string
+	HTMLNotes    string // Asana rich text; sent instead of Notes when set
 	DueOn        string
 	AssigneeGID  string
 }
@@ -250,6 +251,9 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	if nt.Notes != "" {
 		payload["notes"] = nt.Notes
 	}
+	if nt.HTMLNotes != "" {
+		payload["html_notes"] = nt.HTMLNotes
+	}
 	if nt.DueOn != "" {
 		payload["due_on"] = nt.DueOn
 	}
@@ -259,9 +263,9 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks
-			(gid, workspace_gid, name, notes, due_on, assignee_gid, parent_gid, created_at, modified_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			gid, nt.WorkspaceGID, nt.Name, nt.Notes, nt.DueOn, nt.AssigneeGID, nt.ParentGID, ts, ts); err != nil {
+			(gid, workspace_gid, name, notes, html_notes, due_on, assignee_gid, parent_gid, created_at, modified_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			gid, nt.WorkspaceGID, nt.Name, nt.Notes, nt.HTMLNotes, nt.DueOn, nt.AssigneeGID, nt.ParentGID, ts, ts); err != nil {
 			return err
 		}
 		if nt.ParentGID != "" {

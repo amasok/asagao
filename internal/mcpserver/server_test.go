@@ -1,12 +1,16 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -108,8 +112,8 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_task", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "search_tasks", "sync", "sync_status", "update_task"}},
-		{true, []string{"get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
+		{false, []string{"add_comment", "create_task", "get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_task"}},
+		{true, []string{"get_attachment", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
@@ -281,5 +285,92 @@ func TestCreateSubtaskAndAssignByName(t *testing.T) {
 	call(t, cs, "list_users", nil, &users)
 	if len(users.Users) < 2 || users.Users[0].GID != "me" {
 		t.Fatalf("users (me first): %+v", users.Users)
+	}
+}
+
+func TestMarkdownTagsAndComments(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	_ = st.UpsertTags(ctx, []asana.Ref{{GID: "g1", Name: "買い物"}})
+	cs := connect(t, &Server{Store: st})
+	var w WriteOutput
+	call(t, cs, "update_task", map[string]any{"gid": "t1",
+		"notes":    "## 候補\n- **ニトリ**\n- 無印\n\n![画像](asana:42)",
+		"add_tags": []string{"買い物", "急ぎ"}}, &w)
+	d, _ := st.GetTask(ctx, "t1")
+	if !strings.Contains(d.HTMLNotes, "<h2>候補</h2>") || !strings.Contains(d.HTMLNotes, "<strong>ニトリ</strong>") || !strings.Contains(d.HTMLNotes, `<img data-asana-gid="42"/>`) {
+		t.Fatalf("html_notes = %q", d.HTMLNotes)
+	}
+	if !slices.Equal(d.Tags, []string{"急ぎ", "買い物"}) {
+		t.Fatalf("tags = %v", d.Tags)
+	}
+	call(t, cs, "update_task", map[string]any{"gid": "t1", "remove_tags": []string{"#急ぎ"}}, &w)
+	call(t, cs, "add_comment", map[string]any{"gid": "t1", "text": "**明日**見に行く"}, &w)
+
+	var task GetTaskOutput
+	call(t, cs, "get_task", map[string]any{"gid": "t1", "offline": true}, &task)
+	if !strings.Contains(task.DescriptionMarkdown, "## 候補") || !strings.Contains(task.DescriptionMarkdown, "![画像](asana:42)") {
+		t.Fatalf("description_markdown = %q", task.DescriptionMarkdown)
+	}
+	if !slices.Equal(task.Task.Tags, []string{"買い物"}) {
+		t.Fatalf("tags after remove = %v", task.Task.Tags)
+	}
+	if len(task.Comments) != 1 || task.Comments[0].Markdown != "**明日**見に行く" || !task.Comments[0].Pending {
+		t.Fatalf("comments = %+v", task.Comments)
+	}
+	if msg := toolError(call(t, cs, "update_task", map[string]any{"gid": "t1", "remove_tags": []string{"ない"}}, nil)); !strings.Contains(msg, "no such tag") {
+		t.Fatalf("unknown tag error = %q", msg)
+	}
+	call(t, cs, "create_task", map[string]any{"name": "タグ付き", "tags": []string{"買い物"}, "notes": "*メモ*"}, &w)
+	if d, _ := st.GetTask(ctx, w.TaskGID); !slices.Equal(d.Tags, []string{"買い物"}) || !strings.Contains(d.HTMLNotes, "<em>メモ</em>") {
+		t.Fatalf("created task: tags=%v html=%q", d.Tags, d.HTMLNotes)
+	}
+}
+
+func TestResolveOutbox(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	cs := connect(t, &Server{Store: st})
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
+	ops, _ := st.ListOps(ctx)
+	_ = st.MarkOpConflict(ctx, ops[0].ID, map[string]any{"name": "サーバー"})
+
+	var w WriteOutput
+	call(t, cs, "resolve_outbox", map[string]any{"id": ops[0].ID, "action": "keep_local"}, &w)
+	if op, _ := st.GetOp(ctx, ops[0].ID); op.State != store.OpPending || op.Base["name"] != "サーバー" {
+		t.Fatalf("keep_local should requeue with the server value as base: %+v", op)
+	}
+	call(t, cs, "resolve_outbox", map[string]any{"id": ops[0].ID, "action": "discard"}, &w)
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatal("discard should drop the entry")
+	}
+	// keep_local made the server's value the base, so discarding shows the server's name.
+	if d, _ := st.GetTask(ctx, "t1"); d.Name != "サーバー" {
+		t.Fatalf("discard should restore the last known server value, got %q", d.Name)
+	}
+	if msg := toolError(call(t, cs, "resolve_outbox", map[string]any{"id": 999, "action": "discard"}, nil)); msg == "" {
+		t.Fatal("unknown id should be an error")
+	}
+}
+
+func TestGetAttachmentReturnsImage(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	path := filepath.Join(t.TempDir(), "attachments", "42-plan.png")
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, buf.Bytes(), 0o600)
+	_ = st.UpsertAttachment(ctx, "t1", asana.Attachment{GID: "42", Name: "plan.png"})
+	_ = st.SetAttachmentPath(ctx, "42", path)
+	cs := connect(t, &Server{Store: st})
+	res := call(t, cs, "get_attachment", map[string]any{"gid": "42", "task_gid": "t1"}, nil)
+	if res.IsError || len(res.Content) == 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	ic, ok := res.Content[0].(*mcp.ImageContent)
+	if !ok || ic.MIMEType != "image/png" || !bytes.Equal(ic.Data, buf.Bytes()) {
+		t.Fatalf("first content should be the PNG image: %T", res.Content[0])
 	}
 }
