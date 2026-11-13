@@ -95,6 +95,17 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 	// Send local changes first, so the pull below sees them and a network error means
 	// we are offline before anything else is attempted.
+	// The store holds one account's data. If Asana now answers as someone else, nothing is
+	// sent, fetched or overwritten: their 404s would look like deletions (see dropGone).
+	me, err := s.API.Me(ctx)
+	if err != nil {
+		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
+	}
+	if want, err := s.Store.SyncState(ctx, store.KeyMeGID); err != nil {
+		return res, err
+	} else if want != "" && me.GID != want {
+		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	}
 	// If another process is sending them, pull anyway: unsent changes survive a pull.
 	if res.Push, err = s.Push(ctx); err != nil && !errors.Is(err, ErrPushBusy) {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
@@ -115,10 +126,6 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return s.Store.UpsertTasks(ctx, tasks)
 	}
 
-	me, err := s.API.Me(ctx)
-	if err != nil {
-		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
-	}
 	if err := s.Store.UpsertUser(ctx, *me); err != nil {
 		return res, err
 	}

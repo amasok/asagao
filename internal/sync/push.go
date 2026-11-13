@@ -342,7 +342,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 	// account or organization than the one the store was synced with). Make sure it is
 	// the same user before dropping anything.
 	if err := s.checkAccount(ctx, st); err != nil {
-		if isNetworkError(err) || isRateLimited(err) {
+		if isTemporary(err) {
 			if rerr := s.Store.ReleaseOp(context.WithoutCancel(ctx), op.ID); rerr != nil {
 				return rerr
 			}
@@ -440,7 +440,7 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 	}
 	me, err := s.API.Me(ctx)
 	if err != nil {
-		if isNetworkError(err) || isRateLimited(err) {
+		if isTemporary(err) {
 			return err // not checked: try again next time
 		}
 		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
@@ -455,6 +455,12 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 		st.account = fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	}
 	return st.account
+}
+
+// isTemporary reports whether err may go away by itself (offline, rate limit, 5xx).
+func isTemporary(err error) bool {
+	var apiErr *asana.Error
+	return isNetworkError(err) || isRateLimited(err) || (errors.As(err, &apiErr) && apiErr.Status >= 500)
 }
 
 // isRejected reports whether Asana answered with a 4xx other than 429: the request itself

@@ -2528,3 +2528,25 @@ func TestPushRejectionsAreNotDropped(t *testing.T) {
 		})
 	}
 }
+
+// If Asana cannot say who is logged in (5xx), nothing is dropped and the change waits.
+func TestPushAccountCheck5xxKeepsChange(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "消えたかも"}})
+	_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"completed": true}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/users/me" {
+			rw.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err == nil || len(res.Discarded) != 0 || res.Failed != 0 || res.Remaining != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpUpdateTask); op == nil || op.State != store.OpPending {
+		t.Fatalf("entry = %+v", op)
+	}
+}

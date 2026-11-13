@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -171,5 +172,34 @@ func TestRunFetchesNestedSubtasks(t *testing.T) {
 	// A full sync keeps (does not prune) the grandchild.
 	if res, err := s.Run(ctx, true); err != nil || res.Pruned != 0 {
 		t.Fatalf("second full sync = %+v %v", res, err)
+	}
+}
+
+// Asana answers as another account than the one the store was synced with: Run stops
+// before sending or fetching anything, and keeps the stored account.
+func TestRunStopsWhenAccountChanged(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.SetSyncState(ctx, store.KeyMeGID, "old-account")
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t9", Name: "前のアカウント"}})
+	_ = st.UpdateTaskLocal(ctx, "t9", map[string]any{"completed": true}, time.Now())
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	_, err = (&Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}).Run(ctx, false)
+	if !errors.Is(err, ErrAccountChanged) {
+		t.Fatalf("run = %v", err)
+	}
+	if me, _ := st.SyncState(ctx, store.KeyMeGID); me != "old-account" {
+		t.Fatalf("stored account overwritten: %q", me)
+	}
+	if p, _, _, _ := st.OutboxCounts(ctx); p != 1 || len(fake.modifiedSince) != 0 {
+		t.Fatalf("nothing may be sent or fetched: pending=%d fetches=%d", p, len(fake.modifiedSince))
 	}
 }
