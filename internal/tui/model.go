@@ -147,7 +147,8 @@ type Model struct {
 	showOutbox  bool
 	ops         []store.Op
 	opCursor    int
-	discards    []store.Discard // dropped changes already announced this session (shown in the outbox)
+	discards    []store.Discard // recently dropped changes, newest first (shown in full in the outbox)
+	outboxTop   int             // first line of the outbox overlay on screen (it scrolls)
 
 	// views (board.go)
 	zoom           bool // detail pane fills the screen

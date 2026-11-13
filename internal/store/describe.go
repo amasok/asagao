@@ -67,6 +67,38 @@ func DiscardLine(d Discard) string {
 	return "「" + d.TaskName + "」: " + d.Summary
 }
 
+// DiscardDetail is a piece of a dropped change worth keeping in full, e.g. a comment.
+type DiscardDetail struct {
+	Label string
+	Text  string
+}
+
+// DiscardDetails returns, in full, what the user wrote or attached in a dropped change
+// (name, description, comment or status text, the local copy of an attachment), so it can
+// be recovered.
+func DiscardDetails(d Discard) []DiscardDetail {
+	str := func(k string) string { v, _ := d.Payload[k].(string); return v }
+	var out []DiscardDetail
+	add := func(label, key string) {
+		if v := str(key); v != "" {
+			out = append(out, DiscardDetail{label, v})
+		}
+	}
+	switch d.Kind {
+	case OpAddComment:
+		add("コメント", "text")
+	case OpCreateStatus:
+		add("タイトル", "title")
+		add("本文", "text")
+	case OpUploadAttachment:
+		add("ファイルのコピー", "path")
+	case OpCreateTask, OpUpdateTask:
+		add("名前", "name")
+		add("説明", "notes")
+	}
+	return out
+}
+
 // FieldLabel is the label of an update_task field ("" for unknown keys).
 func FieldLabel(k string) string {
 	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,58 @@ func TestDiscardStatusUsesBoundKey(t *testing.T) {
 		if got := m.discardStatus(ds); !strings.HasSuffix(got, tc.want) {
 			t.Errorf("bindings %v: %q, want suffix %q", tc.bindings, got, tc.want)
 		}
+	}
+}
+
+// What the user wrote in a dropped change is shown in full (wrapped) and can be scrolled to.
+func TestOutboxShowsDroppedTextInFull(t *testing.T) {
+	h := newHarness(t, 60, 14)
+	ctx, st := context.Background(), h.m.deps.Store
+	long := strings.Repeat("あいうえおかきくけこ", 12) + "\n最後の行です"
+	if _, err := st.AddCommentLocal(ctx, "t1", long, store.UserRef{GID: "me"}, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DiscardDeletedTask(ctx, "t1", "deleted", testNow); err != nil {
+		t.Fatal(err)
+	}
+	h.key("!")
+	var seen strings.Builder
+	for i := 0; i < 10; i++ {
+		seen.WriteString(h.screen())
+		h.m.handleOutboxKey("ctrl+d")
+	}
+	all := seen.String()
+	for _, want := range []string{"コメント:", "最後の行です"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("scrolling the outbox never shows %q:\n%s", want, all)
+		}
+	}
+	if !strings.Contains(strings.ReplaceAll(all, " ", ""), strings.Repeat("あいうえおかきくけこ", 2)) {
+		t.Errorf("the comment should be wrapped, not cut")
+	}
+	h.m.handleOutboxKey("ctrl+u")
+	for i := 0; i < 10; i++ {
+		h.m.handleOutboxKey("ctrl+u")
+	}
+	if h.m.outboxTop != 0 {
+		t.Fatalf("ctrl+u should scroll back to the top: %d", h.m.outboxTop)
+	}
+}
+
+// Moving through many entries keeps the selected one on screen.
+func TestOutboxCursorStaysVisible(t *testing.T) {
+	h := newHarness(t, 100, 10)
+	ctx, st := context.Background(), h.m.deps.Store
+	for i := 0; i < 12; i++ {
+		if _, err := st.AddCommentLocal(ctx, "t2", fmt.Sprintf("コメント%02d", i), store.UserRef{GID: "me"}, testNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.key("!")
+	for i := 0; i < 11; i++ {
+		h.m.handleOutboxKey("j")
+	}
+	if s := h.screen(); !strings.Contains(s, "コメント11") {
+		t.Fatalf("the selected (last) entry should be on screen:\n%s", s)
 	}
 }

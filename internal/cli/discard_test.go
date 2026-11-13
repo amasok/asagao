@@ -42,3 +42,15 @@ func TestTakeDiscards(t *testing.T) {
 		t.Fatalf("still pending: %+v", ds)
 	}
 }
+
+func TestPrintDiscardShowsFullText(t *testing.T) {
+	var b bytes.Buffer
+	printDiscard(&b, store.Discard{Kind: store.OpAddComment, TaskName: "ソファ", Summary: "コメント「1行目 2行目」",
+		DiscardedAt: "2026-11-13T01:00:00Z", Payload: map[string]any{"text": "1行目\n2行目\n"}})
+	out := b.String()
+	for _, want := range []string{"「ソファ」: コメント「1行目 2行目」", "コメント:", "        1行目\n        2行目\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

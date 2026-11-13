@@ -31,6 +31,22 @@ type writeResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// printDiscard prints a dropped change with what the user wrote in full, so it can be
+// recovered (copied back into Asana).
+func printDiscard(w io.Writer, d store.Discard) {
+	when := ""
+	if t, err := time.Parse(time.RFC3339, d.DiscardedAt); err == nil {
+		when = "  (" + t.Local().Format("2006-01-02 15:04") + ")"
+	}
+	fmt.Fprintln(w, "  - "+store.DiscardLine(d)+when)
+	for _, dt := range store.DiscardDetails(d) {
+		fmt.Fprintf(w, "      %s:\n", dt.Label)
+		for _, l := range strings.Split(strings.TrimRight(dt.Text, "\n"), "\n") {
+			fmt.Fprintln(w, "        "+l)
+		}
+	}
+}
+
 // takeDiscards returns the dropped changes not shown yet and marks them as shown. When
 // print is set they are printed to w first.
 func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool) []store.Discard {
@@ -41,8 +57,9 @@ func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool)
 	if print {
 		fmt.Fprintln(w, store.DiscardNotice+"（Asana で削除されていたため）:")
 		for _, d := range ds {
-			fmt.Fprintln(w, "  - "+store.DiscardLine(d))
+			printDiscard(w, d)
 		}
+		fmt.Fprintln(w, "  （あとで見るには `asana-tui outbox discarded`）")
 	}
 	ids := make([]int64, len(ds))
 	for i, d := range ds {
@@ -558,6 +575,37 @@ func (a *app) outboxCmd() *cobra.Command {
 		})
 	resolve.Flags().StringVar(&keep, "keep", "", "local または remote")
 	_ = resolve.MarkFlagRequired("keep")
+
+	var limit int
+	discarded := &cobra.Command{
+		Use:   "discarded",
+		Short: "Asana で削除されたものへの変更として破棄した変更を、書いた内容の全文つきで表示する（新しい順）",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			st, err := a.openStore(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			ds, err := st.RecentDiscards(cmd.Context(), limit)
+			if err != nil {
+				return err
+			}
+			if a.json {
+				return a.printJSON(ds)
+			}
+			if len(ds) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "破棄した変更はありません")
+				return nil
+			}
+			for _, d := range ds {
+				printDiscard(cmd.OutOrStdout(), d)
+			}
+			return nil
+		},
+	}
+	discarded.Flags().IntVar(&limit, "limit", 20, "表示する件数")
+	cmd.AddCommand(discarded)
 
 	fixed := func(act sync.ResolveAction) func() (sync.ResolveAction, error) {
 		return func() (sync.ResolveAction, error) { return act, nil }

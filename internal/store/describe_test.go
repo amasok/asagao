@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestDescribeOp(t *testing.T) {
 	long := "これはとても長いコメントで四十文字を超えるので途中で切られて省略記号が付きます。さらに続きます"
@@ -82,5 +85,30 @@ func TestDiscardLine(t *testing.T) {
 	}
 	if got := DiscardLine(Discard{Summary: "セクション名を「x」に変更"}); got != "セクション名を「x」に変更" {
 		t.Errorf("without a task name: %q", got)
+	}
+}
+
+func TestDiscardDetails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		d    Discard
+		want []DiscardDetail
+	}{
+		{"comment in full", Discard{Kind: OpAddComment, Payload: map[string]any{"text": "長い\nコメント", "story_gid": "local:1"}},
+			[]DiscardDetail{{"コメント", "長い\nコメント"}}},
+		{"created task", Discard{Kind: OpCreateTask, Payload: map[string]any{"name": "新規", "notes": "説明文", "html_notes": "<body>説明文</body>"}},
+			[]DiscardDetail{{"名前", "新規"}, {"説明", "説明文"}}},
+		{"update without text fields", Discard{Kind: OpUpdateTask, Payload: map[string]any{"completed": true}}, nil},
+		{"status", Discard{Kind: OpCreateStatus, Payload: map[string]any{"title": "順調", "text": "本文"}},
+			[]DiscardDetail{{"タイトル", "順調"}, {"本文", "本文"}}},
+		{"attachment copy", Discard{Kind: OpUploadAttachment, Payload: map[string]any{"name": "a.pdf", "path": "/cache/a.pdf"}},
+			[]DiscardDetail{{"ファイルのコピー", "/cache/a.pdf"}}},
+		{"tag", Discard{Kind: OpAddTag, Payload: map[string]any{"tag_name": "急ぎ"}}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DiscardDetails(tc.d); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
