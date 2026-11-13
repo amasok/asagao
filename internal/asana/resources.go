@@ -140,3 +140,23 @@ func (c *Client) Tasks(ctx context.Context, tq TaskQuery) ([]Task, error) {
 func (c *Client) Subtasks(ctx context.Context, taskGID string) ([]Task, error) {
 	return list[Task](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/subtasks", fields(TaskFields))
 }
+
+type Story struct {
+	GID             string    `json:"gid"`
+	Type            string    `json:"type"`             // "comment" or "system"
+	ResourceSubtype string    `json:"resource_subtype"` // e.g. "comment_added", "assigned"
+	Text            string    `json:"text"`
+	CreatedBy       *Ref      `json:"created_by"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+var storyFields = []string{"type", "resource_subtype", "text", "created_by.name", "created_at"}
+
+func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
+	var t Task
+	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(TaskFields), &t)
+}
+
+func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
+	return list[Story](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/stories", fields(storyFields))
+}

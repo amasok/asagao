@@ -3,6 +3,7 @@ module github.com/amasok/asana-tui
 go 1.27.4
 
 require (
+	github.com/mattn/go-runewidth v0.0.31
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
@@ -12,6 +13,7 @@ require (
 )
 
 require (
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect

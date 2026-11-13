@@ -10,9 +10,10 @@ import (
 )
 
 func (a *app) syncCmd() *cobra.Command {
+	var full bool
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Asana のデータをローカルストアに同期する",
+		Short: "Asana のデータをローカルストアに同期する（前回以降の変更分。24 時間ごとに全件）",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			api, err := a.apiClient(ctx)
@@ -28,18 +29,23 @@ func (a *app) syncCmd() *cobra.Command {
 			if !a.json {
 				s.Progress = func(f string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), "  "+f+"\n", args...) }
 			}
-			res, err := s.Full(ctx)
+			res, err := s.Run(ctx, full)
 			if err != nil {
 				return err
 			}
 			if a.json {
 				return a.printJSON(res)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "同期しました: ワークスペース %d / プロジェクト %d / タスク %d（%s）\n",
-				res.Workspaces, res.Projects, res.Tasks, res.Duration.Round(100*time.Millisecond))
+			kind := "変更分"
+			if res.Full {
+				kind = "全件"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d / 取得したタスク %d / 削除 %d（%s）\n",
+				kind, res.Workspaces, res.Projects, res.Tasks, res.Pruned, res.Duration.Round(100*time.Millisecond))
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false, "全件同期する（Asana で削除されたタスクもローカルから消す）")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
 		Short: "ローカルストアの状態を表示する",
