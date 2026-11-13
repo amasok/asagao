@@ -5,11 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"time"
 )
 
 // ErrUnsentChanges is returned by Reset (without force) when local changes have not been
 // sent to Asana yet; Reset then deletes nothing.
 var ErrUnsentChanges = errors.New("Asana に送っていない変更があります")
+
+// ResetReason is the reason recorded for unsent changes deleted by Reset.
+const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"
 
 // Reset deletes all local data: tasks, projects, comments, attachments, the outbox, the
 // record of dropped changes and sync state including the account (KeyMeGID), so the store
@@ -20,9 +24,18 @@ var ErrUnsentChanges = errors.New("Asana に送っていない変更がありま
 // conflict). If there are any and force is false, nothing is deleted and the error is
 // ErrUnsentChanges; with force they are deleted too.
 //
+// Unsent changes deleted with force are kept as dropped changes (PendingDiscards, with
+// their payload), like changes to things deleted in Asana.
+//
 // Files cached for attachments (downloaded, or copied for an upload) are deleted after
-// the data, best effort: they belong to the old account.
-func (s *Store) Reset(ctx context.Context, force bool) (unsent int, err error) {
+// the data, best effort: they belong to the old account. The push lock file stays: another
+// process may hold it, and a new file would let two processes push at once.
+//
+// Other processes with the store open (TUI, MCP server) see the empty store on their next
+// read; their writes to tasks that no longer exist fail with ErrNotFound. A sync in
+// another process holds the push lock for its whole run, so Reset cannot happen between
+// its push and pull (which would bring old data back): Reset returns ErrPushBusy instead.
+func (s *Store) Reset(ctx context.Context, force bool, now time.Time) (unsent int, err error) {
 	unlock, err := s.TryLockPush()
 	if err != nil {
 		return 0, err
@@ -53,12 +66,35 @@ func (s *Store) Reset(ctx context.Context, force bool) (unsent int, err error) {
 		if err := rows.Err(); err != nil {
 			return err
 		}
+		// Unsent changes deleted with force are recorded (with what the user wrote) as
+		// dropped changes, so the front ends tell the user once and the text can be copied.
+		// Older records belong to the old data and go.
+		if _, err := tx.ExecContext(ctx, "DELETE FROM discarded_changes"); err != nil {
+			return err
+		}
+		idRows, err := tx.QueryContext(ctx, "SELECT id FROM outbox ORDER BY id")
+		if err != nil {
+			return err
+		}
+		ids, err := scanIDs(idRows)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			op, err := getOpTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if _, err := recordDiscard(ctx, tx, op, ResetReason, now); err != nil {
+				return err
+			}
+		}
 		// Children first; deleting tasks and stories also clears the full-text indexes
 		// (triggers).
 		for _, table := range []string{
 			"task_memberships", "task_tags", "task_followers", "task_details", "attachments", "stories",
 			"tasks", "sections", "project_members", "status_updates", "projects", "tags", "users",
-			"workspaces", "outbox", "discarded_changes", "sync_state",
+			"workspaces", "outbox", "sync_state",
 		} {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 				return err

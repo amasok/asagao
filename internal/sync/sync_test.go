@@ -203,3 +203,43 @@ func TestRunStopsWhenAccountChanged(t *testing.T) {
 		t.Fatalf("nothing may be sent or fetched: pending=%d fetches=%d", p, len(fake.modifiedSince))
 	}
 }
+
+// A sync holds the push lock for its whole run: while another process holds it (pushing,
+// syncing or resetting the store), the sync does nothing.
+func TestRunSkipsWhileLocked(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	other, err := store.Open(ctx, st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	unlock, err := other.TryLockPush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	res, err := s.Run(ctx, false)
+	if !errors.Is(err, ErrPushBusy) || !res.Push.Busy || len(fake.modifiedSince) != 0 {
+		t.Fatalf("run while locked = %+v %v (fetches %d)", res, err, len(fake.modifiedSince))
+	}
+	// A reset cannot happen during a sync either.
+	unlock()
+	unlockRun, _ := st.TryLockPush() // stands for a sync in progress in this process
+	if _, err := other.Reset(ctx, true, time.Now()); !errors.Is(err, store.ErrPushBusy) {
+		t.Fatalf("reset during a sync = %v", err)
+	}
+	unlockRun()
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatalf("run after unlock = %v", err)
+	}
+}

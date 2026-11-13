@@ -3,7 +3,6 @@ package sync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -106,8 +105,15 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	} else if want != "" && me.GID != want {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	}
-	// If another process is sending them, pull anyway: unsent changes survive a pull.
-	if res.Push, err = s.Push(ctx); err != nil && !errors.Is(err, ErrPushBusy) {
+	// The whole sync holds the push lock: no other process sends meanwhile, and the store
+	// cannot be reset (store.Reset) between our push and our pull, which would bring the
+	// old data back. If another process is syncing or pushing, this sync is skipped.
+	unlock, err := s.lock(ctx, &res.Push)
+	if err != nil {
+		return res, err
+	}
+	defer unlock()
+	if res.Push, err = s.pushLocked(ctx); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 

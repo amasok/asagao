@@ -35,7 +35,7 @@ func TestResetRefusesWithUnsentChanges(t *testing.T) {
 					t.Fatal(ok, err)
 				}
 			}
-			n, err := s.Reset(ctx, false)
+			n, err := s.Reset(ctx, false, testNow)
 			if !errors.Is(err, ErrUnsentChanges) || n != 1 {
 				t.Fatalf("reset = %d %v", n, err)
 			}
@@ -70,12 +70,15 @@ func TestResetDeletesEverything(t *testing.T) {
 				_, err = s.AddCommentLocal(ctx, "t1", "メモ", UserRef{GID: "me"}, testNow)
 				must(t, err)
 			}
-			n, err := s.Reset(ctx, force)
+			// A dropped change recorded before (old account's data, not shown yet).
+			_, err := s.db.Exec(`INSERT INTO discarded_changes(kind, summary, discarded_at) VALUES('update_task', '前の記録', '2026-11-01T00:00:00Z')`)
+			must(t, err)
+			n, err := s.Reset(ctx, force, testNow)
 			if err != nil || n != map[bool]int{true: 2, false: 0}[force] {
 				t.Fatalf("reset = %d %v", n, err)
 			}
 			for _, table := range []string{"tasks", "projects", "sections", "stories", "attachments", "tags", "task_tags",
-				"task_memberships", "users", "workspaces", "outbox", "discarded_changes", "sync_state", "status_updates", "project_members"} {
+				"task_memberships", "users", "workspaces", "outbox", "sync_state", "status_updates", "project_members"} {
 				if c := rowCount(t, s, table); c != 0 {
 					t.Errorf("%s has %d rows after reset", table, c)
 				}
@@ -94,6 +97,18 @@ func TestResetDeletesEverything(t *testing.T) {
 			if _, err := os.Stat(src); err != nil {
 				t.Error("the user's original file must stay")
 			}
+			// Unsent changes deleted with force are kept as dropped changes, with their content.
+			d, err := s.PendingDiscards(ctx)
+			if err != nil || len(d) != map[bool]int{true: 2, false: 0}[force] {
+				t.Fatalf("recorded = %+v %v", d, err)
+			}
+			if force && (d[1].Payload["text"] != "メモ" || d[1].Reason != ResetReason || d[1].TaskName != "ソファを買う") {
+				t.Fatalf("recorded = %+v", d[1])
+			}
+			// The push lock file stays (another process may hold it).
+			if _, err := os.Stat(s.Path() + ".push.lock"); err != nil {
+				t.Errorf("lock file: %v", err)
+			}
 		})
 	}
 }
@@ -105,7 +120,7 @@ func TestResetWaitsForNoPush(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	if _, err := s.Reset(context.Background(), true); !errors.Is(err, ErrPushBusy) {
+	if _, err := s.Reset(context.Background(), true, testNow); !errors.Is(err, ErrPushBusy) {
 		t.Fatalf("reset while pushing = %v", err)
 	}
 	if rowCount(t, s, "tasks") == 0 {
@@ -115,4 +130,26 @@ func TestResetWaitsForNoPush(t *testing.T) {
 
 func attachmentFixture(gid string) asana.Attachment {
 	return asana.Attachment{GID: gid, Name: "img.png"}
+}
+
+// Another process with the store open sees the empty store after a reset, and its writes
+// to tasks that no longer exist fail.
+func TestResetSeenByOtherProcess(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	other, err := Open(ctx, s.Path())
+	must(t, err)
+	defer other.Close()
+	if _, err := other.GetTask(ctx, "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reset(ctx, false, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.GetTask(ctx, "t1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other process still sees the task: %v", err)
+	}
+	if err := other.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "x"}, testNow); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("write to a reset task = %v", err)
+	}
 }

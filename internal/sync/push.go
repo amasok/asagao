@@ -76,15 +76,26 @@ func sentNotSaved(err error) error {
 // deleted) mark the entry failed and Push continues. Changes to a task whose create has
 // not been sent yet wait for it.
 func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
-	unlock, err := s.Store.TryLockPush()
+	unlock, err := s.lock(ctx, &res)
 	if err != nil {
-		if errors.Is(err, store.ErrPushBusy) {
-			res.Busy = true
-			res.Remaining, _, _, _ = s.Store.OutboxCounts(ctx)
-		}
 		return res, err
 	}
 	defer unlock()
+	return s.pushLocked(ctx)
+}
+
+// lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
+func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
+	unlock, err := s.Store.TryLockPush()
+	if errors.Is(err, store.ErrPushBusy) {
+		res.Busy = true
+		res.Remaining, _, _, _ = s.Store.OutboxCounts(ctx)
+	}
+	return unlock, err
+}
+
+// pushLocked is Push for a caller holding the push lock.
+func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, err error) {
 	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
 		return res, err
 	}
