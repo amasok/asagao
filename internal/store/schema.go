@@ -229,4 +229,8 @@ CREATE TABLE discarded_changes (
     notified     INTEGER NOT NULL DEFAULT 0
 );
 `,
+	`
+-- The dropped change itself (outbox payload JSON), so what the user wrote can be recovered.
+ALTER TABLE discarded_changes ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';
+`,
 }

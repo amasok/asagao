@@ -96,6 +96,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
 	}()
 	verified := map[int64]bool{} // checked in Asana during this push (at most once each)
+	drops := &dropState{res: &res}
 	for _, snapshot := range ops {
 		// An entry is handled a bounded number of times per push, whatever happens: send,
 		// check + send again, the follow-up move of a create, and that move's retry. What is
@@ -136,7 +137,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 				out, m, err = s.reconcile(ctx, *op)
 				switch {
 				case isNotFound(err): // what it changes was deleted in Asana
-					if err := s.dropGone(ctx, *op, err, &res); err != nil {
+					if err := s.dropGone(ctx, *op, err, drops); err != nil {
 						return res, err
 					}
 					sendIt = false
@@ -201,7 +202,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 				}
 				return res, err // offline or cancelled: keep the rest for later
 			case isNotFound(err): // what it changes was deleted in Asana
-				if err := s.dropGone(ctx, *op, err, &res); err != nil {
+				if err := s.dropGone(ctx, *op, err, drops); err != nil {
 					return res, err
 				}
 			default:
@@ -335,14 +336,43 @@ func isNotFound(err error) bool {
 // otherwise only this change is (its section, project, tag, ... is gone). A create is
 // dropped with its local task (its parent or project is gone). Dropped changes are
 // recorded for the user and listed in res.Discarded.
-func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, res *PushResult) error {
+func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dropState) error {
+	res := st.res
+	// Asana also answers 404 when the logged-in account cannot see the object (another
+	// account or organization than the one the store was synced with). Make sure it is
+	// the same user before dropping anything.
+	if err := s.checkAccount(ctx, st); err != nil {
+		if isNetworkError(err) || isRateLimited(err) {
+			if rerr := s.Store.ReleaseOp(context.WithoutCancel(ctx), op.ID); rerr != nil {
+				return rerr
+			}
+			return err
+		}
+		if ferr := s.Store.MarkOpFailed(ctx, op.ID, err); ferr != nil {
+			return ferr
+		}
+		res.Failed++
+		return err // stop: every other change would hit the same problem
+	}
 	reason := "Asana で削除されています (" + cause.Error() + ")"
 	now := s.clock()
 	var discards []store.Discard
 	var err error
+	deleteTask := func(gid string) error {
+		if st.tasks >= maxDroppedTasks { // a second safeguard against dropping too much at once
+			res.Failed++
+			return s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf(
+				"1回の同期で削除済みとして消すタスクの上限 (%d 件) を超えたため、残しました。Asana で確認してください: %w", maxDroppedTasks, cause))
+		}
+		st.tasks++
+		discards, err = s.Store.DiscardDeletedTask(ctx, gid, reason, now)
+		return nil
+	}
 	switch op.Kind {
 	case store.OpCreateTask, store.OpDuplicateTask:
-		discards, err = s.Store.DiscardDeletedTask(ctx, op.TaskGID, reason, now)
+		if ferr := deleteTask(op.TaskGID); ferr != nil {
+			return ferr
+		}
 	case store.OpRenameSection, store.OpCreateStatus:
 		var d store.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
@@ -370,7 +400,9 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, res *Pu
 			}
 		}
 		if gone {
-			discards, err = s.Store.DiscardDeletedTask(ctx, task, reason, now)
+			if ferr := deleteTask(task); ferr != nil {
+				return ferr
+			}
 		} else {
 			var d store.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
@@ -382,6 +414,47 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, res *Pu
 	}
 	res.Discarded = append(res.Discarded, discards...)
 	return nil
+}
+
+// dropState is what dropGone keeps during one push.
+type dropState struct {
+	res     *PushResult
+	checked bool  // the account was checked
+	account error // why changes must not be dropped (nil: same account)
+	tasks   int   // tasks dropped so far
+}
+
+// maxDroppedTasks is how many tasks one push may drop as deleted in Asana.
+const maxDroppedTasks = 5
+
+// ErrAccountChanged is returned by Push when the logged-in Asana account is not the one
+// the local data belongs to: Asana answers 404 for everything, which must not be taken as
+// deletions.
+var ErrAccountChanged = errors.New("ログイン中の Asana アカウントが、ローカルのデータを同期したアカウントと違うため送れません")
+
+// checkAccount makes sure (once per push) that the API acts as the user the store was
+// synced with.
+func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
+	if st.checked {
+		return st.account
+	}
+	me, err := s.API.Me(ctx)
+	if err != nil {
+		if isNetworkError(err) || isRateLimited(err) {
+			return err // not checked: try again next time
+		}
+		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
+		return st.account
+	}
+	want, err := s.Store.SyncState(ctx, store.KeyMeGID)
+	if err != nil {
+		return err
+	}
+	st.checked = true
+	if me.GID != want { // also when nothing was synced yet (want == "")
+		st.account = fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	}
+	return st.account
 }
 
 // isRejected reports whether Asana answered with a 4xx other than 429: the request itself

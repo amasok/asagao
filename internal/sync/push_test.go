@@ -151,6 +151,8 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 	body := struct{ Data map[string]any }{data}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	switch {
+	case r.URL.Path == "/users/me":
+		fmt.Fprint(rw, `{"data":{"gid":"me","name":"Me"}}`)
 	case r.Method == http.MethodPost && r.URL.Path == "/tasks":
 		w.next++
 		gid := fmt.Sprintf("new%d", w.next)
@@ -306,6 +308,9 @@ func setupPush(t *testing.T) (*writeServer, *httptest.Server, *Syncer, *store.St
 	api.BaseURL = srv.URL
 	api.MaxRetries = 0
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", Workspace: &asana.Ref{GID: "w1"},
@@ -2399,5 +2404,127 @@ func TestPushDropsStatusOfDeletedProject(t *testing.T) {
 	}
 	if ups, _ := st.StatusUpdates(ctx, "p1"); len(ups) != 0 {
 		t.Fatalf("local status should be removed: %+v", ups)
+	}
+}
+
+// Logged in as someone else: Asana answers 404 for the old account's tasks. Nothing is
+// dropped; the push stops with ErrAccountChanged.
+func TestPushDoesNotDropWhenAccountChanged(t *testing.T) {
+	for _, tc := range []struct{ name, storedMe, apiMe string }{
+		{"other user", "me", "someone-else"},
+		{"local user unknown", "", "me"}, // no sync yet: cannot tell whose data this is
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			_ = st.SetSyncState(ctx, store.KeyMeGID, tc.storedMe)
+			_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "前のアカウントのタスク"}})
+			_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"completed": true}, now)
+			_, _ = st.AddCommentLocal(ctx, "t2", "メモ", store.UserRef{GID: "me"}, now)
+			ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+				if r.URL.Path == "/users/me" {
+					fmt.Fprintf(rw, `{"data":{"gid":%q}}`, tc.apiMe)
+					return true
+				}
+				return false
+			})
+			res, err := s.Push(ctx)
+			if !errors.Is(err, ErrAccountChanged) || len(res.Discarded) != 0 || res.Failed != 1 {
+				t.Fatalf("push = %+v %v", res, err)
+			}
+			if _, err := st.GetTask(ctx, "t2"); err != nil {
+				t.Fatal("the task must not be removed")
+			}
+			ops, _ := st.ListOps(ctx)
+			if len(ops) != 2 || ops[0].State != store.OpFailed || ops[1].State != store.OpPending {
+				t.Fatalf("entries = %+v", ops)
+			}
+			if d, _ := st.PendingDiscards(ctx); len(d) != 0 {
+				t.Fatalf("nothing should be recorded as dropped: %+v", d)
+			}
+		})
+	}
+}
+
+// One push drops at most maxDroppedTasks tasks; the rest are left failed for the user.
+func TestPushLimitsDroppedTasksPerPush(t *testing.T) {
+	_, _, s, st := setupPush(t)
+	ctx := context.Background()
+	for i := 0; i < maxDroppedTasks+2; i++ {
+		gid := fmt.Sprintf("gone%d", i)
+		_ = st.UpsertTasks(ctx, []asana.Task{{GID: gid, Name: gid}})
+		_ = st.UpdateTaskLocal(ctx, gid, map[string]any{"completed": true}, now)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || len(res.Discarded) != maxDroppedTasks || res.Failed != 2 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	for _, op := range must1(st.ListOps(ctx)) {
+		if op.State != store.OpFailed || !strings.Contains(op.LastError, "上限") {
+			t.Fatalf("entry = %+v", op)
+		}
+	}
+}
+
+// What the user wrote is kept with the record of the dropped change.
+func TestDroppedChangeKeepsPayload(t *testing.T) {
+	_, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "消された"}})
+	long := strings.Repeat("長い本文。", 30)
+	_, _ = st.AddCommentLocal(ctx, "t2", long, store.UserRef{GID: "me"}, now)
+	if res, err := s.Push(ctx); err != nil || len(res.Discarded) != 1 || res.Discarded[0].Payload["text"] != long {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	d, _ := st.PendingDiscards(ctx)
+	if len(d) != 1 || d[0].Payload["text"] != long || len([]rune(d[0].Summary)) > 60 {
+		t.Fatalf("recorded = %+v", d)
+	}
+}
+
+// 403 / 400 are not deletions: the change fails and nothing is dropped. Neither is a 403
+// when asking whether the task still exists.
+func TestPushRejectionsAreNotDropped(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		put, probe    int // status for PUT /tasks/t1 and GET /tasks/t1 (0: normal)
+		wantInLastErr string
+	}{
+		{"put 403", 403, 0, "403"},
+		{"put 400", 400, 0, "400"},
+		{"probe 403", 404, 403, "404"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, _, s, st := setupPush(t)
+			ctx := context.Background()
+			_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+			gets := 0
+			ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+				if r.URL.Path != "/tasks/t1" {
+					return false
+				}
+				if r.Method == http.MethodPut {
+					rw.WriteHeader(tc.put)
+					fmt.Fprintf(rw, `{"errors":[{"message":"status %d"}]}`, tc.put)
+					return true
+				}
+				if gets++; gets > 1 && tc.probe != 0 { // the first GET is pushUpdate's own read
+					rw.WriteHeader(tc.probe)
+					return true
+				}
+				return false
+			})
+			res, err := s.Push(ctx)
+			if err != nil || res.Failed != 1 || len(res.Discarded) != 0 {
+				t.Fatalf("push = %+v %v", res, err)
+			}
+			op := opByKind(t, st, store.OpUpdateTask)
+			if op == nil || op.State != store.OpFailed || !strings.Contains(op.LastError, tc.wantInLastErr) {
+				t.Fatalf("entry = %+v", op)
+			}
+			if _, err := st.GetTask(ctx, "t1"); err != nil {
+				t.Fatal("task must stay")
+			}
+		})
 	}
 }

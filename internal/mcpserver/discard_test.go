@@ -16,6 +16,10 @@ import (
 func TestWriteToDeletedTaskReportsDiscard(t *testing.T) {
 	st := seed(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/users/me" {
+			fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound) // t2 no longer exists
 		fmt.Fprint(w, `{"errors":[{"message":"task not found"}]}`)
 	}))
