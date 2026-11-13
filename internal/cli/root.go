@@ -47,7 +47,7 @@ func NewRoot() *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "結果を JSON で出力する")
 	root.Flags().BoolVar(&a.offline, "offline", false, "Asana と同期せず、ローカルストアだけで TUI を起動する")
-	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.outboxCmd())
+	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.outboxCmd(), a.mcpCmd())
 	return root
 }
 

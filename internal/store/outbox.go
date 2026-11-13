@@ -343,6 +343,8 @@ func (s *Store) ReplaceLocalTaskGID(ctx context.Context, local, real string) err
 			"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
 			"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
 			"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
+			// Remember the mapping so callers holding the local gid can find the task.
+			"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('gid:' || ?1, ?2)",
 		} {
 			if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
 				return err
@@ -350,6 +352,19 @@ func (s *Store) ReplaceLocalTaskGID(ctx context.Context, local, real string) err
 		}
 		return nil
 	})
+}
+
+// RealGID returns the Asana gid for a task created offline, or gid itself if it is not
+// a local gid or has not been sent yet.
+func (s *Store) RealGID(ctx context.Context, gid string) (string, error) {
+	if !IsLocalGID(gid) {
+		return gid, nil
+	}
+	v, err := s.SyncState(ctx, "gid:"+gid)
+	if err != nil || v == "" {
+		return gid, err
+	}
+	return v, nil
 }
 
 // ReplaceLocalStory swaps an offline comment for the one Asana created.
