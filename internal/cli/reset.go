@@ -37,8 +37,9 @@ func (a *app) resetCmd() *cobra.Command {
 			res, err := st.ResetWithBackup(ctx, backupDir(), force, time.Now())
 			switch {
 			case errors.Is(err, store.ErrUnsentChanges):
-				return fmt.Errorf("Asana に送っていない変更が %d 件あり、初期化すると消えます（消す前に自動でバックアップします）。"+
-					"内容は `asana-tui outbox list` で確認できます。よろしければ --force を付けて実行してください", res.Unsent)
+				return fmt.Errorf("Asana に送っていない変更が %d 件あり、初期化すると消えます。"+
+					"消した変更の内容は、初期化の後も `asana-tui outbox discarded` で確認できます（JSON ファイルにも自動でバックアップします）。"+
+					"今の内容は `asana-tui outbox list` で見られます。よろしければ --force を付けて実行してください", res.Unsent)
 			case errors.Is(err, store.ErrPushBusy):
 				return errors.New("別の asana-tui が同期・送信中のため初期化できません。終わってからやり直してください")
 			case err != nil:
@@ -51,6 +52,9 @@ func (a *app) resetCmd() *cobra.Command {
 			fmt.Fprintln(out, "ローカルのデータを初期化しました。次の `asana-tui sync` で、ログイン中のアカウントのデータを取り込みます")
 			if res.BackupPath != "" {
 				fmt.Fprintf(out, "消す前に、未送信の変更 %d 件と破棄した変更の記録を書き出しました: %s\n", res.Unsent, res.BackupPath)
+			}
+			if res.Unsent > 0 {
+				fmt.Fprintln(out, "消した変更の内容は `asana-tui outbox discarded` でも確認できます")
 			}
 			return nil
 		},

@@ -36,7 +36,8 @@ func (m *Model) showResetConfirm(unsent int) {
 	title := "ローカルのデータを初期化しますか？（ログイン情報は残り、次の同期でログイン中のアカウントのデータを取り込みます）"
 	confirm := "初期化する"
 	if unsent > 0 {
-		title = fmt.Sprintf("ローカルのデータを初期化しますか？ Asana に送っていない変更 %d 件も消えます（消す前に JSON ファイルに自動でバックアップします）", unsent)
+		title = fmt.Sprintf("ローカルのデータを初期化しますか？ Asana に送っていない変更 %d 件も消えます。"+
+			"消した変更の内容は、破棄した変更の一覧（%s）から確認できます（JSON ファイルにも自動でバックアップします）", unsent, m.actionKey("outbox"))
 		confirm = fmt.Sprintf("未送信の %d 件ごと初期化する", unsent)
 	}
 	m.picker = &picker{kind: pickReset, title: title,

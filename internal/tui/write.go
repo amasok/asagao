@@ -40,7 +40,9 @@ type (
 		ops      []store.Op
 		discards []store.Discard // dropped changes to announce (now marked as notified)
 		recent   []store.Discard // recently dropped changes, to show in full
-		err      error
+		// discardErr: the dropped changes could not be read; the outbox itself still opens.
+		discardErr error
+		err        error
 	}
 	writeDoneMsg struct {
 		status  string
@@ -67,9 +69,11 @@ func (m *Model) loadOutbox() tea.Cmd {
 		// (here or by the CLI); if marking fails they are announced again next time.
 		// Changes deleted by a reset are not announced: the user confirmed them and was
 		// shown the backup (they are still listed in the overlay).
-		pending, err := st.PendingDiscards(m.ctx)
+		// The dropped changes are extra information: if they cannot be read (e.g. one bad
+		// row), the outbox still opens so conflicts and failures can be resolved.
+		pending, discardErr := st.PendingDiscards(m.ctx)
 		var discards []store.Discard
-		if err == nil && len(pending) > 0 {
+		if discardErr == nil && len(pending) > 0 {
 			ids := make([]int64, len(pending))
 			for i, d := range pending {
 				ids[i] = d.ID
@@ -83,9 +87,9 @@ func (m *Model) loadOutbox() tea.Cmd {
 		}
 		recent, err := st.RecentDiscards(m.ctx, recentDiscards)
 		if err != nil {
-			return outboxLoadedMsg{err: err}
+			discardErr = err
 		}
-		return outboxLoadedMsg{counts: c, ops: ops, discards: discards, recent: recent}
+		return outboxLoadedMsg{counts: c, ops: ops, discards: discards, recent: recent, discardErr: discardErr}
 	}
 }
 
@@ -116,6 +120,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.discards = msg.recent
 			if len(msg.discards) > 0 {
 				m.status = m.discardStatus(msg.discards)
+			}
+			if msg.discardErr != nil {
+				m.status = "破棄した変更の記録を読み込めませんでした（未送信の変更の一覧は使えます）: " + msg.discardErr.Error()
 			}
 		}
 		return m, nil, true

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/amasok/asana-tui/internal/richtext"
 )
 
 // Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
@@ -84,7 +86,8 @@ type DiscardDetail struct {
 
 // DiscardDetails returns, in full, what the user wrote or attached in a dropped change
 // (name, description, comment or status text, the local copy of an attachment), so it can
-// be recovered.
+// be recovered. Rich text is given as Markdown, which keeps the formatting when pasted back
+// (the editors and the MCP tools take Markdown).
 func DiscardDetails(d Discard) []DiscardDetail {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return v }
 	var out []DiscardDetail
@@ -93,17 +96,27 @@ func DiscardDetails(d Discard) []DiscardDetail {
 			out = append(out, DiscardDetail{label, v})
 		}
 	}
+	// addRich prefers the rich text (htmlKey) as Markdown over the plain text (key).
+	addRich := func(label, key, htmlKey string) {
+		if h := str(htmlKey); h != "" {
+			if md := strings.TrimSpace(richtext.ToEditableMarkdown(h)); md != "" {
+				out = append(out, DiscardDetail{label + "（Markdown）", md})
+				return
+			}
+		}
+		add(label, key)
+	}
 	switch d.Kind {
 	case OpAddComment:
-		add("コメント", "text")
+		addRich("コメント", "text", "html_text")
 	case OpCreateStatus:
 		add("タイトル", "title")
-		add("本文", "text")
+		addRich("本文", "text", "html_text")
 	case OpUploadAttachment:
 		add("ファイルのコピー", "path")
 	case OpCreateTask, OpUpdateTask:
 		add("名前", "name")
-		add("説明", "notes")
+		addRich("説明", "notes", "html_notes")
 	}
 	return out
 }
@@ -202,11 +215,19 @@ func DescribeChange(op Op) string {
 					parts = append(parts, fmt.Sprintf("期日を %s に変更", v))
 				}
 			case "assignee":
-				parts = append(parts, "担当者の変更")
+				if v == "" {
+					parts = append(parts, "担当者を外す")
+				} else {
+					parts = append(parts, "担当者の変更")
+				}
 			case "notes":
 				parts = append(parts, "説明の変更")
 			case "liked":
-				parts = append(parts, "いいね")
+				if v == true {
+					parts = append(parts, "いいね")
+				} else {
+					parts = append(parts, "いいねを外す")
+				}
 			}
 		}
 		if len(parts) == 0 && op.Payload["html_notes"] != nil {

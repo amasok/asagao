@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	_ "modernc.org/sqlite"
 
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -33,7 +35,8 @@ func TestResetAsksWithUnsentCount(t *testing.T) {
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 
 	h.run(h.m.startReset())
-	if h.m.picker == nil || h.m.picker.kind != pickReset || !strings.Contains(h.m.picker.title, "2 件") {
+	if h.m.picker == nil || h.m.picker.kind != pickReset || !strings.Contains(h.m.picker.title, "2 件") ||
+		!strings.Contains(h.m.picker.title, "破棄した変更の一覧（!）") {
 		t.Fatalf("confirmation = %+v", h.m.picker)
 	}
 	h.key("enter") // the first item: やめる
@@ -101,5 +104,48 @@ func TestAccountChangedStatus(t *testing.T) {
 	}
 	if s, _ := h.m.syncStatus(); !strings.Contains(s, "アカウント") {
 		t.Errorf("header = %q", s)
+	}
+}
+
+// Another asana-tui syncing is not "offline": the last sync time stays and a retry is
+// scheduled quietly.
+func TestSyncBusyIsNotOffline(t *testing.T) {
+	h, _ := resetHarness(t)
+	h.m.lastSync = testNow
+	h.m.syncing = true
+	_, cmd := h.m.Update(syncDoneMsg{err: fmt.Errorf("x: %w", sync.ErrPushBusy), at: testNow.Add(time.Minute)})
+	if cmd == nil {
+		t.Fatal("a retry should be scheduled")
+	}
+	if h.m.syncErr != nil || !h.m.lastSync.Equal(testNow) {
+		t.Fatalf("busy must not count as an error or a sync: err=%v last=%v", h.m.syncErr, h.m.lastSync)
+	}
+	s, ok := h.m.syncStatus()
+	if !ok || !strings.Contains(s, "別の asana-tui が同期中") || strings.Contains(s, "オフライン") {
+		t.Fatalf("header = %q", s)
+	}
+	// the next successful sync clears it
+	h.m.Update(syncDoneMsg{at: testNow.Add(2 * time.Minute)})
+	if s, _ := h.m.syncStatus(); strings.Contains(s, "別の asana-tui") {
+		t.Fatalf("header after a sync = %q", s)
+	}
+}
+
+// A broken record of a dropped change must not keep the outbox from opening.
+func TestOutboxOpensWhenDiscardsCannotBeRead(t *testing.T) {
+	h, _ := resetHarness(t)
+	ctx, st := context.Background(), h.m.deps.Store
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
+	db, err := sql.Open("sqlite", st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO discarded_changes(kind, summary, discarded_at, payload) VALUES('add_comment', 'x', '2026-11-13T00:00:00Z', '{broken')`); err != nil {
+		t.Fatal(err)
+	}
+	h.key("!")
+	if len(h.m.ops) != 1 || !strings.Contains(h.screen(), "ローカル") || !strings.Contains(h.m.status, "破棄した変更の記録を読み込めませんでした") {
+		t.Fatalf("ops=%d status=%q\n%s", len(h.m.ops), h.m.status, h.screen())
 	}
 }

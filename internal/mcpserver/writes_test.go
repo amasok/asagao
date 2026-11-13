@@ -284,3 +284,31 @@ func TestAccountChangedIsExplained(t *testing.T) {
 		t.Fatalf("local data must be kept: %v", err)
 	}
 }
+
+// A sync while another process syncs is not an error: the output says why nothing happened.
+func TestSyncBusyIsNotAnError(t *testing.T) {
+	st := seed(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/users/me" { // Run checks the account, then finds the lock taken
+			fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
+			return
+		}
+		t.Errorf("nothing else should be requested: %s %s", r.Method, r.URL)
+	}))
+	t.Cleanup(srv.Close)
+	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+		api := asana.NewClient(srv.Client())
+		api.BaseURL = srv.URL
+		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+	}})
+	unlock, err := st.TryLockPush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	var out SyncOutput
+	res := call(t, cs, "sync", nil, &out)
+	if res.IsError || !strings.Contains(out.Note, "another asana-tui process") || strings.Contains(out.Note, "offline") {
+		t.Fatalf("busy sync: error=%q out=%+v", toolError(res), out)
+	}
+}

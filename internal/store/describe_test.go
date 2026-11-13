@@ -36,6 +36,8 @@ func TestDescribeOp(t *testing.T) {
 			"t: 名前を「新」に変更、完了にする、期日を 2026-12-01 に変更、担当者の変更、説明の変更、いいね"},
 		{"update: reopen and clear due date", Op{Kind: OpUpdateTask, TaskName: "t", Payload: map[string]any{"completed": false, "due_on": ""}},
 			"t: 未完了に戻す、期日を削除"},
+		{"update: unlike and unassign", Op{Kind: OpUpdateTask, TaskName: "t", Payload: map[string]any{"liked": false, "assignee": ""}},
+			"t: 担当者を外す、いいねを外す"},
 		{"update: rich notes only", Op{Kind: OpUpdateTask, TaskName: "t", Payload: map[string]any{"html_notes": "<body>x</body>"}}, "t: 説明の変更"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,13 +102,19 @@ func TestDiscardDetails(t *testing.T) {
 		{"comment in full", Discard{Kind: OpAddComment, Payload: map[string]any{"text": "長い\nコメント", "story_gid": "local:1"}},
 			[]DiscardDetail{{"コメント", "長い\nコメント"}}},
 		{"created task", Discard{Kind: OpCreateTask, Payload: map[string]any{"name": "新規", "notes": "説明文", "html_notes": "<body>説明文</body>"}},
-			[]DiscardDetail{{"名前", "新規"}, {"説明", "説明文"}}},
+			[]DiscardDetail{{"名前", "新規"}, {"説明（Markdown）", "説明文"}}},
+		{"plain description", Discard{Kind: OpUpdateTask, Payload: map[string]any{"notes": "説明文"}},
+			[]DiscardDetail{{"説明", "説明文"}}},
 		{"update without text fields", Discard{Kind: OpUpdateTask, Payload: map[string]any{"completed": true}}, nil},
 		{"status", Discard{Kind: OpCreateStatus, Payload: map[string]any{"title": "順調", "text": "本文"}},
 			[]DiscardDetail{{"タイトル", "順調"}, {"本文", "本文"}}},
 		{"attachment copy", Discard{Kind: OpUploadAttachment, Payload: map[string]any{"name": "a.pdf", "path": "/cache/a.pdf"}},
 			[]DiscardDetail{{"ファイルのコピー", "/cache/a.pdf"}}},
 		{"tag", Discard{Kind: OpAddTag, Payload: map[string]any{"tag_name": "急ぎ"}}, nil},
+		{"rich comment as Markdown", Discard{Kind: OpAddComment, Payload: map[string]any{"text": "大事 です", "html_text": "<body><strong>大事</strong> です</body>"}},
+			[]DiscardDetail{{"コメント（Markdown）", "**大事** です"}}},
+		{"rich description as Markdown", Discard{Kind: OpUpdateTask, Payload: map[string]any{"notes": "見出し", "html_notes": "<body><h1>見出し</h1></body>"}},
+			[]DiscardDetail{{"説明（Markdown）", "# 見出し"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := DiscardDetails(tc.d); !reflect.DeepEqual(got, tc.want) {

@@ -60,6 +60,13 @@ func TestResetCommand(t *testing.T) {
 	if !strings.Contains(string(data), "牛乳を買う") || !strings.Contains(string(data), "低脂肪") {
 		t.Fatalf("backup should keep the unsent change:\n%s", data)
 	}
+	if !strings.Contains(out, "outbox discarded") {
+		t.Fatalf("should point to the dropped-changes list:\n%s", out)
+	}
+	out, err = runCLI(t, "outbox", "discarded")
+	if err != nil || !strings.Contains(out, "牛乳を買う") || !strings.Contains(out, "（初期化で破棄）") {
+		t.Fatalf("outbox discarded after reset: %v\n%s", err, out)
+	}
 	st = createStoreAt(t, filepath.Join(config.DataDir(), "store.db"))
 	if n, _ := st.UnsentCount(ctx); n != 0 {
 		t.Fatalf("outbox should be empty: %d", n)

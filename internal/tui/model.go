@@ -134,6 +134,7 @@ type Model struct {
 	syncer      *sync.Syncer
 	syncing     bool
 	syncErr     error
+	syncBusy    bool // the last sync found another process syncing; retrying soon
 	lastSync    time.Time
 	fetchingFor string // gid whose details are being fetched
 
@@ -362,6 +363,13 @@ func (m *Model) startSync() tea.Cmd {
 	}
 }
 
+// busyRetry is how soon a sync is tried again after another process was syncing.
+const busyRetry = 5 * time.Second
+
+func (m *Model) retrySyncSoon() tea.Cmd {
+	return tea.Tick(busyRetry, func(time.Time) tea.Msg { return syncTickMsg{} })
+}
+
 func (m *Model) scheduleSync() tea.Cmd {
 	if m.deps.SyncInterval <= 0 {
 		return nil
@@ -516,12 +524,19 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncDoneMsg:
 		m.syncing = false
+		if msg.syncer != nil {
+			m.syncer = msg.syncer
+		}
+		// Another asana-tui (CLI, MCP server, another TUI) is syncing or sending: not an
+		// error and not offline. Keep the last state and quietly try again soon.
+		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
+		if m.syncBusy {
+			m.syncAgain = false // the retry covers a sync requested meanwhile
+			return m, tea.Batch(m.retrySyncSoon(), m.loadOutbox())
+		}
 		m.syncErr = msg.err
 		if errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.status = m.accountChangedStatus()
-		}
-		if msg.syncer != nil {
-			m.syncer = msg.syncer
 		}
 		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
 		if m.syncAgain {
@@ -907,6 +922,8 @@ func (m *Model) syncStatus() (string, bool) {
 	switch {
 	case m.syncing:
 		return "⟳ 同期中", true
+	case m.syncBusy:
+		return "⟳ 別の asana-tui が同期中（少し後にもう一度同期します）", true
 	case errors.Is(m.syncErr, sync.ErrAccountChanged):
 		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:

@@ -34,6 +34,13 @@ func (a *app) syncCmd() *cobra.Command {
 			if errors.Is(err, sync.ErrAccountChanged) {
 				return accountChanged(ctx, st)
 			}
+			if errors.Is(err, sync.ErrPushBusy) { // not offline: someone else is syncing
+				if a.json {
+					return a.printJSON(res)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "別の asana-tui（TUI・MCP サーバーなど）が同期中のため、今回は何もしませんでした。未送信の変更はそちらで送られます")
+				return nil
+			}
 			if err != nil {
 				return err
 			}

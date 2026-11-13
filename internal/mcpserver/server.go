@@ -200,6 +200,8 @@ type SyncStatusOutput struct {
 type SyncOutput struct {
 	Result sync.Result      `json:"result"`
 	Status SyncStatusOutput `json:"status"`
+	// Note says why nothing was synced (another asana-tui process is syncing).
+	Note string `json:"note,omitempty"`
 }
 
 type CreateTaskInput struct {
@@ -410,7 +412,11 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 		if errors.Is(err, sync.ErrAccountChanged) {
 			return nil, out, fmt.Errorf("sync stopped: %s", s.accountChangedNote(ctx))
 		}
-		return nil, out, err
+		if !errors.Is(err, sync.ErrPushBusy) {
+			return nil, out, err
+		}
+		out.Note = "another asana-tui process (the TUI, the CLI or another MCP server) is syncing right now, so nothing was done; " +
+			"queued changes are sent by that process. Try again in a moment if you need fresh data."
 	}
 	out.Status, err = s.status(ctx)
 	return nil, out, err
