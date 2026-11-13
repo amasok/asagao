@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -103,7 +104,10 @@ func (a *app) taskCreateCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			nt := store.NewTask{Name: strings.Join(args, " "), Notes: notes, ParentGID: parent}
+			nt := store.NewTask{Name: strings.Join(args, " "), ParentGID: parent}
+			if notes != "" { // Markdown -> Asana rich text
+				nt.Notes, nt.HTMLNotes = richtext.PlainFromMarkdown(notes), richtext.FromMarkdown(notes)
+			}
 			if nt.DueOn, err = parseDate(due, time.Now()); err != nil {
 				return fmt.Errorf("--due: %w", err)
 			}
@@ -147,8 +151,63 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&section, "section", "", "セクション（gid または名前。省略時は先頭のセクション）")
 	cmd.Flags().StringVar(&due, "due", "", "期日（YYYY-MM-DD / today / tomorrow / +Nd）")
 	cmd.Flags().StringVar(&assignee, "assignee", "", `担当者（"me" またはユーザーの gid。プロジェクト未指定なら me）`)
-	cmd.Flags().StringVar(&notes, "notes", "", "説明")
+	cmd.Flags().StringVar(&notes, "notes", "", "説明（マークダウン）")
 	cmd.Flags().StringVar(&parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
+	return cmd
+}
+
+func (a *app) taskTagCmd() *cobra.Command {
+	var add, remove []string
+	cmd := &cobra.Command{
+		Use:     "tag <gid> [--add タグ]... [--remove タグ]...",
+		Short:   "タグを付ける / 外す（ないタグは作る）",
+		Example: `  asana-tui task tag 1203455468597469 --add 急ぎ --remove 買い物`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			tags, err := st.ListTags(ctx)
+			if err != nil {
+				return err
+			}
+			find := func(s string) string {
+				s = strings.TrimPrefix(s, "#")
+				for _, t := range tags {
+					if t.GID == s || t.Name == s {
+						return t.GID
+					}
+				}
+				return ""
+			}
+			now := time.Now()
+			for _, t := range add {
+				if gid := find(t); gid != "" {
+					_, err = st.AddTagLocal(ctx, args[0], gid, "", now)
+				} else {
+					_, err = st.AddTagLocal(ctx, args[0], "", strings.TrimPrefix(t, "#"), now)
+				}
+				if err != nil {
+					return err
+				}
+			}
+			for _, t := range remove {
+				gid := find(t)
+				if gid == "" {
+					return fmt.Errorf("タグ %q はありません", t)
+				}
+				if err := st.RemoveTagLocal(ctx, args[0], gid, now); err != nil {
+					return err
+				}
+			}
+			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "タグを変更しました")
+		},
+	}
+	cmd.Flags().StringSliceVar(&add, "add", nil, "付けるタグ（名前または gid）")
+	cmd.Flags().StringSliceVar(&remove, "remove", nil, "外すタグ（名前または gid）")
 	return cmd
 }
 
@@ -275,7 +334,7 @@ func (a *app) commentCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "comment", Short: "コメント"}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "add <タスクの gid> <コメント>",
-		Short: "タスクにコメントする",
+		Short: "タスクにコメントする（マークダウン可）",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -288,7 +347,8 @@ func (a *app) commentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			gid, err := st.AddCommentLocal(ctx, args[0], strings.Join(args[1:], " "), me, time.Now())
+			text := strings.Join(args[1:], " ")
+			gid, err := st.AddRichCommentLocal(ctx, args[0], richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, time.Now())
 			if err != nil {
 				return err
 			}

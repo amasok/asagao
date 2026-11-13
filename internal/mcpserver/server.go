@@ -9,12 +9,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 	stdsync "sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -60,8 +64,11 @@ func (s *Server) New() *mcp.Server {
 		Description: "Full-text search over task names, descriptions and comments in every synced project. " +
 			"Multiple words are ANDed. Includes completed tasks unless completion is set."}, s.searchTasks)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_task", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		Description: "Get one task with notes, subtasks and comments. Refreshes it from Asana when online " +
-			"(set offline=true to use only the cache)."}, s.getTask)
+		Description: "Get one task with its description and comments as Markdown, subtasks, tags and attachments. " +
+			"Refreshes it from Asana when online (set offline=true to use only the cache)."}, s.getTask)
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_attachment", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Description: "Get an attachment of a task. Images are returned as image content so you can look at them " +
+			"(e.g. those referenced as ![画像](asana:<gid>) in a description); other files return their local path."}, s.getAttachment)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: readOnly,
 		Description: "List projects and their sections (gid and name). By default only projects I am a member of."}, s.listProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_users", Annotations: readOnly,
@@ -84,13 +91,17 @@ func (s *Server) New() *mcp.Server {
 				"(like My Tasks). With a project it goes to the given section or the project's first section. " +
 				"With parent it is created as a subtask of that task."}, s.createTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
-			Description: "Update a task: complete/reopen it, rename it, change its description, due date or assignee. " +
-				"Only the fields you pass are changed. Use an empty string to clear due_on or assignee."}, s.updateTask)
+			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
+				"assignee or tags. Only the fields you pass are changed. Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
 				"project is needed only when the task is in more than one project."}, s.moveTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "rename_section", Annotations: write(false),
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
+		mcp.AddTool(srv, &mcp.Tool{Name: "resolve_outbox", Annotations: write(true),
+			Description: "Resolve a local change that could not be sent (see sync_status.outbox): keep_local overwrites " +
+				"Asana with the local value, keep_remote drops the local change, retry resends a failed entry, discard drops it. " +
+				"Ask the user before choosing for a conflict."}, s.resolveOutbox)
 		mcp.AddTool(srv, &mcp.Tool{Name: "add_comment", Annotations: write(false),
 			Description: "Add a comment to a task."}, s.addComment)
 	}
@@ -128,8 +139,21 @@ type GetTaskInput struct {
 
 type GetTaskOutput struct {
 	Task *store.TaskDetail `json:"task"`
+	// DescriptionMarkdown is the description as Markdown (images as ![画像](asana:<gid>),
+	// readable with get_attachment).
+	DescriptionMarkdown string `json:"description_markdown"`
+	// Comments are the task's comments as Markdown, oldest first.
+	Comments []CommentOutput `json:"comments"`
 	// Note explains when the cache was used because Asana could not be reached.
 	Note string `json:"note,omitempty"`
+}
+
+type CommentOutput struct {
+	GID       string `json:"gid"`
+	Author    string `json:"author"`
+	CreatedAt string `json:"created_at"`
+	Markdown  string `json:"markdown"`
+	Pending   bool   `json:"pending"`
 }
 
 type ListProjectsInput struct {
@@ -162,22 +186,25 @@ type SyncOutput struct {
 }
 
 type CreateTaskInput struct {
-	Name     string `json:"name" jsonschema:"task name"`
-	Parent   string `json:"parent,omitempty" jsonschema:"parent task gid: create a subtask (project/section are ignored)"`
-	Project  string `json:"project,omitempty" jsonschema:"project gid or name; omit to create in My Tasks"`
-	Section  string `json:"section,omitempty" jsonschema:"section gid or exact name (default: first section)"`
-	DueOn    string `json:"due_on,omitempty" jsonschema:"due date (YYYY-MM-DD, today, tomorrow, +7d)"`
-	Assignee string `json:"assignee,omitempty" jsonschema:"\"me\" or a user gid (default: me when no project)"`
-	Notes    string `json:"notes,omitempty" jsonschema:"description"`
+	Name     string   `json:"name" jsonschema:"task name"`
+	Parent   string   `json:"parent,omitempty" jsonschema:"parent task gid: create a subtask (project/section are ignored)"`
+	Project  string   `json:"project,omitempty" jsonschema:"project gid or name; omit to create in My Tasks"`
+	Section  string   `json:"section,omitempty" jsonschema:"section gid or exact name (default: first section)"`
+	DueOn    string   `json:"due_on,omitempty" jsonschema:"due date (YYYY-MM-DD, today, tomorrow, +7d)"`
+	Assignee string   `json:"assignee,omitempty" jsonschema:"\"me\" or a user gid (default: me when no project)"`
+	Notes    string   `json:"notes,omitempty" jsonschema:"description in Markdown (headings, **bold**, lists, links); converted to Asana rich text"`
+	Tags     []string `json:"tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids"`
 }
 
 type UpdateTaskInput struct {
-	GID       string  `json:"gid" jsonschema:"task gid"`
-	Completed *bool   `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
-	Name      *string `json:"name,omitempty" jsonschema:"new name"`
-	Notes     *string `json:"notes,omitempty" jsonschema:"new description (replaces the old one)"`
-	DueOn     *string `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
-	Assignee  *string `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
+	GID        string   `json:"gid" jsonschema:"task gid"`
+	Completed  *bool    `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
+	Name       *string  `json:"name,omitempty" jsonschema:"new name"`
+	Notes      *string  `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
+	DueOn      *string  `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	Assignee   *string  `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
+	AddTags    []string `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
+	RemoveTags []string `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
 }
 
 type MoveTaskInput struct {
@@ -198,7 +225,24 @@ type TagsOutput struct {
 
 type AddCommentInput struct {
 	GID  string `json:"gid" jsonschema:"task gid"`
-	Text string `json:"text" jsonschema:"comment text"`
+	Text string `json:"text" jsonschema:"comment in Markdown (converted to Asana rich text)"`
+}
+
+type ResolveOutboxInput struct {
+	ID     int64  `json:"id" jsonschema:"outbox entry id (from sync_status)"`
+	Action string `json:"action" jsonschema:"keep_local (overwrite Asana with the local value), keep_remote (drop the local change), retry (send a failed entry again) or discard (drop it)"`
+}
+
+type GetAttachmentInput struct {
+	GID     string `json:"gid" jsonschema:"attachment gid (e.g. from ![画像](asana:<gid>) or task.attachments)"`
+	TaskGID string `json:"task_gid" jsonschema:"the task it belongs to"`
+}
+
+type AttachmentOutput struct {
+	Name      string `json:"name"`
+	LocalPath string `json:"local_path"`
+	IsImage   bool   `json:"is_image"`
+	Note      string `json:"note,omitempty"`
 }
 
 type WriteOutput struct {
@@ -307,7 +351,30 @@ func (s *Server) getTask(ctx context.Context, _ *mcp.CallToolRequest, in GetTask
 		return nil, out, err
 	}
 	out.Task = d
+	out.DescriptionMarkdown = editableMarkdown(d.HTMLNotes, d.Notes)
+	out.Comments = []CommentOutput{}
+	for _, st := range d.Stories {
+		if st.Type != "comment" {
+			continue
+		}
+		c := CommentOutput{GID: st.GID, CreatedAt: st.CreatedAt, Markdown: editableMarkdown(st.HTMLText, st.Text), Pending: st.Pending}
+		if st.CreatedBy != nil {
+			c.Author = st.CreatedBy.Name
+		}
+		out.Comments = append(out.Comments, c)
+	}
 	return nil, out, nil
+}
+
+// editableMarkdown renders rich text (or plain text) as Markdown that update_task accepts back.
+func editableMarkdown(htmlText, plain string) string {
+	if htmlText != "" {
+		return richtext.ToEditableMarkdown(htmlText)
+	}
+	md := richtext.FromPlain(store.ReplaceInlineAssets(plain, func(gid string) string {
+		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
+	}))
+	return richtext.ImageTokenRe.ReplaceAllString(md, "![画像](asana:$1)")
 }
 
 func (s *Server) listProjects(ctx context.Context, _ *mcp.CallToolRequest, in ListProjectsInput) (*mcp.CallToolResult, ProjectsOutput, error) {
@@ -365,7 +432,10 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 
 func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in CreateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
-	nt := store.NewTask{Name: in.Name, Notes: in.Notes, ParentGID: in.Parent}
+	nt := store.NewTask{Name: in.Name, ParentGID: in.Parent}
+	if in.Notes != "" {
+		nt.Notes, nt.HTMLNotes = richtext.PlainFromMarkdown(in.Notes), richtext.FromMarkdown(in.Notes)
+	}
 	var err error
 	if nt.DueOn, err = dates.Parse(in.DueOn, now); err != nil {
 		return nil, WriteOutput{}, fmt.Errorf("due_on: %w", err)
@@ -400,8 +470,48 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
+	if err := s.changeTags(ctx, gid, in.Tags, nil); err != nil {
+		return nil, WriteOutput{}, err
+	}
 	out := s.push(ctx, gid)
 	return nil, out, nil
+}
+
+// changeTags adds and removes tags given by name or gid; unknown names are created.
+func (s *Server) changeTags(ctx context.Context, taskGID string, add, remove []string) error {
+	tags, err := s.Store.ListTags(ctx)
+	if err != nil {
+		return err
+	}
+	find := func(nameOrGID string) string {
+		name := strings.TrimPrefix(nameOrGID, "#")
+		for _, t := range tags {
+			if t.GID == nameOrGID || t.Name == name {
+				return t.GID
+			}
+		}
+		return ""
+	}
+	for _, a := range add {
+		if gid := find(a); gid != "" {
+			_, err = s.Store.AddTagLocal(ctx, taskGID, gid, "", s.Now())
+		} else {
+			_, err = s.Store.AddTagLocal(ctx, taskGID, "", strings.TrimPrefix(a, "#"), s.Now())
+		}
+		if err != nil {
+			return fmt.Errorf("add tag %q: %w", a, err)
+		}
+	}
+	for _, r := range remove {
+		gid := find(r)
+		if gid == "" {
+			return fmt.Errorf("remove tag %q: no such tag", r)
+		}
+		if err := s.Store.RemoveTagLocal(ctx, taskGID, gid, s.Now()); err != nil {
+			return fmt.Errorf("remove tag %q: %w", r, err)
+		}
+	}
+	return nil
 }
 
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
@@ -413,7 +523,8 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		changes["name"] = *in.Name
 	}
 	if in.Notes != nil {
-		changes["notes"] = *in.Notes
+		changes["notes"] = richtext.PlainFromMarkdown(*in.Notes)
+		changes["html_notes"] = richtext.FromMarkdown(*in.Notes)
 	}
 	if in.DueOn != nil {
 		due, err := dates.Parse(*in.DueOn, s.Now())
@@ -429,10 +540,15 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		}
 		changes["assignee"] = gid
 	}
-	if len(changes) == 0 {
-		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one of completed, name, notes, due_on, assignee")
+	if len(changes) == 0 && len(in.AddTags) == 0 && len(in.RemoveTags) == 0 {
+		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one of completed, name, notes, due_on, assignee, add_tags, remove_tags")
 	}
-	if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, s.Now()); err != nil {
+	if len(changes) > 0 {
+		if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, s.Now()); err != nil {
+			return nil, WriteOutput{}, err
+		}
+	}
+	if err := s.changeTags(ctx, in.GID, in.AddTags, in.RemoveTags); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
@@ -470,7 +586,7 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if _, err := s.Store.AddCommentLocal(ctx, in.GID, in.Text, me, s.Now()); err != nil {
+	if _, err := s.Store.AddRichCommentLocal(ctx, in.GID, richtext.PlainFromMarkdown(in.Text), richtext.FromMarkdown(in.Text), me, s.Now()); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
@@ -538,3 +654,68 @@ func (s *Server) getSyncer(ctx context.Context) (*sync.Syncer, error) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func (s *Server) resolveOutbox(ctx context.Context, _ *mcp.CallToolRequest, in ResolveOutboxInput) (*mcp.CallToolResult, WriteOutput, error) {
+	op, err := s.Store.GetOp(ctx, in.ID)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	switch in.Action {
+	case "keep_local":
+		if op.State != store.OpConflict {
+			return nil, WriteOutput{}, fmt.Errorf("entry %d is not a conflict (state %s)", op.ID, op.State)
+		}
+		err = s.Store.ResolveKeepLocal(ctx, op.ID)
+	case "retry":
+		err = s.Store.RetryOp(ctx, op.ID)
+	case "keep_remote", "discard":
+		if err = s.Store.DiscardOp(ctx, op.ID); err == nil && op.Kind != store.OpCreateTask {
+			_ = s.fetchDetails(ctx, op.TaskGID) // bring the server's values back
+		}
+	default:
+		return nil, WriteOutput{}, fmt.Errorf("action must be keep_local, keep_remote, retry or discard (got %q)", in.Action)
+	}
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	if in.Action == "keep_remote" || in.Action == "discard" {
+		return nil, WriteOutput{TaskGID: op.TaskGID, Sent: true, Note: "local change dropped"}, nil
+	}
+	return nil, s.push(ctx, op.TaskGID), nil
+}
+
+// maxImageBytes keeps images returned to the model reasonably small.
+const maxImageBytes = 4 << 20
+
+func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in GetAttachmentInput) (*mcp.CallToolResult, AttachmentOutput, error) {
+	syncer, err := s.getSyncer(ctx)
+	if err != nil {
+		syncer = &sync.Syncer{Store: s.Store} // offline: cached files only
+	}
+	path, err := syncer.DownloadAttachment(ctx, in.TaskGID, in.GID)
+	if err != nil {
+		return nil, AttachmentOutput{}, err
+	}
+	a, err := s.Store.GetAttachment(ctx, in.GID)
+	if err != nil {
+		return nil, AttachmentOutput{}, err
+	}
+	out := AttachmentOutput{Name: a.Name, LocalPath: path, IsImage: a.IsImage}
+	if !a.IsImage {
+		return nil, out, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, out, err
+	}
+	mime := http.DetectContentType(data)
+	if !strings.HasPrefix(mime, "image/") || len(data) > maxImageBytes {
+		out.Note = "not returned inline (" + mime + ", " + fmt.Sprint(len(data)) + " bytes); open local_path instead"
+		return nil, out, nil
+	}
+	res := &mcp.CallToolResult{Content: []mcp.Content{
+		&mcp.ImageContent{Data: data, MIMEType: mime},
+		&mcp.TextContent{Text: a.Name + " (" + path + ")"},
+	}}
+	return res, out, nil
+}

@@ -117,6 +117,7 @@ asana-tui --offline  # 同期せず、ローカルストアだけで起動
 | `task create <名前> [--project] [--section] [--due] [--assignee] [--notes]` | タスクを作成（プロジェクト未指定なら自分に割り当て） |
 | `task move <gid> --section <セクション> [--project]` | 別のセクションへ移動 |
 | `task assign <gid> <me\|none\|名前>` | 担当者を変更 |
+| `task tag <gid> --add <タグ> --remove <タグ>` | タグを付ける / 外す（ないタグは作る） |
 | `task create <名前> --parent <gid>` | サブタスクを作成 |
 | `section rename <セクション> <新しい名前> --project <プロジェクト>` | セクションの名前を変更 |
 | `tag list` | タグと、そのタグが付いたタスクの数 |
@@ -153,21 +154,25 @@ claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
 |--------|------|
 | `list_tasks` | タスク一覧（デフォルトは自分の未完了。プロジェクト・セクション・担当者・期日・期限切れ・タグで絞り込み） |
 | `search_tasks` | タスク名・説明・コメントを全文検索 |
-| `get_task` | タスク詳細（サブタスク・コメント込み。オンラインなら最新を取得） |
+| `get_task` | タスク詳細。説明とコメントをマークダウンで返す（サブタスク・タグ・添付込み。オンラインなら最新を取得） |
+| `get_attachment` | 添付ファイル。画像は画像として返すので、AI が中身を見られる |
 | `list_projects` | プロジェクトとセクション |
 | `sync_status` | 最終同期の時刻と、未送信の変更・競合 |
 | `sync` | 未送信の変更を送り、Asana の変更を取り込む |
 | `create_task` | タスクを作成（`--read-only` では無効） |
-| `update_task` | 完了 / 未完了・名前・説明・期日・担当者を変更（`--read-only` では無効） |
+| `update_task` | 完了 / 未完了・名前・説明（マークダウン）・期日・担当者・タグを変更（`--read-only` では無効） |
+| `resolve_outbox` | 送れなかった変更を解決（こちらを採用 / Asana を採用 / 再送 / 取り消し。`--read-only` では無効） |
 | `move_task` | 別のセクションへ移動（`--read-only` では無効） |
 | `rename_section` | セクションの名前を変更（`--read-only` では無効） |
 | `list_tags` | タグとタスク数 |
 | `list_users` | ワークスペースのメンバー（担当者の指定に使う） |
-| `add_comment` | コメント（`--read-only` では無効） |
+| `add_comment` | コメント（マークダウン。`--read-only` では無効） |
 
 - 読み取りはローカルストアから行うので、高速でオフラインでも動きます。
 - 書き込みは TUI・CLI と同じ「未送信の変更」を通ります。オンラインならすぐに送り、結果の `sent` で送れたかどうかが分かります。
 - 期日は `YYYY-MM-DD` のほか、`today` / `tomorrow` / `+7d` などで指定できます。
+- 説明とコメントはマークダウンで読み書きし、Asana のリッチテキストに変換します。画像は `![画像](asana:<ID>)` で表し、`get_attachment` で中身を見られます。
+- TUI でできる操作は、MCP でもすべてできます（表示の切り替えなど画面の操作を除く）。
 
 ## 詳細画面
 
