@@ -163,6 +163,8 @@ type Model struct {
 	renameGID string          // section being renamed (promptRenameSection)
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
+	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).
+	rowsScope string
 
 	// detail rendering (markdown.go)
 	dark         bool // terminal background
@@ -774,6 +776,14 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	if t := m.selectedTask(); t != nil {
 		prev = t.GID
 	}
+	// When a reload of the same scope drops the selected task (completed, moved away), keep
+	// the cursor where it was instead of going back to the top.
+	near := 0
+	if key := m.scopeKey(); m.rowsScope == key {
+		near = m.listCursor
+	} else {
+		m.rowsScope = key
+	}
 	m.allRows = rows
 	m.rows = m.visibleRows()
 	target := prev
@@ -781,7 +791,7 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		target = m.selectAfter
 	}
 	m.selectAfter = ""
-	m.selectInList(target)
+	m.selectInListNear(target, near)
 	if m.boardActive() {
 		m.selectInBoard(target)
 	}
@@ -811,7 +821,11 @@ func (m *Model) listed(gid string) bool {
 }
 
 // selectInList puts the list cursor on gid, or on the first task if gid is not listed.
-func (m *Model) selectInList(gid string) {
+func (m *Model) selectInList(gid string) { m.selectInListNear(gid, 0) }
+
+// selectInListNear puts the list cursor on gid, or, if gid is not listed, on the first task
+// at or after row near (the last task before it when there is none after).
+func (m *Model) selectInListNear(gid string, near int) {
 	m.listCursor = -1
 	for i, r := range m.rows {
 		if r.task != nil && r.task.GID == gid {
@@ -819,8 +833,11 @@ func (m *Model) selectInList(gid string) {
 			break
 		}
 	}
-	if m.listCursor < 0 {
-		m.listCursor = m.nextTaskRow(0, 1)
+	if m.listCursor < 0 && len(m.rows) > 0 {
+		near = clamp(near, 0, len(m.rows)-1)
+		if m.listCursor = m.nextTaskRow(near, 1); m.listCursor < 0 {
+			m.listCursor = m.nextTaskRow(near, -1)
+		}
 	}
 	m.ensureListVisible()
 }
