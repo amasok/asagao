@@ -114,7 +114,8 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 	defer unlock()
 	var lastSent int64
-	if res.Push, lastSent, err = s.pushLocked(ctx); err != nil {
+	drops := &dropState{} // one account check and one drop limit for the whole sync
+	if res.Push, lastSent, err = s.pushLocked(ctx, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
@@ -239,7 +240,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		}
 	}
 	// Changes queued by other processes during the pull (they were told this sync sends them).
-	if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent); err != nil {
+	if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, started.UTC().Format(time.RFC3339)); err != nil {

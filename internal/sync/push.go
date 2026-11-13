@@ -81,7 +81,7 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		return res, err
 	}
 	defer unlock()
-	res, _, err = s.pushLocked(ctx)
+	res, _, err = s.pushLocked(ctx, &dropState{})
 	return res, err
 }
 
@@ -98,16 +98,19 @@ func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
 // pushLocked is Push for a caller holding the push lock. Changes queued by other
 // processes while it sends (they got ErrPushBusy and were told this process sends them)
 // are sent too, by one more pass before it returns. last is the newest entry handled.
-func (s *Syncer) pushLocked(ctx context.Context) (res PushResult, last int64, err error) {
-	if res, last, err = s.pushPass(ctx, 0); err != nil {
+//
+// drops is shared by every pass under the same lock (one per Push, one per Run), so the
+// account is checked once and maxDroppedTasks bounds the whole push or sync.
+func (s *Syncer) pushLocked(ctx context.Context, drops *dropState) (res PushResult, last int64, err error) {
+	if res, last, err = s.pushPass(ctx, 0, drops); err != nil {
 		return res, last, err
 	}
-	return s.catchUp(ctx, res, last)
+	return s.catchUp(ctx, res, last, drops)
 }
 
 // catchUp sends entries queued after entry last (one more pass) and adds its result.
-func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64) (PushResult, int64, error) {
-	more, last, err := s.pushPass(ctx, last)
+func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops *dropState) (PushResult, int64, error) {
+	more, last, err := s.pushPass(ctx, last, drops)
 	res.Sent += more.Sent
 	res.Conflicts += more.Conflicts
 	res.Failed += more.Failed
@@ -117,7 +120,7 @@ func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64) (PushR
 }
 
 // pushPass sends the pending entries newer than entry after, in order.
-func (s *Syncer) pushPass(ctx context.Context, after int64) (res PushResult, last int64, err error) {
+func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (res PushResult, last int64, err error) {
 	last = after
 	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
 		return res, last, err
@@ -140,7 +143,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64) (res PushResult, las
 	// The account is checked only before dropping anything (dropGone), not here: only Run
 	// changes the stored account (KeyMeGID), and Run refuses to when Asana answers as
 	// another account, so the stored one stays the account the local data belongs to.
-	drops := &dropState{res: &res}
+	drops.res = &res // this pass's counts
 	for _, snapshot := range ops {
 		// An entry is handled a bounded number of times per push, whatever happens: send,
 		// check + send again, the follow-up move of a create, and that move's retry. What is
@@ -462,10 +465,10 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 
 // dropState is what dropGone keeps during one push.
 type dropState struct {
-	res     *PushResult
-	checked bool  // the account was checked
-	account error // why changes must not be dropped (nil: same account)
-	tasks   int   // tasks dropped so far
+	res     *PushResult // the current pass's result
+	checked bool        // the account was checked
+	account error       // why changes must not be dropped (nil: same account)
+	tasks   int         // tasks dropped so far
 }
 
 // maxDroppedTasks is how many tasks one push may drop as deleted in Asana.

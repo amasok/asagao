@@ -2582,3 +2582,44 @@ func TestPushSendsChangesQueuedMeanwhile(t *testing.T) {
 		t.Fatal("the change queued meanwhile should be sent by this push")
 	}
 }
+
+// The drop limit covers the whole push, including the pass for changes queued meanwhile,
+// and the account is checked once.
+func TestPushDropLimitSpansCatchUp(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	other, err := store.Open(ctx, st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	for i := 0; i < maxDroppedTasks+2; i++ {
+		gid := fmt.Sprintf("gone%d", i)
+		_ = st.UpsertTasks(ctx, []asana.Task{{GID: gid, Name: gid}})
+		if i < maxDroppedTasks {
+			_ = st.UpdateTaskLocal(ctx, gid, map[string]any{"completed": true}, now)
+		}
+	}
+	queued, mes := false, 0
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/users/me" {
+			mes++
+		}
+		if r.URL.Path == "/tasks/gone0" && !queued { // during the first pass
+			queued = true
+			for _, gid := range []string{fmt.Sprintf("gone%d", maxDroppedTasks), fmt.Sprintf("gone%d", maxDroppedTasks+1)} {
+				if err := other.UpdateTaskLocal(ctx, gid, map[string]any{"completed": true}, now); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || len(res.Discarded) != maxDroppedTasks || res.Failed != 2 {
+		t.Fatalf("push = %d dropped, %d failed, %v", len(res.Discarded), res.Failed, err)
+	}
+	if mes != 1 {
+		t.Fatalf("account checked %d times, want once", mes)
+	}
+}
