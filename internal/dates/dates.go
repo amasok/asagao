@@ -3,6 +3,8 @@ package dates
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,12 +28,15 @@ func Parse(s string, now time.Time) (string, error) {
 		return day(-1), nil
 	}
 	if len(s) >= 3 && (s[0] == '+' || s[0] == '-') && s[len(s)-1] == 'd' {
-		var n int
-		if _, err := fmt.Sscanf(s[1:len(s)-1], "%d", &n); err == nil {
-			if s[0] == '-' {
-				n = -n
+		// only digits between the sign and "d": "+7xd", "+-3d" and "+ 7d" are not dates
+		digits := s[1 : len(s)-1]
+		if strings.Trim(digits, "0123456789") == "" {
+			if n, err := strconv.Atoi(digits); err == nil {
+				if s[0] == '-' {
+					n = -n
+				}
+				return day(n), nil
 			}
-			return day(n), nil
 		}
 	}
 	t, err := time.Parse(time.DateOnly, s)
