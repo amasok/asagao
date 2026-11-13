@@ -19,6 +19,7 @@ import (
 
 	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -85,6 +86,26 @@ func (w *writeServer) addStoryLocked(task, text string) string {
 	}
 	js := fmt.Sprintf(`{"gid":"story%d","type":"comment","text":%q,"created_by":{"gid":"me","name":"Me"},"created_at":%q}`,
 		w.next, text, time.Now().UTC().Format(time.RFC3339))
+	w.stories[task] = append(w.stories[task], js)
+	return js
+}
+
+// addRichStoryLocked stores a rich-text comment the way Asana does: mentions are filled in
+// with the user's name and profile link, and the plain text is Asana's own rendering
+// (links with their URL, mentions as profile URLs, list bullets), which differs from the
+// text asana-tui derives from Markdown.
+func (w *writeServer) addRichStoryLocked(task, htmlText string) string {
+	mention := regexp.MustCompile(`<a data-asana-gid="([^"]+)"/>`)
+	full := mention.ReplaceAllString(htmlText, `<a href="https://app.asana.com/0/profile/$1" data-asana-gid="$1" data-asana-type="user">@Partner</a>`)
+	plain := mention.ReplaceAllString(htmlText, `https://app.asana.com/0/profile/$1`)
+	plain = regexp.MustCompile(`<a href="([^"]+)">([^<]*)</a>`).ReplaceAllString(plain, `$2 ($1)`)
+	plain = strings.ReplaceAll(plain, "<li>", "\n• ")
+	plain = regexp.MustCompile(`<[^>]*>`).ReplaceAllString(plain, "")
+	if w.stories == nil {
+		w.stories = map[string][]string{}
+	}
+	js := fmt.Sprintf(`{"gid":"story%d","type":"comment","text":%q,"html_text":%q,"created_by":{"gid":"me","name":"Me"},"created_at":%q}`,
+		w.next, plain, full, time.Now().UTC().Format(time.RFC3339))
 	w.stories[task] = append(w.stories[task], js)
 	return js
 }
@@ -221,6 +242,10 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		}
 		w.next++
 		text, _ := body.Data["text"].(string)
+		if h, ok := body.Data["html_text"].(string); ok {
+			fmt.Fprintf(rw, `{"data":%s}`, w.addRichStoryLocked(parts[1], h))
+			return
+		}
 		fmt.Fprintf(rw, `{"data":%s}`, w.addStoryLocked(parts[1], text))
 	case len(parts) == 2 && parts[0] == "tasks":
 		st, ok := w.tasks[parts[1]]
@@ -1320,57 +1345,6 @@ func TestPushCreate5xxButCreatedIsNotResent(t *testing.T) {
 	assertOutboxEmpty(t, st)
 }
 
-func TestPushCreate5xxNotCreatedIsResentOnce(t *testing.T) {
-	ws, _, s, st := setupPush(t)
-	ctx := context.Background()
-	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いていない"}, now)
-	failed := false
-	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && r.URL.Path == "/tasks" && !failed {
-			failed = true
-			rw.WriteHeader(http.StatusInternalServerError) // not applied
-			return true
-		}
-		return false
-	})
-	res, err := s.Push(ctx)
-	if err != nil || res.Sent != 1 || res.Failed != 0 {
-		t.Fatalf("push = %+v %v", res, err)
-	}
-	if n := ws.countCalls("POST /tasks "); n != 2 {
-		t.Fatalf("a create Asana does not have should be sent exactly once more (calls %d)", n)
-	}
-	if real, _ := st.RealGID(ctx, gid); store.IsLocalGID(real) {
-		t.Fatal("task not created")
-	}
-	assertOutboxEmpty(t, st)
-}
-
-func TestPushCreate5xxTwiceWaitsForNextPush(t *testing.T) {
-	ws, _, s, st := setupPush(t)
-	ctx := context.Background()
-	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "落ちている"}, now)
-	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
-			rw.WriteHeader(http.StatusInternalServerError)
-			return true
-		}
-		return false
-	})
-	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 0 || res.Remaining != 1 || ws.countCalls("POST /tasks ") != 2 {
-		t.Fatalf("push = %+v %v (calls %v)", res, err, ws.calls)
-	}
-	op := opByKind(t, st, store.OpCreateTask)
-	if op == nil || op.State != store.OpPending || !op.Verify {
-		t.Fatalf("entry should wait, to be verified on the next push: %+v", op)
-	}
-	ws.setHook(nil)
-	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 3 {
-		t.Fatalf("next push = %+v %v", res, err)
-	}
-}
-
 func TestPushCreateVerifyOfflineRetriesOnNextPush(t *testing.T) {
 	ws, _, s, st := setupPush(t)
 	ctx := context.Background()
@@ -1425,6 +1399,7 @@ func TestPushConnectionDroppedDuringCreate(t *testing.T) {
 		t.Fatalf("the create should be verified before it is sent again: %+v", op)
 	}
 	ws.setHook(nil)
+	later(s, 2*time.Minute)
 	if res, err := s.Push(ctx); err != nil || res.Sent != 2 || ws.countCalls("POST /tasks ") != 2 {
 		t.Fatalf("not in Asana: sent once more = %+v %v\n%v", res, err, ws.calls)
 	}
@@ -1450,6 +1425,7 @@ func TestPushRecoversInterruptedCreate(t *testing.T) {
 			if created {
 				ws.addTask("srv1", "作成途中", "p1")
 			}
+			later(s, 2*time.Minute) // the app is started again some time later
 			res, err := s.Push(ctx)
 			if err != nil || res.Sent != 2 || res.Failed != 0 {
 				t.Fatalf("push = %+v %v", res, err)
@@ -1506,9 +1482,8 @@ func TestPushComment5xx(t *testing.T) {
 					return false
 				})
 			}
-			res, err := s.Push(ctx)
-			if err != nil || res.Sent != 1 || res.Failed != 0 {
-				t.Fatalf("push = %+v %v", res, err)
+			if res := pushAndSettle(t, s); res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v", res)
 			}
 			if n := len(ws.stories["t1"]); n != 1 {
 				t.Fatalf("Asana should have exactly one comment, has %d", n)
@@ -1671,13 +1646,17 @@ func TestCreateProject5xx(t *testing.T) {
 			_ = st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1"}})
 			api := asana.NewClient(srv.Client())
 			api.BaseURL = srv.URL
-			p, err := (&Syncer{API: api, Store: st}).CreateProject(ctx, "新規")
-			if err != nil {
-				t.Fatal(err)
+			waited := 0
+			s := &Syncer{API: api, Store: st, sleep: func(context.Context, time.Duration) error { waited++; return nil }}
+			p, err := s.CreateProject(ctx, "新規")
+			if posts != 1 {
+				t.Fatalf("a project that may exist must not be created again (posts = %d)", posts)
 			}
-			wantPosts := map[bool]int{true: 1, false: 2}[created]
-			if posts != wantPosts || p.GID != "P1" && created || p.GID != "P2" && !created {
-				t.Fatalf("project = %+v, posts = %d (want %d)", p, posts, wantPosts)
+			if created && (err != nil || p.GID != "P1" || waited != 0) {
+				t.Fatalf("project = %+v %v (waited %d)", p, err, waited)
+			}
+			if !created && (err == nil || waited != 1) {
+				t.Fatalf("not found after waiting: error, no resend; got %+v %v (waited %d)", p, err, waited)
 			}
 		})
 	}
@@ -1756,8 +1735,8 @@ func TestPushStatusUpdate5xx(t *testing.T) {
 				t.Fatal(err)
 			}
 			failOnce(ws, http.MethodPost, "/status_updates", created)
-			if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
-				t.Fatalf("push = %+v %v", res, err)
+			if res := pushAndSettle(t, s); res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v", res)
 			}
 			if n := len(ws.statuses["p1"]); n != 1 {
 				t.Fatalf("Asana should have the status update once, has %d", n)
@@ -1781,8 +1760,14 @@ func TestPushDuplicate5xx(t *testing.T) {
 				t.Fatal(err)
 			}
 			failOnce(ws, http.MethodPost, "/tasks/t1/duplicate", created)
-			if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
-				t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+			if !created { // a copy is made in the background: not finding it for minutes is normal
+				later(s, 3*time.Minute)
+				if res, err := s.Push(ctx); err != nil || res.Sent != 0 || ws.countCalls("POST /tasks/t1/duplicate") != 1 {
+					t.Fatalf("a duplicate is not resent within its settle time: %+v %v", res, err)
+				}
+			}
+			if res := pushAndSettle(t, s); res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v\n%v", res, ws.calls)
 			}
 			var copies []string
 			for gid, task := range ws.tasks {
@@ -1810,8 +1795,8 @@ func TestPushNewTag5xx(t *testing.T) {
 				t.Fatal(err)
 			}
 			failOnce(ws, http.MethodPost, "/tags", created)
-			if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
-				t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+			if res := pushAndSettle(t, s); res.Sent != 1 || res.Failed != 0 {
+				t.Fatalf("push = %+v\n%v", res, ws.calls)
 			}
 			if len(ws.tags) != 1 {
 				t.Fatalf("Asana should have the tag once: %v", ws.tags)
@@ -1842,7 +1827,60 @@ func pushQuickly(t *testing.T, s *Syncer) (PushResult, error) {
 
 // Asana keeps failing and never has the result: the first push sends the entry twice
 // (send, check, send again), each later push once (check, send again); in between it waits.
-func TestPushBoundsRetriesPerPush(t *testing.T) {
+func later(s *Syncer, d time.Duration) { s.now = func() time.Time { return time.Now().Add(d) } }
+
+// pushAndSettle pushes, and if something is left waiting for Asana, pushes again once
+// the wait is over. It returns the combined result.
+func pushAndSettle(t *testing.T, s *Syncer) PushResult {
+	t.Helper()
+	res, err := s.Push(context.Background())
+	if err != nil {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if res.Remaining > 0 {
+		later(s, 10*time.Minute)
+		res2, err := s.Push(context.Background())
+		if err != nil {
+			t.Fatalf("second push = %+v %v", res2, err)
+		}
+		res.Sent += res2.Sent
+		res.Failed += res2.Failed
+		res.Remaining = res2.Remaining
+	}
+	return res
+}
+
+// Right after a 5xx Asana may not list the task yet: not finding it then is not trusted.
+// Once settleTime has passed, not finding it means it was not created: sent once more.
+func TestPushCreate5xxNotCreatedWaitsThenResendsOnce(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いていない"}, now)
+	failOnce(ws, http.MethodPost, "/tasks", false)
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 0 || res.Failed != 0 || res.Remaining != 1 || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("first push must not resend right away: %+v %v\n%v", res, err, ws.calls)
+	}
+	if op := opByKind(t, st, store.OpCreateTask); op == nil || op.State != store.OpPending || !op.Verify {
+		t.Fatalf("entry should wait to be verified: %+v", op)
+	}
+	later(s, 30*time.Second) // still too early
+	if res, err := s.Push(ctx); err != nil || res.Sent != 0 || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("push within settleTime = %+v %v", res, err)
+	}
+	later(s, 2*time.Minute)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 2 {
+		t.Fatalf("after settleTime it is sent exactly once more: %+v %v\n%v", res, err, ws.calls)
+	}
+	if real, _ := st.RealGID(ctx, gid); store.IsLocalGID(real) {
+		t.Fatal("task not created")
+	}
+	assertOutboxEmpty(t, st)
+}
+
+// Asana keeps failing: one push sends an entry at most twice, and after maxSendAttempts
+// requests (over several pushes) it is marked failed for the user instead of retrying forever.
+func TestPushGivesUpAfterMaxSendAttempts(t *testing.T) {
 	for _, tc := range []struct {
 		name, path string
 		queue      func(t *testing.T, st *store.Store)
@@ -1867,15 +1905,210 @@ func TestPushBoundsRetriesPerPush(t *testing.T) {
 				}
 				return false
 			})
-			for push := 1; push <= 3; push++ {
+			failedAt := 0
+			for push := 1; push <= 10 && failedAt == 0; push++ {
+				before := len(ws.calls)
 				res, err := pushQuickly(t, s)
-				if err != nil || res.Failed != 0 || res.Remaining != 1 {
-					t.Fatalf("push %d = %+v %v", push, res, err)
+				if err != nil {
+					t.Fatalf("push %d: %v", push, err)
 				}
-				if n := len(ws.calls); n != push+1 {
-					t.Fatalf("after push %d: %d requests, want %d\n%v", push, n, push+1, ws.calls)
+				if n := len(ws.calls) - before; n > 2 {
+					t.Fatalf("push %d sent %d requests, want at most 2", push, n)
+				}
+				if res.Failed == 1 {
+					failedAt = push
+				}
+				later(s, time.Duration(push)*2*time.Minute)
+			}
+			if failedAt == 0 || len(ws.calls) != maxSendAttempts {
+				t.Fatalf("failed at push %d after %d requests, want failure after %d", failedAt, len(ws.calls), maxSendAttempts)
+			}
+			for _, op := range must1(st.ListOps(context.Background())) {
+				if op.State != store.OpFailed || !strings.Contains(op.LastError, "回送っても") {
+					t.Fatalf("entry = %+v", op)
 				}
 			}
 		})
+	}
+}
+
+func must1[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+// Two creates with the same name: the one whose answer was lost must not be taken for the
+// other's task (which is already recorded as the other's result).
+func TestPushSameNameCreatesAreNotMerged(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	a, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "同じ名前"}, now)
+	b, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "同じ名前"}, now)
+	failOnce(ws, http.MethodPost, "/tasks", false) // a's create is not applied; b's is
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("first push = %+v %v", res, err)
+	}
+	later(s, 2*time.Minute)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
+		t.Fatalf("second push = %+v %v\n%v", res, err, ws.calls)
+	}
+	realA, _ := st.RealGID(ctx, a)
+	realB, _ := st.RealGID(ctx, b)
+	if store.IsLocalGID(realA) || store.IsLocalGID(realB) || realA == realB {
+		t.Fatalf("each create needs its own task: a=%s b=%s", realA, realB)
+	}
+	for _, gid := range []string{realA, realB} {
+		if d, err := st.GetTask(ctx, gid); err != nil || len(d.Memberships) != 1 {
+			t.Fatalf("task %s = %+v %v", gid, d, err)
+		}
+	}
+	if n := ws.countCalls("POST /tasks "); n != 3 {
+		t.Fatalf("POST /tasks sent %d times, want 3 (a, b, a again)", n)
+	}
+	assertOutboxEmpty(t, st)
+}
+
+// A task made by hand in Asana with the same name (but another due date) is not ours.
+func TestPushCreateIgnoresSameNameWithOtherFields(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "買い物", DueOn: "2026-11-20"}, now)
+	beginSendAll(t, st)
+	ws.addTask("hand", "買い物", "p1") // no due date
+	later(s, 2*time.Minute)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+}
+
+// If the check itself is refused (the task is gone), the entry fails instead of waiting forever.
+func TestPushVerifyRejectedFails(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.AddCommentLocal(ctx, "t1", "x", store.UserRef{GID: "me"}, now)
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/tasks/t1/stories" {
+			if r.Method == http.MethodPost {
+				rw.WriteHeader(http.StatusBadGateway)
+			} else {
+				rw.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(rw, `{"errors":[{"message":"task not found"}]}`)
+			}
+			return true
+		}
+		return false
+	})
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 1 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpAddComment); op == nil || op.State != store.OpFailed || !strings.Contains(op.LastError, "404") {
+		t.Fatalf("entry = %+v", op)
+	}
+}
+
+// A rich-text comment (link, mention, list) is found although Asana's plain text differs
+// from ours.
+func TestPushRichComment5xxButCreated(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	md := "見て [資料](https://example.com/doc) と [@Partner](asana:user:u2)\n\n- 一つ目\n- 二つ目"
+	_, err := st.AddRichCommentLocal(ctx, "t1", richtext.PlainFromMarkdown(md), richtext.FromMarkdown(md), store.UserRef{GID: "me"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.setFailAfter("POST /tasks/t1/stories", 1)
+	if res := pushAndSettle(t, s); res.Sent != 1 || res.Failed != 0 {
+		t.Fatalf("push = %+v", res)
+	}
+	if n := len(ws.stories["t1"]); n != 1 {
+		t.Fatalf("Asana should have the comment once, has %d:\n%v", n, ws.stories["t1"])
+	}
+	assertOutboxEmpty(t, st)
+}
+
+// A create found in Asana is moved to its section in the same push.
+func TestPushFoundCreateMovesToSectionAtOnce(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "A"}, {GID: "s2", Name: "B"}})
+	gid, _ := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", SectionGID: "s2", Name: "移動も"}, now)
+	ws.setFailAfter("POST /tasks", 1)
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Remaining != 0 {
+		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
+	}
+	real, _ := st.RealGID(ctx, gid)
+	if ws.tasks[real] == nil || ws.tasks[real].Section != "s2" || ws.countCalls("POST /tasks ") != 1 {
+		t.Fatalf("task should be found and moved to s2 in the same push: %v", ws.calls)
+	}
+}
+
+// Without a send time there is no telling which tasks could be ours: the user decides.
+func TestPushVerifyWithoutSentAtAsksUser(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "x"}, now)
+	op := opByKind(t, st, store.OpCreateTask)
+	if err := st.MarkOpVerify(ctx, op.ID, ""); err != nil { // verify, but never sent_at
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Failed != 1 || ws.countCalls("POST /tasks ") != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if op := opByKind(t, st, store.OpCreateTask); op.State != store.OpFailed || op.LastError != store.AmbiguousMessage {
+		t.Fatalf("entry = %+v", op)
+	}
+}
+
+// Two identical comments: the one whose create was lost is sent again, not matched to the other.
+func TestPushSameTextCommentsAreNotMerged(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.AddCommentLocal(ctx, "t1", "了解", store.UserRef{GID: "me"}, now)
+	_, _ = st.AddCommentLocal(ctx, "t1", "了解", store.UserRef{GID: "me"}, now)
+	failOnce(ws, http.MethodPost, "/tasks/t1/stories", false)
+	if res := pushAndSettle(t, s); res.Sent != 2 || res.Failed != 0 {
+		t.Fatalf("push = %+v", res)
+	}
+	if n := len(ws.stories["t1"]); n != 2 {
+		t.Fatalf("Asana should have both comments, has %d", n)
+	}
+	d, _ := st.GetTask(ctx, "t1")
+	if len(d.Stories) != 2 || d.Stories[0].GID == d.Stories[1].GID {
+		t.Fatalf("local comments = %+v", d.Stories)
+	}
+}
+
+// Pushes while offline do not use up the attempts: Asana never saw those requests.
+func TestPushOfflineDoesNotCountAttempts(t *testing.T) {
+	ws, srv, s, st := setupPush(t)
+	ctx := context.Background()
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	online := s.API
+	offline := asana.NewClient(srv.Client())
+	offline.BaseURL = "http://127.0.0.1:1" // nothing listens: connection refused
+	offline.MaxRetries = 0
+	s.API = offline
+	for i := 0; i < maxSendAttempts+2; i++ {
+		if _, err := s.Push(ctx); err == nil {
+			t.Fatal("offline push should fail")
+		}
+	}
+	if op := opByKind(t, st, store.OpUpdateTask); op.Attempts != 0 {
+		t.Fatalf("attempts = %d after offline pushes, want 0", op.Attempts)
+	}
+	s.API = online
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPut {
+			rw.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	if res, err := s.Push(ctx); err != nil || res.Failed != 0 {
+		t.Fatalf("a first 5xx after being offline must not give up: %+v %v", res, err)
 	}
 }

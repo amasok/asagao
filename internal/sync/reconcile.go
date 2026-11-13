@@ -2,8 +2,11 @@ package sync
 
 import (
 	"context"
+	"html"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/store"
@@ -13,30 +16,60 @@ import (
 //
 // Asana has no idempotency keys (and a task's external.gid can only be set by OAuth apps,
 // while asana-tui also supports personal access tokens), so reconcile looks for what the
-// entry would have created: same name/text, created at or after the entry was first sent
-// (minus clockSkew, as the local clock and Asana's may differ), by us where Asana says who
-// created it. One candidate is taken as the entry's result; none means it did not reach
-// Asana; several (or no way to look) are left to the user.
+// entry would have created: same name/text (and, for tasks, the same due date, assignee
+// and notes), created at or after the entry was first sent (minus clockSkew, as the local
+// clock and Asana's may differ), by us where Asana says who created it, and not already
+// recorded as the result of another entry. One candidate is taken as the entry's result;
+// several (or no way to look) are left to the user. None is trusted only once settleTime
+// has passed since the entry was sent: right after a 5xx or a timeout, Asana may still be
+// creating it (a duplicate is copied in the background), so until then it waits.
 
 // match is what reconcile found in Asana.
 type match int
 
 const (
-	notFound  match = iota // send the entry again
+	notFound  match = iota // not in Asana: send the entry again
 	matched                // recorded as sent
 	ambiguous              // the user must check
+	tooEarly               // not found yet, but Asana may still show it: check again later
 )
 
 const clockSkew = 2 * time.Minute
+
+// settleTime is how long after sending an entry its result may still be missing from
+// Asana's lists. A duplicate is copied by a background job, so it takes longer.
+func settleTime(kind string) time.Duration {
+	if kind == store.OpDuplicateTask {
+		return 5 * time.Minute
+	}
+	return time.Minute
+}
 
 // reconcile checks Asana for the result of op (already marked "sending"). On a match it
 // records the result like the matching push function would. An error means Asana could
 // not be checked.
 func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, error) {
-	since := time.Time{}
-	if t, err := time.Parse(time.RFC3339, op.SentAt); err == nil {
-		since = t.Add(-clockSkew)
+	safe, err := s.Store.SafeToResend(ctx, op)
+	if err != nil || safe {
+		return sent, notFound, err // harmless to send again: no need to look
 	}
+	sentAt, err := time.Parse(time.RFC3339, op.SentAt)
+	if err != nil {
+		return sent, ambiguous, nil // no idea since when to look
+	}
+	out, m, err := s.find(ctx, op, sentAt.Add(-clockSkew))
+	if err != nil || m != notFound || s.clock().Sub(sentAt) >= settleTime(op.Kind) {
+		return out, m, err
+	}
+	// Not found so soon after sending: wait, unless what was found made it harmless to
+	// send (a tag that exists now only needs adding).
+	if safe, err = s.Store.SafeToResend(ctx, op); err != nil || safe {
+		return out, m, err
+	}
+	return out, tooEarly, nil
+}
+
+func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcome, match, error) {
 	me, err := s.Store.SyncState(ctx, store.KeyMeGID) // "" before the first sync: not filtered
 	if err != nil {
 		return sent, notFound, err
@@ -44,6 +77,7 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	byMe := func(r *asana.Ref) bool { return r == nil || me == "" || r.GID == me }
 	recent := func(t time.Time) bool { return !t.Before(since) }
+	taken := func(prefix string) (map[string]bool, error) { return s.Store.RecordedResults(ctx, prefix) }
 
 	switch op.Kind {
 	case store.OpCreateTask:
@@ -51,7 +85,13 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if err != nil || !ok {
 			return sent, ambiguousUnless(ok), err
 		}
-		t, m := pick(tasks, func(t asana.Task) bool { return t.Name == str("name") && recent(t.CreatedAt) && byMe(t.CreatedBy) })
+		used, err := taken(store.ResultTask)
+		if err != nil {
+			return sent, notFound, err
+		}
+		t, m := pick(tasks, func(t asana.Task) bool {
+			return !used[t.GID] && t.Name == str("name") && recent(t.CreatedAt) && byMe(t.CreatedBy) && sameTaskFields(t, op.Payload)
+		})
 		if m != matched {
 			return sent, m, nil
 		}
@@ -74,7 +114,7 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if err != nil {
 			return sent, notFound, err
 		}
-		parent, project, assignee := "", "", ""
+		parent, project, assignee, ws := "", "", "", ""
 		if src.Parent != nil {
 			parent = src.Parent.GID
 		}
@@ -84,7 +124,6 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if src.Assignee != nil {
 			assignee = src.Assignee.GID
 		}
-		ws := ""
 		if src.Workspace != nil {
 			ws = src.Workspace.GID
 		}
@@ -92,7 +131,13 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if err != nil || !ok {
 			return sent, ambiguousUnless(ok), err
 		}
-		t, m := pick(tasks, func(t asana.Task) bool { return t.Name == str("name") && t.GID != src.GID && recent(t.CreatedAt) })
+		used, err := taken(store.ResultTask)
+		if err != nil {
+			return sent, notFound, err
+		}
+		t, m := pick(tasks, func(t asana.Task) bool {
+			return !used[t.GID] && t.Name == str("name") && t.GID != src.GID && recent(t.CreatedAt)
+		})
 		if m != matched {
 			return sent, m, nil
 		}
@@ -107,8 +152,13 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if err != nil {
 			return sent, notFound, err
 		}
+		used, err := taken(store.ResultStory)
+		if err != nil {
+			return sent, notFound, err
+		}
 		st, m := pick(stories, func(st asana.Story) bool {
-			return st.Type == "comment" && byMe(st.CreatedBy) && recent(st.CreatedAt) && sameText(st.Text, str("text"))
+			return !used[st.GID] && st.Type == "comment" && byMe(st.CreatedBy) && recent(st.CreatedAt) &&
+				sameComment(st, str("text"), str("html_text"))
 		})
 		if m != matched {
 			return sent, m, nil
@@ -120,7 +170,11 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if err != nil {
 			return sent, notFound, err
 		}
-		a, m := pick(atts, func(a asana.Attachment) bool { return a.Name == str("name") && recent(a.CreatedAt) })
+		used, err := taken(store.ResultAttachment)
+		if err != nil {
+			return sent, notFound, err
+		}
+		a, m := pick(atts, func(a asana.Attachment) bool { return !used[a.GID] && a.Name == str("name") && recent(a.CreatedAt) })
 		if m != matched {
 			return sent, m, nil
 		}
@@ -131,8 +185,12 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		if err != nil {
 			return sent, notFound, err
 		}
+		used, err := taken(store.ResultStatus)
+		if err != nil {
+			return sent, notFound, err
+		}
 		u, m := pick(ups, func(u asana.StatusUpdate) bool {
-			return u.Title == str("title") && u.StatusType == str("status_type") && recent(u.CreatedAt) && byMe(u.Author)
+			return !used[u.GID] && u.Title == str("title") && u.StatusType == str("status_type") && recent(u.CreatedAt) && byMe(u.Author)
 		})
 		if m != matched {
 			return sent, m, nil
@@ -141,7 +199,8 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 
 	case store.OpAddTag:
 		// A tag created offline is created before it is added. If a tag with that name
-		// exists, use it; the add itself is harmless to repeat, so it is sent either way.
+		// exists (whoever made it), use it; the add itself is harmless to repeat, so it is
+		// sent either way.
 		tag, err := s.Store.RealTagGID(ctx, str("tag"))
 		if err != nil || !store.IsLocalGID(tag) {
 			return sent, notFound, err
@@ -161,7 +220,28 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		}
 		return sent, notFound, nil
 	}
-	return sent, notFound, nil // harmless to send again
+	return sent, notFound, nil
+}
+
+// sameTaskFields compares the fields a create sets besides the name, so a task someone
+// made by hand with the same name is not taken for ours.
+func sameTaskFields(t asana.Task, payload map[string]any) bool {
+	str := func(k string) string { v, _ := payload[k].(string); return v }
+	if str("due_on") != t.DueOn {
+		return false
+	}
+	assignee := ""
+	if t.Assignee != nil {
+		assignee = t.Assignee.GID
+	}
+	if str("assignee") != assignee {
+		return false
+	}
+	if _, rich := payload["html_notes"]; rich {
+		return textKey(stripHTML(t.HTMLNotes)) == textKey(stripHTML(str("html_notes"))) ||
+			textKey(t.Notes) == textKey(str("notes"))
+	}
+	return textKey(t.Notes) == textKey(str("notes"))
 }
 
 // tasksCreatedUnder lists the tasks a new task could be among: the parent's subtasks, the
@@ -211,8 +291,39 @@ func pick[T any](items []T, keep func(T) bool) (T, match) {
 	return zero, ambiguous
 }
 
-// sameText compares comment text ignoring differences in spacing (Asana derives the plain
-// text of a rich-text comment itself).
-func sameText(a, b string) bool {
-	return strings.Join(strings.Fields(a), " ") == strings.Join(strings.Fields(b), " ")
+// sameComment reports whether a story is the comment we sent. Asana makes the plain text
+// of a rich-text comment itself (links, mentions and lists come out differently from our
+// Markdown-derived text), so the visible words of either form are compared.
+func sameComment(st asana.Story, text, htmlText string) bool {
+	if textKey(st.Text) == textKey(text) {
+		return true
+	}
+	return htmlText != "" && st.HTMLText != "" && textKey(stripHTML(st.HTMLText)) == textKey(stripHTML(htmlText))
+}
+
+var (
+	// mentionOrImage matches <a>/<img> elements Asana fills in itself from data-asana-gid
+	// (we send them empty; Asana returns the user's name or the image).
+	mentionOrImage = regexp.MustCompile(`(?s)<(a|img)\b[^>]*data-asana-gid[^>]*?(/>|>.*?</a>)`)
+	tagRE          = regexp.MustCompile(`(?s)<[^>]*>`)
+	urlRE          = regexp.MustCompile(`https?://\S+`)
+)
+
+// stripHTML returns the visible text of Asana rich text, without mentions and images.
+func stripHTML(s string) string {
+	s = mentionOrImage.ReplaceAllString(s, " ")
+	return html.UnescapeString(tagRE.ReplaceAllString(s, " "))
+}
+
+// textKey keeps only letters and digits (URLs removed), so spacing, punctuation, list
+// markers and link targets do not matter.
+func textKey(s string) string {
+	s = urlRE.ReplaceAllString(s, " ")
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

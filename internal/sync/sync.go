@@ -33,6 +33,22 @@ type Syncer struct {
 	// Authorization header (the storage service rejects it). Default: plain HTTP GET.
 	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
+	sleep    func(context.Context, time.Duration) error // replaced in tests
+}
+
+// wait pauses for d (or until ctx is done).
+func (s *Syncer) wait(ctx context.Context, d time.Duration) error {
+	if s.sleep != nil {
+		return s.sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type Result struct {

@@ -39,7 +39,7 @@ const AmbiguousMessage = "Asana に届いたか自動で確かめられません
 // longer pending (sent, discarded or resolved by someone else in the meantime). An entry
 // being verified keeps its first sent_at, so the check looks back far enough.
 func (s *Store) BeginSend(ctx context.Context, id int64, now time.Time) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'sending', attempts = attempts + 1,
+	res, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'sending',
 		sent_at = CASE WHEN verify = 1 AND sent_at <> '' THEN sent_at ELSE ? END
 		WHERE id = ? AND state = 'pending'`, formatTime(now), id)
 	if err != nil {
@@ -47,6 +47,20 @@ func (s *Store) BeginSend(ctx context.Context, id int64, now time.Time) (bool, e
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// CountAttempt records that entry id is about to be sent (attempts counts requests that
+// may have reached Asana; see sync.maxSendAttempts).
+func (s *Store) CountAttempt(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET attempts = attempts + 1 WHERE id = ?", id)
+	return err
+}
+
+// ReleaseNotSent puts back an entry whose request never left (no connection): the attempt
+// counted for it is taken back.
+func (s *Store) ReleaseNotSent(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET state = 'pending', attempts = max(0, attempts - 1) WHERE id = ? AND state = 'sending'", id)
+	return err
 }
 
 // ReleaseOp puts an entry that was not sent (e.g. we are offline) back in the queue.
@@ -187,7 +201,8 @@ func (s *Store) CompleteCreate(ctx context.Context, id int64, local, real string
 		op.Kind, op.TaskGID, op.State, op.LastError = OpMoveTask, real, OpPending, ""
 		op.Payload = map[string]any{"project": move.Project, "section": move.Section, "section_name": name}
 		op.Base = map[string]any{"section": move.From}
-		if _, err := tx.ExecContext(ctx, "UPDATE outbox SET kind = ?, task_gid = ? WHERE id = ?", op.Kind, op.TaskGID, id); err != nil {
+		// A new change: not verified, and its own attempts.
+		if _, err := tx.ExecContext(ctx, "UPDATE outbox SET kind = ?, task_gid = ?, verify = 0, attempts = 0 WHERE id = ?", op.Kind, op.TaskGID, id); err != nil {
 			return err
 		}
 		return saveOp(ctx, tx, op)

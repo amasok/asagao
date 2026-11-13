@@ -132,12 +132,23 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 				var m match
 				out, m, err = s.reconcile(ctx, *op)
 				switch {
+				case isRejected(err): // e.g. the task is gone (404) or not ours (403)
+					if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
+						return res, err
+					}
+					res.Failed++
+					sendIt = false
 				case err != nil: // could not check: try again on the next push
 					note := "Asana に届いたか確かめられませんでした（次の同期で確かめます）: " + err.Error()
 					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, note); rerr != nil {
 						return res, rerr
 					}
 					if isNetworkError(err) || isRateLimited(err) {
+						return res, err
+					}
+					sendIt = false
+				case m == tooEarly: // Asana may not list it yet: check again on the next push
+					if err := s.Store.MarkOpVerify(ctx, op.ID, "Asana への反映を待っています（次の同期で確かめます）"); err != nil {
 						return res, err
 					}
 					sendIt = false
@@ -162,6 +173,10 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 			if !sendIt {
 				continue
 			}
+			if err := s.Store.CountAttempt(ctx, op.ID); err != nil {
+				return res, err
+			}
+			op.Attempts++
 			out, err = s.send(ctx, *op)
 			switch {
 			case err == nil:
@@ -252,7 +267,7 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
 	if requestNotSent(cause) || isRateLimited(cause) {
-		return s.Store.ReleaseOp(ctx, op.ID)
+		return s.Store.ReleaseNotSent(ctx, op.ID)
 	}
 	safe, err := s.Store.SafeToResend(ctx, op)
 	if err != nil {
@@ -283,10 +298,25 @@ func (s *Syncer) handleError(ctx context.Context, op store.Op, cause error) (ver
 		}
 		verify = !safe
 	}
+	if verify && op.Attempts >= maxSendAttempts {
+		// Asana keeps failing on this change (e.g. a server bug its data triggers): show it.
+		return false, s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("%d 回送っても Asana がエラーを返しました: %w", op.Attempts, cause))
+	}
 	if verify {
 		return true, s.Store.MarkOpVerify(ctx, op.ID, cause.Error())
 	}
 	return false, s.Store.MarkOpFailed(ctx, op.ID, cause)
+}
+
+// maxSendAttempts is how many requests for one entry may fail with a 5xx (over all
+// pushes) before it is marked failed for the user.
+const maxSendAttempts = 5
+
+// isRejected reports whether Asana answered with a 4xx other than 429: the request itself
+// is not acceptable (missing, forbidden, invalid), so repeating it will not help.
+func isRejected(err error) bool {
+	var apiErr *asana.Error
+	return errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != http.StatusTooManyRequests
 }
 
 // isRateLimited reports whether Asana still answered 429 after the client's retries: the

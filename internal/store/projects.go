@@ -117,8 +117,10 @@ func (s *Store) ReplaceLocalStatus(ctx context.Context, local string, u asana.St
 }
 
 func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u asana.StatusUpdate) error {
-	_, err := tx.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local)
-	return err
+	if _, err := tx.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local); err != nil {
+		return err
+	}
+	return recordResult(ctx, tx, ResultStatus, local, u.GID)
 }
 
 // ProjectMembers returns a project's members.

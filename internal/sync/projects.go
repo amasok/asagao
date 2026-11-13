@@ -59,29 +59,40 @@ func (s *Syncer) CreateProject(ctx context.Context, name string) (*asana.Project
 }
 
 // recoverCreateProject handles a failed CreateProject that may have created the project
-// anyway (a 5xx, a dropped connection): if Asana has exactly one project of that name
-// created since started, that is it; if it has none, the request is sent once more.
+// anyway (a 5xx, a dropped connection). If Asana has exactly one project of that name
+// created since started, that is it. Asana may need a moment to list a new project, so it
+// looks twice, projectSettle apart. If it is still not there, the project is not created
+// again (that could make a duplicate); the error says to check after the next sync.
 func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*asana.Project, error) {
 	var apiErr *asana.Error
 	if (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil {
 		return nil, cause // not created
 	}
-	projects, err := s.API.Projects(ctx, ws, false)
-	if err != nil {
-		return nil, fmt.Errorf("プロジェクトが作成されたか確かめられませんでした (%v): %w", err, cause)
-	}
-	p, m := pick(projects, func(p asana.Project) bool { return p.Name == name && !p.CreatedAt.Before(started.Add(-clockSkew)) })
-	switch m {
-	case matched:
-		if p.Workspace == nil {
-			p.Workspace = &asana.Ref{GID: ws}
+	for try := 0; try < 2; try++ {
+		if try > 0 {
+			if err := s.wait(ctx, projectSettle); err != nil {
+				return nil, cause
+			}
 		}
-		return &p, nil
-	case ambiguous:
-		return nil, fmt.Errorf("同じ名前のプロジェクトが複数あります。Asana で確認してください: %w", cause)
+		projects, err := s.API.Projects(ctx, ws, false)
+		if err != nil {
+			return nil, fmt.Errorf("プロジェクトが作成されたか確かめられませんでした (%v): %w", err, cause)
+		}
+		p, m := pick(projects, func(p asana.Project) bool { return p.Name == name && !p.CreatedAt.Before(started.Add(-clockSkew)) })
+		switch m {
+		case matched:
+			if p.Workspace == nil {
+				p.Workspace = &asana.Ref{GID: ws}
+			}
+			return &p, nil
+		case ambiguous:
+			return nil, fmt.Errorf("同じ名前のプロジェクトが複数あります。Asana で確認してください: %w", cause)
+		}
 	}
-	return s.API.CreateProject(ctx, ws, "", name)
+	return nil, fmt.Errorf("プロジェクトが作成されたか、まだ分かりません。次の同期の後に一覧に無ければ、もう一度作成してください: %w", cause)
 }
+
+const projectSettle = 5 * time.Second
 
 // SetProjectArchived archives (or unarchives) a project.
 func (s *Syncer) SetProjectArchived(ctx context.Context, gid string, archived bool) error {

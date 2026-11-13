@@ -612,11 +612,48 @@ func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string
 	if st.CreatedBy != nil {
 		byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO stories
+	if _, err := tx.ExecContext(ctx, `INSERT INTO stories
 		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText)
+		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText); err != nil {
+		return err
+	}
+	return recordResult(ctx, tx, ResultStory, localGID, st.GID)
+}
+
+// Prefixes of the sync_state keys that map a local gid to what Asana created for it.
+const (
+	ResultTask       = "gid:"
+	ResultStory      = "story:"
+	ResultAttachment = "att:"
+	ResultStatus     = "status:"
+)
+
+func recordResult(ctx context.Context, tx *sql.Tx, prefix, local, real string) error {
+	if local == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO sync_state(key, value) VALUES (?, ?)", prefix+local, real)
 	return err
+}
+
+// RecordedResults returns the gids already recorded as the result of some local entry
+// (prefix is one of the Result* constants), so they are not taken for another one.
+func (s *Store) RecordedResults(ctx context.Context, prefix string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT value FROM sync_state WHERE substr(key, 1, ?) = ?", len(prefix), prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
 }
 
 // --- helpers ---

@@ -276,6 +276,8 @@ func (s *Store) ReplaceLocalAttachment(ctx context.Context, local, real, viewURL
 }
 
 func replaceLocalAttachment(ctx context.Context, tx *sql.Tx, local, real, viewURL string) error {
-	_, err := tx.ExecContext(ctx, "UPDATE attachments SET gid = ?, view_url = ? WHERE gid = ?", real, viewURL, local)
-	return err
+	if _, err := tx.ExecContext(ctx, "UPDATE attachments SET gid = ?, view_url = ? WHERE gid = ?", real, viewURL, local); err != nil {
+		return err
+	}
+	return recordResult(ctx, tx, ResultAttachment, local, real)
 }
