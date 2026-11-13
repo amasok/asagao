@@ -55,8 +55,8 @@ func OpNote(op Op) (heading, text string) {
 }
 
 // DiscardNotice heads the one-time notice about changes dropped because what they changed
-// was deleted in Asana (see PendingDiscards).
-const DiscardNotice = "削除済みのタスクへの変更を破棄しました"
+// (a task, or its section, project, tag...) was deleted in Asana (see PendingDiscards).
+const DiscardNotice = "Asana で削除されたものへの変更を破棄しました"
 
 // DiscardLine describes one dropped change: 「task」: what it changed.
 func DiscardLine(d Discard) string {

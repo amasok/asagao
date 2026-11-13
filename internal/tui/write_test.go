@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -176,7 +177,7 @@ func TestDiscardedChangesAnnouncedOnce(t *testing.T) {
 		}
 	}
 	h.run(h.m.loadOutbox())
-	if s := h.m.status; !strings.Contains(s, store.DiscardNotice) || !strings.Contains(s, "ソファを2台買う") || !strings.Contains(s, "ほか 1 件") {
+	if s := h.m.status; !strings.Contains(s, store.DiscardNotice) || !strings.Contains(s, "ソファを2台買う") || !strings.Contains(s, "ほか 1 件（! で一覧）") {
 		t.Fatalf("status = %q", s)
 	}
 	if ds, _ := st.PendingDiscards(ctx); len(ds) != 0 {
@@ -191,5 +192,23 @@ func TestDiscardedChangesAnnouncedOnce(t *testing.T) {
 	s := h.screen()
 	if !strings.Contains(s, store.DiscardNotice) || strings.Count(s, "」: ") < 2 {
 		t.Fatalf("outbox should list the dropped changes:\n%s", s)
+	}
+}
+
+// The notice names the key the user bound to the outbox, not a hard-coded "!".
+func TestDiscardStatusUsesBoundKey(t *testing.T) {
+	ds := []store.Discard{{TaskName: "a", Summary: "x"}, {TaskName: "b", Summary: "y"}}
+	for _, tc := range []struct {
+		bindings map[string][]string
+		want     string
+	}{
+		{nil, "（! で一覧）"},
+		{map[string][]string{"outbox": {"O"}}, "（O で一覧）"},
+		{map[string][]string{"outbox": {}}, "（space ! で一覧）"},
+	} {
+		m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }, KeyBindings: tc.bindings})
+		if got := m.discardStatus(ds); !strings.HasSuffix(got, tc.want) {
+			t.Errorf("bindings %v: %q, want suffix %q", tc.bindings, got, tc.want)
+		}
 	}
 }

@@ -103,7 +103,7 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
 			if len(msg.discards) > 0 {
 				m.discards = append(m.discards, msg.discards...)
-				m.status = discardStatus(msg.discards)
+				m.status = m.discardStatus(msg.discards)
 			}
 		}
 		return m, nil, true
@@ -415,12 +415,26 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 }
 
 // discardStatus is the one-line notice for changes dropped by a push.
-func discardStatus(ds []store.Discard) string {
+func (m *Model) discardStatus(ds []store.Discard) string {
 	s := store.DiscardNotice + ": " + store.DiscardLine(ds[0])
 	if len(ds) > 1 {
-		s += fmt.Sprintf(" ほか %d 件（! で一覧）", len(ds)-1)
+		s += fmt.Sprintf(" ほか %d 件（%s で一覧）", len(ds)-1, m.actionKey("outbox"))
 	}
 	return s
+}
+
+// actionKey is how to run action id with the user's key bindings: its first shortcut, or
+// the space menu key.
+func (m *Model) actionKey(id string) string {
+	for _, a := range m.withBindings(m.actions()) {
+		if a.id == id {
+			if len(a.shortcut) > 0 {
+				return a.shortcut[0]
+			}
+			return "space " + a.key
+		}
+	}
+	return "space"
 }
 
 // opStateWidth fits the widest state label, "[自動確認中]"; detail lines under an entry
