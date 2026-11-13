@@ -126,7 +126,7 @@ func New(ctx context.Context, deps Deps) *Model {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	ti := textinput.New()
+	ti := newInput()
 	ti.Prompt = "/ "
 	ti.Placeholder = "タスク名・説明・コメントを検索"
 	m := &Model{
@@ -137,9 +137,19 @@ func New(ctx context.Context, deps Deps) *Model {
 		scopes:     []scope{{kind: scopeMyTasks, name: "My Tasks"}},
 		detailView: viewport.New(),
 		search:     ti,
-		prompt:     textinput.New(),
+		prompt:     newInput(),
 	}
 	return m
+}
+
+// newInput returns a text input with a steady (non-blinking) cursor. Blinking adds a
+// timer to every keystroke and makes the UI harder to test deterministically.
+func newInput() textinput.Model {
+	ti := textinput.New()
+	st := ti.Styles()
+	st.Cursor.Blink = false
+	ti.SetStyles(st)
+	return ti
 }
 
 // --- messages ---
