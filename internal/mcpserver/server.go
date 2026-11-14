@@ -412,7 +412,7 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 	if out.Result, err = syncer.Run(ctx, in.Full); err != nil {
 		s.dropSyncerOn(err)
 		if help := auth.LoginHelp(err); help != "" {
-			return nil, out, fmt.Errorf("sync failed: %s. Tell the user to log in again (they must run it in a terminal): %s", err, help)
+			return nil, out, fmt.Errorf("sync failed: not logged in to Asana. Tell the user to log in again (they must run it in a terminal): %s", help)
 		}
 		if errors.Is(err, sync.ErrAccountChanged) {
 			return nil, out, fmt.Errorf("sync stopped: %s", s.accountChangedNote(ctx))

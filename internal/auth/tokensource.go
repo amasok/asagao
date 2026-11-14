@@ -81,18 +81,21 @@ func TokenSource(ctx context.Context, cfg config.AuthConfig, store tokenstore.St
 		return nil, errors.New("auth.client_id が設定されていません（config.toml または ASANA_CLIENT_ID）。" +
 			"OAuth アプリを登録しないで使うなら `asana-tui auth login --pat` で Personal Access Token を登録してください")
 	}
-	oc := OAuthConfig(cfg, creds.ClientSecret, LocalRedirectURL(cfg.RedirectPort))
-	initial := &oauth2.Token{
-		AccessToken:  creds.AccessToken,
-		RefreshToken: creds.RefreshToken,
-		Expiry:       creds.Expiry,
-		TokenType:    "Bearer",
+	newBase := func(c *tokenstore.Credentials) oauth2.TokenSource {
+		oc := OAuthConfig(cfg, c.ClientSecret, LocalRedirectURL(cfg.RedirectPort))
+		return oc.TokenSource(context.WithoutCancel(ctx), &oauth2.Token{
+			AccessToken:  c.AccessToken,
+			RefreshToken: c.RefreshToken,
+			Expiry:       c.Expiry,
+			TokenType:    "Bearer",
+		})
 	}
 	return &Source{Method: tokenstore.MethodOAuth, TokenSource: &persistingSource{
-		ctx:   ctx,
-		base:  oc.TokenSource(context.WithoutCancel(ctx), initial),
-		store: store,
-		creds: *creds,
+		ctx:     ctx,
+		base:    newBase(creds),
+		newBase: newBase,
+		store:   store,
+		creds:   *creds,
 	}}, nil
 }
 
@@ -103,29 +106,59 @@ func patSource(pat string) oauth2.TokenSource {
 
 // persistingSource saves refreshed tokens back to the store.
 // For stores that don't cache access tokens (1Password), it writes only when Asana rotates the refresh token.
+//
+// Before writing, it reads the store again: if another process logged in meanwhile (a PAT,
+// another OAuth login) that login is adopted instead of being overwritten with ours, so a
+// running TUI or MCP server switches to it; after a logout it reports ErrNotLoggedIn.
 type persistingSource struct {
 	ctx   context.Context
 	base  oauth2.TokenSource
 	store tokenstore.Store
+	// newBase builds the OAuth token source for credentials found in the store.
+	newBase func(*tokenstore.Credentials) oauth2.TokenSource
 
 	mu    sync.Mutex
 	creds tokenstore.Credentials
 }
 
+// errLoginChanged means the store now holds another login, which has been adopted.
+var errLoginChanged = errors.New("ログインが別の場所で変わりました。もう一度試してください")
+
 func (p *persistingSource) Token() (*oauth2.Token, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	tok, err := p.token()
+	if errors.Is(err, errLoginChanged) {
+		tok, err = p.token() // with the login found in the store
+	}
+	return tok, err
+}
+
+func (p *persistingSource) token() (*oauth2.Token, error) {
+	if p.creds.Method() == tokenstore.MethodPAT { // adopted a PAT: nothing to refresh or save
+		return p.base.Token()
+	}
 	tok, err := p.base.Token()
 	if err != nil {
 		var re *oauth2.RetrieveError
 		if errors.As(err, &re) && re.ErrorCode == "invalid_grant" {
-			return nil, ErrNotLoggedIn
+			// Our refresh token is no longer valid: use a login made meanwhile, if any.
+			changed, lerr := p.reload()
+			if lerr != nil || !changed {
+				return nil, ErrNotLoggedIn
+			}
+			return nil, errLoginChanged
 		}
 		return nil, err
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	rotated := tok.RefreshToken != "" && tok.RefreshToken != p.creds.RefreshToken
 	refreshed := tok.AccessToken != p.creds.AccessToken
 	if rotated || (refreshed && p.store.CachesAccessToken()) {
+		if changed, err := p.reload(); err != nil {
+			return nil, err
+		} else if changed {
+			return nil, errLoginChanged
+		}
 		next := p.creds
 		if tok.RefreshToken != "" {
 			next.RefreshToken = tok.RefreshToken
@@ -144,4 +177,27 @@ func (p *persistingSource) Token() (*oauth2.Token, error) {
 	p.creds.AccessToken = tok.AccessToken
 	p.creds.Expiry = tok.Expiry
 	return tok, nil
+}
+
+// reload reads the stored credentials. If they are another login than ours (a PAT, or
+// another refresh token), it switches to them and reports changed. Nothing stored (a
+// logout) is ErrNotLoggedIn.
+func (p *persistingSource) reload() (changed bool, err error) {
+	cur, err := p.store.Load(p.ctx)
+	if errors.Is(err, tokenstore.ErrNotFound) {
+		return false, ErrNotLoggedIn
+	}
+	if err != nil {
+		return false, err
+	}
+	if cur.Method() == tokenstore.MethodOAuth && cur.RefreshToken == p.creds.RefreshToken {
+		return false, nil
+	}
+	p.creds = *cur
+	if cur.Method() == tokenstore.MethodPAT {
+		p.base = patSource(cur.PersonalAccessToken)
+	} else {
+		p.base = p.newBase(cur)
+	}
+	return true, nil
 }

@@ -42,6 +42,8 @@ func (m *memStore) Save(_ context.Context, c *tokenstore.Credentials) error {
 		return m.saveErr
 	}
 	m.saved = append(m.saved, *c)
+	saved := *c
+	m.creds = &saved
 	return nil
 }
 func (m *memStore) Delete(context.Context) error { return nil }
@@ -75,11 +77,9 @@ func TestPersistingSource(t *testing.T) {
 		{"1password saves only on rotation", false, []string{"rt2/"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st := &memStore{caches: tc.caches}
-			p := &persistingSource{
-				ctx: context.Background(), base: tokens(), store: st,
-				creds: tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp},
-			}
+			creds := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp}
+			st := &memStore{caches: tc.caches, creds: &creds}
+			p := &persistingSource{ctx: context.Background(), base: tokens(), store: st, creds: creds}
 			for range 4 {
 				if _, err := p.Token(); err != nil {
 					t.Fatal(err)
@@ -153,10 +153,10 @@ func TestPersistingSourceSaveFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saveErr := errors.New("keychain locked")
-			st := &memStore{caches: tc.caches, saveErr: saveErr}
+			creds := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "9"}
+			st := &memStore{caches: tc.caches, saveErr: saveErr, creds: &creds}
 			tok := tc.tok
-			p := &persistingSource{ctx: context.Background(), base: &seqSource{&tok}, store: st,
-				creds: tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "9"}}
+			p := &persistingSource{ctx: context.Background(), base: &seqSource{&tok}, store: st, creds: creds}
 			if got, err := p.Token(); got != nil || !errors.Is(err, saveErr) {
 				t.Fatalf("Token() = %v, %v; want the save error", got, err)
 			}
@@ -284,6 +284,59 @@ func TestLoginHelp(t *testing.T) {
 			got := LoginHelp(tc.err)
 			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 				t.Fatalf("LoginHelp(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// A running OAuth session must not overwrite a login made meanwhile in another process
+// (auth login --pat, another OAuth login): it switches to that login instead. After a
+// logout it stops with ErrNotLoggedIn and does not save the old login back.
+func TestPersistingSourceAdoptsNewLogin(t *testing.T) {
+	exp := time.Now().Add(time.Hour)
+	ours := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "1"}
+	refreshed := func() *seqSource { return &seqSource{{AccessToken: "at2", RefreshToken: "rt1", Expiry: exp}} }
+	for _, tc := range []struct {
+		name    string
+		base    oauth2.TokenSource
+		stored  *tokenstore.Credentials // what another process saved meanwhile (nil: logged out)
+		want    string                  // access token now used ("" = ErrNotLoggedIn)
+		newBase bool                    // the OAuth source is rebuilt for the stored login
+	}{
+		{"PAT saved meanwhile (refresh)", refreshed(), &tokenstore.Credentials{PersonalAccessToken: "pat", UserGID: "2"}, "pat", false},
+		{"PAT saved meanwhile (invalid_grant)", errSource{&oauth2.RetrieveError{ErrorCode: "invalid_grant"}},
+			&tokenstore.Credentials{PersonalAccessToken: "pat", UserGID: "2"}, "pat", false},
+		{"other OAuth login saved meanwhile", refreshed(), &tokenstore.Credentials{RefreshToken: "rt9", AccessToken: "at9", Expiry: exp, UserGID: "2"}, "at9", true},
+		{"logged out meanwhile", refreshed(), nil, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &memStore{caches: true, creds: tc.stored}
+			var rebuilt bool
+			p := &persistingSource{ctx: context.Background(), base: tc.base, store: st, creds: ours,
+				newBase: func(c *tokenstore.Credentials) oauth2.TokenSource {
+					rebuilt = true
+					return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: c.AccessToken, RefreshToken: c.RefreshToken, Expiry: c.Expiry})
+				}}
+			for range 2 {
+				tok, err := p.Token()
+				if tc.want == "" {
+					if !errors.Is(err, ErrNotLoggedIn) {
+						t.Fatalf("Token() = %v, %v; want ErrNotLoggedIn", tok, err)
+					}
+					continue
+				}
+				if err != nil || tok.AccessToken != tc.want {
+					t.Fatalf("Token() = %v, %v; want %s", tok, err, tc.want)
+				}
+			}
+			if len(st.saved) != 0 {
+				t.Fatalf("the login made elsewhere must not be overwritten: saved %+v", st.saved)
+			}
+			if rebuilt != tc.newBase {
+				t.Fatalf("OAuth source rebuilt = %v, want %v", rebuilt, tc.newBase)
+			}
+			if tc.stored != nil && p.creds.UserGID != tc.stored.UserGID {
+				t.Fatalf("creds = %+v, want the stored login", p.creds)
 			}
 		})
 	}

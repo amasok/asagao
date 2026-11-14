@@ -125,6 +125,7 @@ func readPAT(cmd *cobra.Command) (string, error) {
 		b, err = term.ReadPassword(int(f.Fd()))
 		fmt.Fprintln(cmd.ErrOrStderr())
 	} else {
+		fmt.Fprintln(cmd.ErrOrStderr(), "標準入力から Personal Access Token を読んでいます…")
 		b, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 64<<10))
 	}
 	if err != nil {

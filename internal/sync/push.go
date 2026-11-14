@@ -11,7 +11,10 @@ import (
 	"os"
 	"slices"
 
+	"golang.org/x/oauth2"
+
 	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -544,8 +547,12 @@ func isNetworkError(err error) bool {
 }
 
 // requestNotSent reports whether a network error happened before the request could reach
-// the server (no connection could be made).
+// the server (no connection could be made, or no token: logged out, refresh failed).
 func requestNotSent(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if errors.Is(err, auth.ErrNotLoggedIn) || errors.As(err, &retrieveErr) {
+		return true
+	}
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && (opErr.Op == "dial" || opErr.Op == "proxyconnect") {
 		return true
