@@ -87,8 +87,8 @@ func TestResetClearsInbox(t *testing.T) {
 	if err := st.SetInboxWriteForbidden(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.MarkNotificationsLocal(ctx, []string{"n1"}, true, time.Now()); err == nil {
-		t.Fatal("setup: marks should be refused")
+	if _, err := st.MarkNotificationsLocal(ctx, []string{"n1"}, true, time.Now()); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := st.Reset(ctx, true, time.Now()); err != nil {
 		t.Fatal(err)

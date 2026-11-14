@@ -106,9 +106,10 @@ func TestMarkNotificationsOffline(t *testing.T) {
 	if err := st.SetInboxWriteForbidden(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	res := call(t, cs, "mark_notifications", map[string]any{"all": true}, nil)
-	if !res.IsError || !strings.Contains(toolError(res), "notifications:write") {
-		t.Fatalf("refused: %+v", res)
+	// Refused before: a mark the user asks for is still queued (tried once when sent).
+	var marked MarkNotificationsOutput
+	if res := call(t, cs, "mark_notifications", map[string]any{"all": true}, &marked); res.IsError || marked.Changed == 0 {
+		t.Fatalf("mark while refused: %+v %+v", res, marked)
 	}
 	var out InboxOutput
 	call(t, cs, "list_inbox", map[string]any{}, &out)

@@ -3,7 +3,6 @@ package sync
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -423,9 +422,9 @@ func TestMarkReadOfflineQueuedThenSent(t *testing.T) {
 }
 
 // markRead answering 403 (no notifications:write): the queued read / unread changes are
-// dropped (the local state goes back to Asana's), the sync still runs, further marks are
-// refused with a hint, and once Asana accepts marks again (logged in with the scope) the
-// next sync lets them through.
+// dropped (the local state goes back to Asana's), the sync still runs and never sends a
+// mark by itself (Asana's data is not touched), and a mark the user makes once Asana
+// accepts marks again (logged in with the scope) goes through and clears the state.
 func TestMarkReadForbiddenDropsAndRecovers(t *testing.T) {
 	notes, tasks := notesN(4)
 	f := &edgeInbox{notes: notes, tasks: tasks, markStatus: http.StatusForbidden}
@@ -454,31 +453,27 @@ func TestMarkReadForbiddenDropsAndRecovers(t *testing.T) {
 	if state, _ := st.InboxState(ctx); !state.WriteForbidden || !state.Available() {
 		t.Fatalf("state %+v", state)
 	}
-	if _, err := st.MarkNotificationsLocal(ctx, []string{"n000"}, true, time.Now()); !errors.Is(err, store.ErrInboxReadOnly) {
-		t.Fatalf("mark while refused: %v", err)
-	}
 	if msg := InboxReadOnlyMessage(nil); !strings.Contains(msg, "notifications:write") {
 		t.Fatalf("message %q", msg)
 	}
+	f.mu.Lock()
+	calls := f.markCalls
+	f.mu.Unlock()
 	if _, err := s.Run(ctx, false); err != nil {
 		t.Fatalf("a refused mark should not fail the sync: %v", err)
 	}
-	if state, _ := st.InboxState(ctx); !state.WriteForbidden {
-		t.Fatalf("still refused, but the state says writable: %+v", state)
-	}
-
 	f.mu.Lock()
+	if f.markCalls != calls {
+		t.Fatalf("the sync sent %d marks by itself", f.markCalls-calls)
+	}
 	f.markStatus = 0
 	f.mu.Unlock()
-	if _, err := s.Run(ctx, false); err != nil {
-		t.Fatal(err)
-	}
-	if state, _ := st.InboxState(ctx); state.WriteForbidden {
-		t.Fatalf("Asana accepts marks again, but the state stays read-only: %+v", state)
+	if state, _ := st.InboxState(ctx); !state.WriteForbidden {
+		t.Fatalf("state %+v", state)
 	}
 	for _, n := range notes {
 		if f.serverRead(n.gid) != n.read {
-			t.Fatalf("the probe changed %s in Asana", n.gid)
+			t.Fatalf("%s changed in Asana", n.gid)
 		}
 	}
 	if _, err := st.MarkNotificationsLocal(ctx, []string{"n000"}, true, time.Now()); err != nil {
@@ -486,6 +481,9 @@ func TestMarkReadForbiddenDropsAndRecovers(t *testing.T) {
 	}
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || !f.serverRead("n000") {
 		t.Fatalf("push %+v %v", res, err)
+	}
+	if state, _ := st.InboxState(ctx); state.WriteForbidden {
+		t.Fatalf("Asana accepted the mark, but the state stays read-only: %+v", state)
 	}
 }
 

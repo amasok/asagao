@@ -216,21 +216,18 @@ func TestInboxMarkCommandWithoutSending(t *testing.T) {
 		t.Fatalf("already unread: %v\n%s", err, out)
 	}
 
-	// Asana refuses marks (no notifications:write): an error with the hint, nothing queued.
+	// Asana refused marks before (no notifications:write): the list says why, and a mark the
+	// user asks for is still queued, to be tried once (Asana may allow it again).
 	if err := st.SetInboxWriteForbidden(ctx, true); err != nil {
 		t.Fatal(err)
-	}
-	_, err := runCLI(t, "inbox", "read", "0001")
-	if err == nil || !strings.Contains(err.Error(), "notifications:write") {
-		t.Fatalf("refused mark: %v", err)
-	}
-	if n, _ := st.UnreadNotifications(ctx); n != 2 {
-		t.Fatalf("a refused mark changed the store: unread %d", n)
 	}
 	if out, err := runCLI(t, "inbox"); err != nil || !strings.Contains(out, "notifications:write") || !strings.Contains(out, "1200001") {
 		t.Fatalf("list while marks are refused: %v\n%s", err, out)
 	}
-	if _, err := st.MarkNotificationsLocal(ctx, []string{"1200001"}, true, time.Now()); !errors.Is(err, store.ErrInboxReadOnly) {
-		t.Fatalf("store: %v", err)
+	if _, err := runCLI(t, "inbox", "read", "0001"); err != nil {
+		t.Fatalf("mark while refused: %v", err)
+	}
+	if n, _ := st.UnreadNotifications(ctx); n != 1 {
+		t.Fatalf("the mark should be applied locally and queued: unread %d", n)
 	}
 }
