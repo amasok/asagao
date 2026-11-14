@@ -42,6 +42,7 @@ const (
 	sent       outcome = iota
 	conflicted         // left for the user to resolve
 	followUp           // sent; the entry now holds a follow-up change to send right away
+	dropped            // not sent and removed (e.g. Asana refuses read / unread changes)
 )
 
 // sentNotSavedError wraps a failure to record a change that Asana already accepted.
@@ -269,12 +270,19 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 				return res, last, err
 			}
 			op.Attempts++
-			out, err = s.send(ctx, *op)
+			if op.Kind == store.OpMarkNotification {
+				var batched int // entries sent along with this one, whatever happened to it
+				out, batched, err = s.pushMarkNotification(ctx, *op)
+				res.Sent += batched
+			} else {
+				out, err = s.send(ctx, *op)
+			}
 			switch {
 			case err == nil:
 				switch {
 				case out == conflicted:
 					res.Conflicts++
+				case out == dropped:
 				case !wasFollowUp:
 					res.Sent++ // a follow-up is part of the change already counted
 				}
@@ -353,7 +361,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 	case store.OpCreateStatus:
 		err = s.pushStatus(ctx, op)
 	case store.OpMarkNotification:
-		err = s.pushMarkNotification(ctx, op)
+		out, _, err := s.pushMarkNotification(ctx, op)
+		return out, err
 	default:
 		err = &asana.Error{Status: 400}
 	}

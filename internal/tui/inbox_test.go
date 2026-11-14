@@ -30,6 +30,9 @@ func inboxHarness(t *testing.T, state store.InboxState) (*harness, *store.Store)
 	if err := st.SetInboxState(ctx, state); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.SetInboxWriteForbidden(ctx, state.WriteForbidden); err != nil {
+		t.Fatal(err)
+	}
 	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
@@ -106,5 +109,32 @@ func TestInboxUnavailableShowsRecentWithNotice(t *testing.T) {
 	h.key("space", "R")
 	if !strings.Contains(h.m.status, "使えません") {
 		t.Fatalf("inbox actions should not be available in recent updates: %q", h.m.status)
+	}
+}
+
+func TestInboxUncachedTaskAndReadOnly(t *testing.T) {
+	h, st := inboxHarness(t, store.InboxState{Status: store.InboxOK, WriteForbidden: true})
+	ctx := context.Background()
+	if err := st.ReplaceNotifications(ctx, "w2", []asana.Notification{{GID: "n9", CreatedAt: testNow,
+		WorkObjects: []asana.WorkRef{{GID: "tz", ResourceType: "task", Name: "Not synced"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.key("h", "j", "l")
+	if r := h.m.rows[0]; !r.note || !strings.Contains(r.header, "notifications:write") {
+		t.Fatalf("the inbox should say why notifications cannot be marked: %+v", r)
+	}
+	if n := h.m.selectedNotification(); n == nil || n.GID != "n9" || h.selected() != "" {
+		t.Fatalf("an uncached task is not a selectable task: %+v %q", n, h.selected())
+	}
+	h.key("enter") // opens the task to fetch it; not marked read (Asana refuses)
+	if !h.m.zoom || h.m.detailGID() != "tz" {
+		t.Fatalf("enter should open the uncached task: zoom=%v detail=%q", h.m.zoom, h.m.detailGID())
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("nothing should be queued while marking is refused: %+v", ops)
+	}
+	h.key("esc", "R")
+	if !strings.Contains(h.m.status, "notifications:write") {
+		t.Fatalf("R should explain: %q", h.m.status)
 	}
 }

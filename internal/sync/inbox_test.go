@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,10 @@ import (
 type inboxServer struct {
 	fakeAsana
 	listStatus int      // != 0: GET notifications answers this status
+	markStatus int      // != 0: markRead / markUnread answer this status
 	failed     []string // gids markRead / markUnread report as failed
+	paged      bool     // answer in two pages (offset)
+	extra      string   // more notifications (JSON objects, with a leading comma)
 	marks      []map[string]any
 }
 
@@ -37,13 +41,20 @@ func (f *inboxServer) handler() http.Handler {
 		if r.URL.Query().Get("workspace") != "w1" {
 			f.t.Errorf("workspace = %q", r.URL.Query().Get("workspace"))
 		}
-		fmt.Fprint(w, `{"data":[
-			{"gid":"n2","is_read":false,"created_at":"2026-11-12T10:00:00Z","created_by":{"gid":"u2","name":"Hanako"},
+		n2 := `{"gid":"n2","is_read":false,"created_at":"2026-11-12T10:00:00Z","created_by":{"gid":"u2","name":"Hanako"},
 			 "story_resource_subtype":"comment_added","story":{"gid":"st1","text":"見てください"},
-			 "work_objects":[{"gid":"tx","resource_type":"task","name":"Followed task"}]},
-			{"gid":"n1","is_read":true,"created_at":"2026-11-11T10:00:00Z","created_by":{"gid":"u2","name":"Hanako"},
-			 "story_resource_subtype":"assigned","work_objects":[{"gid":"t1","resource_type":"task","name":"My task"}]}],
-			"next_page":null}`)
+			 "work_objects":[{"gid":"tx","resource_type":"task","name":"Followed task"}]}`
+		n1 := `{"gid":"n1","is_read":true,"created_at":"2026-11-11T10:00:00Z","created_by":{"gid":"u2","name":"Hanako"},
+			 "story_resource_subtype":"assigned","work_objects":[{"gid":"t1","resource_type":"task","name":"My task"}]}`
+		if f.paged {
+			if r.URL.Query().Get("offset") == "" {
+				fmt.Fprintf(w, `{"data":[%s],"next_page":{"offset":"page2"}}`, n2)
+			} else {
+				fmt.Fprintf(w, `{"data":[%s],"next_page":null}`, n1)
+			}
+			return
+		}
+		fmt.Fprintf(w, `{"data":[%s,%s%s],"next_page":null}`, n2, n1, f.extra)
 	})
 	mux.HandleFunc("/tasks/tx", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":{"gid":"tx","name":"Followed task","modified_at":"2026-11-12T00:00:00Z"}}`)
@@ -56,6 +67,11 @@ func (f *inboxServer) handler() http.Handler {
 		}
 		body.Data["read"] = strings.HasSuffix(r.URL.Path, "/markRead")
 		f.marks = append(f.marks, body.Data)
+		if f.markStatus != 0 {
+			w.WriteHeader(f.markStatus)
+			fmt.Fprint(w, `{"errors":[{"message":"Forbidden"}]}`)
+			return
+		}
 		failed, _ := json.Marshal(f.failed)
 		fmt.Fprintf(w, `{"data":{"failed_gids":%s}}`, nonNull(failed))
 	}
@@ -218,5 +234,111 @@ func TestInboxForbiddenFallsBackWithoutFailingSync(t *testing.T) {
 	}
 	if ns, _ := st.ListNotifications(ctx, store.NotificationFilter{}); !slices.ContainsFunc(ns, func(n store.Notification) bool { return n.GID == "n1" }) {
 		t.Fatalf("notifications %+v", ns)
+	}
+}
+
+func TestMarkReadForbiddenDropsAndStopsQueueing(t *testing.T) {
+	f := &inboxServer{markStatus: http.StatusForbidden}
+	s, st := setupInbox(t, f)
+	ctx := context.Background()
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MarkNotificationsLocal(ctx, []string{"n2"}, true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("a refused read change should not stay as a failure: %+v", ops)
+	}
+	state, _ := st.InboxState(ctx)
+	if !state.Available() || !state.WriteForbidden {
+		t.Fatalf("state %+v", state)
+	}
+	if ns, _ := st.ListNotifications(ctx, store.NotificationFilter{UnreadOnly: true}); len(ns) != 1 {
+		t.Fatalf("the dropped change should be undone locally: %+v", ns)
+	}
+	if !strings.Contains(InboxReadOnlyMessage(nil), "auth login") {
+		t.Fatal("read-only message should say what to do")
+	}
+	requests := len(f.marks)
+	if _, err := st.MarkNotificationsLocal(ctx, []string{"n2"}, true, time.Now()); !errors.Is(err, store.ErrInboxReadOnly) {
+		t.Fatalf("mark while refused: %v", err)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 || len(f.marks) != requests {
+		t.Fatalf("nothing should be queued or sent: %+v, %d requests", ops, len(f.marks))
+	}
+
+	// Still refused: the sync's check leaves it so; allowed again: the check clears it.
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := st.InboxState(ctx); !state.WriteForbidden {
+		t.Fatal("still refused")
+	}
+	f.markStatus = 0
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := st.InboxState(ctx); state.WriteForbidden {
+		t.Fatal("the sync should find that marking works again")
+	}
+	last := f.marks[len(f.marks)-1] // the check marks a notification as it already is
+	if gids := fmt.Sprint(last["notification_gids"]); gids != "[n2]" || last["read"] != false {
+		t.Fatalf("probe request %+v", last)
+	}
+	if _, err := st.MarkNotificationsLocal(ctx, []string{"n2"}, true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarkAllReadIsOneRequestAndPartialFailure(t *testing.T) {
+	f := &inboxServer{extra: `,
+		{"gid":"n3","is_read":false,"created_at":"2026-11-10T10:00:00Z","work_objects":[{"gid":"t1","resource_type":"task","name":"My task"}]},
+		{"gid":"n4","is_read":false,"created_at":"2026-11-09T10:00:00Z","work_objects":[{"gid":"t1","resource_type":"task","name":"My task"}]}`,
+		failed: []string{"n3"}}
+	s, st := setupInbox(t, f)
+	ctx := context.Background()
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.MarkNotificationsLocal(ctx, []string{"n2", "n3", "n4"}, true, time.Now()); err != nil || n != 3 {
+		t.Fatalf("mark: %d %v", n, err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.marks) != 2 || fmt.Sprint(f.marks[0]["notification_gids"]) != "[n2 n3 n4]" ||
+		fmt.Sprint(f.marks[1]["notification_gids"]) != "[n3]" {
+		t.Fatalf("requests %+v: want one for all, then the failed one alone", f.marks)
+	}
+	if len(res.Discarded) != 1 || res.Discarded[0].TaskGID != "n3" {
+		t.Fatalf("the failed notification should be dropped: %+v", res)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("outbox %+v", ops)
+	}
+}
+
+func TestInboxPagingAndUnauthorized(t *testing.T) {
+	f := &inboxServer{paged: true}
+	s, st := setupInbox(t, f)
+	ctx := context.Background()
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if ns, _ := st.ListNotifications(ctx, store.NotificationFilter{}); len(ns) != 2 {
+		t.Fatalf("both pages should be cached: %+v", ns)
+	}
+	// 401 is an invalid login, not a missing scope: the sync fails like any other fetch.
+	f.paged, f.listStatus = false, http.StatusUnauthorized
+	if _, err := s.Run(ctx, false); err == nil || !asana.IsUnauthorized(err) {
+		t.Fatalf("401 should fail the sync: %v", err)
+	}
+	if state, _ := st.InboxState(ctx); !state.Available() {
+		t.Fatalf("a 401 should not be taken as a missing scope: %+v", state)
 	}
 }

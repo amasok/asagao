@@ -24,6 +24,9 @@ const OpMarkNotification = "mark_notification"
 const (
 	KeyInboxStatus = "inbox_status" // one of the Inbox* values below ("" before the first try)
 	KeyInboxError  = "inbox_error"  // Asana's error message when not InboxOK
+	// KeyInboxWrite is "forbidden" while Asana refuses to mark notifications (no
+	// notifications:write scope); read / unread changes are then not queued.
+	KeyInboxWrite = "inbox_write"
 
 	InboxOK = "ok"
 	// InboxForbidden: the login lacks the notifications:read scope (Asana answered 401/403).
@@ -39,7 +42,13 @@ const (
 type InboxState struct {
 	Status string `json:"status"`          // InboxOK, InboxForbidden, InboxPayment, InboxError or ""
 	Error  string `json:"error,omitempty"` // Asana's message
+	// WriteForbidden: notifications can be listed but not marked read / unread.
+	WriteForbidden bool `json:"write_forbidden,omitempty"`
 }
+
+// ErrInboxReadOnly is returned by MarkNotificationsLocal while Asana refuses to mark
+// notifications (see InboxState.WriteForbidden).
+var ErrInboxReadOnly = errors.New("通知を既読・未読にする権限 (notifications:write) がありません")
 
 // Available reports whether notifications were fetched (at the latest sync).
 func (s InboxState) Available() bool { return s.Status == InboxOK }
@@ -50,7 +59,49 @@ func (s *Store) InboxState(ctx context.Context) (InboxState, error) {
 		return InboxState{}, err
 	}
 	msg, err := s.SyncState(ctx, KeyInboxError)
-	return InboxState{Status: status, Error: msg}, err
+	if err != nil {
+		return InboxState{}, err
+	}
+	write, err := s.SyncState(ctx, KeyInboxWrite)
+	return InboxState{Status: status, Error: msg, WriteForbidden: write == InboxForbidden}, err
+}
+
+// SetInboxWriteForbidden records whether Asana refuses to mark notifications.
+func (s *Store) SetInboxWriteForbidden(ctx context.Context, forbidden bool) error {
+	v := ""
+	if forbidden {
+		v = InboxForbidden
+	}
+	return s.SetSyncState(ctx, KeyInboxWrite, v)
+}
+
+// DropNotificationMarks removes every queued read / unread change that is not being sent
+// (and entry also, which may be), restoring the read state from before each: Asana refuses
+// them all (no notifications:write scope). It returns how many were dropped.
+func (s *Store) DropNotificationMarks(ctx context.Context, also int64) (int, error) {
+	n := 0
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND (state <> 'sending' OR id = ?) ORDER BY id DESC", OpMarkNotification, also)
+		if err != nil {
+			return err
+		}
+		ids, err := scanIDs(rows)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids { // newest first, so the oldest base is restored last
+			op, err := getOpTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if err := discardOpTx(ctx, tx, op); err != nil {
+				return err
+			}
+			n++
+		}
+		return nil
+	})
+	return n, err
 }
 
 func (s *Store) SetInboxState(ctx context.Context, st InboxState) error {
@@ -211,22 +262,28 @@ func (s *Store) UnreadNotifications(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// NotificationTargets returns the gids of the tasks the cached notifications are about.
-func (s *Store) NotificationTargets(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT target_gid FROM notifications WHERE target_type = 'task' AND target_gid <> ''")
+// NotificationTargets returns the gids of the tasks the cached notifications are about,
+// those of the newest notifications first. recent are the ones with a notification
+// created at or after since (RFC 3339; "" for none).
+func (s *Store) NotificationTargets(ctx context.Context, since string) (gids []string, recent map[string]bool, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT target_gid, MAX(created_at) AS latest FROM notifications
+		WHERE target_type = 'task' AND target_gid <> '' GROUP BY target_gid ORDER BY latest DESC`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
-	var gids []string
+	recent = map[string]bool{}
 	for rows.Next() {
-		var g string
-		if err := rows.Scan(&g); err != nil {
-			return nil, err
+		var g, latest string
+		if err := rows.Scan(&g, &latest); err != nil {
+			return nil, nil, err
 		}
 		gids = append(gids, g)
+		if since != "" && latest >= since {
+			recent[g] = true
+		}
 	}
-	return gids, rows.Err()
+	return gids, recent, rows.Err()
 }
 
 // ResolveNotification finds a cached notification by gid or by a unique gid suffix
@@ -236,7 +293,7 @@ func (s *Store) ResolveNotification(ctx context.Context, arg string) (string, er
 	if arg == "" {
 		return "", errors.New("通知の ID が空です")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT gid FROM notifications WHERE gid = ? OR gid LIKE ? ORDER BY gid = ? DESC", arg, "%"+arg, arg)
+	rows, err := s.db.QueryContext(ctx, "SELECT gid FROM notifications ORDER BY gid = ? DESC", arg)
 	if err != nil {
 		return "", err
 	}
@@ -250,7 +307,9 @@ func (s *Store) ResolveNotification(ctx context.Context, arg string) (string, er
 		if g == arg {
 			return g, nil
 		}
-		gids = append(gids, g)
+		if strings.HasSuffix(g, arg) {
+			gids = append(gids, g)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
@@ -267,9 +326,19 @@ func (s *Store) ResolveNotification(ctx context.Context, arg string) (string, er
 // MarkNotificationsLocal marks notifications read (or unread) locally and queues the change
 // for Asana. Notifications already in that state are left alone. It returns how many changed.
 // Toggling one back before the change is sent removes the queued change.
+//
+// While Asana refuses to mark notifications (InboxState.WriteForbidden), nothing is changed
+// and ErrInboxReadOnly is returned.
 func (s *Store) MarkNotificationsLocal(ctx context.Context, gids []string, read bool, now time.Time) (int, error) {
 	changed := 0
 	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var write string
+		if err := tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", KeyInboxWrite).Scan(&write); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if write == InboxForbidden {
+			return ErrInboxReadOnly
+		}
 		for _, gid := range gids {
 			var ws, name string
 			var cur bool
@@ -292,6 +361,9 @@ func (s *Store) MarkNotificationsLocal(ctx context.Context, gids []string, read 
 			if err != nil {
 				return err
 			}
+			if op != nil && (op.Verify || op.SentAt != "") {
+				op = nil // it may have reached Asana: the change back must be sent too
+			}
 			if op == nil {
 				op = &Op{Kind: OpMarkNotification, TaskGID: gid, Payload: map[string]any{"workspace": ws, "name": name},
 					Base: map[string]any{"read": cur}, State: OpPending, CreatedAt: formatTime(now)}
@@ -312,10 +384,44 @@ func (s *Store) MarkNotificationsLocal(ctx context.Context, gids []string, read 
 	return changed, err
 }
 
-// ApplyNotificationRead records the read state Asana has for a notification (after a push).
-func (s *Store) ApplyNotificationRead(ctx context.Context, gid string, read bool) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE notifications SET is_read = ? WHERE gid = ?", read, gid)
-	return err
+// PendingNotificationMarks returns queued read / unread changes that can be sent together
+// with entry op: same workspace and direction, pending and not being verified, and the
+// oldest queued change of their notification (so two changes to one notification keep
+// their order). At most limit, oldest first.
+func (s *Store) PendingNotificationMarks(ctx context.Context, op Op, limit int) ([]Op, error) {
+	ops, err := s.queryOps(ctx, "WHERE o.kind = ?", OpMarkNotification)
+	if err != nil {
+		return nil, err
+	}
+	first := map[string]int64{} // the oldest entry of each notification goes first
+	for _, o := range ops {
+		if _, ok := first[o.TaskGID]; !ok && o.State != OpFailed {
+			first[o.TaskGID] = o.ID
+		}
+	}
+	var out []Op
+	for _, o := range ops {
+		if o.ID == op.ID || o.State != OpPending || o.Verify || first[o.TaskGID] != o.ID || o.TaskGID == op.TaskGID {
+			continue
+		}
+		if len(out) < limit && o.Payload["workspace"] == op.Payload["workspace"] && o.Payload["read"] == op.Payload["read"] {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+// NotificationProbe returns a notification whose read state (as Asana last reported it)
+// is not changed by a queued entry, to check whether Asana lets us mark notifications by
+// marking it as it already is. ok is false when there is none.
+func (s *Store) NotificationProbe(ctx context.Context) (n Notification, ok bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT gid, workspace_gid, is_read FROM notifications n
+		WHERE NOT EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.task_gid = n.gid) ORDER BY created_at DESC LIMIT 1`,
+		OpMarkNotification).Scan(&n.GID, &n.WorkspaceGID, &n.Read)
+	if errors.Is(err, sql.ErrNoRows) {
+		return n, false, nil
+	}
+	return n, err == nil, err
 }
 
 // NotificationLabel says in a few words what kind of activity a notification reports.

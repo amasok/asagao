@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,7 +28,11 @@ func (m *Model) inboxScope() scope {
 		if m.inboxUnread > 0 {
 			name = fmt.Sprintf("%s (%d)", inboxName, m.inboxUnread)
 		}
-		return scope{kind: scopeInbox, name: name}
+		sc := scope{kind: scopeInbox, name: name}
+		if m.inbox.WriteForbidden {
+			sc.notice = sync.InboxReadOnlyMessage(m.deps.AuthScopes)
+		}
+		return sc
 	}
 	sc := scope{kind: scopeRecent, name: "最近の更新"}
 	if m.inbox.Status != "" { // tried and failed (not merely "not synced yet")
@@ -36,9 +41,10 @@ func (m *Model) inboxScope() scope {
 	return sc
 }
 
-// inboxRows loads the notifications as list rows. Rows about a cached task carry it; one
-// about a task not cached yet carries its gid and name (the detail is fetched on demand).
-func inboxRows(ctx context.Context, st *store.Store, now time.Time) ([]row, error) {
+// inboxRows loads the notifications as list rows. Rows about a cached task carry it (the
+// detail pane shows it, task actions apply to it); enter on one about a task not cached
+// yet fetches it. notice (if any) is shown above the list.
+func inboxRows(ctx context.Context, st *store.Store, now time.Time, notice string) ([]row, error) {
 	ns, err := st.ListNotifications(ctx, store.NotificationFilter{})
 	if err != nil {
 		return nil, err
@@ -48,26 +54,25 @@ func inboxRows(ctx context.Context, st *store.Store, now time.Time) ([]row, erro
 		return nil, err
 	}
 	var rows []row
+	if notice != "" {
+		rows = append(rows, row{header: notice, note: true})
+	}
 	var label string
 	for i := range ns {
 		n := &ns[i]
-		if l := modifiedDay(n.CreatedAt, now); l != label || len(rows) == 0 {
+		if l := modifiedDay(n.CreatedAt, now); l != label || i == 0 {
 			label = l
 			rows = append(rows, row{header: l, key: "inbox:" + l})
 		}
 		r := row{notif: n}
-		if n.IsTask() {
-			if t, ok := tasks[n.TargetGID]; ok {
-				r.task = &t
-			} else {
-				r.task = &store.TaskSummary{GID: n.TargetGID, Name: n.TargetName}
-			}
+		if t, ok := tasks[n.TargetGID]; ok && n.IsTask() {
+			r.task = &t
 		}
 		rows = append(rows, r)
 	}
 	// header counts
 	for i := range rows {
-		if rows[i].isHeader() {
+		if rows[i].isHeader() && !rows[i].note {
 			for j := i + 1; j < len(rows) && !rows[j].isHeader(); j++ {
 				rows[i].count++
 			}
@@ -101,12 +106,14 @@ func (m *Model) openNotification() tea.Cmd {
 		return nil
 	}
 	var cmds []tea.Cmd
-	if !n.Read {
+	if !n.Read && !m.inbox.WriteForbidden { // (when Asana refuses, the note above the list says why)
 		cmds = append(cmds, m.markNotifications([]string{n.GID}, true, ""))
 	}
 	switch {
 	case m.selectedTask() != nil:
 		cmds = append(cmds, m.openDetail())
+	case n.IsTask(): // not cached yet: fetched as it is opened (offline: says so)
+		cmds = append(cmds, m.openTaskDetail(n.TargetGID))
 	case n.TargetType == "project":
 		for i, s := range m.scopes {
 			if s.kind == scopeProject && s.project == n.TargetGID {
@@ -153,7 +160,9 @@ func (m *Model) markAllNotificationsRead() tea.Cmd {
 func (m *Model) markNotifications(gids []string, read bool, status string) tea.Cmd {
 	st, now := m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
-		if _, err := st.MarkNotificationsLocal(m.ctx, gids, read, now); err != nil {
+		if _, err := st.MarkNotificationsLocal(m.ctx, gids, read, now); errors.Is(err, store.ErrInboxReadOnly) {
+			return writeDoneMsg{status: sync.InboxReadOnlyMessage(m.deps.AuthScopes)}
+		} else if err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: status}

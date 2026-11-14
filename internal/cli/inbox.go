@@ -62,6 +62,9 @@ func (a *app) inboxCmd() *cobra.Command {
 				printTaskTable(w, out.Recent)
 				return nil
 			}
+			if out.Notice != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), out.Notice)
+			}
 			printNotifications(w, out.Notifications, time.Now())
 			fmt.Fprintf(w, "\n%d 件（未読 %d 件）\n", len(out.Notifications), out.Unread)
 			return nil
@@ -79,6 +82,9 @@ func loadInbox(ctx context.Context, st *store.Store, unread bool, limit int, sco
 		return inboxOutput{}, err
 	}
 	out := inboxOutput{Available: state.Available(), Notifications: []store.Notification{}}
+	if out.Available && state.WriteForbidden {
+		out.Notice = sync.InboxReadOnlyMessage(scopes)
+	}
 	if !out.Available {
 		out.Notice = sync.InboxUnavailableMessage(state, scopes)
 		out.Recent, err = st.ListTasks(ctx, store.TaskFilter{
@@ -118,6 +124,9 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 				return err
 			}
 			n, err := st.MarkNotificationsLocal(ctx, gids, read, time.Now())
+			if errors.Is(err, store.ErrInboxReadOnly) {
+				return errors.New(sync.InboxReadOnlyMessage(a.cfg.Auth.Scopes))
+			}
 			if err != nil {
 				return err
 			}

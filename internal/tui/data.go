@@ -40,7 +40,7 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 
 	switch sc.kind {
 	case scopeInbox:
-		return inboxRows(ctx, st, now)
+		return inboxRows(ctx, st, now, sc.notice)
 	case scopeRecent:
 		f.ModifiedAfter = now.AddDate(0, 0, -7).UTC().Format(time.RFC3339)
 		f.SortByModified = true
