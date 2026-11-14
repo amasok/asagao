@@ -277,8 +277,11 @@ section: 家具
 ```toml
 [ui]
 image_protocol = "kitty"   # auto / iterm / kitty / open
-inline_images = "auto"     # 本文中に画像を表示するか: auto（kitty 方式のとき）/ on / off
+inline_images = "auto"     # 本文中に画像を表示するか: auto / on / off
 ```
+
+- 本文の途中に貼った画像は、kitty・Ghostty を直接使っているときだけ、詳細画面のその位置に表示します（kitty の Unicode placeholder 方式）。マルチプレクサの中では、herdr のように `i` の全画面表示は映っても本文中の画像は空白になることがあるため、`image_protocol = "kitty"` を指定していても `auto` では表示せず、`[画像N]（i で表示）` と出します。使っている環境で本文中に表示できる場合は `inline_images = "on"` にしてください。
+- 本文中の画像を読み込めなかったときは、`[画像N]（表示できません: 理由）` と出し、ステータスバーに理由を表示します。
 
 ## オフライン編集
 

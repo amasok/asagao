@@ -64,6 +64,27 @@ func Detect(getenv func(string) string) string {
 	return ProtocolOpen
 }
 
+// PlaceholdersSupported reports whether the terminal can surely draw kitty Unicode
+// placeholders (images placed inside text): kitty or Ghostty, not inside a multiplexer.
+// Multiplexers such as herdr may pass ordinary kitty images through (so the full-screen
+// viewer works) but not virtual placements, which then show as blank cells.
+func PlaceholdersSupported(getenv func(string) string) bool {
+	if getenv("TMUX") != "" || getenv("ZELLIJ") != "" || getenv("STY") != "" {
+		return false
+	}
+	term := getenv("TERM")
+	if strings.HasPrefix(term, "tmux") || strings.HasPrefix(term, "screen") {
+		return false
+	}
+	switch getenv("TERM_PROGRAM") {
+	case "ghostty":
+		return true
+	case "":
+		return getenv("KITTY_WINDOW_ID") != "" || term == "xterm-kitty" || term == "xterm-ghostty"
+	}
+	return false // some other terminal, or a multiplexer such as herdr
+}
+
 // Resolve turns "auto" (or "") into a concrete protocol.
 func Resolve(protocol string) string {
 	if protocol == "" || protocol == ProtocolAuto {
