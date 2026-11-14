@@ -33,10 +33,11 @@ func (a *app) mcpCmd() *cobra.Command {
 			}
 			defer st.Close()
 			s := &mcpserver.Server{
-				Store:    st,
-				ReadOnly: readOnly,
-				CacheDir: filepath.Join(config.CacheDir(), "attachments"),
-				Version:  version,
+				Store:      st,
+				ReadOnly:   readOnly,
+				CacheDir:   filepath.Join(config.CacheDir(), "attachments"),
+				Version:    version,
+				AuthScopes: a.cfg.Auth.Scopes,
 				// The syncer outlives the tool call that creates it, so build it with the
 				// server's context, not the request's (token refresh may write to 1Password).
 				NewSyncer: func(context.Context) (*sync.Syncer, error) {

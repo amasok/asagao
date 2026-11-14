@@ -47,6 +47,8 @@ type Deps struct {
 	// RunEditor opens path in the user's editor and reports back with done
 	// (production: tea.ExecProcess with $EDITOR).
 	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
+	// AuthScopes is config auth.scopes (to explain how to enable the inbox).
+	AuthScopes []string
 }
 
 type pane int
@@ -78,7 +80,8 @@ type scopeKind int
 const (
 	scopeMyTasks scopeKind = iota
 	scopeProject
-	scopeRecent // tasks modified in the last 7 days (instead of an inbox)
+	scopeRecent // tasks modified in the last 7 days (when the inbox cannot be fetched)
+	scopeInbox  // Asana notifications (inbox.go)
 )
 
 type scope struct {
@@ -87,6 +90,7 @@ type scope struct {
 	project  string // gid
 	sections []store.SectionView
 	status   string // latest status update type of the project
+	notice   string // scopeRecent: why the inbox is not shown (inbox.go)
 }
 
 // row is one line of the task list: a group header or a task.
@@ -97,10 +101,28 @@ type row struct {
 	collapsed bool
 	depth     int // 0 = task in the list, 1+ = expanded subtask
 	task      *store.TaskSummary
+	notif     *store.Notification // inbox: the notification (task is what it is about, if a task)
+	note      bool                // header is an explanation, not a group (never collapsed)
 }
 
-// selectable rows: tasks, and collapsed group headers (so they can be expanded again).
-func (r row) selectable() bool { return r.task != nil || r.collapsed }
+// selectable rows: tasks, notifications, and collapsed group headers (so they can be
+// expanded again).
+func (r row) selectable() bool { return r.task != nil || r.notif != nil || r.collapsed }
+
+// isHeader reports whether r is a group header (or a note).
+func (r row) isHeader() bool { return r.task == nil && r.notif == nil }
+
+// id identifies a row for keeping the selection across reloads: an inbox row by its
+// notification (several can be about one task), others by their task.
+func (r row) id() string {
+	switch {
+	case r.notif != nil:
+		return "notification:" + r.notif.GID
+	case r.task != nil:
+		return r.task.GID
+	}
+	return ""
+}
 
 // detailRefreshAge: details (comments) older than this are re-fetched when a task is selected.
 const detailRefreshAge = 5 * time.Minute
@@ -152,6 +174,8 @@ type Model struct {
 	showOutbox  bool
 	ops         []store.Op
 	opCursor    int
+	inbox       store.InboxState // whether the notifications can be shown (inbox.go)
+	inboxUnread int
 	discards    []store.Discard // recently dropped changes, newest first (shown in full in the outbox)
 	outboxTop   int             // first line of the outbox overlay on screen (it scrolls)
 
@@ -263,6 +287,8 @@ func newInput() textinput.Model {
 type (
 	scopesLoadedMsg struct {
 		projects []store.ProjectView
+		inbox    store.InboxState
+		unread   int
 		err      error
 	}
 	tasksLoadedMsg struct {
@@ -302,7 +328,14 @@ func (m *Model) loadScopes() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		ps, err := st.ListProjects(m.ctx, true)
-		return scopesLoadedMsg{projects: ps, err: err}
+		msg := scopesLoadedMsg{projects: ps, err: err}
+		if err == nil {
+			msg.inbox, msg.err = st.InboxState(m.ctx)
+		}
+		if msg.err == nil {
+			msg.unread, msg.err = st.UnreadNotifications(m.ctx)
+		}
+		return msg
 	}
 }
 
@@ -470,7 +503,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		before := m.currentScope().sections
+		wasInbox := m.currentScope().kind
+		m.inbox, m.inboxUnread = msg.inbox, msg.unread
 		m.setProjects(msg.projects)
+		if wasInbox != m.currentScope().kind { // the inbox became (un)available
+			return m, m.loadTasks()
+		}
 		// Group headers use section names from the scope, so reload when they changed
 		// (e.g. after a rename or a sync).
 		if !slices.Equal(before, m.currentScope().sections) {
@@ -499,6 +537,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.detail = nil
 			m.status = msg.err.Error()
+			if errors.Is(msg.err, store.ErrNotFound) && m.selectedNotification() != nil {
+				m.status = "通知のタスクはまだ取得していません（オンラインなら自動で取得します）"
+			}
 		} else {
 			keepScroll := m.detail != nil && m.detail.GID == msg.gid
 			m.detail = msg.d
@@ -699,6 +740,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "G", "end":
 			return m, m.moveList(len(m.rows))
 		case "enter":
+			if m.selectedNotification() != nil {
+				return m, m.openNotification()
+			}
 			if m.selectedTask() != nil {
 				return m, m.openDetail()
 			} else if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
@@ -789,14 +833,15 @@ func (m *Model) currentScope() scope {
 
 func (m *Model) setProjects(ps []store.ProjectView) {
 	current := m.currentScope()
-	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, {kind: scopeRecent, name: "最近の更新"}}
+	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, m.inboxScope()}
 	for _, p := range ps {
 		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status})
 	}
 	m.scopes = scopes
 	m.scopeCursor = 0
+	inboxSlot := func(k scopeKind) bool { return k == scopeInbox || k == scopeRecent }
 	for i, s := range scopes {
-		if s.kind == current.kind && s.project == current.project {
+		if (s.kind == current.kind || inboxSlot(s.kind) && inboxSlot(current.kind)) && s.project == current.project {
 			m.scopeCursor = i
 		}
 	}
@@ -827,6 +872,10 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	if t := m.selectedTask(); t != nil {
 		prev = t.GID
 	}
+	prevRow := prev
+	if !m.boardActive() && m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].notif != nil {
+		prevRow = m.rows[m.listCursor].id()
+	}
 	// When a reload of the same scope drops the selected task (completed, moved away), keep
 	// the cursor where it was instead of going back to the top.
 	near := 0
@@ -837,7 +886,7 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	}
 	m.allRows = rows
 	m.rows = m.visibleRows()
-	target := prev
+	target := prevRow
 	if m.selectAfter != "" && m.listed(m.selectAfter) {
 		target = m.selectAfter
 	}
@@ -879,9 +928,14 @@ func (m *Model) selectInList(gid string) { m.selectInListNear(gid, 0) }
 func (m *Model) selectInListNear(gid string, near int) {
 	m.listCursor = -1
 	for i, r := range m.rows {
-		if r.task != nil && r.task.GID == gid {
+		if gid != "" && r.id() == gid {
 			m.listCursor = i
 			break
+		}
+	}
+	for i, r := range m.rows {
+		if m.listCursor < 0 && r.task != nil && r.task.GID == gid {
+			m.listCursor = i
 		}
 	}
 	if m.listCursor < 0 && len(m.rows) > 0 {

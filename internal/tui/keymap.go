@@ -56,6 +56,7 @@ type action struct {
 	ctx         keyCtx
 	needTask    bool // needs a selected (or shown) task
 	needProject bool // needs a project to be open
+	needInbox   bool // only in the inbox (notifications)
 	run         func(m *Model) tea.Cmd
 }
 
@@ -99,6 +100,8 @@ func (m *Model) actions() []action {
 		{id: "sidebar", key: "b", shortcut: []string{"b"}, group: groupView, label: "プロジェクト一覧を隠す / 出す", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("b") }},
 		{id: "wider", key: ">", shortcut: []string{">"}, group: groupView, label: "詳細を広く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey(">") }},
 		{id: "narrower", key: "<", shortcut: []string{"<"}, group: groupView, label: "詳細を狭く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("<") }},
+		{id: "inbox_read", key: "R", shortcut: []string{"R"}, group: groupView, label: "通知を既読 / 未読にする", ctx: ctxList, needInbox: true, run: (*Model).toggleNotificationRead},
+		{id: "inbox_read_all", key: "Y", group: groupView, label: "通知をすべて既読にする", ctx: ctxList, needInbox: true, run: (*Model).markAllNotificationsRead},
 		// project
 		{id: "rename_section", key: "E", shortcut: []string{"E"}, group: groupProject, label: "セクション名を変更", ctx: ctxList | ctxBoard | ctxDetail, run: (*Model).startRenameSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
@@ -140,7 +143,8 @@ func (m *Model) available() []action {
 	hasTask := m.actionTask() != nil
 	var out []action
 	for _, a := range m.withBindings(m.actions()) {
-		if a.ctx&ctx == 0 || (a.needTask && !hasTask) || (a.needProject && m.currentProject() == "") {
+		if a.ctx&ctx == 0 || (a.needTask && !hasTask) || (a.needProject && m.currentProject() == "") ||
+			(a.needInbox && m.currentScope().kind != scopeInbox) {
 			continue
 		}
 		out = append(out, a)

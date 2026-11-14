@@ -454,8 +454,8 @@ func (m *Model) viewKey(key string) tea.Cmd {
 			m.status = "検索中は表示を切り替えられません（esc で検索を解除）"
 			return nil
 		}
-		if m.currentScope().kind == scopeRecent {
-			m.status = "最近の更新はリスト表示だけです"
+		if k := m.currentScope().kind; k == scopeRecent || k == scopeInbox {
+			m.status = m.currentScope().name + "はリスト表示だけです"
 			return nil
 		}
 		selected := m.selectedTask()

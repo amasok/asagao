@@ -191,6 +191,11 @@ func DescribeChange(op Op) string {
 			return fmt.Sprintf("ステータス更新（%s）", StatusLabel(str("status_type")))
 		}
 		return fmt.Sprintf("ステータス更新「%s」", str("title"))
+	case OpMarkNotification:
+		if op.Payload["read"] == true {
+			return "通知を既読にする"
+		}
+		return "通知を未読に戻す"
 	case OpRenameSection:
 		if old, _ := op.Base["name"].(string); old != "" {
 			return fmt.Sprintf("セクション名を「%s」から「%s」に変更", old, str("name"))

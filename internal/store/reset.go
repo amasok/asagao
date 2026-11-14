@@ -110,7 +110,7 @@ func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsen
 		for _, table := range []string{
 			"task_memberships", "task_tags", "task_followers", "task_details", "attachments", "stories",
 			"tasks", "sections", "project_members", "status_updates", "projects", "tags", "users",
-			"workspaces", "outbox", "sync_state",
+			"workspaces", "outbox", "sync_state", "notifications",
 		} {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 				return err

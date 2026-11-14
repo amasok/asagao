@@ -112,7 +112,8 @@ func refreshTarget(op store.Op) string {
 	}
 	switch op.Kind {
 	case store.OpCreateTask, store.OpDuplicateTask, // the task was local and is gone
-		store.OpRenameSection, store.OpCreateStatus: // task_gid is a section / project
+		store.OpRenameSection, store.OpCreateStatus, // task_gid is a section / project
+		store.OpMarkNotification: // task_gid is a notification
 		return ""
 	}
 	return op.TaskGID

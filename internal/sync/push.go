@@ -315,7 +315,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op store.Op) (bool, error) 
 	switch op.Kind {
 	case store.OpCreateTask:
 		gid, _ = op.Payload["parent"].(string)
-	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection:
+	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection, store.OpMarkNotification:
 		return false, nil
 	}
 	if !store.IsLocalGID(gid) {
@@ -352,6 +352,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 		err = s.pushUpload(ctx, op)
 	case store.OpCreateStatus:
 		err = s.pushStatus(ctx, op)
+	case store.OpMarkNotification:
+		err = s.pushMarkNotification(ctx, op)
 	default:
 		err = &asana.Error{Status: 400}
 	}
@@ -458,7 +460,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case store.OpRenameSection, store.OpCreateStatus:
+	case store.OpRenameSection, store.OpCreateStatus, store.OpMarkNotification:
 		var d store.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []store.Discard{d}

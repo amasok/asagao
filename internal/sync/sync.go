@@ -155,6 +155,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 	res.Workspaces = len(workspaces)
 
+	inbox := true // the notifications of every workspace were fetched
 	for _, w := range workspaces {
 		if users, err := s.API.Users(ctx, w.GID); err == nil { // members, for choosing an assignee
 			if err := s.Store.UpsertUsers(ctx, users); err != nil {
@@ -216,6 +217,33 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				return res, err
 			}
 			res.Projects++
+		}
+
+		if inbox {
+			s.progress("ワークスペース %s: 受信トレイ", w.Name)
+			ok, err := s.syncInbox(ctx, w.GID)
+			switch {
+			case err == nil:
+				inbox = ok
+			case isNetworkError(err):
+				return res, fmt.Errorf("%s の通知の取得: %w", w.Name, err)
+			case isTemporary(err): // Asana is having trouble: keep the cached notifications
+				inbox = false
+			default:
+				return res, err
+			}
+		}
+	}
+	if inbox && len(workspaces) > 0 {
+		if err := s.Store.SetInboxState(ctx, store.InboxState{Status: store.InboxOK}); err != nil {
+			return res, err
+		}
+	}
+	if st, err := s.Store.InboxState(ctx); err != nil {
+		return res, err
+	} else if st.Available() {
+		if err := s.fetchNotificationTargets(ctx, keep, res.Full, upsert); err != nil {
+			return res, err
 		}
 	}
 

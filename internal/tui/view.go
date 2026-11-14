@@ -91,7 +91,7 @@ func (m *Model) ensureListVisible() {
 	if m.listCursor < m.listOffset {
 		m.listOffset = m.listCursor
 		// show the group header above the first task when scrolling up
-		if m.listOffset > 0 && m.rows[m.listOffset-1].task == nil {
+		if m.listOffset > 0 && m.rows[m.listOffset-1].isHeader() {
 			m.listOffset--
 		}
 	}
@@ -293,6 +293,8 @@ func (m *Model) sidebarLines(w, h int) []string {
 			label = "★ " + label
 		case scopeRecent:
 			label = "◷ " + label
+		case scopeInbox:
+			label = "✉ " + label
 		default:
 			label = "  " + label
 		}
@@ -305,12 +307,15 @@ func (m *Model) sidebarLines(w, h int) []string {
 func (m *Model) listTitle() string {
 	n := 0
 	for _, r := range m.allRows {
-		if r.task != nil && r.depth == 0 {
+		if r.notif == nil && r.task != nil && r.depth == 0 {
 			n++
 		}
 	}
 	if m.query != "" {
 		return fmt.Sprintf("検索 (%d)", n)
+	}
+	if m.currentScope().kind == scopeInbox {
+		return fmt.Sprintf("通知 (未読 %d)", m.inboxUnread)
 	}
 	return fmt.Sprintf("タスク (%d)", n)
 }
@@ -328,6 +333,14 @@ func (m *Model) listLines(w, h int) []string {
 	lines := make([]string, 0, end-m.listOffset)
 	for i := m.listOffset; i < end; i++ {
 		r := m.rows[i]
+		if r.note {
+			lines = append(lines, m.st.dim.Render(ansi.Truncate(r.header, w, "…")))
+			continue
+		}
+		if r.notif != nil {
+			lines = append(lines, m.notificationLine(r.notif, w, i == m.listCursor))
+			continue
+		}
 		if r.task == nil {
 			header := "▾ " + r.header
 			if r.collapsed {
