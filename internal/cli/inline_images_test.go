@@ -11,7 +11,10 @@ func TestInlineImagesEnabled(t *testing.T) {
 		return func(k string) string { return m[k] }
 	}
 	ghostty := []string{"TERM_PROGRAM", "ghostty", "TERM", "xterm-ghostty", "GHOSTTY_RESOURCES_DIR", "/g"}
-	herdr := []string{"TERM_PROGRAM", "herdr", "TMUX", "/tmp/herdr-teams-x/tmux-fake,0,0", "GHOSTTY_RESOURCES_DIR", "/g", "TERM", "xterm-ghostty"}
+	// herdr's real environment inside Ghostty: no TMUX, TERM_PROGRAM names herdr.
+	herdr := []string{"TERM_PROGRAM", "herdr", "TERM_PROGRAM_VERSION", "0.9.5", "TERM", "xterm-256color", "HERDR_ENV", "1", "GHOSTTY_RESOURCES_DIR", "/g"}
+	// A shell inside herdr that set TERM_PROGRAM back to ghostty.
+	herdrNested := []string{"TERM_PROGRAM", "ghostty", "TERM", "xterm-ghostty", "HERDR_ENV", "1", "GHOSTTY_RESOURCES_DIR", "/g"}
 	for _, c := range []struct {
 		name, setting, protocol string
 		env                     []string
@@ -24,6 +27,9 @@ func TestInlineImagesEnabled(t *testing.T) {
 		// images but leaves Unicode placeholders blank, so auto must not use them.
 		{"herdr kitty", "auto", "kitty", herdr, false},
 		{"herdr forced on", "on", "kitty", herdr, true},
+		{"herdr auto protocol", "auto", "auto", herdr, false},
+		{"herdr nested shell", "auto", "kitty", herdrNested, false},
+		{"herdr without HERDR_ENV", "auto", "kitty", []string{"TERM_PROGRAM", "herdr", "TERM", "xterm-256color", "GHOSTTY_RESOURCES_DIR", "/g"}, false},
 		{"tmux in ghostty", "auto", "kitty", []string{"TMUX", "/tmp/tmux", "TERM", "tmux-256color", "GHOSTTY_RESOURCES_DIR", "/g"}, false},
 		{"zellij", "auto", "kitty", append([]string{"ZELLIJ", "0"}, ghostty...), false},
 		{"iterm protocol", "auto", "iterm", ghostty, false},

@@ -65,11 +65,12 @@ func Detect(getenv func(string) string) string {
 }
 
 // PlaceholdersSupported reports whether the terminal can surely draw kitty Unicode
-// placeholders (images placed inside text): kitty or Ghostty, not inside a multiplexer.
+// placeholders (images placed inside text): kitty or Ghostty, not inside a multiplexer
+// (TMUX, ZELLIJ, STY, HERDR_ENV, or TERM_PROGRAM naming another program such as herdr).
 // Multiplexers such as herdr may pass ordinary kitty images through (so the full-screen
 // viewer works) but not virtual placements, which then show as blank cells.
 func PlaceholdersSupported(getenv func(string) string) bool {
-	if getenv("TMUX") != "" || getenv("ZELLIJ") != "" || getenv("STY") != "" {
+	if getenv("TMUX") != "" || getenv("ZELLIJ") != "" || getenv("STY") != "" || getenv("HERDR_ENV") != "" {
 		return false
 	}
 	term := getenv("TERM")
