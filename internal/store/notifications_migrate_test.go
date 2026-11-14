@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,11 +36,7 @@ func TestMigrateStoreFromBeforeInbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Back to the state of a store written before this migration (and every later one).
-	for _, q := range []string{"DROP TABLE notifications", fmt.Sprintf("PRAGMA user_version = %d", idx)} {
-		if _, err := st.db.ExecContext(ctx, q); err != nil {
-			t.Fatal(err)
-		}
-	}
+	rollbackTo(t, st.db, idx)
 	st.Close()
 
 	st, err = Open(ctx, path)
