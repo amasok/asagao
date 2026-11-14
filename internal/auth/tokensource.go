@@ -19,6 +19,12 @@ import (
 var ErrNotLoggedIn = errors.New("ログインしていません。`asana-tui auth login --pat` で Personal Access Token（" + PATConsoleURL +
 	" で作成）を登録するか、`asana-tui auth login` で OAuth ログインしてください")
 
+// ErrLoginReplaced is returned by a running OAuth session when the store now holds a login
+// for another (or an unknown) user, made meanwhile in another process. It is not adopted:
+// the caller must build its client again, so the account check of the next sync applies
+// (sync.ErrAccountChanged) and nothing is sent as the other user by this session.
+var ErrLoginReplaced = errors.New("別の場所で別のアカウントにログインし直されました。新しいログインで同期し直します")
+
 // EnvToken is the environment variable for a Personal Access Token (fallback for dev / headless).
 const EnvToken = "ASANA_TOKEN"
 
@@ -51,6 +57,8 @@ func LoginHelp(err error) string {
 	switch {
 	case errors.Is(err, ErrNotLoggedIn):
 		return ErrNotLoggedIn.Error()
+	case errors.Is(err, ErrLoginReplaced):
+		return ErrLoginReplaced.Error()
 	case errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized:
 		if apiErr.Hint != "" {
 			return apiErr.Hint
@@ -107,9 +115,13 @@ func patSource(pat string) oauth2.TokenSource {
 // persistingSource saves refreshed tokens back to the store.
 // For stores that don't cache access tokens (1Password), it writes only when Asana rotates the refresh token.
 //
-// Before writing, it reads the store again: if another process logged in meanwhile (a PAT,
-// another OAuth login) that login is adopted instead of being overwritten with ours, so a
-// running TUI or MCP server switches to it; after a logout it reports ErrNotLoggedIn.
+// Before writing, it reads the store again so a login made meanwhile in another process is
+// never overwritten with ours: the same user's new login (a PAT, another OAuth grant) is
+// adopted, so a running TUI or MCP server switches to it; another user's is not
+// (ErrLoginReplaced); after a logout it reports ErrNotLoggedIn.
+//
+// Once a PAT is adopted the store is not read again (a PAT is never saved back): a later
+// logout or login is noticed only when Asana rejects the PAT (401) or the process restarts.
 type persistingSource struct {
 	ctx   context.Context
 	base  oauth2.TokenSource
@@ -144,6 +156,9 @@ func (p *persistingSource) token() (*oauth2.Token, error) {
 		if errors.As(err, &re) && re.ErrorCode == "invalid_grant" {
 			// Our refresh token is no longer valid: use a login made meanwhile, if any.
 			changed, lerr := p.reload()
+			if errors.Is(lerr, ErrLoginReplaced) {
+				return nil, lerr
+			}
 			if lerr != nil || !changed {
 				return nil, ErrNotLoggedIn
 			}
@@ -179,9 +194,9 @@ func (p *persistingSource) token() (*oauth2.Token, error) {
 	return tok, nil
 }
 
-// reload reads the stored credentials. If they are another login than ours (a PAT, or
-// another refresh token), it switches to them and reports changed. Nothing stored (a
-// logout) is ErrNotLoggedIn.
+// reload reads the stored credentials. If they are another login of the same user (a PAT,
+// or another refresh token), it switches to them and reports changed. Another or an
+// unknown user is ErrLoginReplaced; nothing stored (a logout) is ErrNotLoggedIn.
 func (p *persistingSource) reload() (changed bool, err error) {
 	cur, err := p.store.Load(p.ctx)
 	if errors.Is(err, tokenstore.ErrNotFound) {
@@ -192,6 +207,9 @@ func (p *persistingSource) reload() (changed bool, err error) {
 	}
 	if cur.Method() == tokenstore.MethodOAuth && cur.RefreshToken == p.creds.RefreshToken {
 		return false, nil
+	}
+	if cur.UserGID == "" || cur.UserGID != p.creds.UserGID {
+		return false, ErrLoginReplaced
 	}
 	p.creds = *cur
 	if cur.Method() == tokenstore.MethodPAT {

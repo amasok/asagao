@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -33,6 +34,9 @@ type Syncer struct {
 	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
 	sleep    func(context.Context, time.Duration) error // replaced in tests
+	// accountOK is set once Asana answered as the account the local data belongs to, so
+	// Push asks /users/me only once per Syncer (see checkPushAccount).
+	accountOK atomic.Bool
 }
 
 // wait pauses for d (or until ctx is done).
@@ -104,6 +108,8 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, err
 	} else if want != "" && me.GID != want {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	} else if want != "" {
+		s.accountOK.Store(true)
 	}
 	// The whole sync holds the push lock: no other process sends meanwhile, and the store
 	// cannot be reset (store.Reset) between our push and our pull, which would bring the

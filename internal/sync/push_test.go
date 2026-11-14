@@ -1006,6 +1006,8 @@ func TestProjectOperations(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		calls = append(calls, r.Method+" "+r.URL.Path+" "+string(b))
 		switch {
+		case r.URL.Path == "/users/me": // Push checks the account first
+			fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
 		case r.URL.Path == "/projects" && r.Method == http.MethodPost:
 			fmt.Fprint(w, `{"data":{"gid":"P9","name":"新規","workspace":{"gid":"w1"},"members":[{"gid":"me","name":"Me"}]}}`)
 		case r.URL.Path == "/projects/P9/sections":
@@ -2408,11 +2410,16 @@ func TestPushDropsStatusOfDeletedProject(t *testing.T) {
 }
 
 // Logged in as someone else: Asana answers 404 for the old account's tasks. Nothing is
-// dropped; the push stops with ErrAccountChanged.
+// dropped; the push stops with ErrAccountChanged. With a known local account Push checks
+// it before sending anything (nothing is sent as the other user); without one (no sync
+// yet) the check comes before the first drop.
 func TestPushDoesNotDropWhenAccountChanged(t *testing.T) {
-	for _, tc := range []struct{ name, storedMe, apiMe string }{
-		{"other user", "me", "someone-else"},
-		{"local user unknown", "", "me"}, // no sync yet: cannot tell whose data this is
+	for _, tc := range []struct {
+		name, storedMe, apiMe string
+		failed                int // entries marked failed (the one whose 404 led to the check)
+	}{
+		{"other user", "me", "someone-else", 0},
+		{"local user unknown", "", "me", 1}, // no sync yet: cannot tell whose data this is
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, _, s, st := setupPush(t)
@@ -2429,14 +2436,18 @@ func TestPushDoesNotDropWhenAccountChanged(t *testing.T) {
 				return false
 			})
 			res, err := s.Push(ctx)
-			if !errors.Is(err, ErrAccountChanged) || len(res.Discarded) != 0 || res.Failed != 1 {
+			if !errors.Is(err, ErrAccountChanged) || len(res.Discarded) != 0 || res.Failed != tc.failed {
 				t.Fatalf("push = %+v %v", res, err)
 			}
 			if _, err := st.GetTask(ctx, "t2"); err != nil {
 				t.Fatal("the task must not be removed")
 			}
 			ops, _ := st.ListOps(ctx)
-			if len(ops) != 2 || ops[0].State != store.OpFailed || ops[1].State != store.OpPending {
+			first := store.OpPending
+			if tc.failed == 1 {
+				first = store.OpFailed
+			}
+			if len(ops) != 2 || ops[0].State != first || ops[1].State != store.OpPending || (tc.failed == 0 && ops[0].Attempts+ops[1].Attempts != 0) {
 				t.Fatalf("entries = %+v", ops)
 			}
 			if d, _ := st.PendingDiscards(ctx); len(d) != 0 {

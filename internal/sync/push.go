@@ -84,8 +84,36 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		return res, err
 	}
 	defer unlock()
+	if err := s.checkPushAccount(ctx); err != nil {
+		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
+		return res, err
+	}
 	res, _, err = s.pushLocked(ctx, &dropState{})
 	return res, err
+}
+
+// checkPushAccount makes sure, before Push sends anything, that the API acts as the user
+// the local data was synced with: changes queued by one account must never be sent as
+// another (after a login as someone else). Run checks this itself at its start. Before the
+// first sync there is no account to compare with. Once confirmed, it is not asked again
+// for this Syncer: its token source never switches to another user (auth.ErrLoginReplaced).
+func (s *Syncer) checkPushAccount(ctx context.Context) error {
+	if s.accountOK.Load() {
+		return nil
+	}
+	want, err := s.Store.SyncState(ctx, store.KeyMeGID)
+	if err != nil || want == "" {
+		return err
+	}
+	me, err := s.API.Me(ctx)
+	if err != nil {
+		return err // offline or logged out: nothing could be sent anyway
+	}
+	if me.GID != want {
+		return fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	}
+	s.accountOK.Store(true)
+	return nil
 }
 
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
@@ -495,6 +523,10 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 	if st.checked {
 		return st.account
 	}
+	if s.accountOK.Load() { // confirmed by this Syncer already (Push or Run)
+		st.checked = true
+		return nil
+	}
 	me, err := s.API.Me(ctx)
 	if err != nil {
 		if isTemporary(err) {
@@ -550,7 +582,7 @@ func isNetworkError(err error) bool {
 // the server (no connection could be made, or no token: logged out, refresh failed).
 func requestNotSent(err error) bool {
 	var retrieveErr *oauth2.RetrieveError
-	if errors.Is(err, auth.ErrNotLoggedIn) || errors.As(err, &retrieveErr) {
+	if errors.Is(err, auth.ErrNotLoggedIn) || errors.Is(err, auth.ErrLoginReplaced) || errors.As(err, &retrieveErr) {
 		return true
 	}
 	var opErr *net.OpError

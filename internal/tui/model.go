@@ -550,6 +550,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if loginHelp != "" || errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.syncer = nil
 		}
+		if errors.Is(msg.err, auth.ErrLoginReplaced) {
+			m.syncAgain = true // check the new login's account now, not in 5 minutes
+		}
 		// Another asana-tui (CLI, MCP server, another TUI) is syncing or sending: not an
 		// error and not offline. Keep the last state and quietly try again soon.
 		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)

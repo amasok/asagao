@@ -129,8 +129,9 @@ func TestPushVerifyUnauthorizedKeepsVerifying(t *testing.T) {
 	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "届いたかも"}, now)
 	ws.setFailAfter("POST /tasks", 1) // created, but the answer is lost
 	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet {
-			return revoked(rw, r) // the token is revoked right after
+		// Push confirms the account first; the token is revoked right after.
+		if r.Method == http.MethodGet && r.URL.Path != "/users/me" {
+			return revoked(rw, r)
 		}
 		return false
 	})

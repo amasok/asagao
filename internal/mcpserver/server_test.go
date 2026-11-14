@@ -226,6 +226,8 @@ func fakeAsana(t *testing.T) *httptest.Server {
 		}
 		_ = json.Unmarshal(b, &body)
 		switch {
+		case r.URL.Path == "/users/me": // Push checks the account first
+			fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/tasks":
 			fmt.Fprintf(w, `{"data":{"gid":"999","name":%q,"assignee":{"gid":"me"}}}`, body.Data["name"])
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/tasks/"):
