@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -117,10 +118,13 @@ func (m *Model) imageBlock(gid string, width, n int) []string {
 	img := m.inline[gid]
 	if !m.deps.InlineImages || img == nil || img.png == nil {
 		hint := "（i で表示）"
-		if m.deps.InlineImages && img != nil && img.loading {
+		switch {
+		case m.deps.InlineImages && img != nil && img.loading:
 			hint = "（読み込み中…）"
+		case m.deps.InlineImages && img != nil && img.err != nil:
+			hint = "（表示できません: " + shortError(img.err, max(10, width-ansi.StringWidth(label)-20)) + "）"
 		}
-		return []string{label + m.st.dim.Render(hint)}
+		return []string{ansi.Truncate(label+m.st.dim.Render(hint), max(1, width), "…")}
 	}
 	maxRows := min(imageview.MaxPlaceholderCells, max(4, m.listHeight()-2))
 	cw, ch := m.cellW, m.cellH
@@ -141,12 +145,12 @@ func (m *Model) prepareInline() tea.Cmd {
 	}
 	syncer := m.syncer
 	if syncer == nil {
-		syncer = &sync.Syncer{Store: m.deps.Store}
+		syncer = &sync.Syncer{Store: m.deps.Store, CacheDir: m.deps.CacheDir} // offline: cached files only
 	}
 	var cmds []tea.Cmd
 	for _, gid := range taskImages(d) {
 		if img := m.inline[gid]; img != nil && (img.loading || img.png != nil) {
-			continue
+			continue // loading or loaded; failed images are tried again
 		}
 		if m.inline == nil {
 			m.inline = map[string]*inlineImage{}
@@ -163,6 +167,9 @@ func (m *Model) prepareInline() tea.Cmd {
 				return inlineLoadedMsg{gid: gid, err: err}
 			}
 			png, w, h, err := imageview.ToPNG(data)
+			if err != nil {
+				err = fmt.Errorf("画像として読めません（%s）: %w", filepath.Base(path), err)
+			}
 			return inlineLoadedMsg{gid: gid, png: png, pxW: w, pxH: h, err: err}
 		})
 	}
@@ -177,12 +184,27 @@ func (m *Model) onInlineLoaded(msg inlineLoadedMsg) {
 	}
 	img.loading, img.err = false, msg.err
 	if msg.err != nil {
-		delete(m.inline, msg.gid) // retry next time the task is opened
+		// Keep the error so the image line says why; prepareInline tries again next time.
+		if d := m.detail; d != nil {
+			for i, g := range taskImages(d) {
+				if g == msg.gid {
+					m.status = fmt.Sprintf("画像%d を表示できません: %s", i+1, msg.err.Error())
+					break
+				}
+			}
+		}
+		m.refreshDetailView()
 		return
 	}
 	m.nextImageID = m.nextImageID%255 + 1
 	img.id, img.png, img.pxW, img.pxH = m.nextImageID, msg.png, msg.pxW, msg.pxH
 	m.refreshDetailView()
+}
+
+// shortError is err's message on one line, at most width cells.
+func shortError(err error, width int) string {
+	msg := strings.Join(strings.Fields(err.Error()), " ")
+	return ansi.Truncate(msg, width, "…")
 }
 
 // flushInline sends images whose placement size changed, then re-renders the detail so the

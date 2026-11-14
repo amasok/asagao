@@ -645,6 +645,7 @@ func TestPushRenameSection(t *testing.T) {
 
 func TestDownloadAttachment(t *testing.T) {
 	ctx := context.Background()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir()) // the offline syncer below uses the default cache dir
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -2632,5 +2633,29 @@ func TestPushDropLimitSpansCatchUp(t *testing.T) {
 	}
 	if mes != 1 {
 		t.Fatalf("account checked %d times, want once", mes)
+	}
+}
+
+func TestDownloadAttachmentFindsCachedFileWithoutRecordedPath(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	dir := t.TempDir()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T"}})
+	_ = st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "78", Name: "shot 1.png"}})
+	// Renamed by an earlier run whose path update did not reach the database.
+	cached := filepath.Join(dir, "78-shot_1.png")
+	_ = os.WriteFile(cached, []byte("png"), 0o600)
+	_ = st.SetAttachmentPath(ctx, "78", filepath.Join(dir, "78-shot 1.png")) // no longer exists
+
+	path, err := (&Syncer{Store: st, CacheDir: dir}).DownloadAttachment(ctx, "t1", "78") // offline
+	if err != nil || path != cached {
+		t.Fatalf("path = %q, %v; want %q", path, err, cached)
+	}
+	if a, _ := st.GetAttachment(ctx, "78"); a.LocalPath != cached {
+		t.Fatalf("stored path = %q", a.LocalPath)
 	}
 }

@@ -22,8 +22,17 @@ import (
 
 var testNow = time.Date(2026, 11, 13, 10, 0, 0, 0, time.Local)
 
+// isolateDirs points the XDG cache and data directories at temporary ones, so tests never
+// write downloaded images (or anything else) into the real ~/.cache/asana-tui.
+func isolateDirs(t *testing.T) {
+	t.Helper()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+}
+
 func fixtureStore(t *testing.T) *store.Store {
 	t.Helper()
+	isolateDirs(t)
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
 	if err != nil {
