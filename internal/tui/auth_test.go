@@ -67,3 +67,26 @@ func TestSyncLoginProblemRebuildsSyncer(t *testing.T) {
 		t.Fatal("an unrelated error should keep the syncer")
 	}
 }
+
+// A login as someone else made in another terminal (auth.ErrLoginReplaced): the TUI syncs
+// again at once with a new syncer, so the account check applies without waiting.
+func TestLoginReplacedSyncsAgainAtOnce(t *testing.T) {
+	calls := 0
+	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow },
+		NewSyncer: func(context.Context) (*sync.Syncer, error) {
+			calls++
+			return nil, errors.New("offline")
+		}})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 220, Height: 30})
+	built := &sync.Syncer{}
+	m.syncer = built
+	m.syncing = true
+	h.send(syncDoneMsg{syncer: built, err: fmt.Errorf("push: %w", auth.ErrLoginReplaced), at: testNow})
+	if m.syncer == built {
+		t.Fatal("the syncer should be dropped")
+	}
+	if calls != 1 {
+		t.Fatalf("a new syncer should be built right away (NewSyncer called %d times)", calls)
+	}
+}
