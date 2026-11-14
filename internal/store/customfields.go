@@ -175,6 +175,17 @@ func normalizeCFValue(v any) any {
 	return v
 }
 
+// CustomFieldAPIValue is a stored value as PUT /tasks sends it: the same, except that a
+// date goes as {"date": "YYYY-MM-DD"} (Asana rejects a plain string for date fields,
+// although its reference shows one; see the custom fields guide and forum). nil clears.
+func CustomFieldAPIValue(fieldType string, v any) any {
+	v = normalizeCFValue(v)
+	if s, ok := v.(string); ok && fieldType == CFDate {
+		return map[string]any{"date": s}
+	}
+	return v
+}
+
 // ServerCustomField finds a field on a task fetched from Asana: its value (stored form)
 // and display text. found is false if the task does not have the field (any more).
 func ServerCustomField(t *asana.Task, fieldGID string) (value any, display string, found bool) {
@@ -699,7 +710,7 @@ func (s *Store) SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID strin
 				if value == nil {
 					delete(cfs, fieldGID)
 				} else {
-					cfs[fieldGID] = value
+					cfs[fieldGID] = CustomFieldAPIValue(d.Type, value) // sent as is with the create
 				}
 				if len(cfs) == 0 {
 					delete(op.Payload, "custom_fields")

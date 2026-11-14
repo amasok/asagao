@@ -188,3 +188,15 @@ func TestReplaceLocalTaskGIDMovesCustomFields(t *testing.T) {
 		t.Fatalf("field after the gid change = %+v", f)
 	}
 }
+
+func TestCustomFieldAPIValue(t *testing.T) {
+	if got := CustomFieldAPIValue(CFDate, "2026-12-01"); !sameValue(got, map[string]any{"date": "2026-12-01"}) {
+		t.Errorf("date = %v", got)
+	}
+	if got := CustomFieldAPIValue(CFDate, nil); got != nil {
+		t.Errorf("clearing a date = %v", got)
+	}
+	if got := CustomFieldAPIValue(CFMultiEnum, []any{"b", "a"}); !sameValue(got, []string{"a", "b"}) {
+		t.Errorf("multi_enum = %v", got)
+	}
+}

@@ -509,6 +509,10 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 				return ferr
 			}
 		} else {
+			if op.Kind == store.OpAddDependency || op.Kind == store.OpRemoveDependency {
+				// the other task is missing, or private to someone else
+				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			}
 			var d store.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 			discards = []store.Discard{d}
@@ -627,7 +631,10 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 		if k == "html_notes" {
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
-		sv := current[k]
+		sv, known := current[k]
+		if !known {
+			continue // not fetched (Task.Partial): nothing to compare with
+		}
 		if !same(sv, op.Base[k]) && !same(sv, local) {
 			conflicts[k] = sv
 		}
@@ -662,15 +669,23 @@ func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, err
 	if err != nil {
 		return sent, err
 	}
-	sv, display, found := store.ServerCustomField(server, field)
-	if !found {
-		return sent, &asana.Error{Status: http.StatusNotFound} // removed from the task's projects
-	}
 	local := op.Payload["value"]
-	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
-		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
+	if !server.Partial { // else Asana gave no custom fields to compare with: just send
+		sv, display, found := store.ServerCustomField(server, field)
+		if !found {
+			return sent, &asana.Error{Status: http.StatusNotFound} // removed from the task's projects
+		}
+		if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
+			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
+		}
 	}
-	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: local}})
+	fieldType, _ := op.Payload["type"].(string)
+	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: store.CustomFieldAPIValue(fieldType, local)}})
+	var apiErr *asana.Error
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
+		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
+		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
+	}
 	if err != nil {
 		return sent, err
 	}

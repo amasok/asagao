@@ -169,9 +169,13 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET liked = ?, num_likes = ?, approval_status = ? WHERE gid = ?",
-		t.Liked, t.NumLikes, t.ApprovalStatus, t.GID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET liked = ?, num_likes = ? WHERE gid = ?", t.Liked, t.NumLikes, t.GID); err != nil {
 		return err
+	}
+	if !t.Partial { // fetched without the optional fields: keep what is known
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET approval_status = ? WHERE gid = ?", t.ApprovalStatus, t.GID); err != nil {
+			return err
+		}
 	}
 	if err := upsertTaskDependencies(ctx, tx, t); err != nil {
 		return err
@@ -263,6 +267,13 @@ func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, er
 			if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO keep_tasks(gid) VALUES(?)", gid); err != nil {
 				return err
 			}
+		}
+		// Tasks linked by a dependency stay known by name and state (task_refs).
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO task_refs(gid, name, completed, resource_subtype)
+			SELECT gid, name, completed, resource_subtype FROM tasks
+			WHERE gid NOT IN (SELECT gid FROM keep_tasks) AND gid NOT IN (SELECT task_gid FROM outbox)
+			  AND (gid IN (SELECT dependency_gid FROM task_dependencies) OR gid IN (SELECT task_gid FROM task_dependencies))`); err != nil {
+			return err
 		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM tasks
 			WHERE gid NOT IN (SELECT gid FROM keep_tasks)

@@ -161,13 +161,20 @@ func (m *Model) toggleFieldOption(p *picker, item pickerItem) tea.Cmd {
 			gids = append(gids, it.value)
 		}
 	}
-	if m.fieldSaving {
-		m.fieldQueued = &queuedField{task: p.task, field: p.field, value: gids}
+	key := fieldKey(p.task.GID, p.field.GID)
+	if m.fieldSaving == nil {
+		m.fieldSaving, m.fieldQueued = map[string]bool{}, map[string]*queuedField{}
+	}
+	if m.fieldSaving[key] {
+		m.fieldQueued[key] = &queuedField{task: p.task, field: p.field, value: gids}
 		return nil
 	}
-	m.fieldSaving = true
+	m.fieldSaving[key] = true
 	return m.setField(p.task, p.field, gids, true)
 }
+
+// fieldKey identifies a field of a task: saves of one field are made one at a time.
+func fieldKey(task, field string) string { return task + "\x00" + field }
 
 // queuedField is a multi_enum value to save once the change being saved is done.
 type queuedField struct {
@@ -255,25 +262,29 @@ func (m *Model) updateFields(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
 			if msg.reopen { // show what is stored; later toggles built on the failed one
-				m.fieldSaving, m.fieldQueued = false, nil
+				key := fieldKey(msg.task.GID, msg.field)
+				delete(m.fieldSaving, key)
+				delete(m.fieldQueued, key)
 				return m.reopenFieldPicker(msg.task, msg.field), true
 			}
 			return nil, true
 		}
 		m.status = msg.status
 		if msg.reopen {
-			m.fieldSaving = false
-			if q := m.fieldQueued; q != nil { // toggled meanwhile: save that next
-				m.fieldQueued, m.fieldSaving = nil, true
+			key := fieldKey(msg.task.GID, msg.field)
+			if q := m.fieldQueued[key]; q != nil { // toggled meanwhile: save that next
+				delete(m.fieldQueued, key)
 				return tea.Batch(m.afterWrite(), m.setField(q.task, q.field, q.value, true)), true
 			}
+			delete(m.fieldSaving, key)
 			return tea.Batch(m.afterWrite(), m.reopenFieldPicker(msg.task, msg.field)), true
 		}
 		return m.afterWrite(), true
 	case fieldPickerMsg:
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
-		} else if msg.field.GID != "" && m.picker != nil && m.picker.kind == pickFieldMulti && !m.fieldSaving {
+		} else if msg.field.GID != "" && m.picker != nil && m.picker.kind == pickFieldMulti &&
+			!m.fieldSaving[fieldKey(msg.task.GID, msg.field.GID)] {
 			m.showFieldPicker(msg.task, msg.field)
 		}
 		return nil, true

@@ -34,7 +34,7 @@ func TestMultiEnumQuickTogglesKeepEachOther(t *testing.T) {
 	if got := d.CustomFields[0].Value; !sameStrings(got, []string{"a", "b"}) {
 		t.Fatalf("value = %v", got)
 	}
-	if h.m.fieldSaving || h.m.fieldQueued != nil {
+	if len(h.m.fieldSaving)+len(h.m.fieldQueued) != 0 {
 		t.Fatal("nothing should be left to save")
 	}
 }
@@ -56,5 +56,36 @@ func TestFieldPromptStartsWithRawNumber(t *testing.T) {
 	f := store.CustomFieldView{Type: store.CFNumber, Value: 1000.0, Display: "¥1,000"}
 	if got := fieldInput(f); got != "1000" {
 		t.Fatalf("input = %q", got)
+	}
+}
+
+// A toggle queued for one field is kept when another field is toggled meanwhile.
+func TestQueuedTogglesOfDifferentFieldsAreKept(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	st, ctx := h.m.deps.Store, context.Background()
+	opts := []asana.EnumOption{{GID: "a", Name: "A"}, {GID: "b", Name: "B"}}
+	if err := st.ReplaceProjectCustomFields(ctx, "p1", []asana.CustomFieldSetting{
+		{CustomField: asana.CustomField{GID: "cf", Name: "ラベル", ResourceSubtype: store.CFMultiEnum, EnumOptions: opts}},
+		{CustomField: asana.CustomField{GID: "cg", Name: "分類", ResourceSubtype: store.CFMultiEnum, EnumOptions: opts}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := st.GetTask(ctx, "t1")
+	h.m.showFieldPicker(d.TaskSummary, d.CustomFields[0])
+	p1 := h.m.picker
+	saveCF := h.m.toggleFieldOption(p1, p1.items[0]) // cf: A, being saved
+	h.m.toggleFieldOption(p1, p1.items[1])           // cf: A+B, queued
+	h.m.showFieldPicker(d.TaskSummary, d.CustomFields[1])
+	p2 := h.m.picker
+	saveCG := h.m.toggleFieldOption(p2, p2.items[1]) // cg: B, its own save
+	h.run(saveCG)
+	h.run(saveCF)
+	d, _ = st.GetTask(ctx, "t1")
+	values := map[string]any{}
+	for _, f := range d.CustomFields {
+		values[f.GID] = f.Value
+	}
+	if !sameStrings(values["cf"], []string{"a", "b"}) || !sameStrings(values["cg"], []string{"b"}) {
+		t.Fatalf("values = %v", values)
 	}
 }

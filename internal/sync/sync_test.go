@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -283,5 +284,45 @@ func TestRunSendsChangesQueuedDuringPull(t *testing.T) {
 	res, err := (&Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}).Run(ctx, true)
 	if err != nil || res.Push.Sent != 1 || res.Push.Remaining != 0 || len(fake.puts) != 1 {
 		t.Fatalf("run = %+v %v (puts %v)", res.Push, err, fake.puts)
+	}
+}
+
+// A workspace that refuses the optional task fields (custom fields, dependencies,
+// approvals; e.g. a free plan answering 402 or 400) still syncs every task, without them.
+func TestRunWithoutOptionalTaskFields(t *testing.T) {
+	for _, status := range []int{http.StatusPaymentRequired, http.StatusBadRequest} {
+		fake := &fakeAsana{t: t, projectTasks: `[{"gid":"t2","name":"Project task","memberships":[{"project":{"gid":"p1"},"section":{"gid":"s1"}}]}]`}
+		refused := 0
+		inner := fake.handler()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/tasks") && strings.Contains(r.URL.Query().Get("opt_fields"), "dependencies") {
+				refused++
+				w.WriteHeader(status)
+				fmt.Fprint(w, `{"errors":[{"message":"not available"}]}`)
+				return
+			}
+			inner.ServeHTTP(w, r)
+		}))
+		ctx := context.Background()
+		st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		api := asana.NewClient(srv.Client())
+		api.BaseURL = srv.URL
+		s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+		if _, err := s.Run(ctx, false); err != nil {
+			t.Fatalf("%d: sync stopped: %v", status, err)
+		}
+		if refused != 1 {
+			t.Errorf("%d: the optional fields were requested %d times (want once, then left out)", status, refused)
+		}
+		for _, gid := range []string{"t1", "t1a", "t2"} {
+			if _, err := st.GetTask(ctx, gid); err != nil {
+				t.Errorf("%d: task %s not synced: %v", status, gid, err)
+			}
+		}
+		st.Close()
+		srv.Close()
 	}
 }

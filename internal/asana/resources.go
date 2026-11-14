@@ -89,6 +89,9 @@ type Task struct {
 	// are nil when the response did not include them.
 	Dependencies []Ref `json:"dependencies"`
 	Dependents   []Ref `json:"dependents"`
+	// Partial is set when the task was fetched without the optional fields (see
+	// optionalTaskFields): its custom fields, dependencies and approval status are unknown.
+	Partial bool `json:"-"`
 }
 
 // Fields requested for each resource (keep responses small; see requirements 8 章).
@@ -144,7 +147,11 @@ type TaskQuery struct {
 }
 
 func (c *Client) Tasks(ctx context.Context, tq TaskQuery) ([]Task, error) {
-	q := fields(TaskFields)
+	return readTasks(c, false, func(f []string) ([]Task, error) { return c.tasks(ctx, tq, f) })
+}
+
+func (c *Client) tasks(ctx context.Context, tq TaskQuery, f []string) ([]Task, error) {
+	q := fields(f)
 	if tq.Project != "" {
 		q.Set("project", tq.Project)
 	} else {
@@ -161,7 +168,9 @@ func (c *Client) Tasks(ctx context.Context, tq TaskQuery) ([]Task, error) {
 }
 
 func (c *Client) Subtasks(ctx context.Context, taskGID string) ([]Task, error) {
-	return list[Task](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/subtasks", fields(TaskFields))
+	return readTasks(c, false, func(f []string) ([]Task, error) {
+		return list[Task](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/subtasks", fields(f))
+	})
 }
 
 type Story struct {
@@ -177,15 +186,24 @@ type Story struct {
 var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at"}
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
-	var t Task
-	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(TaskFields), &t)
+	return c.task(ctx, gid, false)
+}
+
+func (c *Client) task(ctx context.Context, gid string, detail bool) (*Task, error) {
+	ts, err := readTasks(c, detail, func(f []string) ([]Task, error) {
+		var t Task
+		return []Task{t}, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(f), &t)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ts[0], nil
 }
 
 // TaskDetail is Task plus the choices of the task's enum custom fields (for showing and
 // editing one task; a project's choices come from its settings during sync).
 func (c *Client) TaskDetail(ctx context.Context, gid string) (*Task, error) {
-	var t Task
-	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(taskDetailFields), &t)
+	return c.task(ctx, gid, true)
 }
 
 func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
@@ -197,14 +215,16 @@ func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
 // UpdateTask sends changed fields (PUT /tasks/{gid}) and returns the updated task.
 func (c *Client) UpdateTask(ctx context.Context, gid string, fields map[string]any) (*Task, error) {
 	var t Task
-	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(TaskFields), fields, &t)
+	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(c.taskFields(false)), fields, &t)
+	t.Partial = c.plainTasks.Load()
 	return &t, err
 }
 
 // CreateTask creates a task (POST /tasks).
 func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, error) {
 	var t Task
-	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(TaskFields), fields, &t)
+	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(c.taskFields(false)), fields, &t)
+	t.Partial = c.plainTasks.Load()
 	return &t, err
 }
 
@@ -281,7 +301,8 @@ func (c *Client) Users(ctx context.Context, workspaceGID string) ([]User, error)
 // CreateSubtask creates a subtask under parentGID (POST /tasks/{gid}/subtasks).
 func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*Task, error) {
 	var t Task
-	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(TaskFields), fields, &t)
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(c.taskFields(false)), fields, &t)
+	t.Partial = c.plainTasks.Load()
 	return &t, err
 }
 

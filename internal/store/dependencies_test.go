@@ -106,3 +106,42 @@ func TestApprovalStatusAndType(t *testing.T) {
 		t.Errorf("ParseSubtype = %q, %v", got, err)
 	}
 }
+
+// A completed dependency pruned from the cache stays known (and does not count as open);
+// one whose state was never known does not count either.
+func TestOpenDependenciesAfterPrune(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	must(t, s.UpsertTasks(ctx, []asana.Task{
+		{GID: "t2", Name: "転居届を出す", Completed: true},
+		{GID: "t1", Name: "ソファを買う", Dependencies: []asana.Ref{{GID: "t2"}, {GID: "unknown"}}},
+	}))
+	_, err := s.PruneTasks(ctx, map[string]bool{"t1": true})
+	must(t, err)
+	d, err := s.GetTask(ctx, "t1")
+	must(t, err)
+	if d.OpenDependencies != 0 {
+		t.Fatalf("open dependencies = %d", d.OpenDependencies)
+	}
+	if len(d.Dependencies) != 2 || d.Dependencies[1].Name != "転居届を出す" || !d.Dependencies[1].Completed {
+		t.Fatalf("dependencies = %+v", d.Dependencies)
+	}
+}
+
+func TestApprovalOnlyForApprovalTasks(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"approval_status": "approved"}, testNow); err == nil {
+		t.Fatal("approval status on a normal task must be refused before sending")
+	}
+	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("nothing should be queued: %+v", ops)
+	}
+	// in the same change as making it an approval task: fine; discarding restores completed
+	must(t, s.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "approval", "approval_status": "approved"}, testNow))
+	must(t, s.DiscardOp(ctx, onlyOp(t, s).ID))
+	d, _ := s.GetTask(ctx, "t1")
+	if d.Completed || d.ResourceSubtype != "default_task" {
+		t.Fatalf("after discard = %+v", d.TaskSummary)
+	}
+}

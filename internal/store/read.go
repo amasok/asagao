@@ -148,7 +148,7 @@ const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.
 	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid), t.liked, t.num_likes, t.approval_status,
 	(SELECT count(*) FROM task_dependencies dp LEFT JOIN tasks bt ON bt.gid = dp.dependency_gid
 		LEFT JOIN task_refs br ON br.gid = dp.dependency_gid
-		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed, 0) = 0)`
+		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed) = 0)`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string

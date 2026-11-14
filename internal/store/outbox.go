@@ -89,6 +89,15 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		if err != nil {
 			return err
 		}
+		if _, ok := changes["approval_status"]; ok {
+			subtype, _ := cur["resource_subtype"].(string)
+			if v, ok := changes["resource_subtype"].(string); ok {
+				subtype = v
+			}
+			if subtype != "approval" {
+				return errors.New("承認タスクではないため、承認の状態は設定できません（種類を「承認」にすると設定できます）")
+			}
+		}
 		if IsLocalGID(gid) {
 			// Not on the server yet: fold the change into the pending create.
 			op, err := findUnsentCreate(ctx, tx, gid)
@@ -119,6 +128,12 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		if op == nil {
 			op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
 				BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
+		}
+		if _, ok := changes["approval_status"]; ok {
+			if _, ok := op.Base["completed"]; !ok {
+				// Deciding an approval completes the task locally: discarding restores it.
+				op.Base["completed"] = cur["completed"]
+			}
 		}
 		for k, v := range changes {
 			if _, ok := op.Base[k]; !ok {
@@ -732,8 +747,12 @@ func TaskFieldValues(t *asana.Task) map[string]any {
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
 	}
-	return map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked,
+	values := map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked,
 		"resource_subtype": t.ResourceSubtype, "approval_status": t.ApprovalStatus}
+	if t.Partial {
+		delete(values, "approval_status") // not fetched
+	}
+	return values
 }
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
