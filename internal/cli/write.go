@@ -94,7 +94,7 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 	if err != nil {
 		r.Error = err.Error()
 	} else {
-		r.Sent = push.Remaining == 0 && push.Failed == 0 && push.Conflicts == 0
+		r.Sent = push.Remaining == 0 && push.Failed == 0 && push.Conflicts == 0 && !push.InboxReadOnly
 	}
 	out := cmd.OutOrStdout()
 	r.Discarded = takeDiscards(cmd.Context(), st, out, !a.json)
@@ -112,6 +112,8 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 		return a.printJSON(r)
 	}
 	switch {
+	case push != nil && push.InboxReadOnly:
+		fmt.Fprintf(out, "%s。ただし Asana が受け付けなかったため、元に戻しました\n%s\n", done, sync.InboxReadOnlyMessage(a.cfg.Auth.Scopes))
 	case errors.Is(err, sync.ErrAccountChanged):
 		fmt.Fprintf(out, "%s（まだ送っていません）\n%v\n", done, accountChanged(cmd.Context(), st))
 	case dropped:

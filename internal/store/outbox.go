@@ -361,7 +361,7 @@ func (s *Store) GetOp(ctx context.Context, id int64) (*Op, error) {
 }
 
 func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name, ''), o.payload, o.base,
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name, CASE WHEN o.kind = 'mark_notification' THEN json_extract(o.payload, '$.name') END, ''), o.payload, o.base,
 		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at, o.sent_at, o.last_sent_at, o.verify
 		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid
 		LEFT JOIN projects pr ON pr.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
@@ -501,6 +501,12 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		}
 		if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
 			return err
+		}
+	case OpMarkNotification:
+		if read, ok := op.Base["read"].(bool); ok {
+			if _, err := tx.ExecContext(ctx, "UPDATE notifications SET is_read = ? WHERE gid = ?", read, op.TaskGID); err != nil {
+				return err
+			}
 		}
 	case OpRenameSection:
 		if name, ok := op.Base["name"].(string); ok {

@@ -29,6 +29,9 @@ type PushResult struct {
 	// Discarded lists changes dropped because what they change was deleted in Asana. They
 	// are also kept for the front ends to show once (store.PendingDiscards).
 	Discarded []store.Discard `json:"discarded,omitempty"`
+	// InboxReadOnly is set when Asana refused to mark notifications read / unread (no
+	// notifications:write scope): those changes were dropped (see pushMarkNotification).
+	InboxReadOnly bool `json:"inbox_read_only,omitempty"`
 }
 
 // ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
@@ -42,6 +45,7 @@ const (
 	sent       outcome = iota
 	conflicted         // left for the user to resolve
 	followUp           // sent; the entry now holds a follow-up change to send right away
+	dropped            // not sent and removed (e.g. Asana refuses read / unread changes)
 )
 
 // sentNotSavedError wraps a failure to record a change that Asana already accepted.
@@ -146,6 +150,7 @@ func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops 
 	res.Conflicts += more.Conflicts
 	res.Failed += more.Failed
 	res.Discarded = append(res.Discarded, more.Discarded...)
+	res.InboxReadOnly = res.InboxReadOnly || more.InboxReadOnly
 	res.Remaining = more.Remaining
 	return res, last, err
 }
@@ -269,12 +274,20 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 				return res, last, err
 			}
 			op.Attempts++
-			out, err = s.send(ctx, *op)
+			if op.Kind == store.OpMarkNotification {
+				var batched int // entries sent along with this one, whatever happened to it
+				out, batched, err = s.pushMarkNotification(ctx, *op)
+				res.Sent += batched
+			} else {
+				out, err = s.send(ctx, *op)
+			}
 			switch {
 			case err == nil:
 				switch {
 				case out == conflicted:
 					res.Conflicts++
+				case out == dropped:
+					res.InboxReadOnly = true
 				case !wasFollowUp:
 					res.Sent++ // a follow-up is part of the change already counted
 				}
@@ -315,7 +328,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op store.Op) (bool, error) 
 	switch op.Kind {
 	case store.OpCreateTask:
 		gid, _ = op.Payload["parent"].(string)
-	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection:
+	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection, store.OpMarkNotification:
 		return false, nil
 	}
 	if !store.IsLocalGID(gid) {
@@ -352,6 +365,9 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 		err = s.pushUpload(ctx, op)
 	case store.OpCreateStatus:
 		err = s.pushStatus(ctx, op)
+	case store.OpMarkNotification:
+		out, _, err := s.pushMarkNotification(ctx, op)
+		return out, err
 	default:
 		err = &asana.Error{Status: 400}
 	}
@@ -458,7 +474,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case store.OpRenameSection, store.OpCreateStatus:
+	case store.OpRenameSection, store.OpCreateStatus, store.OpMarkNotification:
 		var d store.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []store.Discard{d}

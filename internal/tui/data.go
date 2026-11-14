@@ -39,6 +39,8 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 	}
 
 	switch sc.kind {
+	case scopeInbox:
+		return inboxRows(ctx, st, now, sc.notice)
 	case scopeRecent:
 		f.ModifiedAfter = now.AddDate(0, 0, -7).UTC().Format(time.RFC3339)
 		f.SortByModified = true
@@ -58,7 +60,11 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 				labels = append(labels, l)
 			}
 		}
-		return groupKeyed(tasks, labels, labels, func(t store.TaskSummary) int { return index[modifiedDay(t.ModifiedAt, now)] }), nil
+		rows := groupKeyed(tasks, labels, labels, func(t store.TaskSummary) int { return index[modifiedDay(t.ModifiedAt, now)] })
+		if sc.notice != "" { // why this is shown instead of the inbox
+			rows = append([]row{{header: sc.notice, note: true}}, rows...)
+		}
+		return rows, nil
 	case scopeProject:
 		f.ProjectGID = sc.project
 		tasks, err := st.ListTasks(ctx, f)

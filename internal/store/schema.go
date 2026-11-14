@@ -233,4 +233,22 @@ CREATE TABLE discarded_changes (
 -- The dropped change itself (outbox payload JSON), so what the user wrote can be recovered.
 ALTER TABLE discarded_changes ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';
 `,
+	`
+-- The user's Asana inbox (notifications), newest first per workspace (see notifications.go).
+CREATE TABLE notifications (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	is_read       INTEGER NOT NULL DEFAULT 0,
+	created_at    TEXT NOT NULL DEFAULT '',
+	actor_gid     TEXT NOT NULL DEFAULT '',
+	actor_name    TEXT NOT NULL DEFAULT '',
+	subtype       TEXT NOT NULL DEFAULT '',
+	text          TEXT NOT NULL DEFAULT '',
+	target_gid    TEXT NOT NULL DEFAULT '',
+	target_type   TEXT NOT NULL DEFAULT '',
+	target_name   TEXT NOT NULL DEFAULT '',
+	position      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX notifications_created ON notifications(created_at);
+`,
 }

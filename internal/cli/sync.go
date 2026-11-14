@@ -66,6 +66,9 @@ func (a *app) syncCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d / 取得したタスク %d / 削除 %d（%s）\n",
 				kind, res.Workspaces, res.Projects, res.Tasks, res.Pruned, res.Duration.Round(100*time.Millisecond))
+			if inbox, err := st.InboxState(ctx); err == nil && !inbox.Available() {
+				fmt.Fprintln(cmd.ErrOrStderr(), sync.InboxUnavailableMessage(inbox, a.cfg.Auth.Scopes))
+			}
 			return nil
 		},
 	}

@@ -33,7 +33,8 @@ const instructions = `Asana tasks from a local cache that asana-tui keeps in syn
   the response says whether the change was sent.
 - Task and project arguments accept a gid. Projects also accept a name or a unique part of it.
 - Dates are YYYY-MM-DD, or relative: today, tomorrow, yesterday, +7d, -3d.
-- Task names and comments are often in Japanese; search_tasks matches substrings.`
+- Task names and comments are often in Japanese; search_tasks matches substrings.
+- list_inbox shows my Asana inbox notifications (what others did on my tasks); mark_notifications marks them read.`
 
 // Server holds the dependencies of the MCP tools.
 type Server struct {
@@ -44,8 +45,10 @@ type Server struct {
 	ReadOnly bool
 	// CacheDir is where files to upload are copied before sending.
 	CacheDir string
-	Version  string
-	Now      func() time.Time
+	// AuthScopes is config auth.scopes (to explain how to enable the inbox).
+	AuthScopes []string
+	Version    string
+	Now        func() time.Time
 
 	mu     stdsync.Mutex
 	syncer *sync.Syncer
@@ -86,6 +89,8 @@ func (s *Server) New() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync", Annotations: &mcp.ToolAnnotations{IdempotentHint: true, OpenWorldHint: ptr(true)},
 		Description: "Send queued local changes to Asana, then pull changes from Asana into the cache " +
 			"(incremental; full=true re-fetches everything and removes deleted tasks)."}, s.sync)
+
+	s.addInboxTools(srv)
 
 	if !s.ReadOnly {
 		write := func(destructive bool) *mcp.ToolAnnotations {
@@ -649,6 +654,8 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:
 		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
+	case res.InboxReadOnly:
+		out.Note += "Asana refused to mark notifications read / unread, so the change was undone: " + sync.InboxReadOnlyMessage(s.AuthScopes)
 	case res.Conflicts > 0 || res.Failed > 0:
 		out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
 	default:

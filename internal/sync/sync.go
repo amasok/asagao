@@ -218,6 +218,16 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			res.Projects++
 		}
 	}
+	if err := s.syncInboxes(ctx, workspaces); err != nil {
+		return res, err
+	}
+	if st, err := s.Store.InboxState(ctx); err != nil {
+		return res, err
+	} else if st.Available() {
+		if err := s.fetchNotificationTargets(ctx, keep, res.Full, modifiedSince, upsert); err != nil {
+			return res, err
+		}
+	}
 
 	// Subtasks are not returned by GET /tasks?project=, so fetch them per parent.
 	// upsert appends subtasks that have subtasks of their own, so nested levels are fetched too.
