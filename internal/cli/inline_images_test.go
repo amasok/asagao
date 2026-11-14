@@ -23,13 +23,14 @@ func TestInlineImagesEnabled(t *testing.T) {
 		{"ghostty auto", "auto", "auto", ghostty, true},
 		{"ghostty kitty", "", "kitty", ghostty, true},
 		{"kitty", "auto", "auto", []string{"TERM", "xterm-kitty", "KITTY_WINDOW_ID", "1"}, true},
-		// The reported case: Ghostty → herdr with image_protocol = "kitty". herdr shows kitty
-		// images but leaves Unicode placeholders blank, so auto must not use them.
-		{"herdr kitty", "auto", "kitty", herdr, false},
-		{"herdr forced on", "on", "kitty", herdr, true},
-		{"herdr auto protocol", "auto", "auto", herdr, false},
-		{"herdr nested shell", "auto", "kitty", herdrNested, false},
-		{"herdr without HERDR_ENV", "auto", "kitty", []string{"TERM_PROGRAM", "herdr", "TERM", "xterm-256color", "GHOSTTY_RESOURCES_DIR", "/g"}, false},
+		// herdr in Ghostty draws Unicode placeholders (confirmed by the user).
+		{"herdr kitty", "auto", "kitty", herdr, true},
+		{"herdr forced off", "off", "kitty", herdr, false},
+		{"herdr auto protocol", "auto", "auto", herdr, true},
+		{"herdr nested shell", "auto", "kitty", herdrNested, true},
+		{"herdr without HERDR_ENV", "auto", "kitty", []string{"TERM_PROGRAM", "herdr", "TERM", "xterm-256color", "GHOSTTY_RESOURCES_DIR", "/g"}, true},
+		// herdr teams panes set TMUX to a fake socket; still herdr.
+		{"herdr teams pane", "auto", "kitty", append([]string{"TMUX", "/tmp/herdr-teams/tmux-fake,0,0"}, herdr...), true},
 		{"tmux in ghostty", "auto", "kitty", []string{"TMUX", "/tmp/tmux", "TERM", "tmux-256color", "GHOSTTY_RESOURCES_DIR", "/g"}, false},
 		{"zellij", "auto", "kitty", append([]string{"ZELLIJ", "0"}, ghostty...), false},
 		{"iterm protocol", "auto", "iterm", ghostty, false},

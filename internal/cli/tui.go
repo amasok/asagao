@@ -82,9 +82,9 @@ func (a *app) inlineImages() bool {
 }
 
 // inlineImagesEnabled decides ui.inline_images. "auto" turns it on only when the terminal
-// itself is known to draw Unicode placeholders: ui.image_protocol = "kitty" is not enough,
-// as multiplexers (herdr) pass kitty images through but leave placeholders blank. Otherwise
-// images are shown as "[画像N]（i で表示）"; inline_images = "on" forces it.
+// is known to draw Unicode placeholders (kitty, Ghostty, herdr): ui.image_protocol = "kitty"
+// is not enough, as tmux and zellij pass kitty images through but leave placeholders blank.
+// Otherwise images are shown as "[画像N]（i で表示）"; inline_images = "on" forces it.
 func inlineImagesEnabled(setting, protocol string, getenv func(string) string) bool {
 	switch setting {
 	case "on":
