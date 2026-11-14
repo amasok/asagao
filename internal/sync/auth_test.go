@@ -255,6 +255,7 @@ func TestPushWithoutTokenIsNotSent(t *testing.T) {
 		login bool // auth.LoginHelp has advice for it
 	}{
 		{"logged out", auth.ErrNotLoggedIn, true},
+		{"logged in as someone else elsewhere", auth.ErrLoginReplaced, true},
 		{"refresh failed", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 500}, ErrorCode: "server_error"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -266,6 +267,9 @@ func TestPushWithoutTokenIsNotSent(t *testing.T) {
 			bad := asana.NewClient(oauth2.NewClient(ctx, failingTokens{tc.err}))
 			bad.BaseURL, bad.MaxRetries = srv.URL, 0
 			s.API = bad
+			// The token goes away after this Syncer confirmed the account (the usual case
+			// in a long-running TUI / MCP server), so the send itself has no token.
+			s.accountOK.Store(true)
 			for range 2 {
 				res, err := s.Push(ctx)
 				if err == nil || res.Failed != 0 || res.Remaining != 2 || res.Sent != 0 {
@@ -293,5 +297,88 @@ func TestPushWithoutTokenIsNotSent(t *testing.T) {
 			}
 			assertOutboxEmpty(t, st)
 		})
+	}
+}
+
+// Push checks the account before sending. If that check cannot be made (Asana down,
+// offline) nothing is sent and nothing fails; a failed check is never remembered as
+// passed, and a passed one is not asked again by the same Syncer.
+func TestPushAccountCheckFailureSendsNothing(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "新しいタスク"}, now)
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "B"}, now)
+	meAnswer := func(status int, gid string) {
+		ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path != "/users/me" {
+				return false
+			}
+			if status != 0 {
+				rw.WriteHeader(status)
+				return true
+			}
+			fmt.Fprintf(rw, `{"data":{"gid":%q}}`, gid)
+			return true
+		})
+	}
+	sentNothing := func(step string) {
+		t.Helper()
+		if len(ws.calls) != 0 {
+			t.Fatalf("%s: nothing may be sent before the account is confirmed: %v", step, ws.calls)
+		}
+		ops, _ := st.ListOps(ctx)
+		for _, op := range ops {
+			if op.State != store.OpPending || op.Verify || op.Attempts != 0 {
+				t.Fatalf("%s: entry should wait unchanged: %+v", step, op)
+			}
+		}
+	}
+
+	meAnswer(http.StatusServiceUnavailable, "")
+	res, err := s.Push(ctx)
+	if err == nil || errors.Is(err, ErrAccountChanged) || res.Remaining != 2 || res.Failed != 0 {
+		t.Fatalf("push while /users/me fails = %+v %v", res, err)
+	}
+	sentNothing("5xx")
+
+	meAnswer(0, "someone-else")
+	for range 2 { // not remembered: asked again and refused again
+		if res, err := s.Push(ctx); !errors.Is(err, ErrAccountChanged) || res.Remaining != 2 {
+			t.Fatalf("push as another account = %+v %v", res, err)
+		}
+		sentNothing("other account")
+	}
+
+	meAnswer(0, "me")
+	if res, err := s.Push(ctx); err != nil || res.Sent != 2 {
+		t.Fatalf("push as the right account = %+v %v", res, err)
+	}
+	asked := 0
+	ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/users/me" {
+			asked++
+		}
+		return false
+	})
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "C"}, now)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || asked != 0 {
+		t.Fatalf("second push = %+v %v (asked /users/me %d times, want 0)", res, err, asked)
+	}
+}
+
+// Before the account is confirmed, no token means nothing is sent at all.
+func TestPushWithoutTokenStopsAtAccountCheck(t *testing.T) {
+	ws, srv, s, st := setupPush(t)
+	ctx := context.Background()
+	_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "新しいタスク"}, now)
+	bad := asana.NewClient(oauth2.NewClient(ctx, failingTokens{auth.ErrLoginReplaced}))
+	bad.BaseURL, bad.MaxRetries = srv.URL, 0
+	s.API = bad
+	res, err := s.Push(ctx)
+	if auth.LoginHelp(err) == "" || res.Remaining != 1 || res.Failed != 0 || len(ws.calls) != 0 {
+		t.Fatalf("push = %+v %v (calls %v)", res, err, ws.calls)
+	}
+	if op := opByKind(t, st, store.OpCreateTask); op == nil || op.State != store.OpPending || op.Verify || op.Attempts != 0 {
+		t.Fatalf("entry = %+v", op)
 	}
 }
