@@ -241,6 +241,8 @@ type Model struct {
 	fieldTask   store.TaskSummary     // task for promptField
 	fieldEdit   store.CustomFieldView // field for promptField
 	fieldFilter fieldFilter
+	fieldSaving bool         // a multi_enum toggle is being saved
+	fieldQueued *queuedField // the latest toggle made meanwhile
 	// dependencies (deps.go)
 	depTask       store.TaskSummary // task for promptDepSearch
 	depDependents bool

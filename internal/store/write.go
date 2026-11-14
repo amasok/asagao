@@ -306,6 +306,7 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 				"DELETE FROM project_members WHERE project_gid = ?",
 				"DELETE FROM status_updates WHERE project_gid = ?",
 				"DELETE FROM project_custom_fields WHERE project_gid = ?",
+				"DELETE FROM sync_state WHERE key = 'custom_fields:' || ?", // fetch them again if it comes back
 				"DELETE FROM task_memberships WHERE project_gid = ?",
 				"DELETE FROM projects WHERE gid = ?",
 			} {

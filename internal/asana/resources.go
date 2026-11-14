@@ -178,6 +178,13 @@ var storyFields = []string{"type", "resource_subtype", "text", "html_text", "cre
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
 	var t Task
+	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(TaskFields), &t)
+}
+
+// TaskDetail is Task plus the choices of the task's enum custom fields (for showing and
+// editing one task; a project's choices come from its settings during sync).
+func (c *Client) TaskDetail(ctx context.Context, gid string) (*Task, error) {
+	var t Task
 	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(taskDetailFields), &t)
 }
 

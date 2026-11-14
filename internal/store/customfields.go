@@ -721,7 +721,9 @@ func (s *Store) SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID strin
 			op = &Op{Kind: OpSetCustomField, TaskGID: taskGID, Base: map[string]any{"value": curValue, "display": curDisplay},
 				BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
 		}
-		if sameValue(normalizeCFValue(op.Base["value"]), value) { // back to the value in Asana
+		// Back to the value in Asana, or (in a conflict) to the value Asana has now: nothing to send.
+		if sameValue(normalizeCFValue(op.Base["value"]), value) ||
+			(op.State == OpConflict && sameValue(normalizeCFValue(op.Conflict["value"]), value)) {
 			if op.ID != 0 {
 				_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 				return err

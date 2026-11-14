@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,9 +56,23 @@ func (m *Model) editCustomField(t store.TaskSummary, f store.CustomFieldView) te
 	default:
 		m.prompt.Placeholder = "テキスト（空欄で空にする）"
 	}
-	m.prompt.SetValue(f.Display)
+	m.prompt.SetValue(fieldInput(f))
 	m.prompt.CursorEnd()
 	return m.prompt.Focus()
+}
+
+// fieldInput is a field's value as the prompt takes it back: the raw number (the display
+// may be formatted, e.g. "¥1,000" or "50%"), the date without a time, else the display.
+func fieldInput(f store.CustomFieldView) string {
+	switch v := f.Value.(type) {
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case string:
+		if f.Type == store.CFDate || f.Type == store.CFText {
+			return v
+		}
+	}
+	return f.Display
 }
 
 // showFieldPicker opens the chooser of an enum field (multi_enum: toggles, stays open).
@@ -121,7 +136,7 @@ func (m *Model) setField(t store.TaskSummary, f store.CustomFieldView, value any
 	return func() tea.Msg {
 		display, err := st.SetCustomFieldLocal(m.ctx, t.GID, f.GID, value, now)
 		if err != nil {
-			return fieldSetMsg{err: err}
+			return fieldSetMsg{task: t, field: f.GID, reopen: reopen, err: err}
 		}
 		status := fmt.Sprintf("「%s」を「%s」にしました", f.Name, display)
 		if display == "" {
@@ -131,15 +146,34 @@ func (m *Model) setField(t store.TaskSummary, f store.CustomFieldView, value any
 	}
 }
 
-// toggleFieldOption adds or removes an option of a multi_enum field.
+// toggleFieldOption adds or removes an option of a multi_enum field. The chooser is
+// updated at once, so quick toggles build on each other; the changes are saved one at a
+// time (a toggle made while one is being saved is saved after it, with every toggle so far).
 func (m *Model) toggleFieldOption(p *picker, item pickerItem) tea.Cmd {
 	var gids []string
-	for _, it := range p.items {
-		if it.checked != (it.value == item.value) { // keep the others, flip this one
+	for i := range p.items {
+		it := &p.items[i]
+		if it.value == item.value {
+			it.checked = !it.checked
+			it.label = map[bool]string{true: "[✓] ", false: "[ ] "}[it.checked] + strings.TrimPrefix(strings.TrimPrefix(it.label, "[✓] "), "[ ] ")
+		}
+		if it.checked {
 			gids = append(gids, it.value)
 		}
 	}
+	if m.fieldSaving {
+		m.fieldQueued = &queuedField{task: p.task, field: p.field, value: gids}
+		return nil
+	}
+	m.fieldSaving = true
 	return m.setField(p.task, p.field, gids, true)
+}
+
+// queuedField is a multi_enum value to save once the change being saved is done.
+type queuedField struct {
+	task  store.TaskSummary
+	field store.CustomFieldView
+	value []string
 }
 
 func (m *Model) submitField(input string) tea.Cmd {
@@ -220,17 +254,26 @@ func (m *Model) updateFields(msg tea.Msg) (tea.Cmd, bool) {
 	case fieldSetMsg:
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
+			if msg.reopen { // show what is stored; later toggles built on the failed one
+				m.fieldSaving, m.fieldQueued = false, nil
+				return m.reopenFieldPicker(msg.task, msg.field), true
+			}
 			return nil, true
 		}
 		m.status = msg.status
 		if msg.reopen {
+			m.fieldSaving = false
+			if q := m.fieldQueued; q != nil { // toggled meanwhile: save that next
+				m.fieldQueued, m.fieldSaving = nil, true
+				return tea.Batch(m.afterWrite(), m.setField(q.task, q.field, q.value, true)), true
+			}
 			return tea.Batch(m.afterWrite(), m.reopenFieldPicker(msg.task, msg.field)), true
 		}
 		return m.afterWrite(), true
 	case fieldPickerMsg:
 		if msg.err != nil {
 			m.status = "エラー: " + msg.err.Error()
-		} else if msg.field.GID != "" && m.picker != nil && m.picker.kind == pickFieldMulti {
+		} else if msg.field.GID != "" && m.picker != nil && m.picker.kind == pickFieldMulti && !m.fieldSaving {
 			m.showFieldPicker(msg.task, msg.field)
 		}
 		return nil, true

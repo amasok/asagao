@@ -161,3 +161,30 @@ func TestCustomFieldOnLocalTaskFoldsIntoCreate(t *testing.T) {
 		t.Fatalf("create = %+v", op)
 	}
 }
+
+// In a conflict, choosing the value Asana has now resolves it: nothing is left to send.
+func TestSetCustomFieldToServerValueResolvesConflict(t *testing.T) {
+	s := setupFields(t)
+	ctx := context.Background()
+	_, err := s.SetCustomFieldLocal(ctx, "t1", "cf1", "o2", testNow)
+	must(t, err)
+	must(t, s.MarkOpConflict(ctx, onlyOp(t, s).ID, map[string]any{"value": nil, "display": ""}))
+	_, err = s.SetCustomFieldLocal(ctx, "t1", "cf1", nil, testNow)
+	must(t, err)
+	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("ops = %+v", ops)
+	}
+}
+
+func TestReplaceLocalTaskGIDMovesCustomFields(t *testing.T) {
+	s := setupFields(t)
+	ctx := context.Background()
+	gid, err := s.CreateTaskLocal(ctx, NewTask{ProjectGID: "p1", SectionGID: "s1", Name: "新しい"}, testNow)
+	must(t, err)
+	_, err = s.SetCustomFieldLocal(ctx, gid, "cf1", "o1", testNow)
+	must(t, err)
+	must(t, s.ReplaceLocalTaskGID(ctx, gid, "real1"))
+	if f := fieldOf(t, s, "real1", "cf1"); f.Value != "o1" {
+		t.Fatalf("field after the gid change = %+v", f)
+	}
+}

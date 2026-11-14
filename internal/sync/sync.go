@@ -3,7 +3,9 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -288,14 +290,19 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, settings); err != nil {
 			return err
 		}
-	case isRejected(err): // not available (402 / 403): no custom fields
+	case asana.IsPaymentRequired(err) || isForbidden(err): // not available on this plan: no custom fields
 		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, nil); err != nil {
 			return err
 		}
 	default:
-		return nil // e.g. a 5xx: try again next time
+		return nil // e.g. an expired token or a 5xx: keep what is cached, try again next time
 	}
 	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+}
+
+func isForbidden(err error) bool {
+	var apiErr *asana.Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden
 }
 
 // FetchDetails refreshes one task with its subtasks and stories (comments and activity).
@@ -304,7 +311,7 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if store.IsLocalGID(taskGID) {
 		return nil // created offline; nothing on the server yet
 	}
-	t, err := s.API.Task(ctx, taskGID)
+	t, err := s.API.TaskDetail(ctx, taskGID)
 	if err != nil {
 		return err
 	}
