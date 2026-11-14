@@ -115,3 +115,35 @@ func TestFileRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Switching OAuth -> PAT -> OAuth in 1Password keeps exactly one of the two tokens, and
+// keeps the client secret for going back to OAuth.
+func TestOnePasswordSwitchMethod(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeOP{}
+	s := &OnePassword{Vault: "Private", Item: "asana-tui", run: fake.run}
+
+	if err := s.Save(ctx, &Credentials{ClientSecret: "secret-cs", RefreshToken: "secret-rt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(ctx, &Credentials{ClientSecret: "secret-cs", PersonalAccessToken: "secret-pat", UserGID: "7"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Method() != MethodPAT || got.PersonalAccessToken != "secret-pat" || got.RefreshToken != "" || got.ClientSecret != "secret-cs" {
+		t.Fatalf("after PAT login: %+v", got)
+	}
+
+	if err := s.Save(ctx, &Credentials{ClientSecret: "secret-cs", RefreshToken: "secret-rt2"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got.Method() != MethodOAuth || got.PersonalAccessToken != "" || got.RefreshToken != "secret-rt2" {
+		t.Fatalf("after OAuth login: %+v", got)
+	}
+}

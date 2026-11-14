@@ -3,11 +3,14 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/oauth2"
 
+	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
 	"github.com/amasok/asana-tui/internal/config"
 )
@@ -200,10 +203,38 @@ func TestTokenSource(t *testing.T) {
 	})
 
 	t.Setenv(EnvToken, "")
-	t.Run("no client id", func(t *testing.T) {
-		_, err := TokenSource(ctx, config.AuthConfig{}, &memStore{})
+	t.Run("no client id with OAuth credentials", func(t *testing.T) {
+		st := &memStore{creds: &tokenstore.Credentials{RefreshToken: "rt"}}
+		_, err := TokenSource(ctx, config.AuthConfig{}, st)
 		if err == nil || errors.Is(err, ErrNotLoggedIn) {
 			t.Fatalf("err = %v, want a client_id error", err)
+		}
+	})
+	t.Run("nothing stored and no client id", func(t *testing.T) {
+		if _, err := TokenSource(ctx, config.AuthConfig{}, &memStore{}); !errors.Is(err, ErrNotLoggedIn) {
+			t.Fatalf("err = %v, want ErrNotLoggedIn", err)
+		}
+	})
+	t.Run("stored PAT needs no client id and is never refreshed", func(t *testing.T) {
+		st := &memStore{caches: true, creds: &tokenstore.Credentials{PersonalAccessToken: "pat", ClientSecret: "old-secret"}}
+		src, err := TokenSource(ctx, config.AuthConfig{}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src.Method != tokenstore.MethodPAT || src.FromEnv {
+			t.Fatalf("source = %+v, want a stored PAT", src)
+		}
+		for range 2 {
+			tok, err := src.Token()
+			if err != nil || tok.AccessToken != "pat" || tok.TokenType != "Bearer" || !tok.Expiry.IsZero() || tok.RefreshToken != "" {
+				t.Fatalf("Token() = %+v, %v", tok, err)
+			}
+		}
+		if len(st.saved) != 0 {
+			t.Fatalf("a PAT must never be saved back: %v", st.saved)
+		}
+		if h := src.UnauthorizedHint(); !strings.Contains(h, "auth login --pat") {
+			t.Fatalf("hint = %q, want the PAT login command", h)
 		}
 	})
 	t.Run("nothing stored", func(t *testing.T) {
@@ -233,4 +264,27 @@ func TestTokenSource(t *testing.T) {
 			t.Fatalf("unchanged token should not be saved: %v", st.saved)
 		}
 	})
+}
+
+func TestLoginHelp(t *testing.T) {
+	patHint := (&Source{Method: tokenstore.MethodPAT}).UnauthorizedHint()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string // substring; "" = not a login problem
+	}{
+		{"nil", nil, ""},
+		{"other", errors.New("boom"), ""},
+		{"403", &asana.Error{Status: 403}, ""},
+		{"not logged in", fmt.Errorf("x: %w", ErrNotLoggedIn), "auth login --pat"},
+		{"401 with hint", fmt.Errorf("ユーザー情報の取得: %w", &asana.Error{Status: 401, Hint: patHint}), patHint},
+		{"401 without hint", &asana.Error{Status: 401}, "auth login"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := LoginHelp(tc.err)
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Fatalf("LoginHelp(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
 }

@@ -377,9 +377,7 @@ func (c *Client) UploadAttachment(ctx context.Context, parentGID, fileName strin
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		e := &Error{Status: resp.StatusCode}
-		_ = json.Unmarshal(b, e)
-		return nil, e
+		return nil, c.newError(resp.StatusCode, b)
 	}
 	var env struct {
 		Data Attachment `json:"data"`

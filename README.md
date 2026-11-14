@@ -13,7 +13,32 @@ go install github.com/amasok/asana-tui/cmd/asana-tui@latest
 
 ## セットアップ
 
-### 1. Asana に OAuth アプリを登録する
+ログインの方法は 2 つあります。設定ファイルを作らずにすぐ使えるのは Personal Access Token (PAT) です。
+
+| 方法 | 手間 | トークン |
+|------|------|----------|
+| Personal Access Token | トークンを作って貼るだけ | 期限なし（Asana で取り消すまで有効） |
+| OAuth | OAuth アプリの登録と `auth.client_id` の設定が必要 | 1 時間ごとに自動更新 |
+
+### Personal Access Token でログインする（かんたん）
+
+1. https://app.asana.com/0/my-apps の「Personal access tokens」でトークンを作り、コピーする
+2. ログインして同期する
+
+```sh
+asana-tui auth login --pat   # トークンを貼り付ける（入力は表示されません）
+asana-tui sync
+```
+
+- 標準入力からも渡せます: `pbpaste | asana-tui auth login --pat`、`op read "op://Private/Asana/token" | asana-tui auth login --pat`。トークンはシェルの履歴に残らないよう、コマンドの引数では受け付けません。
+- `auth.client_id` が設定されていなければ、`--pat` を付けなくても PAT でのログインになります。
+- ログイン時に `/users/me` で確かめてから、OAuth と同じ保存先（`auth.token_store`。既定はキーチェーン）に保存します。保存先を変えるときだけ下の設定ファイルを作ってください。
+- トークンを取り消した・失効した場合は、TUI / CLI / MCP にその旨と `asana-tui auth login --pat` が表示されます。新しいトークンでログインし直せば、未送信の変更はそのまま送られます（TUI と MCP サーバーは再起動不要）。
+- OAuth と PAT はいつでも乗り換えられます（あとからログインした方に置き換わります）。前と違うアカウントでログインすると、ローカルのデータを守るため同期を止めて案内を出します。
+
+### OAuth でログインする
+
+#### 1. Asana に OAuth アプリを登録する
 
 1. https://app.asana.com/0/my-apps で「Create new app」
 2. **OAuth** の設定で Redirect URL を 2 つ追加する
@@ -22,7 +47,7 @@ go install github.com/amasok/asana-tui/cmd/asana-tui@latest
 3. **Permission scopes** で「Full permissions」を選ぶ
 4. Client ID と Client secret を控える
 
-### 2. 設定ファイルを作る
+#### 2. 設定ファイルを作る
 
 `~/.config/asana-tui/config.toml`:
 
@@ -43,9 +68,11 @@ completed_days = 14     # 完了済みタスクを何日分保存するか
 # all_projects = true   # 参加していないプロジェクトも同期する
 ```
 
-1Password に保存する場合は、[1Password CLI](https://developer.1password.com/docs/cli/get-started/) をインストールし、デスクトップアプリとの連携を有効にしてください。リフレッシュトークンと Client secret が指定した保管庫のアイテムに保存されます。
+PAT だけで使う場合は `[auth]` の `client_id` は不要です（保存先を変えるときだけ `token_store` を書きます）。
 
-### 3. ログインして同期する
+1Password に保存する場合は、[1Password CLI](https://developer.1password.com/docs/cli/get-started/) をインストールし、デスクトップアプリとの連携を有効にしてください。リフレッシュトークン（PAT でログインした場合は PAT）と Client secret が指定した保管庫のアイテムに保存されます。
+
+#### 3. ログインして同期する
 
 ```sh
 asana-tui auth login     # ブラウザが開く。Client secret を聞かれたら入力
@@ -122,9 +149,10 @@ due = ["D", "ctrl+t"]
 
 | コマンド | 内容 |
 |----------|------|
-| `auth login [--manual] [--no-browser]` | OAuth でログイン |
-| `auth status` | ログイン状態 |
-| `auth logout` | 保存したトークンを削除 |
+| `auth login --pat` | Personal Access Token でログイン（貼り付けるか標準入力から渡す） |
+| `auth login [--manual] [--no-browser]` | OAuth でログイン（`auth.client_id` が未設定なら PAT でのログインになる） |
+| `auth status` | ログイン状態と方式（OAuth / Personal Access Token） |
+| `auth logout` | 保存したトークン（OAuth / PAT）を削除 |
 | `auth migrate --to <store>` | トークンの保存先を移す |
 | `sync [--full]` | Asana からローカルストアへ同期（通常は前回以降の変更分。24 時間ごとに自動で全件） |
 | `sync status` | ローカルストアの状態 |
@@ -264,7 +292,7 @@ inline_images = "auto"     # 本文中に画像を表示するか: auto（kitty 
 
 | 変数 | 内容 |
 |------|------|
-| `ASANA_TOKEN` | Personal Access Token。設定されていれば OAuth より優先（開発・ヘッドレス用） |
+| `ASANA_TOKEN` | Personal Access Token。設定されていれば保存したトークンより優先（CI・ヘッドレス用。ふだんは `auth login --pat` で保存する方が手軽） |
 | `ASANA_CLIENT_ID` | `auth.client_id` を上書き |
 | `ASANA_CLIENT_SECRET` | ログイン時に Client secret を聞かずにこれを使う（例: `op run` と組み合わせる） |
 | `XDG_CONFIG_HOME` / `XDG_DATA_HOME` | 設定 / データの置き場所 |

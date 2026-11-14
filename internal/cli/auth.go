@@ -4,15 +4,19 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 	"golang.org/x/term"
 
+	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
 	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asana-tui/internal/store"
 )
 
 // EnvClientSecret lets the client secret be passed non-interactively (e.g. `op run`).
@@ -25,18 +29,33 @@ func (a *app) authCmd() *cobra.Command {
 }
 
 func (a *app) authLoginCmd() *cobra.Command {
-	var manual, noBrowser bool
+	var manual, noBrowser, pat bool
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "OAuth 2.0 でログインし、トークンを保存する",
+		Short: "Asana にログインし、トークンを保存する（OAuth、または --pat で Personal Access Token）",
+		Long: `Asana にログインし、トークンを保存します。
+
+Personal Access Token (PAT) を使う方法がいちばん手軽です（OAuth アプリの登録は要りません）:
+  1. ` + auth.PATConsoleURL + ` の「Personal access tokens」でトークンを作る
+  2. asana-tui auth login --pat を実行し、トークンを貼り付ける（入力は表示されません）
+     標準入力からも渡せます: pbpaste | asana-tui auth login --pat
+     （トークンをコマンドの引数に書くとシェルの履歴に残るので、引数では受け付けません）
+
+auth.client_id が設定されていなければ、--pat を付けなくても PAT でのログインになります。
+OAuth で使うなら、Asana に OAuth アプリを登録して config.toml の auth.client_id を設定し、
+--pat を付けずに実行してください（ブラウザが開きます）。`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
-			if a.cfg.Auth.ClientID == "" {
-				return fmt.Errorf("auth.client_id が未設定です。%s に設定するか ASANA_CLIENT_ID を指定してください", config.FilePath())
-			}
 			ts, err := a.tokenStore()
 			if err != nil {
 				return err
+			}
+			if a.cfg.Auth.ClientID == "" && !pat && (manual || noBrowser) {
+				return fmt.Errorf("auth.client_id が未設定です。OAuth を使うなら %s に設定するか ASANA_CLIENT_ID を指定してください"+
+					"（OAuth アプリを登録しないなら asana-tui auth login --pat）", config.FilePath())
+			}
+			if pat || a.cfg.Auth.ClientID == "" {
+				return a.loginPAT(cmd, ts)
 			}
 			secret, err := a.clientSecret(cmd, ts)
 			if err != nil {
@@ -56,13 +75,95 @@ func (a *app) authLoginCmd() *cobra.Command {
 			if err := ts.Save(ctx, creds); err != nil {
 				return fmt.Errorf("トークンの保存 (%s): %w", ts.Name(), err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s (%s) としてログインしました。トークンの保存先: %s\n", creds.UserName, creds.UserEmail, ts.Name())
+			fmt.Fprintf(cmd.OutOrStdout(), "%s (%s) としてログインしました（OAuth、保存先: %s）\n", creds.UserName, creds.UserEmail, ts.Name())
+			a.afterLogin(cmd, creds.UserGID)
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&manual, "manual", false, "コードを手で貼り付ける方式（SSH 先などブラウザがない環境向け）")
-	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "ブラウザを自動で開かず URL を表示する")
+	cmd.Flags().BoolVar(&pat, "pat", false, "Personal Access Token でログインする（貼り付けるか標準入力から渡す）")
+	cmd.Flags().BoolVar(&manual, "manual", false, "OAuth: コードを手で貼り付ける方式（SSH 先などブラウザがない環境向け）")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "OAuth: ブラウザを自動で開かず URL を表示する")
+	cmd.MarkFlagsMutuallyExclusive("pat", "manual")
+	cmd.MarkFlagsMutuallyExclusive("pat", "no-browser")
 	return cmd
+}
+
+// loginPAT reads a Personal Access Token, checks it with /users/me and saves it.
+func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
+	ctx := cmd.Context()
+	token, err := readPAT(cmd)
+	if err != nil {
+		return err
+	}
+	me, err := a.newClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"})).Me(ctx)
+	if asana.IsUnauthorized(err) {
+		return fmt.Errorf("Asana がこのトークンを受け付けませんでした。貼り付け間違いがないか確かめるか、%s で作り直してください", auth.PATConsoleURL)
+	}
+	if err != nil {
+		return fmt.Errorf("トークンの確認 (/users/me): %w", err)
+	}
+	creds := &tokenstore.Credentials{PersonalAccessToken: token, UserGID: me.GID, UserName: me.Name, UserEmail: me.Email}
+	// Keep the client secret of an earlier OAuth login, so switching back needs no re-entry.
+	if old, err := ts.Load(ctx); err == nil {
+		creds.ClientSecret = old.ClientSecret
+	}
+	if err := ts.Save(ctx, creds); err != nil {
+		return fmt.Errorf("トークンの保存 (%s): %w", ts.Name(), err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s (%s) としてログインしました（Personal Access Token、保存先: %s）\n", me.Name, me.Email, ts.Name())
+	a.afterLogin(cmd, me.GID)
+	return nil
+}
+
+// readPAT takes the token from a hidden prompt on a terminal, or else from stdin, never
+// from the command line (it would stay in the shell history).
+func readPAT(cmd *cobra.Command) (string, error) {
+	var b []byte
+	var err error
+	if f, ok := cmd.InOrStdin().(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s で作成した Personal Access Token を貼り付けてください（入力は表示されません）: ", auth.PATConsoleURL)
+		b, err = term.ReadPassword(int(f.Fd()))
+		fmt.Fprintln(cmd.ErrOrStderr())
+	} else {
+		b, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 64<<10))
+	}
+	if err != nil {
+		return "", fmt.Errorf("Personal Access Token の読み込み: %w", err)
+	}
+	token := strings.TrimSpace(string(b))
+	switch {
+	case token == "":
+		return "", fmt.Errorf("Personal Access Token が空です。%s で作成し、貼り付けるか標準入力から渡してください（例: pbpaste | asana-tui auth login --pat）", auth.PATConsoleURL)
+	case strings.ContainsAny(token, " \t\r\n"):
+		return "", errors.New("Personal Access Token に空白や改行が含まれています。トークンだけを 1 行で渡してください")
+	}
+	return token, nil
+}
+
+// afterLogin tells the user what else affects the login just made: ASANA_TOKEN still wins
+// over it, and a different account than the local data's stops syncing
+// (sync.ErrAccountChanged) until they log back in or reset.
+func (a *app) afterLogin(cmd *cobra.Command, gid string) {
+	if os.Getenv(auth.EnvToken) != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "注意: 環境変数 %s が設定されている間は、そちらのトークンが優先されます\n", auth.EnvToken)
+	}
+	if gid == "" {
+		return
+	}
+	if _, err := os.Stat(a.storePath()); err != nil {
+		return // no local data yet
+	}
+	ctx := cmd.Context()
+	st, err := a.openStore(ctx)
+	if err != nil {
+		return
+	}
+	defer st.Close()
+	if want, err := st.SyncState(ctx, store.KeyMeGID); err != nil || want == "" || want == gid {
+		return
+	}
+	n, _ := st.UnsentCount(ctx)
+	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+store.AccountChangedHelp(n, "asana-tui reset"))
 }
 
 // clientSecret takes the secret from the environment, an existing login, or a hidden prompt.
@@ -88,31 +189,33 @@ func (a *app) clientSecret(cmd *cobra.Command, ts tokenstore.Store) (string, err
 func (a *app) authStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "ログイン状態を表示する",
+		Short: "ログイン状態と方式（OAuth / Personal Access Token）を表示する",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			type status struct {
-				LoggedIn   bool   `json:"logged_in"`
+				LoggedIn bool `json:"logged_in"`
+				// Method is "oauth" or "personal_access_token" ("" when not logged in).
 				Method     string `json:"method"`
+				Env        string `json:"env,omitempty"` // the variable the token comes from
 				TokenStore string `json:"token_store,omitempty"`
 				UserName   string `json:"user_name,omitempty"`
 				UserEmail  string `json:"user_email,omitempty"`
 			}
 			var st status
 			if os.Getenv(auth.EnvToken) != "" {
-				st = status{LoggedIn: true, Method: "personal_access_token"}
+				st = status{LoggedIn: true, Method: string(tokenstore.MethodPAT), Env: auth.EnvToken}
 			} else {
 				ts, err := a.tokenStore()
 				if err != nil {
 					return err
 				}
-				st.Method, st.TokenStore = "oauth", ts.Name()
+				st.TokenStore = ts.Name()
 				c, err := ts.Load(cmd.Context())
 				switch {
 				case errors.Is(err, tokenstore.ErrNotFound):
 				case err != nil:
 					return err
 				default:
-					st.LoggedIn, st.UserName, st.UserEmail = true, c.UserName, c.UserEmail
+					st.LoggedIn, st.Method, st.UserName, st.UserEmail = true, string(c.Method()), c.UserName, c.UserEmail
 				}
 			}
 			if a.json {
@@ -121,21 +224,29 @@ func (a *app) authStatusCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			switch {
 			case !st.LoggedIn:
-				fmt.Fprintf(out, "ログインしていません（保存先: %s）\n", st.TokenStore)
-			case st.Method == "personal_access_token":
-				fmt.Fprintf(out, "%s の Personal Access Token を使用中\n", auth.EnvToken)
+				fmt.Fprintf(out, "ログインしていません（保存先: %s）\n%s\n", st.TokenStore, auth.ErrNotLoggedIn)
+			case st.Env != "":
+				fmt.Fprintf(out, "%s の Personal Access Token を使用中\n", st.Env)
 			default:
-				fmt.Fprintf(out, "%s (%s) としてログイン中（保存先: %s）\n", st.UserName, st.UserEmail, st.TokenStore)
+				fmt.Fprintf(out, "%s (%s) としてログイン中（方式: %s、保存先: %s）\n",
+					st.UserName, st.UserEmail, methodLabel(tokenstore.Method(st.Method)), st.TokenStore)
 			}
 			return nil
 		},
 	}
 }
 
+func methodLabel(m tokenstore.Method) string {
+	if m == tokenstore.MethodPAT {
+		return "Personal Access Token"
+	}
+	return "OAuth"
+}
+
 func (a *app) authLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
-		Short: "保存したトークンを削除する",
+		Short: "保存したトークン（OAuth / Personal Access Token）を削除する",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ts, err := a.tokenStore()
 			if err != nil {
@@ -145,6 +256,9 @@ func (a *app) authLogoutCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "ログアウトしました（%s から削除）\n", ts.Name())
+			if os.Getenv(auth.EnvToken) != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "注意: 環境変数 %s が設定されているので、そのトークンは引き続き使われます\n", auth.EnvToken)
+			}
 			return nil
 		},
 	}

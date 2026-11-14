@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/imageview"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -543,6 +544,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.syncer != nil {
 			m.syncer = msg.syncer
 		}
+		// After a login problem or another account, build the syncer again next time, so a
+		// login made meanwhile (asana-tui auth login in another terminal) is picked up.
+		loginHelp := auth.LoginHelp(msg.err)
+		if loginHelp != "" || errors.Is(msg.err, sync.ErrAccountChanged) {
+			m.syncer = nil
+		}
 		// Another asana-tui (CLI, MCP server, another TUI) is syncing or sending: not an
 		// error and not offline. Keep the last state and quietly try again soon.
 		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
@@ -556,6 +563,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncErr = msg.err
 		if errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.status = m.accountChangedStatus()
+		} else if loginHelp != "" {
+			m.status = loginHelp
 		}
 		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
 		if m.syncAgain {
@@ -962,6 +971,10 @@ func (m *Model) syncStatus() (string, bool) {
 		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:
 		return "○ オフライン", false
+	case errors.Is(m.syncErr, auth.ErrNotLoggedIn):
+		return "○ 未ログイン（asana-tui auth login --pat）", false
+	case auth.LoginHelp(m.syncErr) != "":
+		return "○ ログインし直してください（案内は下の行）", false
 	case m.syncErr != nil:
 		if errors.Is(m.syncErr, context.Canceled) {
 			return "", true
