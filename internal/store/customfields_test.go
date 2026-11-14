@@ -131,7 +131,7 @@ func TestParseCustomFieldValue(t *testing.T) {
 		{"cf1", "高", "o1", false},
 		{"cf1", "o2", "o2", false},
 		{"cf1", "低", nil, true}, // disabled
-		{"cf1", "", nil, false},  // clears
+		{"cf1", "", nil, false}, // clears
 		{"cf2", "1,234.5", 1234.5, false},
 		{"cf2", "abc", nil, true},
 		{"cf3", "1", nil, true}, // formula
