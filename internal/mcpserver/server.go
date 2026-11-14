@@ -17,6 +17,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
@@ -409,6 +410,10 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 		return nil, out, err
 	}
 	if out.Result, err = syncer.Run(ctx, in.Full); err != nil {
+		s.dropSyncerOn(err)
+		if help := auth.LoginHelp(err); help != "" {
+			return nil, out, fmt.Errorf("sync failed: not logged in to Asana. Tell the user to log in again (they must run it in a terminal): %s", help)
+		}
 		if errors.Is(err, sync.ErrAccountChanged) {
 			return nil, out, fmt.Errorf("sync stopped: %s", s.accountChangedNote(ctx))
 		}
@@ -620,11 +625,16 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	syncer, err := s.getSyncer(ctx)
 	if err != nil {
 		out.Note = "saved locally; will be sent on the next sync (" + err.Error() + ")"
+		if help := auth.LoginHelp(err); help != "" {
+			out.Note = "saved locally but NOT sent: not logged in to Asana. Tell the user to log in (in a terminal); " +
+				"the change is sent by the next sync after that: " + help
+		}
 		return out
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	res, err := syncer.Push(ctx)
+	s.dropSyncerOn(err)
 	out.Discarded = res.Discarded
 	if len(res.Discarded) > 0 {
 		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
@@ -632,6 +642,9 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	switch {
 	case errors.Is(err, sync.ErrAccountChanged):
 		out.Note += "saved locally but NOT sent: " + s.accountChangedNote(ctx)
+	case auth.LoginHelp(err) != "":
+		out.Note += "saved locally but NOT sent: Asana rejected the login token. Tell the user to log in again (in a terminal); " +
+			"the change is sent by the next sync after that: " + auth.LoginHelp(err)
 	case errors.Is(err, sync.ErrPushBusy):
 		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:
@@ -678,6 +691,17 @@ func (s *Server) getSyncer(ctx context.Context) (*sync.Syncer, error) {
 	}
 	s.syncer = syncer
 	return syncer, nil
+}
+
+// dropSyncerOn forgets the syncer after a login problem or another account, so the next
+// call builds it again and picks up a login made meanwhile (asana-tui auth login).
+func (s *Server) dropSyncerOn(err error) {
+	if auth.LoginHelp(err) == "" && !errors.Is(err, sync.ErrAccountChanged) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncer = nil
 }
 
 func ptr[T any](v T) *T { return &v }

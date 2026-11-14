@@ -24,10 +24,13 @@ type app struct {
 	cfg     config.Config
 	json    bool
 	offline bool
+	// baseURL overrides the Asana API URL (tests).
+	baseURL string
 }
 
-func NewRoot() *cobra.Command {
-	a := &app{}
+func NewRoot() *cobra.Command { return newRoot(&app{}) }
+
+func newRoot(a *app) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "asana-tui",
 		Short:         "Asana をターミナルから操作する TUI / CLI / MCP サーバー（引数なしで TUI を起動）",
@@ -69,11 +72,23 @@ func (a *app) apiClient(ctx context.Context) (*asana.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return asana.NewClient(oauth2.NewClient(ctx, src)), nil
+	c := a.newClient(ctx, src)
+	c.AuthHint = src.UnauthorizedHint()
+	return c, nil
 }
 
+func (a *app) newClient(ctx context.Context, src oauth2.TokenSource) *asana.Client {
+	c := asana.NewClient(oauth2.NewClient(ctx, src))
+	if a.baseURL != "" {
+		c.BaseURL = a.baseURL
+	}
+	return c
+}
+
+func (a *app) storePath() string { return filepath.Join(config.DataDir(), "store.db") }
+
 func (a *app) openStore(ctx context.Context) (*store.Store, error) {
-	return store.Open(ctx, filepath.Join(config.DataDir(), "store.db"))
+	return store.Open(ctx, a.storePath())
 }
 
 func (a *app) printJSON(v any) error {

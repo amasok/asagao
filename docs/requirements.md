@@ -44,7 +44,7 @@
 
 | # | 機能 | 内容 |
 |---|------|------|
-| F1 | 認証 | OAuth 2.0 でログイン（`asana-tui auth login`）。トークンは OS のキーチェーンまたは 1Password に保存し、自動で更新 |
+| F1 | 認証 | Personal Access Token（`asana-tui auth login --pat`）または OAuth 2.0（`asana-tui auth login`）でログイン。トークンは OS のキーチェーンまたは 1Password に保存し、OAuth は自動で更新 |
 | F2 | ワークスペース選択 | 所属ワークスペース一覧を表示・切替 |
 | F3 | My Tasks 表示 | 自分にアサインされた未完了タスクを一覧表示（期日順） |
 | F4 | プロジェクト一覧 / タスク一覧 | プロジェクトを選択し、セクションごとにタスクを表示 |
@@ -224,7 +224,12 @@ asana-tui sync status     # 送信待ちキューの確認
   - `asana-tui auth migrate --to 1password` で保存先を移せるようにする。
 - ブラウザがない環境（SSH 先の Linux など）では、認可 URL を表示し、ユーザーが手元のブラウザで開ける方式も用意する。
 - `[要確認]` 配布バイナリに client secret を含める必要があるか。PKCE だけでトークン交換できるかを実装前に確認する。
-- 予備手段として、環境変数 `ASANA_TOKEN` に Personal Access Token が設定されていればそれを優先して使う（開発用・ヘッドレス用）。`op run` と組み合わせれば 1Password から渡すこともできる。
+- OAuth アプリを登録しなくても使えるよう、Personal Access Token (PAT) でもログインできる（`asana-tui auth login --pat`。`auth.client_id` が未設定なら `--pat` なしでも PAT）:
+  - PAT は端末なら入力を隠して聞き、そうでなければ標準入力から読む。シェルの履歴に残らないよう、コマンドの引数では受け付けない。
+  - `/users/me` で確かめてから、OAuth と同じ保存先に保存する（1Password では `personal_access_token` フィールド）。PAT は更新しない。
+  - Asana が 401 を返したら、PAT を作り直して `auth login --pat` するよう案内する。未送信の変更は失敗にせず残す。
+  - `auth status` は方式（OAuth / Personal Access Token）を表示する。OAuth と PAT はあとからログインした方に置き換わる（client secret は残す）。
+- 予備手段として、環境変数 `ASANA_TOKEN` に Personal Access Token が設定されていればそれを優先して使う（CI・ヘッドレス用）。`op run` と組み合わせれば 1Password から渡すこともできる。
 
 ## 10. 非機能要件
 

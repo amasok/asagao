@@ -11,7 +11,10 @@ import (
 	"os"
 	"slices"
 
+	"golang.org/x/oauth2"
+
 	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -81,8 +84,36 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		return res, err
 	}
 	defer unlock()
+	if err := s.checkPushAccount(ctx); err != nil {
+		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
+		return res, err
+	}
 	res, _, err = s.pushLocked(ctx, &dropState{})
 	return res, err
+}
+
+// checkPushAccount makes sure, before Push sends anything, that the API acts as the user
+// the local data was synced with: changes queued by one account must never be sent as
+// another (after a login as someone else). Run checks this itself at its start. Before the
+// first sync there is no account to compare with. Once confirmed, it is not asked again
+// for this Syncer: its token source never switches to another user (auth.ErrLoginReplaced).
+func (s *Syncer) checkPushAccount(ctx context.Context) error {
+	if s.accountOK.Load() {
+		return nil
+	}
+	want, err := s.Store.SyncState(ctx, store.KeyMeGID)
+	if err != nil || want == "" {
+		return err
+	}
+	me, err := s.API.Me(ctx)
+	if err != nil {
+		return err // offline or logged out: nothing could be sent anyway
+	}
+	if me.GID != want {
+		return fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	}
+	s.accountOK.Store(true)
+	return nil
 }
 
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
@@ -188,6 +219,11 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 						return res, last, err
 					}
 					sendIt = false
+				case asana.IsUnauthorized(err): // the token is rejected: keep it for after a new login
+					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
+						return res, last, rerr
+					}
+					return res, last, err
 				case isRejected(err): // e.g. not ours (403)
 					if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
 						return res, last, err
@@ -243,11 +279,11 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 					res.Sent++ // a follow-up is part of the change already counted
 				}
 				again = out == followUp
-			case isNetworkError(err) || isRateLimited(err):
+			case isNetworkError(err) || isRateLimited(err) || asana.IsUnauthorized(err):
 				if err := s.holdBack(ctx, *op, err); err != nil {
 					return res, last, err
 				}
-				return res, last, err // offline or cancelled: keep the rest for later
+				return res, last, err // offline, cancelled or logged out: keep the rest for later
 			case isNotFound(err): // what it changes was deleted in Asana
 				if err := s.dropGone(ctx, *op, err, drops); err != nil {
 					return res, last, err
@@ -324,9 +360,11 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 
 // holdBack handles a network error while sending op: it goes back in the queue, to be
 // verified first if Asana may have received it and sending it twice would duplicate it.
+// A 429 or a 401 (the token is rejected, e.g. an expired PAT) was not processed: the entry
+// waits, unchanged, for the next push (after the user logs in again).
 func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
-	if requestNotSent(cause) || isRateLimited(cause) {
+	if requestNotSent(cause) || isRateLimited(cause) || asana.IsUnauthorized(cause) {
 		return s.Store.ReleaseNotSent(ctx, op.ID)
 	}
 	safe, err := s.Store.SafeToResend(ctx, op)
@@ -389,7 +427,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 	// account or organization than the one the store was synced with). Make sure it is
 	// the same user before dropping anything.
 	if err := s.checkAccount(ctx, st); err != nil {
-		if isTemporary(err) {
+		if isTemporary(err) || asana.IsUnauthorized(err) {
 			if rerr := s.Store.ReleaseOp(context.WithoutCancel(ctx), op.ID); rerr != nil {
 				return rerr
 			}
@@ -485,10 +523,17 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 	if st.checked {
 		return st.account
 	}
+	if s.accountOK.Load() { // confirmed by this Syncer already (Push or Run)
+		st.checked = true
+		return nil
+	}
 	me, err := s.API.Me(ctx)
 	if err != nil {
 		if isTemporary(err) {
 			return err // not checked: try again next time
+		}
+		if asana.IsUnauthorized(err) {
+			return err // the token is rejected (e.g. an expired PAT): log in again, not reset
 		}
 		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
 		return st.account
@@ -534,8 +579,12 @@ func isNetworkError(err error) bool {
 }
 
 // requestNotSent reports whether a network error happened before the request could reach
-// the server (no connection could be made).
+// the server (no connection could be made, or no token: logged out, refresh failed).
 func requestNotSent(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if errors.Is(err, auth.ErrNotLoggedIn) || errors.Is(err, auth.ErrLoginReplaced) || errors.As(err, &retrieveErr) {
+		return true
+	}
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && (opErr.Op == "dial" || opErr.Op == "proxyconnect") {
 		return true
