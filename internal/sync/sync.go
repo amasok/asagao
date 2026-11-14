@@ -330,10 +330,29 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err := s.Store.ReplaceStories(ctx, taskGID, stories, s.clock()); err != nil {
 		return err
 	}
+	s.fetchDependencies(ctx, *t)
 	if attErr != nil {
 		return &AttachmentsError{Err: attErr}
 	}
 	return nil
+}
+
+// fetchDependencies stores the names and states of a task's dependencies and dependents,
+// which may not be cached (the task itself only lists their gids). Without dependencies
+// (e.g. a free plan) or offline, the task simply keeps what it has.
+func (s *Syncer) fetchDependencies(ctx context.Context, t asana.Task) {
+	if len(t.Dependencies) == 0 && len(t.Dependents) == 0 {
+		return
+	}
+	deps, err := s.API.Dependencies(ctx, t.GID)
+	if err != nil {
+		return
+	}
+	dependents, err := s.API.Dependents(ctx, t.GID)
+	if err != nil {
+		return
+	}
+	_ = s.Store.ReplaceDependencies(ctx, t.GID, deps, dependents)
 }
 
 // AttachmentsError means a task's details were refreshed except for its attachments.

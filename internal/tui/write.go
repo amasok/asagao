@@ -30,7 +30,8 @@ const (
 	promptDuplicate
 	promptAttach
 	promptNewProject
-	promptField // a custom field (fields.go)
+	promptField     // a custom field (fields.go)
+	promptDepSearch // search for a task to link (deps.go)
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -114,6 +115,9 @@ func (m *Model) afterWrite() tea.Cmd {
 
 func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if cmd, ok := m.updateFields(msg); ok {
+		return m, cmd, true
+	}
+	if cmd, ok := m.updateDeps(msg); ok {
 		return m, cmd, true
 	}
 	switch msg := msg.(type) {
@@ -268,6 +272,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptNewProject:
 		m.prompt.Prompt = "新しいプロジェクト: "
 		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+	case promptDepSearch:
+		m.prompt.Prompt = "タスクを検索: "
+		m.prompt.Placeholder = "タスク名の一部"
 	case promptAttach:
 		m.prompt.Prompt = "添付するファイル: "
 		m.prompt.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
@@ -309,6 +316,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.attach(value)
 		case promptNewProject:
 			return m, m.createProject(value)
+		case promptDepSearch:
+			return m, m.openDependencyTargets(m.depTask, m.depDependents, value)
 		}
 		if m.commentGID != "" {
 			return m, m.addComment(m.commentGID, value)

@@ -104,7 +104,8 @@ func (s *Server) New() *mcp.Server {
 				"With parent it is created as a subtask of that task."}, s.createTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
-				"assignee, tags, followers, likes, custom fields or the projects it is in. Only the fields you pass are changed. " +
+				"assignee, tags, followers, likes, custom fields, dependencies (tasks it waits for / that wait for it), " +
+				"its type (milestone / approval), an approval's status, or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
@@ -225,20 +226,26 @@ type CreateTaskInput struct {
 }
 
 type UpdateTaskInput struct {
-	GID             string         `json:"gid" jsonschema:"task gid"`
-	Completed       *bool          `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
-	Name            *string        `json:"name,omitempty" jsonschema:"new name"`
-	Notes           *string        `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
-	DueOn           *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
-	Assignee        *string        `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
-	AddTags         []string       `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
-	RemoveTags      []string       `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
-	Liked           *bool          `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
-	AddFollowers    []string       `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
-	RemoveFollowers []string       `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
-	AddProjects     []string       `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
-	RemoveProjects  []string       `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
-	CustomFields    map[string]any `json:"custom_fields,omitempty" jsonschema:"custom fields to set, by field name or gid (see get_task custom_fields): an option name for enum, a list of option names for multi_enum, a number, text, a date (YYYY-MM-DD, +7d), user names or gids for people; null or empty string clears"`
+	GID                string         `json:"gid" jsonschema:"task gid"`
+	Completed          *bool          `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
+	Name               *string        `json:"name,omitempty" jsonschema:"new name"`
+	Notes              *string        `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
+	DueOn              *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	Assignee           *string        `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
+	AddTags            []string       `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
+	RemoveTags         []string       `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
+	Liked              *bool          `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
+	AddFollowers       []string       `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
+	RemoveFollowers    []string       `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
+	AddProjects        []string       `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
+	RemoveProjects     []string       `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
+	ResourceSubtype    *string        `json:"resource_subtype,omitempty" jsonschema:"task type: default_task, milestone or approval"`
+	ApprovalStatus     *string        `json:"approval_status,omitempty" jsonschema:"for an approval task: pending, approved, rejected or changes_requested"`
+	AddDependencies    []string       `json:"add_dependencies,omitempty" jsonschema:"gids of tasks this task should wait for (be blocked by)"`
+	RemoveDependencies []string       `json:"remove_dependencies,omitempty" jsonschema:"gids of tasks this task should stop waiting for"`
+	AddDependents      []string       `json:"add_dependents,omitempty" jsonschema:"gids of tasks that should wait for this task"`
+	RemoveDependents   []string       `json:"remove_dependents,omitempty" jsonschema:"gids of tasks that should stop waiting for this task"`
+	CustomFields       map[string]any `json:"custom_fields,omitempty" jsonschema:"custom fields to set, by field name or gid (see get_task custom_fields): an option name for enum, a list of option names for multi_enum, a number, text, a date (YYYY-MM-DD, +7d), user names or gids for people; null or empty string clears"`
 }
 
 type DuplicateTaskInput struct {
@@ -506,6 +513,20 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if in.Liked != nil {
 		changes["liked"] = *in.Liked
 	}
+	if in.ResourceSubtype != nil {
+		v, err := store.ParseSubtype(*in.ResourceSubtype)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("resource_subtype: %w", err)
+		}
+		changes["resource_subtype"] = v
+	}
+	if in.ApprovalStatus != nil {
+		v, err := store.ParseApprovalStatus(*in.ApprovalStatus)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("approval_status: %w", err)
+		}
+		changes["approval_status"] = v
+	}
 	if in.DueOn != nil {
 		due, err := dates.Parse(*in.DueOn, now)
 		if err != nil {
@@ -540,7 +561,30 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if err != nil {
 		return nil, WriteOutput{}, fmt.Errorf("remove_projects: %w", err)
 	}
-	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields) == 0 {
+	type depChange struct {
+		task, dep string
+		add       bool
+	}
+	var deps []depChange
+	for _, d := range []struct {
+		name    string
+		gids    []string
+		add, of bool // of: the given tasks wait for this one
+	}{{"add_dependencies", in.AddDependencies, true, false}, {"remove_dependencies", in.RemoveDependencies, false, false},
+		{"add_dependents", in.AddDependents, true, true}, {"remove_dependents", in.RemoveDependents, false, true}} {
+		for _, g := range d.gids {
+			other, err := s.Store.ResolveTaskGID(ctx, g)
+			if err != nil {
+				return nil, WriteOutput{}, fmt.Errorf("%s: %w", d.name, err)
+			}
+			c := depChange{in.GID, other, d.add}
+			if d.of {
+				c.task, c.dep = other, in.GID
+			}
+			deps = append(deps, c)
+		}
+	}
+	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields)+len(deps) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
 	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
@@ -574,6 +618,11 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	}
 	for _, f := range fields {
 		if _, err := s.Store.SetCustomFieldLocal(ctx, in.GID, f.gid, f.value, now); err != nil {
+			return nil, WriteOutput{}, err
+		}
+	}
+	for _, d := range deps {
+		if err := s.Store.SetDependencyLocal(ctx, d.task, d.dep, d.add, now); err != nil {
 			return nil, WriteOutput{}, err
 		}
 	}

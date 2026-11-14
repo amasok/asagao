@@ -264,7 +264,11 @@ func printTaskTable(w io.Writer, tasks []store.TaskSummary) {
 				tags = strings.TrimSpace(tags + " " + f.Name + ":" + f.Display)
 			}
 		}
-		rows = append(rows, []string{checkbox(t.Completed), formatDue(t), t.Name, membershipLabel(t.Memberships), tags, t.GID})
+		name := t.Name
+		if b := store.TaskBadges(t); b != "" {
+			name += " " + b
+		}
+		rows = append(rows, []string{checkbox(t.Completed), formatDue(t), name, membershipLabel(t.Memberships), tags, t.GID})
 	}
 	printTable(w, rows)
 	fmt.Fprintf(w, "\n%d 件\n", len(tasks))
@@ -288,6 +292,32 @@ func printTaskDetail(w io.Writer, d *store.TaskDetail) {
 	}
 	if d.Parent != nil {
 		row("親タスク", d.Parent.Name+" ("+d.Parent.GID+")")
+	}
+	if d.ResourceSubtype != "" && d.ResourceSubtype != "default_task" {
+		row("種類", store.SubtypeLabel(d.ResourceSubtype))
+	}
+	if d.ResourceSubtype == "approval" {
+		status := d.ApprovalStatus
+		if status == "" {
+			status = "pending"
+		}
+		row("承認", store.ApprovalLabel(status))
+	}
+	for _, list := range []struct {
+		label string
+		deps  []store.DependencyView
+	}{{"待っている", d.Dependencies}, {"待たれている", d.Dependents}} {
+		for i, dep := range list.deps {
+			label := ""
+			if i == 0 {
+				label = list.label
+			}
+			v := checkbox(dep.Completed) + " " + dep.Name + " (" + dep.GID + ")"
+			if dep.Pending {
+				v += " ↑"
+			}
+			row(label, v)
+		}
 	}
 	for _, f := range d.CustomFields {
 		v := f.Display

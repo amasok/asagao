@@ -241,6 +241,9 @@ type Model struct {
 	fieldTask   store.TaskSummary     // task for promptField
 	fieldEdit   store.CustomFieldView // field for promptField
 	fieldFilter fieldFilter
+	// dependencies (deps.go)
+	depTask       store.TaskSummary // task for promptDepSearch
+	depDependents bool
 	// extras.go
 	dupSource      string // task to duplicate (promptDuplicate)
 	attachTask     string // task to attach a file to (promptAttach)

@@ -109,7 +109,7 @@ func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsen
 		// (triggers).
 		for _, table := range []string{
 			"task_memberships", "task_tags", "task_followers", "task_details", "attachments", "stories",
-			"task_custom_fields", "project_custom_fields", "custom_fields",
+			"task_custom_fields", "project_custom_fields", "custom_fields", "task_dependencies", "task_refs",
 			"tasks", "sections", "project_members", "status_updates", "projects", "tags", "users",
 			"workspaces", "outbox", "sync_state",
 			"notifications",

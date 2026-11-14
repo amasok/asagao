@@ -361,6 +361,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 		err = s.pushTag(ctx, op)
 	case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
 		err = s.pushRelation(ctx, op)
+	case store.OpAddDependency, store.OpRemoveDependency:
+		err = s.pushDependency(ctx, op)
 	case store.OpDuplicateTask:
 		err = s.pushDuplicate(ctx, op)
 	case store.OpUploadAttachment:
@@ -859,6 +861,31 @@ func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
 		err = s.API.AddProject(ctx, task, project, section)
 	case store.OpRemoveProject:
 		err = s.API.RemoveProject(ctx, task, project)
+	}
+	if err != nil {
+		return err
+	}
+	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
+}
+
+// pushDependency adds or removes a dependency. Both are harmless to repeat: Asana adds only
+// tasks that are not dependencies yet.
+func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	dep, _ := op.Payload["dependency"].(string)
+	if dep, err = s.Store.RealGID(ctx, dep); err != nil {
+		return err
+	}
+	if store.IsLocalGID(task) || store.IsLocalGID(dep) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	if op.Kind == store.OpAddDependency {
+		err = s.API.AddDependencies(ctx, task, []string{dep})
+	} else {
+		err = s.API.RemoveDependencies(ctx, task, []string{dep})
 	}
 	if err != nil {
 		return err

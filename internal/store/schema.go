@@ -282,4 +282,23 @@ CREATE TABLE task_custom_fields (
 CREATE INDEX task_custom_fields_field ON task_custom_fields(field_gid);
 DELETE FROM sync_state WHERE key = 'last_full_sync';
 `,
+	`
+-- Dependencies between tasks (task_gid waits for dependency_gid), the approval status of
+-- approval tasks, and the names of referenced tasks that are not cached (task_refs).
+-- Forget the last full sync so the next sync fetches them for every task.
+CREATE TABLE task_dependencies (
+	task_gid       TEXT NOT NULL,
+	dependency_gid TEXT NOT NULL,
+	PRIMARY KEY (task_gid, dependency_gid)
+);
+CREATE INDEX task_dependencies_dependency ON task_dependencies(dependency_gid);
+CREATE TABLE task_refs (
+	gid              TEXT PRIMARY KEY,
+	name             TEXT NOT NULL DEFAULT '',
+	completed        INTEGER NOT NULL DEFAULT 0,
+	resource_subtype TEXT NOT NULL DEFAULT ''
+);
+ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT '';
+DELETE FROM sync_state WHERE key = 'last_full_sync';
+`,
 }

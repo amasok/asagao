@@ -83,6 +83,12 @@ type Task struct {
 	ModifiedAt      time.Time    `json:"modified_at"`
 	// CustomFields is nil when the response did not include them.
 	CustomFields []CustomField `json:"custom_fields"`
+	// ApprovalStatus is pending / approved / rejected / changes_requested (approval tasks).
+	ApprovalStatus string `json:"approval_status"`
+	// Dependencies (tasks this one waits for) and Dependents (tasks waiting for this one)
+	// are nil when the response did not include them.
+	Dependencies []Ref `json:"dependencies"`
+	Dependents   []Ref `json:"dependents"`
 }
 
 // Fields requested for each resource (keep responses small; see requirements 8 章).
@@ -96,6 +102,7 @@ var (
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
+		"approval_status", "dependencies", "dependents",
 	}, customFieldValueFields)
 )
 

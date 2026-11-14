@@ -200,6 +200,9 @@ func (m *Model) cardLine(t *store.TaskSummary, w int, today string, selected boo
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	name := t.Name + fieldBadges(t)
+	if badges := store.TaskBadges(*t); badges != "" {
+		name = t.Name + " " + badges + fieldBadges(t)
+	}
 	if t.Pending {
 		name += " ↑"
 	}
@@ -261,6 +264,10 @@ const (
 	pickField       // an enum custom field (fields.go)
 	pickFieldMulti  // a multi_enum custom field: toggles
 	pickFieldFilter // filter by a custom field option
+	pickSubtype     // task type (deps.go)
+	pickApproval    // approval status
+	pickDepAction   // open / remove a linked task
+	pickDepTarget   // a task to link
 )
 
 type pickerItem struct {
@@ -277,6 +284,8 @@ type picker struct {
 	task    store.TaskSummary
 	project string
 	field   store.CustomFieldView // pickField, pickFieldMulti
+	// pickDepAction, pickDepTarget: the chosen task waits for p.task (else p.task waits for it)
+	dependents bool
 }
 
 type tagsLoadedMsg struct {
@@ -385,6 +394,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.picker = nil
+		if cmd, ok := m.handleDepPicker(p, item); ok {
+			return m, cmd
+		}
 		switch p.kind {
 		case pickDayTask:
 			return m, m.openTaskDetail(item.value)

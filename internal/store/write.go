@@ -105,6 +105,9 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 			if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
 				return err
 			}
+			if err := reapplyDependencyOps(ctx, tx, t.GID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -166,7 +169,11 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET liked = ?, num_likes = ? WHERE gid = ?", t.Liked, t.NumLikes, t.GID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET liked = ?, num_likes = ?, approval_status = ? WHERE gid = ?",
+		t.Liked, t.NumLikes, t.ApprovalStatus, t.GID); err != nil {
+		return err
+	}
+	if err := upsertTaskDependencies(ctx, tx, t); err != nil {
 		return err
 	}
 	if t.Followers != nil {

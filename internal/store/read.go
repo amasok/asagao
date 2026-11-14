@@ -52,6 +52,10 @@ type TaskSummary struct {
 	Pending  bool `json:"pending"`
 	Liked    bool `json:"liked"`
 	NumLikes int  `json:"num_likes"`
+	// ApprovalStatus of an approval task: pending, approved, rejected or changes_requested.
+	ApprovalStatus string `json:"approval_status,omitempty"`
+	// OpenDependencies is how many incomplete tasks this task waits for.
+	OpenDependencies int `json:"open_dependencies,omitempty"`
 	// CustomFields: in lists, the fields that have a value; in a task's detail, every field
 	// of the task (and of its projects), with the choices of enum fields.
 	CustomFields []CustomFieldView `json:"custom_fields,omitempty"`
@@ -80,6 +84,9 @@ type TaskDetail struct {
 	Stories     []StoryView      `json:"stories"`
 	Attachments []AttachmentView `json:"attachments"`
 	Followers   []UserRef        `json:"followers"`
+	// Dependencies are the tasks this task waits for; Dependents the tasks waiting for it.
+	Dependencies []DependencyView `json:"dependencies"`
+	Dependents   []DependencyView `json:"dependents"`
 	// DetailsFetchedAt is when subtasks/stories were last fetched; empty if never.
 	DetailsFetchedAt string `json:"details_fetched_at,omitempty"`
 }
@@ -138,7 +145,10 @@ const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.
 	t.due_on, COALESCE(t.due_at, ''), t.start_on, t.assignee_gid, COALESCE(u.name, ''),
 	t.parent_gid, COALESCE((SELECT p.name FROM tasks p WHERE p.gid = t.parent_gid), ''),
 	t.num_subtasks, t.permalink_url, t.modified_at,
-	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid), t.liked, t.num_likes`
+	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid), t.liked, t.num_likes, t.approval_status,
+	(SELECT count(*) FROM task_dependencies dp LEFT JOIN tasks bt ON bt.gid = dp.dependency_gid
+		LEFT JOIN task_refs br ON br.gid = dp.dependency_gid
+		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed, 0) = 0)`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string
@@ -228,7 +238,8 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 		var assigneeGID, assigneeName string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
-			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending, &t.Liked, &t.NumLikes); err != nil {
+			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending, &t.Liked, &t.NumLikes,
+			&t.ApprovalStatus, &t.OpenDependencies); err != nil {
 			return nil, err
 		}
 		if assigneeGID != "" {
@@ -316,6 +327,12 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		return nil, err
 	}
 	if d.CustomFields, err = s.taskCustomFields(ctx, gid); err != nil {
+		return nil, err
+	}
+	if d.Dependencies, err = s.taskDependencies(ctx, gid, false); err != nil {
+		return nil, err
+	}
+	if d.Dependents, err = s.taskDependencies(ctx, gid, true); err != nil {
 		return nil, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT t.notes, t.html_notes, t.created_at, COALESCE(d.fetched_at, '')

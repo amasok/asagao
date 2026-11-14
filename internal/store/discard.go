@@ -61,6 +61,11 @@ func (s *Store) DiscardDeletedTask(ctx context.Context, taskGID, reason string, 
 		}
 		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE sub(gid) AS (
 				SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid)
+			DELETE FROM task_dependencies WHERE task_gid IN (SELECT gid FROM sub) OR dependency_gid IN (SELECT gid FROM sub)`, taskGID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE sub(gid) AS (
+				SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid)
 			DELETE FROM tasks WHERE gid IN (SELECT gid FROM sub)`, taskGID); err != nil {
 			return err
 		}
