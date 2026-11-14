@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -102,7 +104,7 @@ func (s *Server) New() *mcp.Server {
 				"With parent it is created as a subtask of that task."}, s.createTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
-				"assignee, tags, followers, likes or the projects it is in. Only the fields you pass are changed. " +
+				"assignee, tags, followers, likes, custom fields or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
@@ -140,6 +142,7 @@ type TaskFilterInput struct {
 	DueAfter   string `json:"due_after,omitempty" jsonschema:"due on or after this date"`
 	Overdue    bool   `json:"overdue,omitempty" jsonschema:"only incomplete tasks whose due date has passed"`
 	Tag        string `json:"tag,omitempty" jsonschema:"tag name or gid"`
+	Field      string `json:"field,omitempty" jsonschema:"custom field filter: \"name=value\" (option name or value text), or \"name\" for any value"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"maximum number of tasks (default 100)"`
 	// recent updates (an inbox substitute)
 	ModifiedWithinDays int `json:"modified_within_days,omitempty" jsonschema:"only tasks modified in the last N days, newest first (what changed recently)"`
@@ -222,19 +225,20 @@ type CreateTaskInput struct {
 }
 
 type UpdateTaskInput struct {
-	GID             string   `json:"gid" jsonschema:"task gid"`
-	Completed       *bool    `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
-	Name            *string  `json:"name,omitempty" jsonschema:"new name"`
-	Notes           *string  `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
-	DueOn           *string  `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
-	Assignee        *string  `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
-	AddTags         []string `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
-	RemoveTags      []string `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
-	Liked           *bool    `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
-	AddFollowers    []string `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
-	RemoveFollowers []string `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
-	AddProjects     []string `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
-	RemoveProjects  []string `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
+	GID             string         `json:"gid" jsonschema:"task gid"`
+	Completed       *bool          `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
+	Name            *string        `json:"name,omitempty" jsonschema:"new name"`
+	Notes           *string        `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
+	DueOn           *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	Assignee        *string        `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
+	AddTags         []string       `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
+	RemoveTags      []string       `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
+	Liked           *bool          `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
+	AddFollowers    []string       `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
+	RemoveFollowers []string       `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
+	AddProjects     []string       `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
+	RemoveProjects  []string       `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
+	CustomFields    map[string]any `json:"custom_fields,omitempty" jsonschema:"custom fields to set, by field name or gid (see get_task custom_fields): an option name for enum, a list of option names for multi_enum, a number, text, a date (YYYY-MM-DD, +7d), user names or gids for people; null or empty string clears"`
 }
 
 type DuplicateTaskInput struct {
@@ -325,7 +329,7 @@ func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee
 	}
 	return s.Store.BuildFilter(ctx, store.FilterSpec{
 		Assignee: in.Assignee, DefaultAssignee: defaultAssignee,
-		Project: in.Project, Section: in.Section, Tag: in.Tag,
+		Project: in.Project, Section: in.Section, Tag: in.Tag, Field: in.Field,
 		DueBefore: in.DueBefore, DueAfter: in.DueAfter,
 		Completion: in.Completion, DefaultCompleted: defaultCompleted,
 		Overdue: in.Overdue, ModifiedWithinDays: in.ModifiedWithinDays, Limit: limit,
@@ -536,11 +540,28 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if err != nil {
 		return nil, WriteOutput{}, fmt.Errorf("remove_projects: %w", err)
 	}
-	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects) == 0 {
+	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
 	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
 		return nil, WriteOutput{}, err
+	}
+	// Resolve every custom field value before changing anything.
+	type fieldValue struct {
+		gid   string
+		value any
+	}
+	var fields []fieldValue
+	for _, name := range slices.Sorted(maps.Keys(in.CustomFields)) {
+		f, err := s.Store.ResolveCustomField(ctx, in.GID, name)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("custom_fields: %w", err)
+		}
+		v, err := s.Store.ParseCustomFieldValue(ctx, f.GID, in.CustomFields[name], now)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("custom_fields: %w", err)
+		}
+		fields = append(fields, fieldValue{f.GID, v})
 	}
 
 	if len(changes) > 0 {
@@ -550,6 +571,11 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	}
 	if err := s.Store.ApplyTagEdit(ctx, in.GID, tags, now); err != nil {
 		return nil, WriteOutput{}, err
+	}
+	for _, f := range fields {
+		if _, err := s.Store.SetCustomFieldLocal(ctx, in.GID, f.gid, f.value, now); err != nil {
+			return nil, WriteOutput{}, err
+		}
 	}
 	for _, f := range []struct {
 		users  []string

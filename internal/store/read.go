@@ -52,6 +52,9 @@ type TaskSummary struct {
 	Pending  bool `json:"pending"`
 	Liked    bool `json:"liked"`
 	NumLikes int  `json:"num_likes"`
+	// CustomFields: in lists, the fields that have a value; in a task's detail, every field
+	// of the task (and of its projects), with the choices of enum fields.
+	CustomFields []CustomFieldView `json:"custom_fields,omitempty"`
 }
 
 type StoryView struct {
@@ -122,6 +125,10 @@ type TaskFilter struct {
 	// SortByModified orders by last modification, newest first (instead of due date).
 	SortByModified bool
 	Tag            string // tag name or gid
+	// Field (a custom field's gid or name) keeps tasks whose field has FieldValue (its text,
+	// or one of its options); with FieldValue "" any value.
+	Field      string
+	FieldValue string
 	// Query is a full-text search over task name, notes and comments.
 	Query string
 	Limit int
@@ -168,6 +175,10 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 	if f.Tag != "" {
 		add(`EXISTS (SELECT 1 FROM task_tags tt JOIN tags g ON g.gid = tt.tag_gid
 			WHERE tt.task_gid = t.gid AND (g.gid = ? OR g.name = ?))`, f.Tag, f.Tag)
+	}
+	if f.Field != "" {
+		cond, a := fieldCondition(f.Field, f.FieldValue)
+		add(cond, a...)
 	}
 	for _, term := range strings.Fields(f.Query) {
 		cond, a := searchCondition(term)
@@ -273,15 +284,19 @@ func (s *Store) fillRelations(ctx context.Context, tasks []TaskSummary) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var taskGID, name string
 		if err := rows.Scan(&taskGID, &name); err != nil {
+			rows.Close()
 			return err
 		}
 		idx[taskGID].Tags = append(idx[taskGID].Tags, name)
 	}
-	return rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return s.fillCustomFields(ctx, idx, in, ids)
 }
 
 // GetTask returns a task with notes, subtasks and stories from the store.
@@ -298,6 +313,9 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		return nil, err
 	}
 	if d.Followers, err = s.TaskFollowers(ctx, gid); err != nil {
+		return nil, err
+	}
+	if d.CustomFields, err = s.taskCustomFields(ctx, gid); err != nil {
 		return nil, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT t.notes, t.html_notes, t.created_at, COALESCE(d.fetched_at, '')

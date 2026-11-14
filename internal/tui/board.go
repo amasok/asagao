@@ -199,7 +199,7 @@ func (m *Model) cardLine(t *store.TaskSummary, w int, today string, selected boo
 		check = "☑"
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
-	name := t.Name
+	name := t.Name + fieldBadges(t)
 	if t.Pending {
 		name += " ↑"
 	}
@@ -258,6 +258,9 @@ const (
 	pickMembers
 	pickArchive
 	pickReset
+	pickField       // an enum custom field (fields.go)
+	pickFieldMulti  // a multi_enum custom field: toggles
+	pickFieldFilter // filter by a custom field option
 )
 
 type pickerItem struct {
@@ -273,6 +276,7 @@ type picker struct {
 	// for pickSection
 	task    store.TaskSummary
 	project string
+	field   store.CustomFieldView // pickField, pickFieldMulti
 }
 
 type tagsLoadedMsg struct {
@@ -374,6 +378,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.toggleProject(p.task, item)
 		case pickMembers:
 			return m, m.toggleMember(p.project, item)
+		case pickFieldMulti:
+			return m, m.toggleFieldOption(p, item)
 		}
 		if key == "space" {
 			return m, nil
@@ -382,6 +388,14 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		switch p.kind {
 		case pickDayTask:
 			return m, m.openTaskDetail(item.value)
+		case pickField:
+			var value any
+			if item.value != "" {
+				value = item.value
+			}
+			return m, m.setField(p.task, p.field, value, false)
+		case pickFieldFilter:
+			return m, m.applyFieldFilter(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickReset:

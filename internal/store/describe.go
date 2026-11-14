@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -136,6 +138,30 @@ func FieldLabel(k string) string {
 	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]
 }
 
+// ConflictLines describes the conflicting fields of an entry in conflict, one per line:
+// "label: こちら=local / Asana=server".
+func ConflictLines(op Op) []string {
+	if op.Kind == OpSetCustomField {
+		text := func(m map[string]any) string {
+			if s, _ := m["display"].(string); s != "" {
+				return s
+			}
+			if m["value"] == nil {
+				return "（空）"
+			}
+			return fmt.Sprint(m["value"])
+		}
+		name, _ := op.Payload["field_name"].(string)
+		return []string{fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict))}
+	}
+	keys := slices.Sorted(maps.Keys(op.Conflict))
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf("%s: こちら=%v / Asana=%v", FieldLabel(k), op.Payload[k], op.Conflict[k]))
+	}
+	return lines
+}
+
 // DescribeOp is a one-line description of an outbox entry: "task: what it changes"
 // (see DescribeChange). Entries whose change already names what they are about (creating
 // or duplicating a task, renaming a section) are not prefixed.
@@ -186,6 +212,11 @@ func DescribeChange(op Op) string {
 		return fmt.Sprintf("プロジェクト「%s」からの削除", str("project_name"))
 	case OpUploadAttachment:
 		return fmt.Sprintf("添付「%s」", str("name"))
+	case OpSetCustomField:
+		if op.Payload["value"] == nil {
+			return fmt.Sprintf("「%s」を空にする", str("field_name"))
+		}
+		return fmt.Sprintf("「%s」を「%s」に変更", str("field_name"), clip(str("display"), 40))
 	case OpCreateStatus:
 		if str("title") == "" {
 			return fmt.Sprintf("ステータス更新（%s）", StatusLabel(str("status_type")))

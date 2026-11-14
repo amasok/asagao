@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -80,6 +81,8 @@ type Task struct {
 	CreatedAt       time.Time    `json:"created_at"`
 	CreatedBy       *Ref         `json:"created_by"`
 	ModifiedAt      time.Time    `json:"modified_at"`
+	// CustomFields is nil when the response did not include them.
+	CustomFields []CustomField `json:"custom_fields"`
 }
 
 // Fields requested for each resource (keep responses small; see requirements 8 章).
@@ -87,13 +90,13 @@ var (
 	userFields    = []string{"name", "email", "workspaces.name"}
 	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members.name", "permalink_url", "created_at", "modified_at"}
 	sectionFields = []string{"name", "project"}
-	TaskFields    = []string{
+	TaskFields    = slices.Concat([]string{
 		"name", "notes", "html_notes", "resource_subtype", "completed", "completed_at",
 		"assignee.name", "due_on", "due_at", "start_on", "parent.name",
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
-	}
+	}, customFieldValueFields)
 )
 
 func fields(f []string) url.Values {
@@ -168,7 +171,7 @@ var storyFields = []string{"type", "resource_subtype", "text", "html_text", "cre
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
 	var t Task
-	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(TaskFields), &t)
+	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(taskDetailFields), &t)
 }
 
 func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {

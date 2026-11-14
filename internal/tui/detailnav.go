@@ -29,6 +29,7 @@ const (
 	itemProjects // "＋ プロジェクトに追加 / 外す"
 	itemAttachment
 	itemAddAttachment
+	itemCustomField // sub: index into CustomFields
 )
 
 type detailItem struct {
@@ -160,6 +161,10 @@ func (m *Model) activateItem() tea.Cmd {
 		return nil
 	case itemLike:
 		return m.toggleLike()
+	case itemCustomField:
+		if it.sub < len(d.CustomFields) {
+			return m.editCustomField(d.TaskSummary, d.CustomFields[it.sub])
+		}
 	case itemFollowers:
 		return m.openFollowers()
 	case itemProjects:

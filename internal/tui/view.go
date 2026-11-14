@@ -191,6 +191,9 @@ func (m *Model) renderHeader() string {
 	if m.tagFilter != "" {
 		left += "  " + m.st.tag.Render("#"+m.tagFilter)
 	}
+	if m.fieldFilter.field != "" {
+		left += "  " + m.st.tag.Render(m.fieldFilter.label())
+	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
 	}
@@ -367,7 +370,7 @@ func (m *Model) taskLine(t *store.TaskSummary, depth, w int, today string, selec
 		check = strings.Repeat("  ", depth-1) + "└ " + check
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
-	extra := ""
+	extra := fieldBadges(t)
 	if t.Pending {
 		extra += " ↑"
 	}
@@ -525,6 +528,19 @@ func (m *Model) renderDetail(w int) string {
 		}
 	}
 	field(itemLike, "いいね", likes, "♡ なし")
+	for i, f := range d.CustomFields {
+		value := f.Display
+		if value == "" {
+			if !active {
+				continue
+			}
+			value = m.st.dim.Render("なし")
+		}
+		if active && !f.Editable {
+			value += m.st.dim.Render("  （変更不可）")
+		}
+		row(item(itemCustomField, i), m.st.label.Render(padRight(ansi.Truncate(f.Name, labelW, "…"), labelW))+" "+value)
+	}
 	if active {
 		done := "☐ 未完了"
 		if d.Completed {

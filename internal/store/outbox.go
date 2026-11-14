@@ -520,6 +520,10 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
 			return err
 		}
+	case OpSetCustomField:
+		if err := applyCustomFieldOp(ctx, tx, *op, true); err != nil {
+			return err
+		}
 	case OpUpdateTask:
 		// Restore the values from before the local edit.
 		if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
@@ -588,6 +592,8 @@ func replaceLocalTaskGID(ctx context.Context, tx *sql.Tx, local, real string) er
 		"UPDATE task_memberships SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE task_followers SET task_gid = ?2 WHERE task_gid = ?1",
+		"DELETE FROM task_custom_fields WHERE task_gid = ?2",
+		"UPDATE task_custom_fields SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE task_details SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE attachments SET parent_gid = ?2 WHERE parent_gid = ?1",

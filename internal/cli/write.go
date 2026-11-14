@@ -355,7 +355,42 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			_, err := st.UploadAttachmentLocal(cmd.Context(), args[0], args[1], filepath.Join(config.CacheDir(), "attachments"), time.Now())
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})
-	return []*cobra.Command{like, follow, project, duplicate, attach}
+	field := a.writeCommand("field <gid> <フィールド> [値]", "カスタムフィールドを設定する（値なし / --clear で空に）", cobra.RangeArgs(2, 3),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			ctx := cmd.Context()
+			f, err := st.ResolveCustomField(ctx, args[0], args[1])
+			if err != nil {
+				return "", "", err
+			}
+			var input any
+			if len(args) == 3 {
+				input = args[2]
+			}
+			if clear, _ := cmd.Flags().GetBool("clear"); clear {
+				input = nil
+			} else if input == nil {
+				return "", "", fmt.Errorf("値を指定してください（空にするなら --clear）")
+			}
+			value, err := st.ParseCustomFieldValue(ctx, f.GID, input, time.Now())
+			if err != nil {
+				return "", "", err
+			}
+			display, err := st.SetCustomFieldLocal(ctx, args[0], f.GID, value, time.Now())
+			if err != nil {
+				return "", "", err
+			}
+			if display == "" {
+				return args[0], fmt.Sprintf("「%s」を空にしました", f.Name), nil
+			}
+			return args[0], fmt.Sprintf("「%s」を「%s」にしました", f.Name, display), nil
+		})
+	field.Flags().Bool("clear", false, "値を空にする")
+	field.Example = `  asana-tui task field 1203455468597469 優先度 高
+  asana-tui task field 1203455468597469 見積もり 3.5
+  asana-tui task field 1203455468597469 ラベル "バグ,UI"     # 複数選択はカンマ区切り
+  asana-tui task field 1203455468597469 締切 +7d
+  asana-tui task field 1203455468597469 優先度 --clear`
+	return []*cobra.Command{like, follow, project, duplicate, attach, field}
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {
@@ -561,8 +596,8 @@ func (a *app) outboxCmd() *cobra.Command {
 			}
 			for _, op := range ops {
 				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, store.OpLabel(op), store.DescribeOp(op))
-				for k, v := range op.Conflict {
-					fmt.Fprintf(cmd.OutOrStdout(), "      %s: こちら=%v / Asana=%v\n", store.FieldLabel(k), op.Payload[k], v)
+				for _, c := range store.ConflictLines(op) {
+					fmt.Fprintf(cmd.OutOrStdout(), "      %s\n", c)
 				}
 				if heading, text := store.OpNote(op); text != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", heading, text)

@@ -251,4 +251,35 @@ CREATE TABLE notifications (
 );
 CREATE INDEX notifications_created ON notifications(created_at);
 `,
+	`
+-- Custom fields: definitions (from project settings and tasks), the fields of each project,
+-- and the values of tasks. value is JSON in the form Asana accepts (enum option gid,
+-- [option gids], number, text, "YYYY-MM-DD", [user gids]; null when empty); display is
+-- the value as text. Forget the last full sync so the next sync fetches every task's values.
+CREATE TABLE custom_fields (
+	gid          TEXT PRIMARY KEY,
+	name         TEXT NOT NULL DEFAULT '',
+	type         TEXT NOT NULL DEFAULT '',
+	precision    INTEGER NOT NULL DEFAULT 0,
+	read_only    INTEGER NOT NULL DEFAULT 0,
+	enum_options TEXT NOT NULL DEFAULT '' -- JSON [{gid, name, color, enabled}]; '' = not known
+);
+CREATE TABLE project_custom_fields (
+	project_gid  TEXT NOT NULL,
+	field_gid    TEXT NOT NULL,
+	position     INTEGER NOT NULL DEFAULT 0,
+	is_important INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (project_gid, field_gid)
+);
+CREATE TABLE task_custom_fields (
+	task_gid  TEXT NOT NULL REFERENCES tasks(gid) ON DELETE CASCADE,
+	field_gid TEXT NOT NULL,
+	position  INTEGER NOT NULL DEFAULT 0,
+	value     TEXT NOT NULL DEFAULT 'null',
+	display   TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (task_gid, field_gid)
+);
+CREATE INDEX task_custom_fields_field ON task_custom_fields(field_gid);
+DELETE FROM sync_state WHERE key = 'last_full_sync';
+`,
 }

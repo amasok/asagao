@@ -102,6 +102,9 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 			if err := reapplyRelationOps(ctx, tx, t.GID); err != nil {
 				return err
 			}
+			if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -180,6 +183,9 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 				return err
 			}
 		}
+	}
+	if err := upsertTaskCustomFields(ctx, tx, t); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ?", t.GID); err != nil {
 		return err
@@ -292,6 +298,7 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 				"DELETE FROM sections WHERE project_gid = ?",
 				"DELETE FROM project_members WHERE project_gid = ?",
 				"DELETE FROM status_updates WHERE project_gid = ?",
+				"DELETE FROM project_custom_fields WHERE project_gid = ?",
 				"DELETE FROM task_memberships WHERE project_gid = ?",
 				"DELETE FROM projects WHERE gid = ?",
 			} {

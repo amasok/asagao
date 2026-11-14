@@ -347,6 +347,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 	switch op.Kind {
 	case store.OpUpdateTask:
 		return s.pushUpdate(ctx, op)
+	case store.OpSetCustomField:
+		return s.pushCustomField(ctx, op)
 	case store.OpRenameSection:
 		return s.pushRenameSection(ctx, op)
 	case store.OpCreateTask:
@@ -640,6 +642,56 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 	}
 	s.refresh(ctx, *t)
 	return sent, nil
+}
+
+// pushCustomField sets one custom field, after checking that nobody changed it in Asana
+// since it was edited here. A field the task no longer has is treated like a 404 (the
+// change is dropped and the user told).
+func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, error) {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return sent, err
+	}
+	if store.IsLocalGID(task) {
+		return sent, &asana.Error{Status: 404} // its create failed
+	}
+	field, _ := op.Payload["field"].(string)
+	server, err := s.API.Task(ctx, task)
+	if err != nil {
+		return sent, err
+	}
+	sv, display, found := store.ServerCustomField(server, field)
+	if !found {
+		return sent, &asana.Error{Status: http.StatusNotFound} // removed from the task's projects
+	}
+	local := op.Payload["value"]
+	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
+	}
+	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: local}})
+	if err != nil {
+		return sent, err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sent, sentNotSaved(err)
+	}
+	s.refresh(ctx, *t)
+	return sent, nil
+}
+
+// normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
+func normalize(v any) any {
+	if l, ok := v.([]any); ok {
+		out := make([]string, 0, len(l))
+		for _, e := range l {
+			out = append(out, fmt.Sprint(e))
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return v
 }
 
 // refresh stores a task as Asana returned it after a change. The change is already
