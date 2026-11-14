@@ -32,6 +32,9 @@ type FilterSpec struct {
 	ModifiedWithinDays int
 	Limit              int
 	Query              string
+	// Field is a custom field filter: "name=value" (an option name or the value as text),
+	// or "name" for any value. The name may also be the field's gid.
+	Field string
 }
 
 // FilterError is an invalid FilterSpec field. Field is the spec's input name in
@@ -50,6 +53,7 @@ var ErrSectionWithoutProject = errors.New("section requires project")
 // BuildFilter resolves names and relative dates in spec.
 func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time) (TaskFilter, error) {
 	f := TaskFilter{Tag: spec.Tag, Limit: spec.Limit, Query: spec.Query}
+	f.Field, f.FieldValue = ParseFieldFilter(spec.Field)
 
 	assignee := spec.Assignee
 	if assignee == "" {

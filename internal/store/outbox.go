@@ -89,6 +89,15 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		if err != nil {
 			return err
 		}
+		if _, ok := changes["approval_status"]; ok {
+			subtype, _ := cur["resource_subtype"].(string)
+			if v, ok := changes["resource_subtype"].(string); ok {
+				subtype = v
+			}
+			if subtype != "approval" {
+				return errors.New("承認タスクではないため、承認の状態は設定できません（種類を「承認」にすると設定できます）")
+			}
+		}
 		if IsLocalGID(gid) {
 			// Not on the server yet: fold the change into the pending create.
 			op, err := findUnsentCreate(ctx, tx, gid)
@@ -119,6 +128,12 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		if op == nil {
 			op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
 				BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
+		}
+		if _, ok := changes["approval_status"]; ok {
+			if _, ok := op.Base["completed"]; !ok {
+				// Deciding an approval completes the task locally: discarding restores it.
+				op.Base["completed"] = cur["completed"]
+			}
 		}
 		for k, v := range changes {
 			if _, ok := op.Base[k]; !ok {
@@ -520,6 +535,14 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
 			return err
 		}
+	case OpSetCustomField:
+		if err := applyCustomFieldOp(ctx, tx, *op, true); err != nil {
+			return err
+		}
+	case OpAddDependency, OpRemoveDependency:
+		if err := applyDependency(ctx, tx, *op, true); err != nil {
+			return err
+		}
 	case OpUpdateTask:
 		// Restore the values from before the local edit.
 		if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
@@ -588,6 +611,10 @@ func replaceLocalTaskGID(ctx context.Context, tx *sql.Tx, local, real string) er
 		"UPDATE task_memberships SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE task_tags SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE task_followers SET task_gid = ?2 WHERE task_gid = ?1",
+		"DELETE FROM task_custom_fields WHERE task_gid = ?2",
+		"UPDATE task_custom_fields SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE OR REPLACE task_dependencies SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE OR REPLACE task_dependencies SET dependency_gid = ?2 WHERE dependency_gid = ?1",
 		"UPDATE task_details SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE attachments SET parent_gid = ?2 WHERE parent_gid = ?1",
@@ -674,7 +701,14 @@ func (s *Store) RecordedResults(ctx context.Context, prefix string) (map[string]
 
 // --- helpers ---
 
-var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true, "liked": true}
+var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true, "liked": true,
+	"resource_subtype": true, "approval_status": true}
+
+// Task types (resource_subtype) and approval statuses that can be set.
+var (
+	TaskSubtypes     = []string{"default_task", "milestone", "approval"}
+	ApprovalStatuses = []string{"pending", "approved", "rejected", "changes_requested"}
+)
 
 func validateFields(changes map[string]any) error {
 	if len(changes) == 0 {
@@ -698,6 +732,12 @@ func validateFields(changes map[string]any) error {
 	if name, ok := changes["name"].(string); ok && strings.TrimSpace(name) == "" {
 		return errors.New("タスク名が空です")
 	}
+	if v, ok := changes["resource_subtype"].(string); ok && !slices.Contains(TaskSubtypes, v) {
+		return fmt.Errorf("タスクの種類は %s のどれかです: %q", strings.Join(TaskSubtypes, " / "), v)
+	}
+	if v, ok := changes["approval_status"].(string); ok && !slices.Contains(ApprovalStatuses, v) {
+		return fmt.Errorf("承認の状態は %s のどれかです: %q", strings.Join(ApprovalStatuses, " / "), v)
+	}
 	return nil
 }
 
@@ -707,21 +747,28 @@ func TaskFieldValues(t *asana.Task) map[string]any {
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
 	}
-	return map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked}
+	values := map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked,
+		"resource_subtype": t.ResourceSubtype, "approval_status": t.ApprovalStatus}
+	if t.Partial {
+		delete(values, "approval_status") // not fetched
+	}
+	return values
 }
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
 	var completed, liked bool
-	var name, notes, htmlNotes, dueOn, assignee, modifiedAt string
-	err := tx.QueryRowContext(ctx, "SELECT completed, name, notes, html_notes, due_on, assignee_gid, modified_at, liked FROM tasks WHERE gid = ?", gid).
-		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &assignee, &modifiedAt, &liked)
+	var name, notes, htmlNotes, dueOn, assignee, modifiedAt, subtype, approval string
+	err := tx.QueryRowContext(ctx, `SELECT completed, name, notes, html_notes, due_on, assignee_gid, modified_at, liked,
+		resource_subtype, approval_status FROM tasks WHERE gid = ?`, gid).
+		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &assignee, &modifiedAt, &liked, &subtype, &approval)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", fmt.Errorf("task %s: %w", gid, ErrNotFound)
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "assignee": assignee, "liked": liked}, modifiedAt, nil
+	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "assignee": assignee, "liked": liked,
+		"resource_subtype": subtype, "approval_status": approval}, modifiedAt, nil
 }
 
 // applyFields writes update_task fields to the tasks table.
@@ -761,8 +808,12 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 			like, _ := v.(bool)
 			_, err = tx.ExecContext(ctx, `UPDATE tasks SET num_likes = max(0, num_likes + CASE WHEN ? = liked THEN 0 WHEN ? THEN 1 ELSE -1 END),
 				liked = ? WHERE gid = ?`, like, like, like, gid)
-		case "name", "due_on":
+		case "name", "due_on", "resource_subtype":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET "+k+" = ? WHERE gid = ?", v, gid)
+		case "approval_status":
+			// Asana completes an approval task once it is decided, and reopens it when pending.
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET approval_status = ?1,
+				completed = CASE WHEN ?1 = 'pending' THEN 0 WHEN ?1 <> '' THEN 1 ELSE completed END WHERE gid = ?2`, v, gid)
 		case "assignee":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET assignee_gid = ? WHERE gid = ?", v, gid)
 		}

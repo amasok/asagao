@@ -191,6 +191,9 @@ func (m *Model) renderHeader() string {
 	if m.tagFilter != "" {
 		left += "  " + m.st.tag.Render("#"+m.tagFilter)
 	}
+	if m.fieldFilter.field != "" {
+		left += "  " + m.st.tag.Render(m.fieldFilter.label())
+	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
 	}
@@ -367,7 +370,10 @@ func (m *Model) taskLine(t *store.TaskSummary, depth, w int, today string, selec
 		check = strings.Repeat("  ", depth-1) + "└ " + check
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
-	extra := ""
+	extra := fieldBadges(t)
+	if badges := store.TaskBadges(*t); badges != "" {
+		extra = " " + badges + extra
+	}
 	if t.Pending {
 		extra += " ↑"
 	}
@@ -525,12 +531,39 @@ func (m *Model) renderDetail(w int) string {
 		}
 	}
 	field(itemLike, "いいね", likes, "♡ なし")
+	for i, f := range d.CustomFields {
+		value := f.Display
+		if value == "" {
+			if !active {
+				continue
+			}
+			value = m.st.dim.Render("なし")
+		}
+		if active && !f.Editable {
+			value += m.st.dim.Render("  （変更不可）")
+		}
+		row(item(itemCustomField, i), m.st.label.Render(padRight(ansi.Truncate(f.Name, labelW, "…"), labelW))+" "+value)
+	}
 	if active {
 		done := "☐ 未完了"
 		if d.Completed {
 			done = "☑ 完了"
 		}
 		field(itemCompleted, "状態", done, "")
+	}
+	if subtype := d.ResourceSubtype; active || (subtype != "" && subtype != "default_task") {
+		label := store.SubtypeLabel(subtype)
+		if subtype == "milestone" {
+			label = "◆ " + label
+		}
+		field(itemSubtype, "種類", label, "タスク")
+	}
+	if d.ResourceSubtype == "approval" {
+		status := d.ApprovalStatus
+		if status == "" {
+			status = "pending"
+		}
+		field(itemApproval, "承認", store.ApprovalLabel(status), "")
 	}
 	if d.Parent != nil {
 		field(itemParent, "親タスク", d.Parent.Name, "")
@@ -606,6 +639,30 @@ func (m *Model) renderDetail(w int) string {
 		}
 		if active {
 			row(item(itemAddSubtask, 0), m.st.dim.Render("＋ サブタスクを追加"))
+		}
+	}
+
+	// Dependencies: headed lists when there are some; otherwise just the "add" rows.
+	if len(d.Dependencies)+len(d.Dependents) > 0 || active {
+		b.WriteString("\n")
+	}
+	for _, sec := range []struct {
+		title     string
+		deps      []store.DependencyView
+		kind, add itemKind
+		addLabel  string
+	}{
+		{"待っているタスク", d.Dependencies, itemDependency, itemAddDependency, "＋ 待つタスクを追加（依存関係）"},
+		{"待たれているタスク", d.Dependents, itemDependent, itemAddDependent, "＋ このタスクを待つタスクを追加"},
+	} {
+		if len(sec.deps) > 0 {
+			b.WriteString(m.st.sectionHeader.Render(fmt.Sprintf("%s (%d)", sec.title, len(sec.deps))) + "\n")
+		}
+		for i, dep := range sec.deps {
+			row(item(sec.kind, i), ansi.Truncate(m.dependencyLine(dep), w, "…"))
+		}
+		if active {
+			row(item(sec.add, 0), m.st.dim.Render(sec.addLabel))
 		}
 	}
 

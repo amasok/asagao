@@ -347,6 +347,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 	switch op.Kind {
 	case store.OpUpdateTask:
 		return s.pushUpdate(ctx, op)
+	case store.OpSetCustomField:
+		return s.pushCustomField(ctx, op)
 	case store.OpRenameSection:
 		return s.pushRenameSection(ctx, op)
 	case store.OpCreateTask:
@@ -359,6 +361,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 		err = s.pushTag(ctx, op)
 	case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
 		err = s.pushRelation(ctx, op)
+	case store.OpAddDependency, store.OpRemoveDependency:
+		err = s.pushDependency(ctx, op)
 	case store.OpDuplicateTask:
 		err = s.pushDuplicate(ctx, op)
 	case store.OpUploadAttachment:
@@ -505,6 +509,10 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 				return ferr
 			}
 		} else {
+			if op.Kind == store.OpAddDependency || op.Kind == store.OpRemoveDependency {
+				// the other task is missing, or private to someone else
+				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			}
 			var d store.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 			discards = []store.Discard{d}
@@ -623,7 +631,10 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 		if k == "html_notes" {
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
-		sv := current[k]
+		sv, known := current[k]
+		if !known {
+			continue // not fetched (Task.Partial): nothing to compare with
+		}
 		if !same(sv, op.Base[k]) && !same(sv, local) {
 			conflicts[k] = sv
 		}
@@ -640,6 +651,64 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 	}
 	s.refresh(ctx, *t)
 	return sent, nil
+}
+
+// pushCustomField sets one custom field, after checking that nobody changed it in Asana
+// since it was edited here. A field the task no longer has is treated like a 404 (the
+// change is dropped and the user told).
+func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, error) {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return sent, err
+	}
+	if store.IsLocalGID(task) {
+		return sent, &asana.Error{Status: 404} // its create failed
+	}
+	field, _ := op.Payload["field"].(string)
+	server, err := s.API.Task(ctx, task)
+	if err != nil {
+		return sent, err
+	}
+	local := op.Payload["value"]
+	if !server.Partial { // else Asana gave no custom fields to compare with: just send
+		sv, display, found := store.ServerCustomField(server, field)
+		if !found {
+			return sent, &asana.Error{Status: http.StatusNotFound} // removed from the task's projects
+		}
+		if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
+			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
+		}
+	}
+	fieldType, _ := op.Payload["type"].(string)
+	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: store.CustomFieldAPIValue(fieldType, local)}})
+	var apiErr *asana.Error
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
+		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
+		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
+	}
+	if err != nil {
+		return sent, err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sent, sentNotSaved(err)
+	}
+	s.refresh(ctx, *t)
+	return sent, nil
+}
+
+// normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
+func normalize(v any) any {
+	if l, ok := v.([]any); ok {
+		out := make([]string, 0, len(l))
+		for _, e := range l {
+			out = append(out, fmt.Sprint(e))
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return v
 }
 
 // refresh stores a task as Asana returned it after a change. The change is already
@@ -807,6 +876,31 @@ func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
 		err = s.API.AddProject(ctx, task, project, section)
 	case store.OpRemoveProject:
 		err = s.API.RemoveProject(ctx, task, project)
+	}
+	if err != nil {
+		return err
+	}
+	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
+}
+
+// pushDependency adds or removes a dependency. Both are harmless to repeat: Asana adds only
+// tasks that are not dependencies yet.
+func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	dep, _ := op.Payload["dependency"].(string)
+	if dep, err = s.Store.RealGID(ctx, dep); err != nil {
+		return err
+	}
+	if store.IsLocalGID(task) || store.IsLocalGID(dep) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	if op.Kind == store.OpAddDependency {
+		err = s.API.AddDependencies(ctx, task, []string{dep})
+	} else {
+		err = s.API.RemoveDependencies(ctx, task, []string{dep})
 	}
 	if err != nil {
 		return err

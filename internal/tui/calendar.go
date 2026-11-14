@@ -48,7 +48,7 @@ func (m *Model) loadCalendar() tea.Cmd {
 	}
 	month := monthStart(m.calDay)
 	start, end := calendarRange(month)
-	f := store.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter}
+	f := store.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter, Field: m.fieldFilter.field, FieldValue: m.fieldFilter.value}
 	switch m.filter {
 	case filterCompleted:
 		f.Completed = boolPtr(true)

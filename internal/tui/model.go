@@ -237,6 +237,15 @@ type Model struct {
 	renderedActive bool              // the detail was last rendered with selectable items
 	dueTask        store.TaskSummary // task for promptDue
 	tagTask        store.TaskSummary // task for promptNewTag
+	// custom fields (fields.go)
+	fieldTask   store.TaskSummary     // task for promptField
+	fieldEdit   store.CustomFieldView // field for promptField
+	fieldFilter fieldFilter
+	fieldSaving map[string]bool         // fieldKey: a multi_enum toggle of it is being saved
+	fieldQueued map[string]*queuedField // fieldKey: its latest toggle made meanwhile
+	// dependencies (deps.go)
+	depTask       store.TaskSummary // task for promptDepSearch
+	depDependents bool
 	// extras.go
 	dupSource      string // task to duplicate (promptDuplicate)
 	attachTask     string // task to attach a file to (promptAttach)
@@ -345,7 +354,7 @@ func (m *Model) loadTasks() tea.Cmd {
 
 func (m *Model) loadList() tea.Cmd {
 	m.taskSeq++
-	seq, sc, query, filter, tag := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter
+	seq, sc, query, filter, tag, field := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.collapsedScope
 	expanded := make(map[string]bool, len(m.expanded))
@@ -361,7 +370,7 @@ func (m *Model) loadList() tea.Cmd {
 		subCompleted = boolPtr(false)
 	}
 	return func() tea.Msg {
-		rows, err := queryRows(m.ctx, st, sc, query, filter, tag, now)
+		rows, err := queryRows(m.ctx, st, sc, query, filter, tag, field, now)
 		if err == nil {
 			rows, err = withSubtasks(m.ctx, st, rows, expanded, subCompleted)
 		}

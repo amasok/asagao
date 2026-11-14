@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -80,6 +81,17 @@ type Task struct {
 	CreatedAt       time.Time    `json:"created_at"`
 	CreatedBy       *Ref         `json:"created_by"`
 	ModifiedAt      time.Time    `json:"modified_at"`
+	// CustomFields is nil when the response did not include them.
+	CustomFields []CustomField `json:"custom_fields"`
+	// ApprovalStatus is pending / approved / rejected / changes_requested (approval tasks).
+	ApprovalStatus string `json:"approval_status"`
+	// Dependencies (tasks this one waits for) and Dependents (tasks waiting for this one)
+	// are nil when the response did not include them.
+	Dependencies []Ref `json:"dependencies"`
+	Dependents   []Ref `json:"dependents"`
+	// Partial is set when the task was fetched without the optional fields (see
+	// optionalTaskFields): its custom fields, dependencies and approval status are unknown.
+	Partial bool `json:"-"`
 }
 
 // Fields requested for each resource (keep responses small; see requirements 8 章).
@@ -87,13 +99,14 @@ var (
 	userFields    = []string{"name", "email", "workspaces.name"}
 	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members.name", "permalink_url", "created_at", "modified_at"}
 	sectionFields = []string{"name", "project"}
-	TaskFields    = []string{
+	TaskFields    = slices.Concat([]string{
 		"name", "notes", "html_notes", "resource_subtype", "completed", "completed_at",
 		"assignee.name", "due_on", "due_at", "start_on", "parent.name",
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
-	}
+		"approval_status", "dependencies", "dependents",
+	}, customFieldValueFields)
 )
 
 func fields(f []string) url.Values {
@@ -134,7 +147,11 @@ type TaskQuery struct {
 }
 
 func (c *Client) Tasks(ctx context.Context, tq TaskQuery) ([]Task, error) {
-	q := fields(TaskFields)
+	return readTasks(c, false, func(f []string) ([]Task, error) { return c.tasks(ctx, tq, f) })
+}
+
+func (c *Client) tasks(ctx context.Context, tq TaskQuery, f []string) ([]Task, error) {
+	q := fields(f)
 	if tq.Project != "" {
 		q.Set("project", tq.Project)
 	} else {
@@ -151,7 +168,9 @@ func (c *Client) Tasks(ctx context.Context, tq TaskQuery) ([]Task, error) {
 }
 
 func (c *Client) Subtasks(ctx context.Context, taskGID string) ([]Task, error) {
-	return list[Task](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/subtasks", fields(TaskFields))
+	return readTasks(c, false, func(f []string) ([]Task, error) {
+		return list[Task](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/subtasks", fields(f))
+	})
 }
 
 type Story struct {
@@ -167,8 +186,24 @@ type Story struct {
 var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at"}
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
-	var t Task
-	return &t, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(TaskFields), &t)
+	return c.task(ctx, gid, false)
+}
+
+func (c *Client) task(ctx context.Context, gid string, detail bool) (*Task, error) {
+	ts, err := readTasks(c, detail, func(f []string) ([]Task, error) {
+		var t Task
+		return []Task{t}, c.get(ctx, "/tasks/"+url.PathEscape(gid), fields(f), &t)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ts[0], nil
+}
+
+// TaskDetail is Task plus the choices of the task's enum custom fields (for showing and
+// editing one task; a project's choices come from its settings during sync).
+func (c *Client) TaskDetail(ctx context.Context, gid string) (*Task, error) {
+	return c.task(ctx, gid, true)
 }
 
 func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
@@ -180,14 +215,16 @@ func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
 // UpdateTask sends changed fields (PUT /tasks/{gid}) and returns the updated task.
 func (c *Client) UpdateTask(ctx context.Context, gid string, fields map[string]any) (*Task, error) {
 	var t Task
-	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(TaskFields), fields, &t)
+	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(c.taskFields(false)), fields, &t)
+	t.Partial = c.plainTasks.Load()
 	return &t, err
 }
 
 // CreateTask creates a task (POST /tasks).
 func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, error) {
 	var t Task
-	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(TaskFields), fields, &t)
+	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(c.taskFields(false)), fields, &t)
+	t.Partial = c.plainTasks.Load()
 	return &t, err
 }
 
@@ -264,7 +301,8 @@ func (c *Client) Users(ctx context.Context, workspaceGID string) ([]User, error)
 // CreateSubtask creates a subtask under parentGID (POST /tasks/{gid}/subtasks).
 func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*Task, error) {
 	var t Task
-	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(TaskFields), fields, &t)
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(c.taskFields(false)), fields, &t)
+	t.Partial = c.plainTasks.Load()
 	return &t, err
 }
 

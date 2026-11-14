@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -133,7 +135,32 @@ func AccountChangedHelp(unsent int, resetHow string) string {
 
 // FieldLabel is the label of an update_task field ("" for unknown keys).
 func FieldLabel(k string) string {
-	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者"}[k]
+	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者",
+		"liked": "いいね", "resource_subtype": "種類", "approval_status": "承認"}[k]
+}
+
+// ConflictLines describes the conflicting fields of an entry in conflict, one per line:
+// "label: こちら=local / Asana=server".
+func ConflictLines(op Op) []string {
+	if op.Kind == OpSetCustomField {
+		text := func(m map[string]any) string {
+			if s, _ := m["display"].(string); s != "" {
+				return s
+			}
+			if m["value"] == nil {
+				return "（空）"
+			}
+			return fmt.Sprint(m["value"])
+		}
+		name, _ := op.Payload["field_name"].(string)
+		return []string{fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict))}
+	}
+	keys := slices.Sorted(maps.Keys(op.Conflict))
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf("%s: こちら=%v / Asana=%v", FieldLabel(k), op.Payload[k], op.Conflict[k]))
+	}
+	return lines
 }
 
 // DescribeOp is a one-line description of an outbox entry: "task: what it changes"
@@ -186,6 +213,15 @@ func DescribeChange(op Op) string {
 		return fmt.Sprintf("プロジェクト「%s」からの削除", str("project_name"))
 	case OpUploadAttachment:
 		return fmt.Sprintf("添付「%s」", str("name"))
+	case OpAddDependency:
+		return fmt.Sprintf("「%s」を待つ", dependencyName(op))
+	case OpRemoveDependency:
+		return fmt.Sprintf("「%s」を待つのをやめる", dependencyName(op))
+	case OpSetCustomField:
+		if op.Payload["value"] == nil {
+			return fmt.Sprintf("「%s」を空にする", str("field_name"))
+		}
+		return fmt.Sprintf("「%s」を「%s」に変更", str("field_name"), clip(str("display"), 40))
 	case OpCreateStatus:
 		if str("title") == "" {
 			return fmt.Sprintf("ステータス更新（%s）", StatusLabel(str("status_type")))
@@ -203,7 +239,7 @@ func DescribeChange(op Op) string {
 		return fmt.Sprintf("セクション名を「%s」に変更", str("name"))
 	case OpUpdateTask:
 		var parts []string
-		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked"} {
+		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked", "resource_subtype", "approval_status"} {
 			v, ok := op.Payload[k]
 			if !ok {
 				continue
@@ -227,6 +263,10 @@ func DescribeChange(op Op) string {
 				}
 			case "notes":
 				parts = append(parts, "説明の変更")
+			case "resource_subtype":
+				parts = append(parts, fmt.Sprintf("種類を「%s」に変更", SubtypeLabel(fmt.Sprint(v))))
+			case "approval_status":
+				parts = append(parts, fmt.Sprintf("承認を「%s」に変更", ApprovalLabel(fmt.Sprint(v))))
 			case "liked":
 				if v == true {
 					parts = append(parts, "いいね")
@@ -241,6 +281,78 @@ func DescribeChange(op Op) string {
 		return strings.Join(parts, "、")
 	}
 	return op.Kind
+}
+
+func dependencyName(op Op) string {
+	if name, _ := op.Payload["dependency_name"].(string); name != "" {
+		return name
+	}
+	dep, _ := op.Payload["dependency"].(string)
+	return dep
+}
+
+// SubtypeLabel is the Japanese name of a task type (resource_subtype).
+func SubtypeLabel(s string) string {
+	if l, ok := map[string]string{"default_task": "タスク", "milestone": "マイルストーン", "approval": "承認"}[s]; ok {
+		return l
+	}
+	return s
+}
+
+// ApprovalLabel is the Japanese name of an approval status.
+func ApprovalLabel(s string) string {
+	if l, ok := map[string]string{"pending": "承認待ち", "approved": "承認済み", "rejected": "却下", "changes_requested": "要修正"}[s]; ok {
+		return l
+	}
+	return s
+}
+
+// ParseSubtype accepts a task type as Asana names it or as SubtypeLabel shows it
+// ("default" and "task" mean default_task).
+func ParseSubtype(s string) (string, error) {
+	return parseChoice(s, TaskSubtypes, SubtypeLabel, map[string]string{"default": "default_task", "task": "default_task", "normal": "default_task"})
+}
+
+// ParseApprovalStatus accepts an approval status as Asana names it or as ApprovalLabel
+// shows it (also "承認" / "approve" for approved, "reject" for rejected).
+func ParseApprovalStatus(s string) (string, error) {
+	return parseChoice(s, ApprovalStatuses, ApprovalLabel, map[string]string{"approve": "approved", "承認": "approved",
+		"reject": "rejected", "却下する": "rejected", "request_changes": "changes_requested", "修正依頼": "changes_requested"})
+}
+
+func parseChoice(s string, values []string, label func(string) string, aliases map[string]string) (string, error) {
+	s = strings.TrimSpace(s)
+	if v, ok := aliases[strings.ToLower(s)]; ok {
+		return v, nil
+	}
+	var labels []string
+	for _, v := range values {
+		if strings.EqualFold(s, v) || s == label(v) {
+			return v, nil
+		}
+		labels = append(labels, v+"（"+label(v)+"）")
+	}
+	return "", fmt.Errorf("%q は使えません。%s のどれかを指定してください", s, strings.Join(labels, " / "))
+}
+
+// TaskBadges are short marks for a task in a list: ◆ for a milestone, the approval status
+// of an approval task, and how many incomplete tasks it waits for.
+func TaskBadges(t TaskSummary) string {
+	var parts []string
+	switch t.ResourceSubtype {
+	case "milestone":
+		parts = append(parts, "◆")
+	case "approval":
+		status := t.ApprovalStatus
+		if status == "" {
+			status = "pending"
+		}
+		parts = append(parts, "["+ApprovalLabel(status)+"]")
+	}
+	if t.OpenDependencies > 0 && !t.Completed {
+		parts = append(parts, fmt.Sprintf("[待ち%d]", t.OpenDependencies))
+	}
+	return strings.Join(parts, " ")
 }
 
 func clip(s string, n int) string {

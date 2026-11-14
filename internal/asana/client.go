@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type Client struct {
 	// AuthHint tells the user how to fix a 401 (e.g. how to log in again); it is added to
 	// the message of 401 errors.
 	AuthHint string
+	// plainTasks: Asana refused the optional task fields; request tasks without them.
+	plainTasks atomic.Bool
 	// sleep is replaced in tests.
 	sleep func(context.Context, time.Duration) error
 }

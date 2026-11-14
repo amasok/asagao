@@ -26,6 +26,7 @@ func (a *app) taskCmd() *cobra.Command {
 
 type listFlags struct {
 	assignee, project, section, tag, dueBefore, dueAfter string
+	field                                                string
 	completed, all, overdue                              bool
 	limit, modifiedWithin                                int
 }
@@ -35,6 +36,7 @@ func (f *listFlags) register(cmd *cobra.Command, defaultAssignee string) {
 	cmd.Flags().StringVar(&f.project, "project", "", "プロジェクト（gid または名前。部分一致可）")
 	cmd.Flags().StringVar(&f.section, "section", "", "セクション（gid または名前。--project と併用）")
 	cmd.Flags().StringVar(&f.tag, "tag", "", "タグ（名前または gid）")
+	cmd.Flags().StringVar(&f.field, "field", "", `カスタムフィールドの値: "優先度=高"（"優先度" だけなら値があるもの）`)
 	cmd.Flags().StringVar(&f.dueBefore, "due-before", "", "期日がこの日以前（YYYY-MM-DD / today / tomorrow / +Nd）")
 	cmd.Flags().StringVar(&f.dueAfter, "due-after", "", "期日がこの日以降（YYYY-MM-DD / today / tomorrow / +Nd）")
 	cmd.Flags().BoolVar(&f.overdue, "overdue", false, "期限切れの未完了タスク")
@@ -50,7 +52,7 @@ func (f *listFlags) register(cmd *cobra.Command, defaultAssignee string) {
 func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool) store.FilterSpec {
 	sp := store.FilterSpec{
 		DefaultAssignee: defaultAssignee, DefaultCompleted: defaultCompleted,
-		Project: f.project, Section: f.section, Tag: f.tag,
+		Project: f.project, Section: f.section, Tag: f.tag, Field: f.field,
 		DueBefore: f.dueBefore, DueAfter: f.dueAfter, Overdue: f.overdue,
 		ModifiedWithinDays: f.modifiedWithin, Limit: f.limit,
 	}
@@ -257,7 +259,16 @@ func printTaskTable(w io.Writer, tasks []store.TaskSummary) {
 		if len(t.Tags) > 0 {
 			tags = "#" + strings.Join(t.Tags, " #")
 		}
-		rows = append(rows, []string{checkbox(t.Completed), formatDue(t), t.Name, membershipLabel(t.Memberships), tags, t.GID})
+		for _, f := range t.CustomFields {
+			if f.Important && f.Display != "" {
+				tags = strings.TrimSpace(tags + " " + f.Name + ":" + f.Display)
+			}
+		}
+		name := t.Name
+		if b := store.TaskBadges(t); b != "" {
+			name += " " + b
+		}
+		rows = append(rows, []string{checkbox(t.Completed), formatDue(t), name, membershipLabel(t.Memberships), tags, t.GID})
 	}
 	printTable(w, rows)
 	fmt.Fprintf(w, "\n%d 件\n", len(tasks))
@@ -281,6 +292,39 @@ func printTaskDetail(w io.Writer, d *store.TaskDetail) {
 	}
 	if d.Parent != nil {
 		row("親タスク", d.Parent.Name+" ("+d.Parent.GID+")")
+	}
+	if d.ResourceSubtype != "" && d.ResourceSubtype != "default_task" {
+		row("種類", store.SubtypeLabel(d.ResourceSubtype))
+	}
+	if d.ResourceSubtype == "approval" {
+		status := d.ApprovalStatus
+		if status == "" {
+			status = "pending"
+		}
+		row("承認", store.ApprovalLabel(status))
+	}
+	for _, list := range []struct {
+		label string
+		deps  []store.DependencyView
+	}{{"待っている", d.Dependencies}, {"待たれている", d.Dependents}} {
+		for i, dep := range list.deps {
+			label := ""
+			if i == 0 {
+				label = list.label
+			}
+			v := checkbox(dep.Completed) + " " + dep.Name + " (" + dep.GID + ")"
+			if dep.Pending {
+				v += " ↑"
+			}
+			row(label, v)
+		}
+	}
+	for _, f := range d.CustomFields {
+		v := f.Display
+		if v == "" {
+			v = "-"
+		}
+		row(f.Name, v)
 	}
 	row("URL", d.PermalinkURL)
 	if d.Notes != "" {
