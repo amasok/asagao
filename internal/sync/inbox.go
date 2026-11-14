@@ -34,14 +34,14 @@ func (s *Syncer) syncInbox(ctx context.Context, workspaceGID string) error {
 // the sync goes on. An invalid login or a network error stops the sync like any other
 // fetch; Asana having trouble (5xx, 429) keeps the cached notifications.
 func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) error {
-	var fetched []string // workspaces whose notifications are fresh
+	ok := false
 	var refused store.InboxState
 	for _, w := range workspaces {
 		s.progress("ワークスペース %s: 受信トレイ", w.Name)
 		err := s.syncInbox(ctx, w.GID)
 		switch {
 		case err == nil:
-			fetched = append(fetched, w.GID)
+			ok = true
 		case asana.IsUnauthorized(err) || isNetworkError(err):
 			return fmt.Errorf("%s の通知の取得: %w", w.Name, err)
 		case isRejected(err):
@@ -54,35 +54,14 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) 
 		}
 	}
 	switch {
-	case len(fetched) > 0:
+	case ok:
 		if err := s.Store.SetInboxState(ctx, store.InboxState{Status: store.InboxOK}); err != nil {
 			return err
 		}
 	case refused.Status != "":
 		return s.Store.SetInboxState(ctx, refused)
-	default:
-		return nil
 	}
-	return s.probeInboxWrite(ctx, fetched)
-}
-
-// probeInboxWrite checks, while marking notifications is known to be refused, whether it
-// works now (e.g. after logging in again with notifications:write): it marks one
-// notification as Asana already has it, which changes nothing. Only notifications just
-// fetched (of workspaces) are used: an older cached state may be stale.
-func (s *Syncer) probeInboxWrite(ctx context.Context, workspaces []string) error {
-	st, err := s.Store.InboxState(ctx)
-	if err != nil || !st.WriteForbidden {
-		return err
-	}
-	n, ok, err := s.Store.NotificationProbe(ctx, workspaces)
-	if err != nil || !ok {
-		return err
-	}
-	if _, err := s.API.MarkNotifications(ctx, n.WorkspaceGID, []string{n.GID}, n.Read); err != nil {
-		return nil // still refused, or Asana cannot tell now: try again next sync
-	}
-	return s.Store.SetInboxWriteForbidden(ctx, false)
+	return nil
 }
 
 // inboxStateFor classifies why Asana refused to list notifications.
@@ -183,8 +162,10 @@ func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]b
 // Asana reports as failed (deleted, archived) are dropped like other changes to deleted
 // things: op's own by returning a 404, the others by putting them back to be sent alone.
 // When Asana refuses to mark notifications at all (no notifications:write scope), every
-// queued read / unread change is dropped and no more are queued until it works again
-// (see probeInboxWrite), so they do not pile up as failures. batched is how many other
+// queued read / unread change is dropped (not left as failures) and WriteForbidden is
+// recorded: front ends then say why and stop marking notifications by themselves (only
+// what the user asks for is tried again). A change Asana accepts, or logging in again,
+// clears it. batched is how many other
 // entries were sent along.
 func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out outcome, batched int, err error) {
 	ws, _ := op.Payload["workspace"].(string)
@@ -236,6 +217,9 @@ func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out out
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 		return sent, batched, sentNotSaved(err)
+	}
+	if st, err := s.Store.InboxState(ctx); err == nil && st.WriteForbidden { // allowed now
+		_ = s.Store.SetInboxWriteForbidden(ctx, false)
 	}
 	return sent, batched, nil
 }

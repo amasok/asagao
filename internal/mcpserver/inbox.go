@@ -102,9 +102,6 @@ func (s *Server) markNotifications(ctx context.Context, _ *mcp.CallToolRequest, 
 		resolved = append(resolved, gid)
 	}
 	n, err := s.Store.MarkNotificationsLocal(ctx, resolved, read, s.Now())
-	if errors.Is(err, store.ErrInboxReadOnly) {
-		return nil, MarkNotificationsOutput{}, errors.New(sync.InboxReadOnlyMessage(s.AuthScopes))
-	}
 	if err != nil {
 		return nil, MarkNotificationsOutput{}, err
 	}

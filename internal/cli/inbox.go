@@ -124,9 +124,6 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 				return err
 			}
 			n, err := st.MarkNotificationsLocal(ctx, gids, read, time.Now())
-			if errors.Is(err, store.ErrInboxReadOnly) {
-				return errors.New(sync.InboxReadOnlyMessage(a.cfg.Auth.Scopes))
-			}
 			if err != nil {
 				return err
 			}

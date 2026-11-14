@@ -24,8 +24,8 @@ const OpMarkNotification = "mark_notification"
 const (
 	KeyInboxStatus = "inbox_status" // one of the Inbox* values below ("" before the first try)
 	KeyInboxError  = "inbox_error"  // Asana's error message when not InboxOK
-	// KeyInboxWrite is "forbidden" while Asana refuses to mark notifications (no
-	// notifications:write scope); read / unread changes are then not queued.
+	// KeyInboxWrite is "forbidden" since Asana refused to mark notifications (no
+	// notifications:write scope): front ends say why and do not mark them by themselves.
 	KeyInboxWrite = "inbox_write"
 
 	InboxOK = "ok"
@@ -45,10 +45,6 @@ type InboxState struct {
 	// WriteForbidden: notifications can be listed but not marked read / unread.
 	WriteForbidden bool `json:"write_forbidden,omitempty"`
 }
-
-// ErrInboxReadOnly is returned by MarkNotificationsLocal while Asana refuses to mark
-// notifications (see InboxState.WriteForbidden).
-var ErrInboxReadOnly = errors.New("通知を既読・未読にする権限 (notifications:write) がありません")
 
 // Available reports whether notifications were fetched (at the latest sync).
 func (s InboxState) Available() bool { return s.Status == InboxOK }
@@ -326,19 +322,9 @@ func (s *Store) ResolveNotification(ctx context.Context, arg string) (string, er
 // MarkNotificationsLocal marks notifications read (or unread) locally and queues the change
 // for Asana. Notifications already in that state are left alone. It returns how many changed.
 // Toggling one back before the change is sent removes the queued change.
-//
-// While Asana refuses to mark notifications (InboxState.WriteForbidden), nothing is changed
-// and ErrInboxReadOnly is returned.
 func (s *Store) MarkNotificationsLocal(ctx context.Context, gids []string, read bool, now time.Time) (int, error) {
 	changed := 0
 	err := s.tx(ctx, func(tx *sql.Tx) error {
-		var write string
-		if err := tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", KeyInboxWrite).Scan(&write); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if write == InboxForbidden {
-			return ErrInboxReadOnly
-		}
 		for _, gid := range gids {
 			var ws, name string
 			var cur bool
@@ -409,28 +395,6 @@ func (s *Store) PendingNotificationMarks(ctx context.Context, op Op, limit int) 
 		}
 	}
 	return out, nil
-}
-
-// NotificationProbe returns a notification whose read state (as Asana last reported it)
-// is not changed by a queued entry, to check whether Asana lets us mark notifications by
-// marking it as it already is. Only notifications of workspaces are considered (those just
-// fetched). ok is false when there is none.
-func (s *Store) NotificationProbe(ctx context.Context, workspaces []string) (n Notification, ok bool, err error) {
-	if len(workspaces) == 0 {
-		return n, false, nil
-	}
-	args := []any{OpMarkNotification}
-	for _, w := range workspaces {
-		args = append(args, w)
-	}
-	err = s.db.QueryRowContext(ctx, `SELECT gid, workspace_gid, is_read FROM notifications n
-		WHERE NOT EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.task_gid = n.gid)
-		AND workspace_gid IN (?`+strings.Repeat(", ?", len(workspaces)-1)+`) ORDER BY created_at DESC LIMIT 1`,
-		args...).Scan(&n.GID, &n.WorkspaceGID, &n.Read)
-	if errors.Is(err, sql.ErrNoRows) {
-		return n, false, nil
-	}
-	return n, err == nil, err
 }
 
 // NotificationLabel says in a few words what kind of activity a notification reports.

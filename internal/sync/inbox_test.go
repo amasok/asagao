@@ -3,7 +3,6 @@ package sync
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -237,7 +236,7 @@ func TestInboxForbiddenFallsBackWithoutFailingSync(t *testing.T) {
 	}
 }
 
-func TestMarkReadForbiddenDropsAndStopsQueueing(t *testing.T) {
+func TestMarkReadForbiddenDropsWithoutFailures(t *testing.T) {
 	f := &inboxServer{markStatus: http.StatusForbidden}
 	s, st := setupInbox(t, f)
 	ctx := context.Background()
@@ -247,8 +246,9 @@ func TestMarkReadForbiddenDropsAndStopsQueueing(t *testing.T) {
 	if _, err := st.MarkNotificationsLocal(ctx, []string{"n2"}, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Push(ctx); err != nil {
-		t.Fatal(err)
+	res, err := s.Push(ctx)
+	if err != nil || !res.InboxReadOnly || res.Failed != 0 {
+		t.Fatalf("push %+v %v", res, err)
 	}
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
 		t.Fatalf("a refused read change should not stay as a failure: %+v", ops)
@@ -263,34 +263,24 @@ func TestMarkReadForbiddenDropsAndStopsQueueing(t *testing.T) {
 	if !strings.Contains(InboxReadOnlyMessage(nil), "auth login") {
 		t.Fatal("read-only message should say what to do")
 	}
+	// Syncing never sends anything to check: Asana's data is not touched.
 	requests := len(f.marks)
-	if _, err := st.MarkNotificationsLocal(ctx, []string{"n2"}, true, time.Now()); !errors.Is(err, store.ErrInboxReadOnly) {
-		t.Fatalf("mark while refused: %v", err)
-	}
-	if ops, _ := st.ListOps(ctx); len(ops) != 0 || len(f.marks) != requests {
-		t.Fatalf("nothing should be queued or sent: %+v, %d requests", ops, len(f.marks))
-	}
-
-	// Still refused: the sync's check leaves it so; allowed again: the check clears it.
 	if _, err := s.Run(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	if state, _ := st.InboxState(ctx); !state.WriteForbidden {
-		t.Fatal("still refused")
+	if len(f.marks) != requests {
+		t.Fatalf("sync sent %d mark requests", len(f.marks)-requests)
 	}
+	// The user marks it again once allowed: it is sent and the state is cleared.
 	f.markStatus = 0
-	if _, err := s.Run(ctx, false); err != nil {
-		t.Fatal(err)
-	}
-	if state, _ := st.InboxState(ctx); state.WriteForbidden {
-		t.Fatal("the sync should find that marking works again")
-	}
-	last := f.marks[len(f.marks)-1] // the check marks a notification as it already is
-	if gids := fmt.Sprint(last["notification_gids"]); gids != "[n2]" || last["read"] != false {
-		t.Fatalf("probe request %+v", last)
-	}
 	if _, err := st.MarkNotificationsLocal(ctx, []string{"n2"}, true, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.InboxReadOnly {
+		t.Fatalf("push %+v %v", res, err)
+	}
+	if state, _ := st.InboxState(ctx); state.WriteForbidden {
+		t.Fatal("an accepted change should clear WriteForbidden")
 	}
 }
 

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -160,9 +159,7 @@ func (m *Model) markAllNotificationsRead() tea.Cmd {
 func (m *Model) markNotifications(gids []string, read bool, status string) tea.Cmd {
 	st, now := m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
-		if _, err := st.MarkNotificationsLocal(m.ctx, gids, read, now); errors.Is(err, store.ErrInboxReadOnly) {
-			return writeDoneMsg{status: sync.InboxReadOnlyMessage(m.deps.AuthScopes)}
-		} else if err != nil {
+		if _, err := st.MarkNotificationsLocal(m.ctx, gids, read, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: status}

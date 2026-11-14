@@ -29,6 +29,9 @@ type PushResult struct {
 	// Discarded lists changes dropped because what they change was deleted in Asana. They
 	// are also kept for the front ends to show once (store.PendingDiscards).
 	Discarded []store.Discard `json:"discarded,omitempty"`
+	// InboxReadOnly is set when Asana refused to mark notifications read / unread (no
+	// notifications:write scope): those changes were dropped (see pushMarkNotification).
+	InboxReadOnly bool `json:"inbox_read_only,omitempty"`
 }
 
 // ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
@@ -147,6 +150,7 @@ func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops 
 	res.Conflicts += more.Conflicts
 	res.Failed += more.Failed
 	res.Discarded = append(res.Discarded, more.Discarded...)
+	res.InboxReadOnly = res.InboxReadOnly || more.InboxReadOnly
 	res.Remaining = more.Remaining
 	return res, last, err
 }
@@ -283,6 +287,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 				case out == conflicted:
 					res.Conflicts++
 				case out == dropped:
+					res.InboxReadOnly = true
 				case !wasFollowUp:
 					res.Sent++ // a follow-up is part of the change already counted
 				}

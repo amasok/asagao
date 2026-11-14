@@ -654,6 +654,8 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:
 		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
+	case res.InboxReadOnly:
+		out.Note += "Asana refused to mark notifications read / unread, so the change was undone: " + sync.InboxReadOnlyMessage(s.AuthScopes)
 	case res.Conflicts > 0 || res.Failed > 0:
 		out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
 	default:

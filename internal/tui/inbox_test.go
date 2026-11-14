@@ -133,8 +133,8 @@ func TestInboxUncachedTaskAndReadOnly(t *testing.T) {
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
 		t.Fatalf("nothing should be queued while marking is refused: %+v", ops)
 	}
-	h.key("esc", "R")
-	if !strings.Contains(h.m.status, "notifications:write") {
-		t.Fatalf("R should explain: %q", h.m.status)
+	h.key("esc", "R") // what the user asks for is tried (Asana may allow it again)
+	if ops, _ := st.ListOps(ctx); len(ops) != 1 {
+		t.Fatalf("R should queue the change: %+v", ops)
 	}
 }

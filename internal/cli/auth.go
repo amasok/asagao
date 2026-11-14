@@ -160,6 +160,7 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 		return
 	}
 	defer st.Close()
+	_ = st.SetInboxWriteForbidden(ctx, false) // the new login may allow marking notifications
 	if want, err := st.SyncState(ctx, store.KeyMeGID); err != nil || want == "" || want == gid {
 		return
 	}
