@@ -78,13 +78,24 @@ func (a *app) viewImages(paths []string) tea.Cmd {
 // inlineImages reports whether to draw images inside the detail pane (kitty Unicode
 // placeholders; supported by kitty and Ghostty, not through multiplexers).
 func (a *app) inlineImages() bool {
-	switch a.cfg.UI.InlineImages {
+	return inlineImagesEnabled(a.cfg.UI.InlineImages, a.cfg.UI.ImageProtocol, os.Getenv)
+}
+
+// inlineImagesEnabled decides ui.inline_images. "auto" turns it on only when the terminal
+// itself is known to draw Unicode placeholders: ui.image_protocol = "kitty" is not enough,
+// as multiplexers (herdr) pass kitty images through but leave placeholders blank. Otherwise
+// images are shown as "[画像N]（i で表示）"; inline_images = "on" forces it.
+func inlineImagesEnabled(setting, protocol string, getenv func(string) string) bool {
+	switch setting {
 	case "on":
 		return true
 	case "off":
 		return false
 	}
-	return imageview.Resolve(a.cfg.UI.ImageProtocol) == imageview.ProtocolKitty
+	if protocol != "" && protocol != imageview.ProtocolAuto && protocol != imageview.ProtocolKitty {
+		return false // iterm / open chosen explicitly
+	}
+	return imageview.PlaceholdersSupported(getenv)
 }
 
 // runEditor opens path in ui.editor, $VISUAL, $EDITOR, nvim or vi (in that order) while the
