@@ -413,11 +413,20 @@ func (s *Store) PendingNotificationMarks(ctx context.Context, op Op, limit int) 
 
 // NotificationProbe returns a notification whose read state (as Asana last reported it)
 // is not changed by a queued entry, to check whether Asana lets us mark notifications by
-// marking it as it already is. ok is false when there is none.
-func (s *Store) NotificationProbe(ctx context.Context) (n Notification, ok bool, err error) {
+// marking it as it already is. Only notifications of workspaces are considered (those just
+// fetched). ok is false when there is none.
+func (s *Store) NotificationProbe(ctx context.Context, workspaces []string) (n Notification, ok bool, err error) {
+	if len(workspaces) == 0 {
+		return n, false, nil
+	}
+	args := []any{OpMarkNotification}
+	for _, w := range workspaces {
+		args = append(args, w)
+	}
 	err = s.db.QueryRowContext(ctx, `SELECT gid, workspace_gid, is_read FROM notifications n
-		WHERE NOT EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.task_gid = n.gid) ORDER BY created_at DESC LIMIT 1`,
-		OpMarkNotification).Scan(&n.GID, &n.WorkspaceGID, &n.Read)
+		WHERE NOT EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.task_gid = n.gid)
+		AND workspace_gid IN (?`+strings.Repeat(", ?", len(workspaces)-1)+`) ORDER BY created_at DESC LIMIT 1`,
+		args...).Scan(&n.GID, &n.WorkspaceGID, &n.Read)
 	if errors.Is(err, sql.ErrNoRows) {
 		return n, false, nil
 	}

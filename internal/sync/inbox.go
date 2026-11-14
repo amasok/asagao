@@ -34,14 +34,14 @@ func (s *Syncer) syncInbox(ctx context.Context, workspaceGID string) error {
 // the sync goes on. An invalid login or a network error stops the sync like any other
 // fetch; Asana having trouble (5xx, 429) keeps the cached notifications.
 func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) error {
-	ok := 0
+	var fetched []string // workspaces whose notifications are fresh
 	var refused store.InboxState
 	for _, w := range workspaces {
 		s.progress("ワークスペース %s: 受信トレイ", w.Name)
 		err := s.syncInbox(ctx, w.GID)
 		switch {
 		case err == nil:
-			ok++
+			fetched = append(fetched, w.GID)
 		case asana.IsUnauthorized(err) || isNetworkError(err):
 			return fmt.Errorf("%s の通知の取得: %w", w.Name, err)
 		case isRejected(err):
@@ -54,7 +54,7 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) 
 		}
 	}
 	switch {
-	case ok > 0:
+	case len(fetched) > 0:
 		if err := s.Store.SetInboxState(ctx, store.InboxState{Status: store.InboxOK}); err != nil {
 			return err
 		}
@@ -63,18 +63,19 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) 
 	default:
 		return nil
 	}
-	return s.probeInboxWrite(ctx)
+	return s.probeInboxWrite(ctx, fetched)
 }
 
 // probeInboxWrite checks, while marking notifications is known to be refused, whether it
 // works now (e.g. after logging in again with notifications:write): it marks one
-// notification as Asana already has it, which changes nothing.
-func (s *Syncer) probeInboxWrite(ctx context.Context) error {
+// notification as Asana already has it, which changes nothing. Only notifications just
+// fetched (of workspaces) are used: an older cached state may be stale.
+func (s *Syncer) probeInboxWrite(ctx context.Context, workspaces []string) error {
 	st, err := s.Store.InboxState(ctx)
 	if err != nil || !st.WriteForbidden {
 		return err
 	}
-	n, ok, err := s.Store.NotificationProbe(ctx)
+	n, ok, err := s.Store.NotificationProbe(ctx, workspaces)
 	if err != nil || !ok {
 		return err
 	}
