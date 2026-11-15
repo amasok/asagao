@@ -38,6 +38,7 @@ func TestRisky(t *testing.T) {
 		"evil.terminal": true, "evil.TERMINAL": true, "evil.command": true, "x.webloc": true,
 		"x.jar": true, "x.app": true, "x.sh": true, "x.pkg": true, "x.fileloc": true,
 		"x.terminal.": true, "x.terminal ": true, "x.inetloc": true, "x.scpt": true,
+		"x.webarchive": true, "x.afploc": true, "x.ftploc": true, "x.alfredworkflow": true,
 	} {
 		if got := Risky(file(t, dir, name, 0o600)); got != want {
 			t.Errorf("Risky(%q) = %v, want %v", name, got, want)

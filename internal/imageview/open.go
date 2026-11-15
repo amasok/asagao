@@ -31,7 +31,7 @@ func init() {
 		app command terminal tool workflow action service shortcut definition
 		sh bash zsh csh tcsh ksh fish py pyc pl rb php js jse jxa scpt scptd applescript osascript lua tcl
 		jar class jnlp
-		webloc inetloc fileloc url desktop lnk
+		webloc inetloc fileloc afploc ftploc url desktop lnk webarchive alfredworkflow
 		pkg mpkg dmg iso img sparseimage sparsebundle mobileconfig configprofile
 		bundle plugin prefpane saver kext dylib so qlgenerator mdimporter osax xpc wdgt widget
 		appimage run bin out elf deb rpm snap flatpakref
