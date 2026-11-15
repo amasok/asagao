@@ -83,3 +83,15 @@ func TestPixelLimit(t *testing.T) {
 		}
 	}
 }
+
+// iTerm2 still gets HEIC (Go cannot read it), but nothing else Go cannot read.
+func TestITermSendsOnlyKnownUnreadableFormats(t *testing.T) {
+	heic := append([]byte{0, 0, 0, 24}, []byte("ftypheic\x00\x00\x00\x00mif1heic")...)
+	var out strings.Builder
+	if err := Write(&out, heic, ProtocolITerm, Box{Cols: 80, Rows: 24}); err != nil || !strings.Contains(out.String(), "1337;File=") {
+		t.Errorf("HEIC: err = %v, out = %q", err, out.String())
+	}
+	if err := Write(io.Discard, []byte("BM not really an image"), ProtocolITerm, Box{Cols: 80, Rows: 24}); err == nil {
+		t.Error("an unreadable non-HEIF file must not be sent")
+	}
+}

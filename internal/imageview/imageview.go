@@ -146,16 +146,27 @@ func Write(out io.Writer, data []byte, protocol string, b Box) error {
 
 func writeITerm(out io.Writer, data []byte, b Box) error {
 	cols, rows := b.Cols, b.Rows
-	// A format Go cannot read (e.g. HEIC) is still sent: iTerm2 may show it.
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	switch {
+	case err == nil:
 		if err := checkPixels(cfg); err != nil {
 			return err
 		}
 		cols, rows = Fit(cfg.Width, cfg.Height, b)
+	case isHEIF(data):
+		// HEIC / AVIF (iPhone photos): Go cannot read them, iTerm2 can show them.
+	default:
+		// Anything else Go cannot read (BMP, a damaged PNG...) could claim any size.
+		return fmt.Errorf("この画像形式は表示できません: %w", err)
 	}
-	_, err := fmt.Fprintf(out, "\x1b]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s\a",
+	_, err = fmt.Fprintf(out, "\x1b]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s\a",
 		len(data), cols, rows, base64.StdEncoding.EncodeToString(data))
 	return err
+}
+
+// isHEIF reports whether data is an ISO-BMFF image (HEIC, HEIF, AVIF): "ftyp" at byte 4.
+func isHEIF(data []byte) bool {
+	return len(data) >= 12 && string(data[4:8]) == "ftyp"
 }
 
 func writeKitty(out io.Writer, data []byte, b Box) error {
