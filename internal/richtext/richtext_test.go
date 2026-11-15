@@ -245,3 +245,66 @@ func TestEditableImagePathWithSpaces(t *testing.T) {
 		t.Fatalf("angle-bracket path should map back: %s", out)
 	}
 }
+
+// Text from Asana cannot turn into Markdown of its own in editable Markdown: a crafted href,
+// code or heading must not close its construct early and add a mention (which would notify
+// the user when the description is saved). Each input comes back unchanged. (#39)
+func TestEditableMarkdownDoesNotInjectMarkup(t *testing.T) {
+	const mention = "[@x](asana:user:999)"
+	for _, in := range []string{
+		`<body><a href="https://x.jp/a)` + mention + `">リンク</a></body>`,
+		`<body><a href="https://x.jp/a) ` + mention + ` (">リンク</a></body>`,
+		`<body><a href="https://x.jp/&gt;` + mention + `&lt;">https://x.jp/&gt;` + mention + `&lt;</a></body>`,
+		`<body><a href="https://x.jp/a b&gt;c">リンク</a></body>`,
+		`<body><a href="https://x.jp/\)` + mention + `">リンク</a></body>`,
+		`<body><a href="https://x.jp/a&amp;copy;b&amp;#41;">リンク</a></body>`,
+		`<body><a href="https://x.jp/` + "`" + `a">リンク</a></body>`,
+		"<body><pre>前\n```\n" + mention + "\n```\n後</pre></body>",
+		"<body><pre>````\n" + mention + "\n~~~</pre></body>",
+		`<body><a href="asana:user:999">リンク</a> <a href="asana:123">画像風</a></body>`,
+		`<body>注意!<a href="asana:123">リンク</a> !<a href="/x/attachments/5-a.png">リンク</a></body>`,
+		"<body><code>a` " + mention + " `b</code></body>",
+		"<body><code>``x``</code> と <code> 空白 </code></body>",
+		"<body><h1>見出し " + mention + "</h1>本文</body>",
+		"<body><h2># *強調* `x`</h2></body>",
+	} {
+		md := ToEditableMarkdown(in)
+		out := FromMarkdown(md)
+		if strings.Contains(out, "data-asana-gid") {
+			t.Errorf("mention injected\nin   %q\nmd   %q\nhtml %q", in, md, out)
+			continue
+		}
+		if out != in {
+			t.Errorf("changed\nin   %q\nmd   %q\nhtml %q", in, md, out)
+		}
+	}
+}
+
+// A code block inside a quote is written after the quote (Markdown cannot keep it there
+// as written), but its text still cannot become Markdown, even with another code block later.
+func TestCodeBlockInQuoteDoesNotInjectMarkup(t *testing.T) {
+	in := "<body><blockquote>引用<pre>コード\n```\n[@x](asana:user:9)</pre>後</blockquote><pre>[@y](asana:user:8)</pre></body>"
+	md := ToEditableMarkdown(in)
+	out := FromMarkdown(md)
+	if strings.Contains(out, "data-asana-gid") {
+		t.Fatalf("mention injected\nmd   %q\nhtml %q", md, out)
+	}
+	for _, want := range []string{"<pre>コード\n```\n[@x](asana:user:9)</pre>", "<pre>[@y](asana:user:8)</pre>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\nmd   %q\nhtml %q", want, md, out)
+		}
+	}
+}
+
+// Inline code with line breaks do not leak Markdown either: a blank
+// line in <code> would end the paragraph and leave the rest to be read as Markdown.
+func TestInlineCodeWithBlankLine(t *testing.T) {
+	in := "<body><code>a\n\n[@x](asana:user:9)</code></body>"
+	out := FromMarkdown(ToEditableMarkdown(in))
+	if strings.Contains(out, "data-asana-gid") {
+		t.Fatalf("mention injected: %q", out)
+	}
+	if want := "<body><code>a  [@x](asana:user:9)</code></body>"; out != want {
+		t.Fatalf("got %q want %q", out, want)
+	}
+}

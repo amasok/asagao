@@ -195,8 +195,9 @@ func (w *htmlWriter) inline(n gast.Node) {
 		w.inlines(n)
 		w.tag("</s>")
 	case *gast.Link:
-		dest := string(n.Destination)
-		if gid, ok := strings.CutPrefix(dest, mentionScheme); ok {
+		// Mentions and images are recognised by the destination as written; the href is the
+		// destination with backslash escapes and character references resolved.
+		if gid, ok := strings.CutPrefix(string(n.Destination), mentionScheme); ok {
 			if w.plain {
 				w.inlines(n)
 			} else {
@@ -204,7 +205,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 			}
 			return
 		}
-		w.tag(`<a href="` + html.EscapeString(dest) + `">`)
+		w.tag(`<a href="` + html.EscapeString(decodeText(n.Destination)) + `">`)
 		w.inlines(n)
 		w.tag("</a>")
 	case *gast.AutoLink:
@@ -220,7 +221,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 			}
 			return
 		}
-		w.tag(`<a href="` + html.EscapeString(dest) + `">`)
+		w.tag(`<a href="` + html.EscapeString(decodeText(n.Destination)) + `">`)
 		w.inlines(n)
 		w.tag("</a>")
 	case *gast.RawHTML:

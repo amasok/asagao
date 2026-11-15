@@ -128,12 +128,12 @@ func (c *converter) walk(n *html.Node) {
 		if c.pre > 0 {
 			c.children(n)
 		} else {
-			c.write("`" + textOf(n) + "`")
+			c.write(codeSpan(textOf(n)))
 		}
 	case atom.Pre:
 		c.block()
 		c.pre++
-		c.write("```\n" + strings.TrimRight(textOf(n), "\n") + "\n```")
+		c.codeBlock(strings.TrimRight(textOf(n), "\n"))
 		c.pre--
 		c.block()
 	case atom.A:
@@ -141,7 +141,7 @@ func (c *converter) walk(n *html.Node) {
 	case atom.H1, atom.H2, atom.H3:
 		c.block()
 		c.write(strings.Repeat("#", headingLevel(n.DataAtom)) + " ")
-		c.write(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")))
+		c.write(escape(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")), false))
 		c.block()
 	case atom.Hr:
 		c.block()
@@ -238,14 +238,92 @@ func (c *converter) link(n *html.Node) {
 		c.write("[" + escape(text, false) + "](" + mentionScheme + attr(n, "data-asana-gid") + ")")
 	case attr(n, "data-asana-type") == "user" || strings.HasPrefix(text, "@"):
 		c.write("**" + escape(text, false) + "**") // mention
-	case href == "" || text == href:
-		if href == "" {
-			href = text
-		}
-		c.write("<" + href + ">")
+	case (href == "" || text == href) && autolinkSafe(text):
+		c.write("<" + text + ">")
+	case href == "":
+		c.write(escape(text, false)) // not a link
 	default:
-		c.write("[" + escape(text, false) + "](" + href + ")")
+		// "!" just before the link would make it an image (of an attachment, for a local path)
+		if out := c.b.String(); strings.HasSuffix(out, "!") {
+			c.b.Reset()
+			c.write(out[:len(out)-1] + `\!`)
+		}
+		c.write("[" + escape(text, false) + "](" + linkDest(href) + ")")
 	}
+}
+
+// autolinkSafe reports whether u can be written as an autolink (<u>): a URL with a scheme
+// and nothing that would end the autolink early or make it raw HTML instead.
+var autolinkRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\x00-\x20<>\x7f]*$`)
+
+func autolinkSafe(u string) bool { return autolinkRe.MatchString(u) }
+
+// linkDest writes href as a Markdown link destination that reads back as the same href
+// (FromMarkdown resolves backslash escapes and character references in it).
+// Characters that would end the destination (")", ">", spaces, line breaks) or be read as
+// syntax ("\\", "&", "<", "(") are escaped, so a crafted href cannot close the link and
+// add Markdown of its own (e.g. a mention). Control characters are percent-encoded.
+func linkDest(href string) string {
+	var b strings.Builder
+	b.WriteByte('<')
+	for i := 0; i < len(href); i++ {
+		switch ch := href[i]; {
+		case ch < 0x20 || ch == 0x7f:
+			fmt.Fprintf(&b, "%%%02X", ch)
+		case strings.IndexByte(`\<>()&`+"`", ch) >= 0:
+			b.WriteByte('\\')
+			b.WriteByte(ch)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteByte('>')
+	d := b.String()
+	if strings.HasPrefix(d, "<"+assetScheme) {
+		// an Asana link to "asana:..." is not an image or a mention: FromMarkdown checks the
+		// destination as written, so "asana\:" keeps it a plain link
+		d = "<asana\\:" + d[len("<"+assetScheme):]
+	}
+	if !strings.ContainsAny(href, " ") {
+		// no spaces: the plain form reads better ("(" and ")" are escaped, so it stays closed)
+		d = d[1 : len(d)-1]
+	}
+	return d
+}
+
+// codeSpan writes s as an inline code span. The backtick fence is longer than any run of
+// backticks in s, so s cannot close it early; line breaks become spaces (a blank line
+// would end the paragraph and leave the rest of s to be read as Markdown).
+func codeSpan(s string) string {
+	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
+	fence := strings.Repeat("`", longestRun(s, '`')+1)
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") ||
+		(strings.HasPrefix(s, " ") && strings.HasSuffix(s, " ") && strings.TrimSpace(s) != "") {
+		s = " " + s + " " // Markdown strips one space on each side
+	}
+	return fence + s + fence
+}
+
+// codeBlock writes s as a fenced code block. The fence is longer than any run of backticks
+// in s, so a line of "```" in s does not close it. (Inside a blockquote the paragraph break
+// before it has already ended the quote, so its lines get no quote prefix.)
+func (c *converter) codeBlock(s string) {
+	fence := strings.Repeat("`", max(3, longestRun(s, '`')+1))
+	c.write(fence + "\n" + s + "\n" + fence)
+}
+
+// longestRun is the length of the longest run of ch in s.
+func longestRun(s string, ch byte) int {
+	longest, n := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ch {
+			n++
+			longest = max(longest, n)
+		} else {
+			n = 0
+		}
+	}
+	return longest
 }
 
 func (c *converter) listItem(n *html.Node) {
