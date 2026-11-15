@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -13,13 +14,14 @@ import (
 )
 
 // An attachment fetched by gid is recorded under the task Asana says it belongs to, not
-// under whatever task it was asked for with. (#42)
+// under whatever task it was asked for with. An image whose task is not in the store (e.g.
+// copied from another task) is still downloaded and shown, but not recorded. (#42)
 func TestDownloadAttachmentChecksParent(t *testing.T) {
 	ctx := context.Background()
-	parents := map[string]string{"a-other": `{"gid":"t-unknown"}`, "a-none": `null`, "a-t2": `{"gid":"t2"}`, "a-t1": `{"gid":"t1"}`}
+	parents := map[string]string{"11": `{"gid":"t-unknown"}`, "12": `null`, "13": `{"gid":"t2"}`, "14": `{"gid":"t1"}`}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gid := filepath.Base(r.URL.Path)
-		fmt.Fprintf(w, `{"data":{"gid":%q,"name":"x.png","host":"asana","download_url":"https://files.example/%s","parent":%s}}`, gid, gid, parents[gid])
+		fmt.Fprintf(w, `{"data":{"gid":%q,"name":"x %s.png","host":"asana","download_url":"https://files.example/%s","parent":%s}}`, gid, gid, gid, parents[gid])
 	}))
 	defer srv.Close()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
@@ -32,37 +34,51 @@ func TestDownloadAttachmentChecksParent(t *testing.T) {
 	}
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	var downloads int
-	s := &Syncer{API: api, Store: st, CacheDir: t.TempDir(), Download: func(context.Context, string) ([]byte, error) {
-		downloads++
-		return []byte("img"), nil
+	cache := t.TempDir()
+	var downloads []string
+	s := &Syncer{API: api, Store: st, CacheDir: cache, Download: func(_ context.Context, url string) ([]byte, error) {
+		downloads = append(downloads, url)
+		return []byte("img " + url), nil
 	}}
+	offline := &Syncer{Store: st, CacheDir: cache}
 
-	for _, gid := range []string{"a-other", "a-none"} {
-		if _, err := s.DownloadAttachment(ctx, "t1", gid); err == nil {
-			t.Fatalf("%s: attachment of another task should be refused", gid)
+	// task not in the store, or no parent: shown, not recorded; offline the cached file is used
+	for _, gid := range []string{"11", "12"} {
+		path, err := s.DownloadAttachment(ctx, "t1", gid)
+		if err != nil {
+			t.Fatalf("%s: an image copied from another task should be shown: %v", gid, err)
+		}
+		if b, _ := os.ReadFile(path); string(b) != "img https://files.example/"+gid || filepath.Base(path) != gid+"-x_"+gid+".png" {
+			t.Fatalf("%s: path %q content %q", gid, path, b)
 		}
 		if _, err := st.GetAttachment(ctx, gid); err == nil {
-			t.Fatalf("%s: should not be recorded", gid)
+			t.Fatalf("%s: should not be recorded under a task", gid)
+		}
+		n := len(downloads)
+		if p2, err := s.DownloadAttachment(ctx, "t1", gid); err != nil || p2 != path || len(downloads) != n {
+			t.Fatalf("%s: second call should reuse the file: %q %v (%d downloads)", gid, p2, err, len(downloads))
+		}
+		if p3, err := offline.DownloadAttachment(ctx, "t1", gid); err != nil || p3 != path {
+			t.Fatalf("%s: offline should use the cached file: %q %v", gid, p3, err)
 		}
 	}
-	if downloads != 0 {
-		t.Fatalf("refused attachments were downloaded %d times", downloads)
+	// the real parent is in the store: recorded under it, not under the task asked with
+	for _, gid := range []string{"13", "14"} {
+		if _, err := s.DownloadAttachment(ctx, "t1", gid); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// an image copied from another cached task is shown, but recorded under that task
-	if _, err := s.DownloadAttachment(ctx, "t1", "a-t2"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.DownloadAttachment(ctx, "t1", "a-t1"); err != nil {
-		t.Fatal(err)
-	}
-	for task, want := range map[string]string{"t1": "a-t1", "t2": "a-t2"} {
+	for task, want := range map[string]string{"t1": "14", "t2": "13"} {
 		d, err := st.GetTask(ctx, task)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(d.Attachments) != 1 || d.Attachments[0].GID != want {
-			t.Fatalf("%s attachments = %+v, want only %s", task, d.Attachments, want)
+		if len(d.Attachments) != 1 || d.Attachments[0].GID != want || d.Attachments[0].LocalPath == "" {
+			t.Fatalf("%s attachments = %+v, want only %s (downloaded)", task, d.Attachments, want)
 		}
+	}
+	// a gid that is not a number is refused before it is used in a path
+	if _, err := offline.DownloadAttachment(ctx, "t1", "../11"); err == nil {
+		t.Fatal("a gid with a path should be refused")
 	}
 }

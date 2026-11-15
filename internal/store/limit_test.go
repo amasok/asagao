@@ -22,7 +22,7 @@ func manyTasks(t *testing.T, n int) *Store {
 	tasks := make([]asana.Task, n)
 	for i := range tasks {
 		tasks[i] = asana.Task{GID: fmt.Sprint(100000 + i), Name: fmt.Sprintf("task %05d", i),
-			ModifiedAt: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
+			ModifiedAt:  time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC),
 			Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1", Name: "P"}}},
 			Tags:        []asana.Ref{{GID: "g1", Name: "タグ"}}}
 	}

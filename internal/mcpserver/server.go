@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	stdsync "sync"
@@ -840,12 +841,18 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 	if err != nil {
 		return nil, AttachmentOutput{}, err
 	}
-	a, err := s.Store.GetAttachment(ctx, in.GID)
-	if err != nil {
+	out := AttachmentOutput{LocalPath: path}
+	if a, err := s.Store.GetAttachment(ctx, in.GID); err == nil {
+		out.Name, out.IsImage = a.Name, a.IsImage
+	} else if errors.Is(err, store.ErrNotFound) {
+		// not recorded: its task in Asana is not in the cache (e.g. an image copied from
+		// another task); the cached file is named "<gid>-name"
+		out.Name = strings.TrimPrefix(filepath.Base(path), in.GID+"-")
+		out.IsImage = store.IsImageName(out.Name)
+	} else {
 		return nil, AttachmentOutput{}, err
 	}
-	out := AttachmentOutput{Name: a.Name, LocalPath: path, IsImage: a.IsImage}
-	if !a.IsImage {
+	if !out.IsImage {
 		return nil, out, nil
 	}
 	data, err := os.ReadFile(path)
@@ -859,7 +866,7 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 	}
 	res := &mcp.CallToolResult{Content: []mcp.Content{
 		&mcp.ImageContent{Data: data, MIMEType: mime},
-		&mcp.TextContent{Text: a.Name + " (" + path + ")"},
+		&mcp.TextContent{Text: out.Name + " (" + path + ")"},
 	}}
 	return res, out, nil
 }

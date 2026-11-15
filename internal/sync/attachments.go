@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -21,36 +22,16 @@ const maxAttachmentSize = 100 << 20
 
 // DownloadAttachment returns a local path for an attachment of a task, downloading it on
 // first use. Once downloaded, the file is reused (and is available offline). Attachments
-// not yet in the store (e.g. images pasted into the description) are looked up first and
-// recorded under the task Asana says they belong to: taskGID, or another cached task (an
-// image copied from it). An attachment of neither is not recorded or downloaded.
+// not yet in the store (e.g. images pasted into the description) are looked up first, see
+// downloadUnknown.
 func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (string, error) {
 	a, err := s.Store.GetAttachment(ctx, gid)
-	if errors.Is(err, store.ErrNotFound) && s.API != nil {
-		meta, err := s.API.Attachment(ctx, gid)
-		if err != nil {
-			return "", fmt.Errorf("画像 %s の取得: %w", gid, err)
-		}
-		parent, err := s.attachmentParent(ctx, taskGID, meta)
-		if err != nil {
-			return "", err
-		}
-		if err := s.Store.UpsertAttachment(ctx, parent, *meta); err != nil {
-			return "", err
-		}
-		a, err = s.Store.GetAttachment(ctx, gid)
-		if err != nil {
-			return "", err
-		}
-	} else if errors.Is(err, store.ErrNotFound) {
-		return "", errors.New("オフラインのため画像を取得できません")
+	if errors.Is(err, store.ErrNotFound) {
+		return s.downloadUnknown(ctx, gid)
 	} else if err != nil {
 		return "", err
 	}
-	dir := s.CacheDir
-	if dir == "" {
-		dir = filepath.Join(config.CacheDir(), "attachments")
-	}
+	dir := s.cacheDir()
 	path := filepath.Join(dir, gid+"-"+safeName(a.Name))
 	if a.LocalPath != "" {
 		if _, err := os.Stat(a.LocalPath); err == nil {
@@ -85,25 +66,106 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 	if fresh.DownloadURL == "" {
 		return "", fmt.Errorf("%s はダウンロードできません（%s 上のファイル）", a.Name, fresh.Host)
 	}
+	if err := s.saveDownload(ctx, fresh.DownloadURL, a.Name, path); err != nil {
+		return "", err
+	}
+	return path, s.Store.SetAttachmentPath(ctx, gid, path)
+}
+
+func (s *Syncer) cacheDir() string {
+	if s.CacheDir != "" {
+		return s.CacheDir
+	}
+	return filepath.Join(config.CacheDir(), "attachments")
+}
+
+// saveDownload downloads url to path (through a temporary file).
+func (s *Syncer) saveDownload(ctx context.Context, url, name, path string) error {
 	download := s.Download
 	if download == nil {
 		download = httpDownload
 	}
-	data, err := download(ctx, fresh.DownloadURL)
+	data, err := download(ctx, url)
 	if err != nil {
-		return "", fmt.Errorf("%s のダウンロード: %w", a.Name, err)
+		return fmt.Errorf("%s のダウンロード: %w", name, err)
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+var digits = regexp.MustCompile(`^[0-9]+$`)
+
+// downloadUnknown handles an attachment that is not in the store, such as an image pasted
+// into a description (often copied from another task). It is recorded under the task Asana
+// says it belongs to when that task is in the store, and then downloaded as usual.
+// Otherwise it is not recorded (it must not appear among the attachments of a task it does
+// not belong to), but it is still downloaded to the cache so it can be shown; offline, the
+// cached file is used.
+func (s *Syncer) downloadUnknown(ctx context.Context, gid string) (string, error) {
+	if !digits.MatchString(gid) {
+		return "", fmt.Errorf("画像の gid が正しくありません: %q", gid)
+	}
+	dir := s.cacheDir()
+	if s.API == nil {
+		if p := cachedFile(dir, gid); p != "" {
+			return p, nil
+		}
+		return "", errors.New("オフラインのため画像を取得できません")
+	}
+	meta, err := s.API.Attachment(ctx, gid)
+	if err != nil {
+		return "", fmt.Errorf("画像 %s の取得: %w", gid, err)
+	}
+	if parent := s.cachedParent(ctx, meta); parent != "" {
+		if err := s.Store.UpsertAttachment(ctx, parent, *meta); err != nil {
+			return "", err
+		}
+		return s.DownloadAttachment(ctx, parent, gid)
+	}
+	path := filepath.Join(dir, gid+"-"+safeName(meta.Name))
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	}
+	if meta.DownloadURL == "" {
+		return "", fmt.Errorf("%s はダウンロードできません（%s 上のファイル）", meta.Name, meta.Host)
+	}
+	if err := s.saveDownload(ctx, meta.DownloadURL, meta.Name, path); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return "", err
+	return path, nil
+}
+
+// cachedParent returns the gid of the task an attachment belongs to in Asana, if that task
+// is in the store, or "".
+func (s *Syncer) cachedParent(ctx context.Context, a *asana.Attachment) string {
+	if a.Parent == nil || a.Parent.GID == "" {
+		return ""
 	}
-	return path, s.Store.SetAttachmentPath(ctx, gid, path)
+	if _, err := s.Store.GetTask(ctx, a.Parent.GID); err != nil {
+		return ""
+	}
+	return a.Parent.GID
+}
+
+// cachedFile returns a file downloaded earlier for attachment gid ("<gid>-name"), or "".
+func cachedFile(dir, gid string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if e.Type().IsRegular() && strings.HasPrefix(n, gid+"-") && !strings.HasSuffix(n, ".tmp") {
+			return filepath.Join(dir, n)
+		}
+	}
+	return ""
 }
 
 // unsafeChars are replaced in cached file names: path separators, control characters, and
@@ -141,23 +203,4 @@ func httpDownload(ctx context.Context, url string) ([]byte, error) {
 		return nil, errors.New("ファイルが大きすぎます（100MB 超）")
 	}
 	return data, nil
-}
-
-// attachmentParent returns the task an attachment fetched by gid is recorded under: its
-// parent in Asana, if that is taskGID or a task in the store. Otherwise it is an error, so a
-// gid that is not the task's does not show up among the task's attachments.
-func (s *Syncer) attachmentParent(ctx context.Context, taskGID string, a *asana.Attachment) (string, error) {
-	if a.Parent == nil || a.Parent.GID == "" {
-		return "", fmt.Errorf("画像 %s の添付先が分かりません", a.GID)
-	}
-	parent := a.Parent.GID
-	if parent == taskGID {
-		return parent, nil
-	}
-	if _, err := s.Store.GetTask(ctx, parent); err == nil {
-		return parent, nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return "", err
-	}
-	return "", fmt.Errorf("画像 %s はタスク %s の添付ではありません", a.GID, taskGID)
 }
