@@ -3,6 +3,7 @@ package imageview
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -10,6 +11,8 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -84,14 +87,25 @@ func TestPixelLimit(t *testing.T) {
 	}
 }
 
-// iTerm2 still gets HEIC (Go cannot read it), but nothing else Go cannot read.
-func TestITermSendsOnlyKnownUnreadableFormats(t *testing.T) {
+// An image whose size cannot be checked (Go cannot read it: HEIC, BMP, a damaged PNG)
+// is not sent to the terminal; the viewer opens it in the OS viewer, once.
+func TestUnknownSizeOpensExternally(t *testing.T) {
 	heic := append([]byte{0, 0, 0, 24}, []byte("ftypheic\x00\x00\x00\x00mif1heic")...)
-	var out strings.Builder
-	if err := Write(&out, heic, ProtocolITerm, Box{Cols: 80, Rows: 24}); err != nil || !strings.Contains(out.String(), "1337;File=") {
-		t.Errorf("HEIC: err = %v, out = %q", err, out.String())
+	for _, protocol := range []string{ProtocolITerm, ProtocolKitty} {
+		var out strings.Builder
+		if err := Write(&out, heic, protocol, Box{Cols: 80, Rows: 24}); !errors.Is(err, ErrUnknownSize) || out.Len() != 0 {
+			t.Errorf("%s: err = %v, wrote %q", protocol, err, out.String())
+		}
 	}
-	if err := Write(io.Discard, []byte("BM not really an image"), ProtocolITerm, Box{Cols: 80, Rows: 24}); err == nil {
-		t.Error("an unreadable non-HEIF file must not be sent")
+	path := filepath.Join(t.TempDir(), "123-IMG_0001.HEIC")
+	if err := os.WriteFile(path, heic, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var opened []int
+	external := func(i int) error { opened = append(opened, i); return nil }
+	var out strings.Builder
+	draw(&out, []string{path}, 0, ProtocolITerm, Box{Cols: 80, Rows: 24}, external)
+	if len(opened) != 1 || strings.Contains(out.String(), "1337;File=") || !strings.Contains(out.String(), "外部ビューアで開きました") {
+		t.Errorf("opened %v, out %q", opened, out.String())
 	}
 }

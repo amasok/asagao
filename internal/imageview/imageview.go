@@ -10,6 +10,7 @@ package imageview
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -122,6 +123,10 @@ func Fit(w, h int, b Box) (cols, rows int) {
 // allocate gigabytes. 50 million pixels still covers a 48MP phone photo.
 const MaxPixels = 50_000_000
 
+// ErrUnknownSize means the image format cannot be read here, so its size cannot be
+// checked and it is not drawn in the terminal (open it in the OS viewer instead).
+var ErrUnknownSize = errors.New("この画像形式は端末に表示できません")
+
 // checkPixels refuses images whose header claims more than MaxPixels.
 func checkPixels(cfg image.Config) error {
 	if cfg.Width <= 0 || cfg.Height <= 0 {
@@ -147,32 +152,25 @@ func Write(out io.Writer, data []byte, protocol string, b Box) error {
 func writeITerm(out io.Writer, data []byte, b Box) error {
 	cols, rows := b.Cols, b.Rows
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	switch {
-	case err == nil:
-		if err := checkPixels(cfg); err != nil {
-			return err
-		}
-		cols, rows = Fit(cfg.Width, cfg.Height, b)
-	case isHEIF(data):
-		// HEIC / AVIF (iPhone photos): Go cannot read them, iTerm2 can show them.
-	default:
-		// Anything else Go cannot read (BMP, a damaged PNG...) could claim any size.
-		return fmt.Errorf("この画像形式は表示できません: %w", err)
+	if err != nil {
+		// Go cannot read it (HEIC, BMP, a damaged PNG...), so its size is unknown: it
+		// could claim any size, and iTerm2 would decode it. The viewer opens it in the
+		// OS viewer instead.
+		return fmt.Errorf("%w: %v", ErrUnknownSize, err)
 	}
+	if err := checkPixels(cfg); err != nil {
+		return err
+	}
+	cols, rows = Fit(cfg.Width, cfg.Height, b)
 	_, err = fmt.Fprintf(out, "\x1b]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s\a",
 		len(data), cols, rows, base64.StdEncoding.EncodeToString(data))
 	return err
 }
 
-// isHEIF reports whether data is an ISO-BMFF image (HEIC, HEIF, AVIF): "ftyp" at byte 4.
-func isHEIF(data []byte) bool {
-	return len(data) >= 12 && string(data[4:8]) == "ftyp"
-}
-
 func writeKitty(out io.Writer, data []byte, b Box) error {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("この画像形式は表示できません: %w", err)
+		return fmt.Errorf("%w: %v", ErrUnknownSize, err)
 	}
 	if err := checkPixels(cfg); err != nil {
 		return err

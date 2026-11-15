@@ -68,7 +68,7 @@ func TestDraw(t *testing.T) {
 	box := Box{Cols: 80, Rows: 24, CellW: 10, CellH: 20}
 
 	var out bytes.Buffer
-	draw(&out, paths, 1, ProtocolITerm, box)
+	draw(&out, paths, 1, ProtocolITerm, box, nil)
 	s := out.String()
 	if !strings.HasPrefix(s, "\x1b[2J\x1b[H\x1b]1337;File=inline=1;") {
 		t.Fatalf("should clear the screen then draw the image: %q", s[:min(len(s), 60)])
@@ -78,7 +78,7 @@ func TestDraw(t *testing.T) {
 	}
 
 	out.Reset()
-	draw(&out, paths, 0, ProtocolKitty, box)
+	draw(&out, paths, 0, ProtocolKitty, box, nil)
 	s = out.String()
 	if !strings.HasPrefix(s, "\x1b_Ga=d,d=A,q=2\x1b\\") {
 		t.Fatalf("kitty images should be deleted before redrawing: %q", s[:min(len(s), 40)])
@@ -88,7 +88,7 @@ func TestDraw(t *testing.T) {
 	}
 
 	out.Reset()
-	draw(&out, paths, 1, ProtocolITerm, Box{Cols: 10, Rows: 1})
+	draw(&out, paths, 1, ProtocolITerm, Box{Cols: 10, Rows: 1}, nil)
 	if !strings.Contains(out.String(), "\x1b[3;1H") {
 		t.Fatalf("tiny terminal: the image keeps one row and the caption goes below it: %q", out.String())
 	}
