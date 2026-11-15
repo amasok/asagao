@@ -28,6 +28,15 @@ type eventsAsana struct {
 	// events answers GET /events?resource=p1: sync token received -> the response.
 	events func(token string) (status int, body string)
 	log    []string // "GET /tasks?project=p1&modified_since=..." etc.
+	// hook, if set, may answer a request itself (returning true), e.g. to inject failures.
+	hook func(w http.ResponseWriter, r *http.Request) bool
+}
+
+// setHook sets (or with nil, clears) the hook under the lock the server goroutines take.
+func (f *eventsAsana) setHook(h func(w http.ResponseWriter, r *http.Request) bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hook = h
 }
 
 func newEventsAsana(t *testing.T) *eventsAsana {
@@ -72,6 +81,9 @@ func (f *eventsAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	f.log = append(f.log, entry)
+	if f.hook != nil && f.hook(w, r) {
+		return
+	}
 	switch {
 	case r.URL.Path == "/users/me":
 		fmt.Fprint(w, `{"data":{"gid":"u1","name":"Me"}}`)
@@ -466,12 +478,8 @@ func TestEventsBatchFailureFallsBack(t *testing.T) {
 			e := setupEvents(t)
 			e.run(t, 0)
 			e.fake.events = func(string) (int, string) { return 200, eventsJSON([]string{taskEvent("t1", "changed")}, "T1", false) }
-			h := e.srv.Config.Handler
-			e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/batch" && tc.batch(w) {
-					return
-				}
-				h.ServeHTTP(w, r)
+			e.fake.setHook(func(w http.ResponseWriter, r *http.Request) bool {
+				return r.URL.Path == "/batch" && tc.batch(w)
 			})
 			e.fake.setTask("t1", "via the fallback", "")
 			res := e.run(t, 5*time.Minute)
@@ -500,14 +508,13 @@ func TestEventsBatchOfflineKeepsToken(t *testing.T) {
 	e := setupEvents(t)
 	e.run(t, 0)
 	e.fake.events = func(string) (int, string) { return 200, eventsJSON([]string{taskEvent("t1", "changed")}, "T1", false) }
-	h := e.srv.Config.Handler
-	e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/batch" {
-			conn, _, _ := w.(http.Hijacker).Hijack()
-			conn.Close()
-			return
+	e.fake.setHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/batch" {
+			return false
 		}
-		h.ServeHTTP(w, r)
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		conn.Close()
+		return true
 	})
 	e.now = e.now.Add(5 * time.Minute)
 	if _, err := e.s.Run(context.Background(), false); err == nil {
@@ -516,7 +523,7 @@ func TestEventsBatchOfflineKeepsToken(t *testing.T) {
 	if e.token(t) != "T0" {
 		t.Fatalf("token advanced past events that were not applied: %q", e.token(t))
 	}
-	e.srv.Config.Handler = h
+	e.fake.setHook(nil)
 	e.fake.setTask("t1", "applied later", "")
 	e.run(t, 5*time.Minute)
 	if e.token(t) != "T1" || e.taskName(t, "t1") != "applied later" {
