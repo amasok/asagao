@@ -33,6 +33,7 @@ type Client struct {
 	// clockOffset is Asana's clock minus ours in nanoseconds, from the Date header of the
 	// latest response (0 until one arrived, or when the difference is within noise).
 	clockOffset atomic.Int64
+	clockKnown  atomic.Bool // a response with a Date header has arrived
 }
 
 // minClockOffset is the smallest difference between Asana's clock and ours that
@@ -48,6 +49,10 @@ func (c *Client) ClockOffset() time.Duration {
 	return time.Duration(c.clockOffset.Load())
 }
 
+// ClockKnown reports whether ClockOffset has been measured (a response with a valid Date
+// header has arrived).
+func (c *Client) ClockKnown() bool { return c.clockKnown.Load() }
+
 // observeDate records the clock offset from a response's Date header.
 func (c *Client) observeDate(h http.Header, received time.Time) {
 	server, err := http.ParseTime(h.Get("Date"))
@@ -60,6 +65,7 @@ func (c *Client) observeDate(h http.Header, received time.Time) {
 		off = 0
 	}
 	c.clockOffset.Store(int64(off))
+	c.clockKnown.Store(true)
 }
 
 func NewClient(httpClient *http.Client) *Client {

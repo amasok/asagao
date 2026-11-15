@@ -140,6 +140,12 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if lastSync.IsZero() || lastFull.IsZero() || stamp.Sub(lastFull) >= FullSyncInterval {
 		res.Full = true
 	}
+	// A stamp in the future by Asana's clock was written by the PC's clock (an older
+	// version, or the clock was changed since): modified_since from it would miss changes,
+	// and the next full sync would come late. Start again from a full sync.
+	if lastSync.After(stamp) || lastFull.After(stamp) {
+		res.Full = true
+	}
 	lastPoll, err := s.stateTime(ctx, keyLastPoll)
 	if err != nil {
 		return res, err

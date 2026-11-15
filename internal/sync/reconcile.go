@@ -35,10 +35,11 @@ const (
 )
 
 // clockSkew is the margin when comparing when an entry was sent with Asana's created_at.
-// Send times are recorded by Asana's clock (Syncer.serverNow, measured from the Date
-// header of Asana's responses), so a PC clock that is minutes or hours off does not
-// matter; the margin covers what that measurement cannot (resolution, network delay, a
-// clock changed since).
+// Send times are recorded by this PC's clock; when compared, they are moved to Asana's by
+// the offset measured from the Date header of Asana's latest response (by then known:
+// the failed request's own answer, or the request that looks for the result), so a PC
+// clock that is minutes or hours off does not matter. The margin covers what that
+// measurement cannot (resolution, network delay).
 const clockSkew = 2 * time.Minute
 
 // settleTime is how long after sending an entry its result may still be missing from
@@ -68,8 +69,15 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 	if t, err := time.Parse(time.RFC3339, op.LastSentAt); err == nil && t.After(lastSent) {
 		lastSent = t
 	}
-	out, m, err := s.find(ctx, op, sentAt.Add(-clockSkew))
-	if err != nil || m != notFound || s.serverNow().Sub(lastSent) >= settleTime(op.Kind) {
+	// sentAt is by this PC's clock, created_at by Asana's: compare them by Asana's. If no
+	// answer has told the offset yet (a new process whose first request this is), ask.
+	if !s.API.ClockKnown() {
+		if _, err := s.API.Me(ctx); err != nil {
+			return sent, notFound, err
+		}
+	}
+	out, m, err := s.find(ctx, op, sentAt.Add(s.API.ClockOffset()-clockSkew))
+	if err != nil || m != notFound || s.clock().Sub(lastSent) >= settleTime(op.Kind) {
 		return out, m, err
 	}
 	// Not found so soon after sending: wait, unless what was found made it harmless to
