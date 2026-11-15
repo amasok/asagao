@@ -75,6 +75,8 @@ type Error struct {
 		Message string `json:"message"`
 		Help    string `json:"help"`
 	} `json:"errors"`
+	// Sync is the new sync token of a 412 from GET /events (see SyncToken).
+	Sync string `json:"sync"`
 }
 
 func (e *Error) Error() string {
@@ -113,6 +115,8 @@ func IsPaymentRequired(err error) bool {
 
 type envelope struct {
 	Data     json.RawMessage `json:"data"`
+	Sync     string          `json:"sync"`     // GET /events
+	HasMore  bool            `json:"has_more"` // GET /events
 	NextPage *struct {
 		Offset string `json:"offset"`
 	} `json:"next_page"`
@@ -156,7 +160,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			return nil, err
 		}
 
-		if retryable(method, resp.StatusCode) && attempt < c.MaxRetries {
+		if (retryable(method, resp.StatusCode) || (path == batchPath && resp.StatusCode >= 500)) && attempt < c.MaxRetries {
 			if err := c.wait(ctx, retryDelay(resp, attempt)); err != nil {
 				return nil, err
 			}

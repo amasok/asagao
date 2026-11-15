@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -291,6 +292,38 @@ func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, er
 	return deleted, err
 }
 
+// DeleteGoneTasks removes tasks Asana says are deleted or no longer visible to us, with
+// their subtasks. Like PruneTasks, a task with queued changes is kept (sending them finds
+// out it is gone, see sync.dropGone), and tasks linked by a dependency stay known by name.
+func (s *Store) DeleteGoneTasks(ctx context.Context, gids []string) (int64, error) {
+	if len(gids) == 0 {
+		return 0, nil
+	}
+	b, err := json.Marshal(gids)
+	if err != nil {
+		return 0, err
+	}
+	const sub = `WITH RECURSIVE sub(gid) AS (
+			SELECT value FROM json_each(?1) UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid) `
+	var deleted int64
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, sub+`INSERT OR REPLACE INTO task_refs(gid, name, completed, resource_subtype)
+			SELECT gid, name, completed, resource_subtype FROM tasks
+			WHERE gid IN (SELECT gid FROM sub) AND gid NOT IN (SELECT task_gid FROM outbox)
+			  AND (gid IN (SELECT dependency_gid FROM task_dependencies) OR gid IN (SELECT task_gid FROM task_dependencies))`, string(b)); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, sub+`DELETE FROM tasks
+			WHERE gid IN (SELECT gid FROM sub) AND gid NOT IN (SELECT task_gid FROM outbox)`, string(b))
+		if err != nil {
+			return err
+		}
+		deleted, _ = res.RowsAffected()
+		return nil
+	})
+	return deleted, err
+}
+
 // Prefixes of the sync_state keys kept per project (prefix + project gid). They are
 // deleted with the project (see PruneProjects), so they do not pile up.
 const (
@@ -298,12 +331,15 @@ const (
 	KeyCustomFields = "custom_fields:"
 	// KeyCollapsed + scope: the TUI's collapsed groups of a list ("my", "inbox", or a project gid).
 	KeyCollapsed = "ui:collapsed:"
+	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
+	KeyEvents = "events:"
 )
 
 // projectKeys lists, for each per-project key prefix, the SQL condition that tells a
 // project's key from other keys with the same prefix ({gid} is the part after the prefix).
 var projectKeys = []struct{ prefix, isProject string }{
 	{KeyCustomFields, "1"},
+	{KeyEvents, "1"},
 	{KeyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
 }
 
