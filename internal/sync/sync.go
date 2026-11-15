@@ -344,7 +344,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		}
 	}
 
-	if res.Full {
+	// An account always has a workspace: an empty list is a broken answer, and pruning by
+	// it would delete every task. The full sync is then done again next time.
+	if res.Full && len(workspaces) > 0 {
 		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
 			return res, err
 		}
