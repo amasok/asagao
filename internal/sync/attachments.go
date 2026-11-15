@@ -124,6 +124,10 @@ func (s *Syncer) downloadUnknown(ctx context.Context, gid string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("画像 %s の取得: %w", gid, err)
 	}
+	if meta.GID != gid {
+		// recording it would not make gid known, and the download below would ask again
+		return "", fmt.Errorf("画像 %s の取得: 別の添付 (%s) が返されました", gid, termsafe.String(meta.GID))
+	}
 	// not read through the store, so make the text safe for the terminal here (it ends up
 	// in error messages shown in the TUI)
 	meta.Name, meta.Host = termsafe.String(meta.Name), termsafe.String(meta.Host)
