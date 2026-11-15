@@ -410,6 +410,7 @@ func (c *Client) UploadAttachment(ctx context.Context, parentGID, fileName strin
 	if err != nil {
 		return nil, err
 	}
+	c.observeDate(resp.Header, time.Now())
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {

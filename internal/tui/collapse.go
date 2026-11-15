@@ -22,7 +22,7 @@ func (m *Model) scopeKey() string {
 	return "my"
 }
 
-func collapsedStateKey(scope string) string { return "ui:collapsed:" + scope }
+func collapsedStateKey(scope string) string { return store.KeyCollapsed + scope }
 
 // loadCollapsed reads the collapsed group keys of a scope (in a command goroutine).
 func loadCollapsed(ctx context.Context, st *store.Store, scope string) map[string]bool {

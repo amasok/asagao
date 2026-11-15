@@ -18,8 +18,7 @@ import (
 // Asana has no idempotency keys (and a task's external.gid can only be set by OAuth apps,
 // while asana-tui also supports personal access tokens), so reconcile looks for what the
 // entry would have created: same name/text (and, for tasks, the same due date, assignee
-// and notes), created at or after the entry was first sent (minus clockSkew, as the local
-// clock and Asana's may differ), by us where Asana says who created it, and not already
+// and notes), created at or after the entry was first sent (minus clockSkew), by us where Asana says who created it, and not already
 // recorded as the result of another entry. One candidate is taken as the entry's result;
 // several (or no way to look) are left to the user. None is trusted only once settleTime
 // has passed since the entry was sent: right after a 5xx or a timeout, Asana may still be
@@ -35,6 +34,12 @@ const (
 	tooEarly               // not found yet, but Asana may still show it: check again later
 )
 
+// clockSkew is the margin when comparing when an entry was sent with Asana's created_at.
+// Send times are recorded by this PC's clock; when compared, they are moved to Asana's by
+// the offset measured from the Date header of Asana's latest response (by then known:
+// the failed request's own answer, or the request that looks for the result), so a PC
+// clock that is minutes or hours off does not matter. The margin covers what that
+// measurement cannot (resolution, network delay).
 const clockSkew = 2 * time.Minute
 
 // settleTime is how long after sending an entry its result may still be missing from
@@ -64,7 +69,14 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 	if t, err := time.Parse(time.RFC3339, op.LastSentAt); err == nil && t.After(lastSent) {
 		lastSent = t
 	}
-	out, m, err := s.find(ctx, op, sentAt.Add(-clockSkew))
+	// sentAt is by this PC's clock, created_at by Asana's: compare them by Asana's. If no
+	// answer has told the offset yet (a new process whose first request this is), ask.
+	if !s.API.ClockKnown() {
+		if _, err := s.API.Me(ctx); err != nil {
+			return sent, notFound, err
+		}
+	}
+	out, m, err := s.find(ctx, op, sentAt.Add(s.API.ClockOffset()-clockSkew))
 	if err != nil || m != notFound || s.clock().Sub(lastSent) >= settleTime(op.Kind) {
 		return out, m, err
 	}

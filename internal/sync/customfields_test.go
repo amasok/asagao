@@ -186,14 +186,14 @@ func TestCustomFieldsUnavailableIsNotAnError(t *testing.T) {
 func TestCustomFieldsKeptOnUnauthorized(t *testing.T) {
 	fs, s, st := setupFieldPush(t)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, keyCustomFields+"p1", ""); err != nil {
+	if err := st.SetSyncState(ctx, store.KeyCustomFields+"p1", ""); err != nil {
 		t.Fatal(err)
 	}
 	fs.settings = http.StatusUnauthorized
 	if err := s.syncCustomFields(ctx, "p1", false); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, keyCustomFields+"p1"); v != "" {
+	if v, _ := st.SyncState(ctx, store.KeyCustomFields+"p1"); v != "" {
 		t.Fatalf("a failed fetch must not be recorded as done: %q", v)
 	}
 	d, _ := st.GetTask(ctx, "t1")
