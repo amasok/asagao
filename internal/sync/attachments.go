@@ -15,6 +15,7 @@ import (
 	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // maxAttachmentSize guards against huge downloads (Asana's free plan limit is 100MB per file).
@@ -112,16 +113,20 @@ func (s *Syncer) downloadUnknown(ctx context.Context, gid string) (string, error
 		return "", fmt.Errorf("画像の gid が正しくありません: %q", gid)
 	}
 	dir := s.cacheDir()
+	// Downloaded before (attachments do not change): no API call, and it works offline.
+	if p := cachedFile(dir, gid); p != "" {
+		return p, nil
+	}
 	if s.API == nil {
-		if p := cachedFile(dir, gid); p != "" {
-			return p, nil
-		}
 		return "", errors.New("オフラインのため画像を取得できません")
 	}
 	meta, err := s.API.Attachment(ctx, gid)
 	if err != nil {
 		return "", fmt.Errorf("画像 %s の取得: %w", gid, err)
 	}
+	// not read through the store, so make the text safe for the terminal here (it ends up
+	// in error messages shown in the TUI)
+	meta.Name, meta.Host = termsafe.String(meta.Name), termsafe.String(meta.Host)
 	if parent := s.cachedParent(ctx, meta); parent != "" {
 		if err := s.Store.UpsertAttachment(ctx, parent, *meta); err != nil {
 			return "", err

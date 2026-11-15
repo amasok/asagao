@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -80,5 +81,71 @@ func TestDownloadAttachmentChecksParent(t *testing.T) {
 	// a gid that is not a number is refused before it is used in a path
 	if _, err := offline.DownloadAttachment(ctx, "t1", "../11"); err == nil {
 		t.Fatal("a gid with a path should be refused")
+	}
+}
+
+// An attachment downloaded before without a record is taken from the cache without asking
+// Asana, so it shows when the network is down even though the syncer is logged in. (#42)
+func TestUnrecordedAttachmentUsesCacheWhenAPIFails(t *testing.T) {
+	ctx := context.Background()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
+	srv.Close() // the network is down: requests fail to connect
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "T1"}})
+	cache := t.TempDir()
+	path := filepath.Join(cache, "21-copy.png")
+	if err := os.WriteFile(path, []byte("img"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, CacheDir: cache,
+		Download: func(context.Context, string) ([]byte, error) { t.Fatal("no download expected"); return nil, nil }}
+	if p, err := s.DownloadAttachment(ctx, "t1", "21"); err != nil || p != path {
+		t.Fatalf("path %q %v", p, err)
+	}
+	if calls != 0 {
+		t.Fatalf("Asana was asked %d times for a cached attachment", calls)
+	}
+	if _, err := s.DownloadAttachment(ctx, "t1", "22"); err == nil {
+		t.Fatal("an attachment that is neither cached nor reachable should fail")
+	}
+}
+
+// Names from Asana that reach error messages (shown in the TUI) carry no terminal control
+// characters. (#42)
+func TestUnrecordedAttachmentErrorIsTerminalSafe(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gid := filepath.Base(r.URL.Path)
+		url := `"https://files.example/x"`
+		if gid == "31" {
+			url = `""` // not downloadable: the name and host are in the error
+		}
+		fmt.Fprintf(w, `{"data":{"gid":%q,"name":"a\u001b]0;evil\u0007\u001b[2Jb.png","host":"h\u001b[31mx","download_url":%s,"parent":null}}`, gid, url)
+	}))
+	defer srv.Close()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	s := &Syncer{API: api, Store: st, CacheDir: t.TempDir(),
+		Download: func(context.Context, string) ([]byte, error) { return nil, fmt.Errorf("HTTP 500") }}
+	for _, gid := range []string{"31", "32"} {
+		_, err := s.DownloadAttachment(ctx, "t1", gid)
+		if err == nil {
+			t.Fatalf("%s: expected an error", gid)
+		}
+		if strings.ContainsAny(err.Error(), "\x1b\x07") {
+			t.Fatalf("%s: error has control characters: %q", gid, err.Error())
+		}
 	}
 }
