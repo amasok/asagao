@@ -267,7 +267,7 @@ var errTooLarge = errors.New("100MB を超えるファイルは添付できま�
 // copyFile copies the regular file src (statted as want) to dst, reading at most limit
 // bytes: the file may grow, or be replaced, after it was checked.
 func copyFile(src, dst string, want os.FileInfo, limit int64) (int64, error) {
-	in, err := os.Open(src)
+	in, err := openNoBlock(src)
 	if err != nil {
 		return 0, err
 	}

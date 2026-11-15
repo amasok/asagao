@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -37,18 +38,20 @@ func NewUploadPolicy(cwd, home string, extra, denied []string) UploadPolicy {
 }
 
 func usableCwd(cwd, home string) bool {
-	cwd = filepath.Clean(cwd)
+	// Compare the real folders: os.Getwd returns $PWD, which may be a symlink to the
+	// home folder or to ~/.ssh, and Check resolves the allowed folders.
+	cwd = resolveDir(cwd)
 	if cwd == string(filepath.Separator) || filepath.Dir(cwd) == cwd { // / or C:\
 		return false
 	}
 	if home == "" {
 		return true
 	}
-	home = filepath.Clean(home)
+	home = resolveDir(home)
 	if within(home, cwd) { // the home folder or one of its parents
 		return false
 	}
-	if rel, ok := relInside(home, cwd); ok && strings.HasPrefix(rel, ".") { // ~/.ssh, ~/.config/...
+	if rel, ok := relInside(fold(home), fold(cwd)); ok && strings.HasPrefix(rel, ".") { // ~/.ssh, ~/.config/...
 		return false
 	}
 	return true
@@ -86,6 +89,11 @@ func (p UploadPolicy) Check(path string) (string, error) {
 		if hidden(rel) {
 			return "", errors.New("upload_attachment: hidden files and files in hidden folders (names starting with \".\") cannot be uploaded")
 		}
+		// A hard link has no symlink to resolve: a link here to ~/.ssh/id_ed25519 or to
+		// asana-tui's token would look like an ordinary file of this folder.
+		if info, err := os.Stat(real); err == nil && info.Mode().IsRegular() && links(info) > 1 {
+			return "", errors.New("upload_attachment: files with more than one hard link cannot be uploaded (copy the file instead)")
+		}
 		return real, nil
 	}
 	return "", fmt.Errorf("upload_attachment: %s is not in a folder that allows uploads (%s). "+
@@ -116,11 +124,16 @@ func relInside(dir, path string) (string, bool) {
 // within reports whether path is dir or inside it. On macOS and Windows file names are
 // usually case-insensitive, so ~/.Config/ASANA-TUI must match too.
 func within(path, dir string) bool {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		path, dir = strings.ToLower(path), strings.ToLower(dir)
-	}
-	_, ok := relInside(dir, path)
+	_, ok := relInside(fold(dir), fold(path))
 	return ok
+}
+
+// fold lowercases a path where file names are usually case-insensitive.
+func fold(path string) string {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return strings.ToLower(path)
+	}
+	return path
 }
 
 func hidden(rel string) bool {
