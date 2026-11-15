@@ -18,7 +18,7 @@ import (
 //
 // JSON stored in TEXT columns (outbox payloads, notification payloads, enum options) may
 // hold control characters as \u escapes, which decoding turns back into raw characters;
-// for values that look like JSON those escapes are removed too (see safeText).
+// for values that look like JSON (objects, arrays, strings) those escapes are removed too.
 
 type safeConnector struct {
 	dsn string
@@ -122,7 +122,8 @@ func (r safeRows) Next(dest []driver.Value) error {
 
 // safeText is a TEXT value as the store hands it out.
 func safeText(s string) string {
-	if t := strings.TrimLeft(s, " \t\n\r"); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+	// JSON values: objects, arrays, and strings (custom field values are stored as JSON).
+	if t := strings.TrimLeft(s, " \t\n\r"); t != "" && strings.ContainsRune(`{["`, rune(t[0])) {
 		return termsafe.JSON(s)
 	}
 	return termsafe.String(s)
