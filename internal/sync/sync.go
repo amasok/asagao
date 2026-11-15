@@ -17,9 +17,15 @@ import (
 
 const (
 	keyLastFullSync = "last_full_sync"
+	keyLastPoll     = "last_poll"
 	// FullSyncInterval forces a full sync (which also removes deleted tasks) this often.
 	FullSyncInterval = 24 * time.Hour
-	// modifiedSinceMargin absorbs clock skew between this machine and Asana.
+	// PollInterval is how often every project is fetched again with modified_since, besides
+	// its events: Asana delivers events at most once, so a few may be missing. In between,
+	// a sync only reads each project's events and fetches what they say changed.
+	PollInterval = time.Hour
+	// modifiedSinceMargin covers what the measured clock offset (see Syncer.serverNow) cannot:
+	// its resolution, and a task saved in Asana with a modified_at just before the sync started.
 	modifiedSinceMargin = 2 * time.Minute
 )
 
@@ -61,7 +67,12 @@ func (s *Syncer) wait(ctx context.Context, d time.Duration) error {
 }
 
 type Result struct {
-	Full       bool          `json:"full"`
+	Full bool `json:"full"`
+	// Poll: every project was fetched with modified_since (see PollInterval). Otherwise
+	// projects were brought up to date from their events.
+	Poll       bool          `json:"poll"`
+	Events     int           `json:"events"`              // events read
+	Fallbacks  int           `json:"fallbacks,omitempty"` // projects fetched again because their events could not be used
 	Push       PushResult    `json:"push"`
 	Workspaces int           `json:"workspaces"`
 	Projects   int           `json:"projects"`
@@ -77,31 +88,29 @@ func (s *Syncer) clock() time.Time {
 	return time.Now()
 }
 
+// serverNow is the current time by Asana's clock (as far as the responses so far tell):
+// what is compared with Asana's timestamps or sent as modified_since must not depend on
+// this machine's clock being right.
+func (s *Syncer) serverNow() time.Time {
+	if s.API == nil {
+		return s.clock()
+	}
+	return s.clock().Add(s.API.ClockOffset())
+}
+
 // Run syncs Asana into the store.
 //
-// An incremental sync fetches only tasks modified since the previous sync. A full sync
-// fetches everything in the retention window and removes tasks Asana no longer returns.
-// A full sync runs when forced, on the first sync, or when the last one is older than
-// FullSyncInterval (incremental syncs cannot see deletions).
+// Most syncs read each project's events (GET /events) and fetch only the tasks they say
+// changed (see events.go); My Tasks is fetched with modified_since. Every PollInterval, a
+// poll also fetches every project with modified_since, which catches events Asana did not
+// deliver; a project whose events cannot be used (expired token, 429, 5xx) is fetched
+// that way too. A full sync fetches everything in the retention window and removes tasks
+// Asana no longer returns. It runs when forced, on the first sync, or when the last one is
+// older than FullSyncInterval.
 func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	started := s.clock()
 	res := Result{Full: forceFull}
 
-	lastSync, err := s.stateTime(ctx, store.KeyLastSync)
-	if err != nil {
-		return res, err
-	}
-	lastFull, err := s.stateTime(ctx, keyLastFullSync)
-	if err != nil {
-		return res, err
-	}
-	if lastSync.IsZero() || lastFull.IsZero() || started.Sub(lastFull) >= FullSyncInterval {
-		res.Full = true
-	}
-	var modifiedSince time.Time
-	if !res.Full {
-		modifiedSince = lastSync.Add(-modifiedSinceMargin)
-	}
 	// Send local changes first, so the pull below sees them and a network error means
 	// we are offline before anything else is attempted.
 	// The store holds one account's data. If Asana now answers as someone else, nothing is
@@ -116,6 +125,45 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	} else if want != "" {
 		s.accountOK.Store(true)
+	}
+	// The times recorded and compared below are by Asana's clock (measured from the Date
+	// header of the answer to Me), as modified_since is compared with Asana's modified_at.
+	stamp := started.Add(s.API.ClockOffset())
+	lastSync, err := s.stateTime(ctx, store.KeyLastSync)
+	if err != nil {
+		return res, err
+	}
+	lastFull, err := s.stateTime(ctx, keyLastFullSync)
+	if err != nil {
+		return res, err
+	}
+	if lastSync.IsZero() || lastFull.IsZero() || stamp.Sub(lastFull) >= FullSyncInterval {
+		res.Full = true
+	}
+	// A stamp in the future by Asana's clock was written by the PC's clock (an older
+	// version, or the clock was changed since): modified_since from it would miss changes,
+	// and the next full sync would come late. Start again from a full sync. Less than the
+	// margin is harmless (modified_since looks back by it) and may be noise of the offset.
+	if limit := stamp.Add(modifiedSinceMargin); lastSync.After(limit) || lastFull.After(limit) {
+		res.Full = true
+	}
+	lastPoll, err := s.stateTime(ctx, keyLastPoll)
+	if err != nil {
+		return res, err
+	}
+	if lastPoll.IsZero() || lastPoll.After(lastSync) { // before events were used, every sync polled
+		lastPoll = lastSync
+	}
+	res.Poll = res.Full || stamp.Sub(lastPoll) >= PollInterval
+	// modifiedSince: what a project fetch asks for. A poll looks back to the previous poll
+	// (events since then may be missing); otherwise to the previous sync (My Tasks, and
+	// projects whose events cannot be used).
+	var modifiedSince time.Time
+	if !res.Full {
+		modifiedSince = lastSync.Add(-modifiedSinceMargin)
+		if res.Poll {
+			modifiedSince = lastPoll.Add(-modifiedSinceMargin)
+		}
 	}
 	// The whole sync holds the push lock: no other process sends meanwhile, and the store
 	// cannot be reset (store.Reset) between our push and our pull, which would bring the
@@ -133,8 +181,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
-	completedSince := started.AddDate(0, 0, -s.Cfg.CompletedDays)
+	completedSince := stamp.AddDate(0, 0, -s.Cfg.CompletedDays)
 	keep := map[string]bool{}
+	tokens := map[string]string{} // project gid -> events token, saved once everything is stored
 	var withSubtasks []string
 
 	upsert := func(tasks []asana.Task) error {
@@ -161,19 +210,28 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if err := s.Store.UpsertWorkspaces(ctx, workspaces); err != nil {
 		return res, err
 	}
+	if res.Full {
+		if err := s.Store.PruneWorkspaces(ctx, workspaces); err != nil {
+			return res, err
+		}
+	}
 	res.Workspaces = len(workspaces)
 
 	for _, w := range workspaces {
-		if users, err := s.API.Users(ctx, w.GID); err == nil { // members, for choosing an assignee
-			if err := s.Store.UpsertUsers(ctx, users); err != nil {
-				return res, err
+		if res.Poll { // members and tags change rarely: fetched with the poll
+			if users, err := s.API.Users(ctx, w.GID); err == nil { // members, for choosing an assignee
+				if err := s.Store.UpsertUsers(ctx, users); err != nil {
+					return res, err
+				}
+			}
+			if tags, err := s.API.Tags(ctx, w.GID); err == nil { // all tags, for the tag picker
+				if err := s.Store.UpsertTags(ctx, tags); err != nil {
+					return res, err
+				}
 			}
 		}
-		if tags, err := s.API.Tags(ctx, w.GID); err == nil { // all tags, for the tag picker
-			if err := s.Store.UpsertTags(ctx, tags); err != nil {
-				return res, err
-			}
-		}
+		// My Tasks may hold tasks in no project, which no project's events report: they are
+		// fetched with modified_since on every sync (one request, only what changed).
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)
 		mine, err := s.API.Tasks(ctx, asana.TaskQuery{
 			Assignee: "me", Workspace: w.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
@@ -202,29 +260,85 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				continue
 			}
 			s.progress("プロジェクト %s", p.Name)
-			secs, err := s.API.Sections(ctx, p.GID)
+			ev, err := s.readEvents(ctx, p.GID)
 			if err != nil {
-				return res, fmt.Errorf("%s のセクションの取得: %w", p.Name, err)
-			}
-			if err := s.Store.ReplaceSections(ctx, p.GID, secs); err != nil {
 				return res, err
 			}
-			if err := s.syncCustomFields(ctx, p.GID, res.Full); err != nil {
-				return res, err
-			}
-			if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
-				if err := s.Store.ReplaceStatusUpdates(ctx, p.GID, updates); err != nil {
-					return res, err
+			res.Events += ev.count
+			// Without usable events, the project is fetched like a poll: in full the first time
+			// (nothing is known before the new token), else what changed since the last sync.
+			fetch, since := res.Poll, modifiedSince
+			if ev.fallback {
+				res.Fallbacks++
+				fetch = true
+				if ev.fresh {
+					since = time.Time{}
 				}
 			}
-			tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
-				Project: p.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
-			})
-			if err != nil {
-				return res, fmt.Errorf("%s のタスクの取得: %w", p.Name, err)
+			sections := func() error {
+				secs, err := s.API.Sections(ctx, p.GID)
+				if err != nil {
+					return fmt.Errorf("%s のセクションの取得: %w", p.Name, err)
+				}
+				return s.Store.ReplaceSections(ctx, p.GID, secs)
 			}
-			if err := upsert(tasks); err != nil {
+			statuses := func() error {
+				if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
+					return s.Store.ReplaceStatusUpdates(ctx, p.GID, updates)
+				}
+				return nil
+			}
+			fetchProject := func(since time.Time) error {
+				if err := sections(); err != nil {
+					return err
+				}
+				if err := statuses(); err != nil {
+					return err
+				}
+				tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
+					Project: p.GID, CompletedSince: completedSince, ModifiedSince: since,
+				})
+				if err != nil {
+					return fmt.Errorf("%s のタスクの取得: %w", p.Name, err)
+				}
+				return upsert(tasks)
+			}
+			if fetch {
+				if err := fetchProject(since); err != nil {
+					return res, err
+				}
+			} else {
+				if ev.sections {
+					if err := sections(); err != nil {
+						return res, err
+					}
+				}
+				if ev.statuses {
+					if err := statuses(); err != nil {
+						return res, err
+					}
+				}
+			}
+			if err := s.syncCustomFields(ctx, p.GID, res.Full || ev.fields); err != nil {
 				return res, err
+			}
+			if err := s.applyEvents(ctx, ev, keep, upsert, &withSubtasks); err != nil {
+				var fe *eventFetchError
+				if !errors.As(err, &fe) || isNetworkError(err) || asana.IsUnauthorized(err) {
+					return res, fmt.Errorf("%s の変更の取得: %w", p.Name, err)
+				}
+				// Asana could not give the changed tasks (a 5xx or 429 that outlasted the
+				// retries, a task that always fails): like unusable events, fetch the project
+				// with modified_since instead, which covers the changes the events named.
+				if !fetch {
+					res.Fallbacks++
+					if err := fetchProject(modifiedSince); err != nil {
+						return res, err
+					}
+				}
+			}
+			if ev.token != "" {
+				tokens[p.GID] = ev.token
 			}
 			res.Projects++
 		}
@@ -258,11 +372,25 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		}
 	}
 
-	if res.Full {
+	// The events tokens are saved only now, after the subtasks of the tasks they reported:
+	// if anything failed, the next sync reads the same events again.
+	for gid, token := range tokens {
+		if err := s.Store.SetSyncState(ctx, store.KeyEvents+gid, token); err != nil {
+			return res, err
+		}
+	}
+	// An account always has a workspace: an empty list is a broken answer, and pruning by
+	// it would delete every task. The full sync is then done again next time.
+	if res.Full && len(workspaces) > 0 {
 		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
 			return res, err
 		}
-		if err := s.Store.SetSyncState(ctx, keyLastFullSync, started.UTC().Format(time.RFC3339)); err != nil {
+		if err := s.Store.SetSyncState(ctx, keyLastFullSync, stamp.UTC().Format(time.RFC3339)); err != nil {
+			return res, err
+		}
+	}
+	if res.Poll {
+		if err := s.Store.SetSyncState(ctx, keyLastPoll, stamp.UTC().Format(time.RFC3339)); err != nil {
 			return res, err
 		}
 	}
@@ -272,21 +400,18 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	} else if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
-	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, started.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, stamp.UTC().Format(time.RFC3339)); err != nil {
 		return res, err
 	}
 	res.Duration = s.clock().Sub(started)
 	return res, nil
 }
 
-// keyCustomFields + project gid records when a project's custom fields were last fetched.
-const keyCustomFields = "custom_fields:"
-
 // syncCustomFields fetches a project's custom fields (with their choices) on a full sync,
 // or if they were never fetched. A workspace without custom fields (Asana answers e.g. 402
 // on a free plan) simply has none; any other failure is retried on the next sync.
 func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
-	key := keyCustomFields + projectGID
+	key := store.KeyCustomFields + projectGID
 	if !full {
 		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
 			return err

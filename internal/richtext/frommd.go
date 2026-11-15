@@ -26,7 +26,7 @@ var md = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension
 // FromMarkdown converts Markdown to Asana rich text (the HTML subset accepted in
 // html_notes / html_text), wrapped in <body>.
 func FromMarkdown(src string) string {
-	b := []byte(src)
+	b := []byte(keepIndentation(src))
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b}
 	w.blocks(doc)
@@ -35,11 +35,11 @@ func FromMarkdown(src string) string {
 
 // PlainFromMarkdown returns the text of Markdown without markup (for Asana's plain notes).
 func PlainFromMarkdown(src string) string {
-	b := []byte(src)
+	b := []byte(keepIndentation(src))
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b, plain: true}
 	w.blocks(doc)
-	// keep the indentation of the first line (written as "&#32;" / "&#9;" in Markdown)
+	// keep the indentation of the first line (see keepIndentation)
 	return strings.TrimLeft(strings.TrimRight(w.b.String(), " \t\n"), "\n")
 }
 
@@ -195,8 +195,9 @@ func (w *htmlWriter) inline(n gast.Node) {
 		w.inlines(n)
 		w.tag("</s>")
 	case *gast.Link:
-		dest := string(n.Destination)
-		if gid, ok := strings.CutPrefix(dest, mentionScheme); ok {
+		// Mentions and images are recognised by the destination as written; the href is the
+		// destination with backslash escapes and character references resolved.
+		if gid, ok := strings.CutPrefix(string(n.Destination), mentionScheme); ok {
 			if w.plain {
 				w.inlines(n)
 			} else {
@@ -204,7 +205,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 			}
 			return
 		}
-		w.tag(`<a href="` + html.EscapeString(dest) + `">`)
+		w.tag(`<a href="` + html.EscapeString(decodeText(n.Destination)) + `">`)
 		w.inlines(n)
 		w.tag("</a>")
 	case *gast.AutoLink:
@@ -220,7 +221,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 			}
 			return
 		}
-		w.tag(`<a href="` + html.EscapeString(dest) + `">`)
+		w.tag(`<a href="` + html.EscapeString(decodeText(n.Destination)) + `">`)
 		w.inlines(n)
 		w.tag("</a>")
 	case *gast.RawHTML:
@@ -264,4 +265,92 @@ func ImageGID(dest string) (string, bool) {
 		return m[1], true
 	}
 	return "", false
+}
+
+// keepIndentation makes the indentation of text lines part of the text. Markdown drops the
+// indentation of a paragraph line (or reads 4 spaces as a code block), but Asana keeps it,
+// and editable Markdown writes it as it is (ToEditableMarkdown). The first indentation
+// character of such a line becomes a character reference ("&#32;" / "&#9;"), which Markdown
+// keeps as text. Lines that are Markdown structure stay as they are: list items and the
+// lines that continue them, quotes, headings, fences and fenced code, rules.
+func keepIndentation(src string) string {
+	lines := strings.Split(src, "\n")
+	var fence string // the fence of the open code block, "" outside one
+	inItem := false  // in the paragraph of a list item (where indentation is list structure)
+	for i, l := range lines {
+		prefix, rest := cutQuotePrefix(l)
+		trimmed := strings.TrimLeft(rest, " \t")
+		if fence != "" {
+			if closesFence(trimmed, fence) {
+				fence = ""
+			}
+			continue
+		}
+		if strings.TrimSpace(trimmed) == "" {
+			inItem = false
+			continue
+		}
+		if f := openingFence(trimmed); f != "" {
+			fence = f
+			continue
+		}
+		if listItemStart(trimmed) {
+			inItem = true
+			continue
+		}
+		indent := rest[:len(rest)-len(trimmed)]
+		if indent == "" || inItem || blockStart(trimmed) {
+			continue
+		}
+		lines[i] = prefix + indentRef[indent[0]] + indent[1:] + trimmed
+	}
+	return strings.Join(lines, "\n")
+}
+
+// cutQuotePrefix splits a line into its blockquote markers ("> > ") and the rest.
+func cutQuotePrefix(l string) (prefix, rest string) {
+	rest = l
+	for {
+		t := strings.TrimLeft(rest, " ")
+		if len(rest)-len(t) > 3 || !strings.HasPrefix(t, ">") {
+			break
+		}
+		t = t[1:]
+		if strings.HasPrefix(t, " ") {
+			t = t[1:]
+		}
+		rest = t
+	}
+	return l[:len(l)-len(rest)], rest
+}
+
+var fenceRe = regexp.MustCompile("^(`{3,}|~{3,})")
+
+// openingFence returns the fence a line opens a fenced code block with, or "".
+func openingFence(line string) string {
+	f := fenceRe.FindString(line)
+	if f != "" && f[0] == '`' && strings.Contains(line[len(f):], "`") {
+		return "" // a backtick fence's info string has no backticks: this is inline code
+	}
+	return f
+}
+
+// closesFence reports whether line closes a code block opened with fence.
+func closesFence(line, fence string) bool {
+	f := fenceRe.FindString(line)
+	return f != "" && f[0] == fence[0] && len(f) >= len(fence) && strings.TrimSpace(line[len(f):]) == ""
+}
+
+// listItemStart reports whether line (without indentation) starts a list item.
+func listItemStart(line string) bool {
+	return listBullet(line, '-') || listBullet(line, '+') || listBullet(line, '*') ||
+		orderedMarker.MatchString(line)
+}
+
+// blockStart reports whether line (without indentation) starts a Markdown block other than
+// a paragraph: a quote, an ATX heading, a rule or a setext underline. (Editable Markdown
+// escapes these at the start of text lines, so text never looks like them.)
+func blockStart(line string) bool {
+	return strings.HasPrefix(line, ">") || strings.HasPrefix(line, "#") ||
+		onlyOf(line, '-') || onlyOf(line, '=') || onlyOf(line, '*') || onlyOf(line, '_')
 }

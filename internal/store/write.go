@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -289,10 +292,126 @@ func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, er
 	return deleted, err
 }
 
+// DeleteGoneTasks removes tasks Asana says are deleted or no longer visible to us, with
+// their subtasks. Like PruneTasks, a task with queued changes is kept (sending them finds
+// out it is gone, see sync.dropGone), and tasks linked by a dependency stay known by name.
+func (s *Store) DeleteGoneTasks(ctx context.Context, gids []string) (int64, error) {
+	if len(gids) == 0 {
+		return 0, nil
+	}
+	b, err := json.Marshal(gids)
+	if err != nil {
+		return 0, err
+	}
+	const sub = `WITH RECURSIVE sub(gid) AS (
+			SELECT value FROM json_each(?1) UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid) `
+	var deleted int64
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, sub+`INSERT OR REPLACE INTO task_refs(gid, name, completed, resource_subtype)
+			SELECT gid, name, completed, resource_subtype FROM tasks
+			WHERE gid IN (SELECT gid FROM sub) AND gid NOT IN (SELECT task_gid FROM outbox)
+			  AND (gid IN (SELECT dependency_gid FROM task_dependencies) OR gid IN (SELECT task_gid FROM task_dependencies))`, string(b)); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, sub+`DELETE FROM tasks
+			WHERE gid IN (SELECT gid FROM sub) AND gid NOT IN (SELECT task_gid FROM outbox)`, string(b))
+		if err != nil {
+			return err
+		}
+		deleted, _ = res.RowsAffected()
+		return nil
+	})
+	return deleted, err
+}
+
+// Prefixes of the sync_state keys kept per project (prefix + project gid). They are
+// deleted with the project (see PruneProjects), so they do not pile up.
+const (
+	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
+	KeyCustomFields = "custom_fields:"
+	// KeyCollapsed + scope: the TUI's collapsed groups of a list ("my", "inbox", or a project gid).
+	KeyCollapsed = "ui:collapsed:"
+	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
+	KeyEvents = "events:"
+)
+
+// projectKeys lists, for each per-project key prefix, the SQL condition that tells a
+// project's key from other keys with the same prefix ({gid} is the part after the prefix).
+var projectKeys = []struct{ prefix, isProject string }{
+	{KeyCustomFields, "1"},
+	{KeyEvents, "1"},
+	{KeyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
+}
+
 // PruneProjects deletes projects (and their sections) of a workspace that are no longer returned.
 func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []asana.Project) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT gid FROM projects WHERE workspace_gid = ?", workspaceGID)
+		return pruneProjects(ctx, tx, workspaceGID, keep)
+	})
+}
+
+func pruneProjects(ctx context.Context, tx *sql.Tx, workspaceGID string, keep []asana.Project) error {
+	rows, err := tx.QueryContext(ctx, "SELECT gid FROM projects WHERE workspace_gid = ?", workspaceGID)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for rows.Next() {
+		var gid string
+		if err := rows.Scan(&gid); err != nil {
+			rows.Close()
+			return err
+		}
+		if !slices.ContainsFunc(keep, func(p asana.Project) bool { return p.GID == gid }) {
+			stale = append(stale, gid)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, gid := range stale {
+		for _, q := range []string{
+			"DELETE FROM sections WHERE project_gid = ?",
+			"DELETE FROM project_members WHERE project_gid = ?",
+			"DELETE FROM status_updates WHERE project_gid = ?",
+			"DELETE FROM project_custom_fields WHERE project_gid = ?",
+			"DELETE FROM task_memberships WHERE project_gid = ?",
+			"DELETE FROM projects WHERE gid = ?",
+		} {
+			if _, err := tx.ExecContext(ctx, q, gid); err != nil {
+				return err
+			}
+		}
+	}
+	return pruneProjectKeys(ctx, tx)
+}
+
+// pruneProjectKeys deletes the per-project sync_state keys of projects no longer in the
+// store, including those left behind by versions that did not delete them (the custom
+// fields are fetched again, and a list's collapsed groups reset, if the project comes back).
+func pruneProjectKeys(ctx context.Context, tx *sql.Tx) error {
+	for _, k := range projectKeys {
+		gidPart := "substr(key, " + strconv.Itoa(len(k.prefix)+1) + ")"
+		cond := strings.ReplaceAll(k.isProject, "{gid}", gidPart)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sync_state
+			WHERE substr(key, 1, ?) = ? AND `+cond+` AND `+gidPart+` NOT IN (SELECT gid FROM projects)`,
+			len(k.prefix), k.prefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PruneWorkspaces deletes the workspaces (with their projects and the projects' keys) that
+// are not in keep, the workspaces Asana returned. An empty keep is ignored: an account
+// always has a workspace, so it would only mean a broken answer.
+func (s *Store) PruneWorkspaces(ctx context.Context, keep []asana.Workspace) error {
+	if len(keep) == 0 {
+		return nil
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT gid FROM workspaces")
 		if err != nil {
 			return err
 		}
@@ -303,7 +422,7 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 				rows.Close()
 				return err
 			}
-			if !slices.ContainsFunc(keep, func(p asana.Project) bool { return p.GID == gid }) {
+			if !slices.ContainsFunc(keep, func(w asana.Workspace) bool { return w.GID == gid }) {
 				stale = append(stale, gid)
 			}
 		}
@@ -312,18 +431,11 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 			return err
 		}
 		for _, gid := range stale {
-			for _, q := range []string{
-				"DELETE FROM sections WHERE project_gid = ?",
-				"DELETE FROM project_members WHERE project_gid = ?",
-				"DELETE FROM status_updates WHERE project_gid = ?",
-				"DELETE FROM project_custom_fields WHERE project_gid = ?",
-				"DELETE FROM sync_state WHERE key = 'custom_fields:' || ?", // fetch them again if it comes back
-				"DELETE FROM task_memberships WHERE project_gid = ?",
-				"DELETE FROM projects WHERE gid = ?",
-			} {
-				if _, err := tx.ExecContext(ctx, q, gid); err != nil {
-					return err
-				}
+			if err := pruneProjects(ctx, tx, gid, nil); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "DELETE FROM workspaces WHERE gid = ?", gid); err != nil {
+				return err
 			}
 		}
 		return nil

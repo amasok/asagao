@@ -30,6 +30,42 @@ type Client struct {
 	plainTasks atomic.Bool
 	// sleep is replaced in tests.
 	sleep func(context.Context, time.Duration) error
+	// clockOffset is Asana's clock minus ours in nanoseconds, from the Date header of the
+	// latest response (0 until one arrived, or when the difference is within noise).
+	clockOffset atomic.Int64
+	clockKnown  atomic.Bool // a response with a Date header has arrived
+}
+
+// minClockOffset is the smallest difference between Asana's clock and ours that
+// ClockOffset reports. The Date header has a resolution of one second and the response
+// takes a moment to arrive, so smaller differences are noise.
+const minClockOffset = 5 * time.Second
+
+// ClockOffset returns how far Asana's clock is ahead of this machine's (negative when it
+// is behind), measured from the Date header of the latest response. Times compared with
+// Asana's timestamps (created_at, modified_since) are corrected by it, so a wrong PC clock
+// does not make asana-tui miss what it created or changed. It is 0 before any response.
+func (c *Client) ClockOffset() time.Duration {
+	return time.Duration(c.clockOffset.Load())
+}
+
+// ClockKnown reports whether ClockOffset has been measured (a response with a valid Date
+// header has arrived).
+func (c *Client) ClockKnown() bool { return c.clockKnown.Load() }
+
+// observeDate records the clock offset from a response's Date header.
+func (c *Client) observeDate(h http.Header, received time.Time) {
+	server, err := http.ParseTime(h.Get("Date"))
+	if err != nil {
+		return
+	}
+	// The header is truncated to the second: on average Asana's clock is half a second later.
+	off := server.Add(500 * time.Millisecond).Sub(received)
+	if off > -minClockOffset && off < minClockOffset {
+		off = 0
+	}
+	c.clockOffset.Store(int64(off))
+	c.clockKnown.Store(true)
 }
 
 func NewClient(httpClient *http.Client) *Client {
@@ -45,6 +81,8 @@ type Error struct {
 		Message string `json:"message"`
 		Help    string `json:"help"`
 	} `json:"errors"`
+	// Sync is the new sync token of a 412 from GET /events (see SyncToken).
+	Sync string `json:"sync"`
 }
 
 func (e *Error) Error() string {
@@ -83,6 +121,8 @@ func IsPaymentRequired(err error) bool {
 
 type envelope struct {
 	Data     json.RawMessage `json:"data"`
+	Sync     string          `json:"sync"`     // GET /events
+	HasMore  bool            `json:"has_more"` // GET /events
 	NextPage *struct {
 		Offset string `json:"offset"`
 	} `json:"next_page"`
@@ -119,13 +159,14 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		if err != nil {
 			return nil, err
 		}
+		c.observeDate(resp.Header, time.Now())
 		b, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			return nil, err
 		}
 
-		if retryable(method, resp.StatusCode) && attempt < c.MaxRetries {
+		if (retryable(method, resp.StatusCode) || (path == batchPath && resp.StatusCode >= 500)) && attempt < c.MaxRetries {
 			if err := c.wait(ctx, retryDelay(resp, attempt)); err != nil {
 				return nil, err
 			}

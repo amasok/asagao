@@ -78,7 +78,10 @@ func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, star
 		if err != nil {
 			return nil, fmt.Errorf("プロジェクトが作成されたか確かめられませんでした (%v): %w", err, cause)
 		}
-		p, m := pick(projects, func(p asana.Project) bool { return p.Name == name && !p.CreatedAt.Before(started.Add(-clockSkew)) })
+		// By Asana's clock, like created_at. Measured only now: a dropped connection may
+		// have been this process's first request, and the list's answer has a Date header.
+		since := started.Add(s.API.ClockOffset()).Add(-clockSkew)
+		p, m := pick(projects, func(p asana.Project) bool { return p.Name == name && !p.CreatedAt.Before(since) })
 		switch m {
 		case matched:
 			if p.Workspace == nil {

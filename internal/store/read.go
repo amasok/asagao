@@ -253,7 +253,7 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 	return tasks, s.fillRelations(ctx, tasks)
 }
 
-// fillRelations loads memberships and tags for the given tasks in two queries.
+// fillRelations loads memberships and tags for the given tasks in two queries per batch.
 func (s *Store) fillRelations(ctx context.Context, tasks []TaskSummary) error {
 	if len(tasks) == 0 {
 		return nil
@@ -266,6 +266,22 @@ func (s *Store) fillRelations(ctx context.Context, tasks []TaskSummary) error {
 		idx[tasks[i].GID] = &tasks[i]
 		ids[i] = tasks[i].GID
 	}
+	// in batches: SQLite limits the number of variables in a statement
+	for len(ids) > 0 {
+		n := min(len(ids), relationBatch)
+		if err := s.fillRelationsBatch(ctx, idx, ids[:n]); err != nil {
+			return err
+		}
+		ids = ids[n:]
+	}
+	return nil
+}
+
+// relationBatch is how many tasks fillRelations loads per query (well below SQLite's
+// limit on variables, which is 999 in older builds).
+const relationBatch = 500
+
+func (s *Store) fillRelationsBatch(ctx context.Context, idx map[string]*TaskSummary, ids []any) error {
 	in := "(" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ")"
 
 	rows, err := s.db.QueryContext(ctx, `SELECT m.task_gid, m.project_gid, COALESCE(p.name, ''), m.section_gid, COALESCE(sec.name, '')

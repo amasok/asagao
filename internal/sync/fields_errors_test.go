@@ -158,12 +158,12 @@ func TestCustomFieldSettingsFailures(t *testing.T) {
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			fs, s, st := setupFieldPush(t)
-			_ = st.SetSyncState(ctx, keyCustomFields+"p1", "")
+			_ = st.SetSyncState(ctx, store.KeyCustomFields+"p1", "")
 			fs.settings = tc.status
 			if err := s.syncCustomFields(ctx, "p1", false); err != nil {
 				t.Fatalf("a %d must not stop the sync: %v", tc.status, err)
 			}
-			v, _ := st.SyncState(ctx, keyCustomFields+"p1")
+			v, _ := st.SyncState(ctx, store.KeyCustomFields+"p1")
 			if (v != "") != tc.recorded {
 				t.Fatalf("recorded = %q, want recorded %v", v, tc.recorded)
 			}
@@ -172,7 +172,7 @@ func TestCustomFieldSettingsFailures(t *testing.T) {
 				if err := s.syncCustomFields(ctx, "p1", false); err != nil {
 					t.Fatal(err)
 				}
-				if v, _ := st.SyncState(ctx, keyCustomFields+"p1"); v == "" {
+				if v, _ := st.SyncState(ctx, store.KeyCustomFields+"p1"); v == "" {
 					t.Fatal("the next sync should fetch the definitions again")
 				}
 			}
