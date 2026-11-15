@@ -57,3 +57,24 @@ func TestStoreReadsAreTerminalSafe(t *testing.T) {
 		t.Errorf("json = %q", v)
 	}
 }
+
+// Plain text that only mentions an escape (`\u001b[31m` written as characters) is not JSON
+// and must come back as it is: editing and saving it would otherwise lose it on Asana.
+func TestStoreKeepsLiteralEscapeTextInPlainText(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	notes := "赤字は `\\u001b[31m` で始める\n{\"memo\": \"\\u001b\"} も文字のまま\r"
+	if err := s.UpsertTasks(ctx, []asana.Task{{GID: "e2", Name: `\u001b[31m 赤`, Notes: notes}}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.GetTask(ctx, "e2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Name != `\u001b[31m 赤` {
+		t.Errorf("name = %q", d.Name)
+	}
+	if want := strings.TrimSuffix(notes, "\r"); d.Notes != want { // only the raw \r goes
+		t.Errorf("notes = %q, want %q", d.Notes, want)
+	}
+}
