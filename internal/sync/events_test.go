@@ -447,16 +447,64 @@ func TestEventsOfflineKeepsToken(t *testing.T) {
 	}
 }
 
-// A failure while fetching the changed tasks does not save the token: the same events
-// are read again by the next sync.
-func TestEventsBatchFailureKeepsToken(t *testing.T) {
+// Asana cannot give the tasks the events name (the whole batch fails, or one task always
+// answers 500): the sync does not stop; the project is fetched with modified_since,
+// which covers those changes, and the rest of the sync goes on.
+func TestEventsBatchFailureFallsBack(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		batch func(w http.ResponseWriter) bool // answers the batch itself if it returns true
+	}{
+		{"batch 502", func(w http.ResponseWriter) bool { w.WriteHeader(http.StatusBadGateway); return true }},
+		{"batch 429", func(w http.ResponseWriter) bool { w.WriteHeader(http.StatusTooManyRequests); return true }},
+		{"one task 500", func(w http.ResponseWriter) bool {
+			fmt.Fprint(w, `{"data":[{"status_code":500,"body":{"errors":[{"message":"broken"}]}}]}`)
+			return true
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupEvents(t)
+			e.run(t, 0)
+			e.fake.events = func(string) (int, string) { return 200, eventsJSON([]string{taskEvent("t1", "changed")}, "T1", false) }
+			h := e.srv.Config.Handler
+			e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/batch" && tc.batch(w) {
+					return
+				}
+				h.ServeHTTP(w, r)
+			})
+			e.fake.setTask("t1", "via the fallback", "")
+			res := e.run(t, 5*time.Minute)
+			if res.Fallbacks != 1 || res.Poll {
+				t.Fatalf("result = %+v", res)
+			}
+			if got := e.fake.calls("GET /tasks project=p1"); len(got) != 1 || !strings.Contains(got[0], "modified_since=2026-11-13T08:58:00Z") {
+				t.Fatalf("fallback fetch = %v", got)
+			}
+			if e.taskName(t, "t1") != "via the fallback" || e.token(t) != "T1" {
+				t.Fatalf("t1 %q token %q", e.taskName(t, "t1"), e.token(t))
+			}
+			if got := e.fake.calls("GET /users/me/notifications"); len(got) == 0 {
+				t.Fatalf("the sync stopped at the project: %v", e.fake.log)
+			}
+			if v, _ := e.st.SyncState(context.Background(), store.KeyLastSync); v != "2026-11-13T09:05:00Z" {
+				t.Fatalf("last_sync = %q", v)
+			}
+		})
+	}
+}
+
+// Offline while fetching the changed tasks: the sync fails as before and keeps the token,
+// so the next sync reads the same events.
+func TestEventsBatchOfflineKeepsToken(t *testing.T) {
 	e := setupEvents(t)
 	e.run(t, 0)
 	e.fake.events = func(string) (int, string) { return 200, eventsJSON([]string{taskEvent("t1", "changed")}, "T1", false) }
 	h := e.srv.Config.Handler
 	e.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/batch" {
-			w.WriteHeader(http.StatusBadGateway)
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
 			return
 		}
 		h.ServeHTTP(w, r)

@@ -121,7 +121,7 @@ func (s *Syncer) applyEvents(ctx context.Context, ev projectEvents, keep map[str
 	}
 	tasks, gone, err := s.API.TasksByGID(ctx, gids)
 	if err != nil {
-		return err
+		return &eventFetchError{err}
 	}
 	before := len(*withSubtasks)
 	if err := upsert(tasks); err != nil {
@@ -141,3 +141,10 @@ func (s *Syncer) applyEvents(ctx context.Context, ev projectEvents, keep map[str
 	}
 	return nil
 }
+
+// eventFetchError means Asana could not give the tasks the events named (as opposed to
+// an error of the local store). Run then fetches the project with modified_since.
+type eventFetchError struct{ err error }
+
+func (e *eventFetchError) Error() string { return e.err.Error() }
+func (e *eventFetchError) Unwrap() error { return e.err }

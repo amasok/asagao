@@ -273,38 +273,67 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 					since = time.Time{}
 				}
 			}
-			if fetch || ev.sections {
+			sections := func() error {
 				secs, err := s.API.Sections(ctx, p.GID)
 				if err != nil {
-					return res, fmt.Errorf("%s のセクションの取得: %w", p.Name, err)
+					return fmt.Errorf("%s のセクションの取得: %w", p.Name, err)
 				}
-				if err := s.Store.ReplaceSections(ctx, p.GID, secs); err != nil {
+				return s.Store.ReplaceSections(ctx, p.GID, secs)
+			}
+			statuses := func() error {
+				if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
+					return s.Store.ReplaceStatusUpdates(ctx, p.GID, updates)
+				}
+				return nil
+			}
+			fetchProject := func(since time.Time) error {
+				if err := sections(); err != nil {
+					return err
+				}
+				if err := statuses(); err != nil {
+					return err
+				}
+				tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
+					Project: p.GID, CompletedSince: completedSince, ModifiedSince: since,
+				})
+				if err != nil {
+					return fmt.Errorf("%s のタスクの取得: %w", p.Name, err)
+				}
+				return upsert(tasks)
+			}
+			if fetch {
+				if err := fetchProject(since); err != nil {
 					return res, err
+				}
+			} else {
+				if ev.sections {
+					if err := sections(); err != nil {
+						return res, err
+					}
+				}
+				if ev.statuses {
+					if err := statuses(); err != nil {
+						return res, err
+					}
 				}
 			}
 			if err := s.syncCustomFields(ctx, p.GID, res.Full || ev.fields); err != nil {
 				return res, err
 			}
-			if fetch || ev.statuses {
-				if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
-					if err := s.Store.ReplaceStatusUpdates(ctx, p.GID, updates); err != nil {
+			if err := s.applyEvents(ctx, ev, keep, upsert, &withSubtasks); err != nil {
+				var fe *eventFetchError
+				if !errors.As(err, &fe) || isNetworkError(err) || asana.IsUnauthorized(err) {
+					return res, fmt.Errorf("%s の変更の取得: %w", p.Name, err)
+				}
+				// Asana could not give the changed tasks (a 5xx or 429 that outlasted the
+				// retries, a task that always fails): like unusable events, fetch the project
+				// with modified_since instead, which covers the changes the events named.
+				if !fetch {
+					res.Fallbacks++
+					if err := fetchProject(modifiedSince); err != nil {
 						return res, err
 					}
 				}
-			}
-			if fetch {
-				tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
-					Project: p.GID, CompletedSince: completedSince, ModifiedSince: since,
-				})
-				if err != nil {
-					return res, fmt.Errorf("%s のタスクの取得: %w", p.Name, err)
-				}
-				if err := upsert(tasks); err != nil {
-					return res, err
-				}
-			}
-			if err := s.applyEvents(ctx, ev, keep, upsert, &withSubtasks); err != nil {
-				return res, fmt.Errorf("%s の変更の取得: %w", p.Name, err)
 			}
 			// Saved only now: if anything above failed, the next sync reads the same events.
 			if ev.token != "" {
