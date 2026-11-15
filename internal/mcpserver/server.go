@@ -384,7 +384,7 @@ func editableMarkdown(htmlText, plain string) string {
 	if htmlText != "" {
 		return richtext.ToEditableMarkdown(htmlText)
 	}
-	md := richtext.FromPlain(store.ReplaceInlineAssets(plain, func(gid string) string {
+	md := richtext.FromPlainEditable(store.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	}))
 	return richtext.ImageTokenRe.ReplaceAllString(md, "![画像](asana:$1)")

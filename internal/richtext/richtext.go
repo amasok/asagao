@@ -191,7 +191,9 @@ func (c *converter) text(n *html.Node) {
 	if len(c.lists) > 0 && strings.TrimSpace(t) == "" {
 		return // whitespace between list tags
 	}
-	t = escape(t, c.atLineStart())
+	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
+	// it stays a character reference, as indentation there is list structure.
+	t = escapeText(t, c.atLineStart(), c.editable && len(c.lists) == 0)
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
@@ -413,7 +415,12 @@ var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
 // escape escapes Markdown syntax in text so that it reads back as the same text. lineStart
 // tells whether the text begins at the start of a line (otherwise only the lines after its
 // first newline are checked for block syntax and indentation).
-func escape(s string, lineStart bool) string {
+func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false) }
+
+// escapeText is escape. With rawIndent, indentation is written as it is (for editable
+// Markdown, where FromMarkdown keeps it, see keepIndentation); otherwise its first
+// character is a character reference, so any Markdown reader keeps it.
+func escapeText(s string, lineStart, rawIndent bool) string {
 	s = mdSpecial.Replace(s)
 	s = entityLike.ReplaceAllString(s, `\$0`) // "&copy;" in the text stays as written
 	lines := strings.Split(s, "\n")
@@ -427,23 +434,34 @@ func escape(s string, lineStart bool) string {
 			// Indentation would be dropped (or make a code block at the start of a paragraph).
 			// Writing its first character as a character reference keeps it exactly, and the
 			// line no longer starts with block syntax.
-			lines[i] = indentRef[indent[0]] + indent[1:] + trimmed
+			if rawIndent {
+				lines[i] = indent + escapeBlock(trimmed)
+			} else {
+				lines[i] = indentRef[indent[0]] + indent[1:] + trimmed
+			}
 			continue
 		}
-		// "#", ">", "- ", "+ ", "1. ", "1) " at the start of a line would become headings,
-		// quotes or lists, and a line of only "-" or "=" would turn the line above into a heading.
-		switch {
-		case strings.HasPrefix(trimmed, "#"), strings.HasPrefix(trimmed, ">"),
-			listBullet(trimmed, '-'), listBullet(trimmed, '+'),
-			onlyOf(trimmed, '-'), onlyOf(trimmed, '='):
-			lines[i] = `\` + trimmed
-		default:
-			if m := orderedMarker.FindStringSubmatchIndex(trimmed); m != nil {
-				lines[i] = trimmed[:m[4]] + `\` + trimmed[m[4]:]
-			}
+		if trimmed != "" {
+			lines[i] = escapeBlock(trimmed)
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// escapeBlock escapes block syntax at the start of a line: "#", ">", "- ", "+ ", "1. ", "1) "
+// would become headings, quotes or lists, and a line of only "-" or "=" would turn the line
+// above into a heading. (Lines that do not start with block syntax are returned as they are.)
+func escapeBlock(line string) string {
+	switch {
+	case strings.HasPrefix(line, "#"), strings.HasPrefix(line, ">"),
+		listBullet(line, '-'), listBullet(line, '+'),
+		onlyOf(line, '-'), onlyOf(line, '='):
+		return `\` + line
+	}
+	if m := orderedMarker.FindStringSubmatchIndex(line); m != nil {
+		return line[:m[4]] + `\` + line[m[4]:]
+	}
+	return line
 }
 
 // entityLike matches what Markdown would read as a character reference ("&amp;", "&#32;").
@@ -479,7 +497,10 @@ func tidy(s string) string {
 			lines[i] = ""
 		}
 	}
-	return strings.TrimSpace(manyBlank.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
+	// blank lines are empty now, so trimming newlines on the left keeps the indentation of
+	// the first line (editable Markdown writes it as it is)
+	s = manyBlank.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+	return strings.TrimRight(strings.TrimLeft(s, "\n"), " \t\n")
 }
 
 // FromPlain converts plain text (which may contain image tokens) to Markdown, keeping line
@@ -489,6 +510,15 @@ func FromPlain(text string) string {
 		return ""
 	}
 	return ToMarkdown("<body>" + html.EscapeString(text) + "</body>")
+}
+
+// FromPlainEditable is FromPlain for editing: indentation is written as it is (FromMarkdown
+// keeps it) instead of as character references. Image tokens are kept.
+func FromPlainEditable(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return ToEditableMarkdown("<body>" + html.EscapeString(text) + "</body>")
 }
 
 // EditableImageDest is the link target of an image in editable Markdown. Targets with
