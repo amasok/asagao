@@ -29,7 +29,7 @@ type FilterSpec struct {
 	Overdue bool
 	// ModifiedWithinDays keeps tasks modified in the last N days, newest first. Without
 	// an explicit Completion it includes completed tasks (completing is a change).
-	ModifiedWithinDays int
+	ModifiedWithinDays int // at most MaxModifiedWithinDays
 	Limit              int
 	Query              string
 	// Field is a custom field filter: "name=value" (an option name or the value as text),
@@ -43,6 +43,9 @@ type FilterError struct {
 	Field string
 	Err   error
 }
+
+// MaxModifiedWithinDays caps FilterSpec.ModifiedWithinDays (about 100 years).
+const MaxModifiedWithinDays = 36500
 
 func (e *FilterError) Error() string { return e.Field + ": " + e.Err.Error() }
 func (e *FilterError) Unwrap() error { return e.Err }
@@ -117,7 +120,9 @@ func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time)
 		f.Completed = ptrTo(false)
 	}
 	if spec.ModifiedWithinDays > 0 {
-		f.ModifiedAfter = now.AddDate(0, 0, -spec.ModifiedWithinDays).UTC().Format(time.RFC3339)
+		// more days than this mean "all": a huge N would overflow the date
+		days := min(spec.ModifiedWithinDays, MaxModifiedWithinDays)
+		f.ModifiedAfter = now.AddDate(0, 0, -days).UTC().Format(time.RFC3339)
 		f.SortByModified = true
 	}
 	return f, nil

@@ -698,7 +698,7 @@ func TestDownloadInlineImageByGID(t *testing.T) {
 		if r.URL.Path != "/attachments/1220507679870013" {
 			t.Errorf("unexpected %s", r.URL)
 		}
-		fmt.Fprint(w, `{"data":{"gid":"1220507679870013","name":"image.png","host":"asana","download_url":"https://files.example/x"}}`)
+		fmt.Fprint(w, `{"data":{"gid":"1220507679870013","name":"image.png","host":"asana","download_url":"https://files.example/x","parent":{"gid":"t1"}}}`)
 	}))
 	defer srv.Close()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
