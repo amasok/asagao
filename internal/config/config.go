@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -25,6 +26,7 @@ type Config struct {
 	Auth AuthConfig `toml:"auth"`
 	Sync SyncConfig `toml:"sync"`
 	UI   UIConfig   `toml:"ui"`
+	MCP  MCPConfig  `toml:"mcp"`
 	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asana-tui keys`).
 	Keys map[string]any `toml:"keys"`
 }
@@ -64,6 +66,28 @@ type UIConfig struct {
 	Theme string `toml:"theme"`
 	// Accent is the accent color, e.g. "#7aa2f7" ("" = default).
 	Accent string `toml:"accent"`
+}
+
+type MCPConfig struct {
+	// UploadDirs are folders (besides the current folder, ~/Downloads and ~/Desktop) whose
+	// files the MCP tool upload_attachment may send to Asana. "~/" is the home folder.
+	UploadDirs []string `toml:"upload_dirs"`
+}
+
+// ExpandedUploadDirs returns [mcp] upload_dirs with "~" replaced by the home folder.
+func (c MCPConfig) ExpandedUploadDirs() []string {
+	home, _ := os.UserHomeDir()
+	var out []string
+	for _, d := range c.UploadDirs {
+		if d == "~" || strings.HasPrefix(d, "~/") {
+			if home == "" {
+				continue
+			}
+			d = filepath.Join(home, strings.TrimPrefix(d, "~"))
+		}
+		out = append(out, filepath.Clean(d))
+	}
+	return out
 }
 
 type AuthConfig struct {
@@ -167,6 +191,11 @@ func (c Config) validate() error {
 	case "auto", "on", "off":
 	default:
 		return fmt.Errorf("ui.inline_images: unknown value %q (want auto, on or off)", c.UI.InlineImages)
+	}
+	for _, d := range c.MCP.UploadDirs {
+		if d != "~" && !strings.HasPrefix(d, "~/") && !filepath.IsAbs(d) {
+			return fmt.Errorf("mcp.upload_dirs: %q must be an absolute path or start with ~/", d)
+		}
 	}
 	if c.Auth.RedirectPort <= 0 || c.Auth.RedirectPort > 65535 {
 		return fmt.Errorf("auth.redirect_port: invalid port %d", c.Auth.RedirectPort)

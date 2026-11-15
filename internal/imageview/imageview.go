@@ -10,7 +10,6 @@ package imageview
 import (
 	"bytes"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -19,8 +18,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 )
 
@@ -96,25 +93,6 @@ func Resolve(protocol string) string {
 	return protocol
 }
 
-// OpenExternal opens files in the OS default viewer (macOS: open, Linux: xdg-open).
-func OpenExternal(paths ...string) error {
-	if len(paths) == 0 {
-		return nil
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", paths...).Start()
-	case "linux":
-		for _, p := range paths {
-			if err := exec.Command("xdg-open", p).Start(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return errors.New("unsupported OS: " + runtime.GOOS)
-}
-
 // Box is the area to draw into, in terminal cells, plus the cell size in pixels
 // (0 if unknown).
 type Box struct {
@@ -139,6 +117,22 @@ func Fit(w, h int, b Box) (cols, rows int) {
 	return min(cols, b.Cols), min(rows, b.Rows)
 }
 
+// MaxPixels is the largest image (width × height) that is decoded or sent to the
+// terminal. The header of a few-KB file can claim 60000×60000 pixels; decoding it would
+// allocate gigabytes. 50 million pixels still covers a 48MP phone photo.
+const MaxPixels = 50_000_000
+
+// checkPixels refuses images whose header claims more than MaxPixels.
+func checkPixels(cfg image.Config) error {
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return fmt.Errorf("画像の大きさが不正です（%d×%d）", cfg.Width, cfg.Height)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > MaxPixels {
+		return fmt.Errorf("画像が大きすぎます（%d×%d px、上限 %d 万画素）", cfg.Width, cfg.Height, MaxPixels/10000)
+	}
+	return nil
+}
+
 // Write draws the image at the cursor position using the given protocol.
 func Write(out io.Writer, data []byte, protocol string, b Box) error {
 	switch protocol {
@@ -152,7 +146,11 @@ func Write(out io.Writer, data []byte, protocol string, b Box) error {
 
 func writeITerm(out io.Writer, data []byte, b Box) error {
 	cols, rows := b.Cols, b.Rows
+	// A format Go cannot read (e.g. HEIC) is still sent: iTerm2 may show it.
 	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		if err := checkPixels(cfg); err != nil {
+			return err
+		}
 		cols, rows = Fit(cfg.Width, cfg.Height, b)
 	}
 	_, err := fmt.Fprintf(out, "\x1b]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s\a",
@@ -164,6 +162,9 @@ func writeKitty(out io.Writer, data []byte, b Box) error {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("この画像形式は表示できません: %w", err)
+	}
+	if err := checkPixels(cfg); err != nil {
+		return err
 	}
 	if format != "png" {
 		img, _, err := image.Decode(bytes.NewReader(data))

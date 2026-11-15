@@ -81,15 +81,27 @@ func PlaceholderLines(id, cols, rows int) []string {
 }
 
 // ToPNG decodes an image file (PNG, JPEG or GIF) and returns PNG bytes and its size in pixels.
+// The size is checked from the header first, so a huge image is refused before decoding.
 func ToPNG(data []byte) ([]byte, int, int, error) {
-	img, format, err := image.Decode(bytes.NewReader(data))
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if err := checkPixels(cfg); err != nil {
+		return nil, 0, 0, err
+	}
+	if format == "png" {
+		// Decoded only to make sure it is readable (the terminal decodes it again).
+		if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+			return nil, 0, 0, err
+		}
+		return data, cfg.Width, cfg.Height, nil
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, err
 	}
 	b := img.Bounds()
-	if format == "png" {
-		return data, b.Dx(), b.Dy(), nil
-	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return nil, 0, 0, err

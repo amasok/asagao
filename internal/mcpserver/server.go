@@ -47,6 +47,8 @@ type Server struct {
 	ReadOnly bool
 	// CacheDir is where files to upload are copied before sending.
 	CacheDir string
+	// Upload limits which files upload_attachment may send (nothing when empty).
+	Upload UploadPolicy
 	// AuthScopes is config auth.scopes (to explain how to enable the inbox).
 	AuthScopes []string
 	Version    string
@@ -88,9 +90,14 @@ func (s *Server) New() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync_status", Annotations: readOnly,
 		Description: "Show when the cache was last synced and any local changes not yet sent " +
 			"(pending, conflicts, failures)."}, s.syncStatus)
+	syncDesc := "Send queued local changes to Asana, then pull changes from Asana into the cache " +
+		"(incremental; full=true re-fetches everything and removes deleted tasks)."
+	if s.ReadOnly {
+		syncDesc = "Pull changes from Asana into the cache (incremental; full=true re-fetches everything and removes deleted tasks). " +
+			"This server is read-only: queued local changes are not sent (the TUI or `asana-tui sync` sends them)."
+	}
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync", Annotations: &mcp.ToolAnnotations{IdempotentHint: true, OpenWorldHint: ptr(true)},
-		Description: "Send queued local changes to Asana, then pull changes from Asana into the cache " +
-			"(incremental; full=true re-fetches everything and removes deleted tasks)."}, s.sync)
+		Description: syncDesc}, s.sync)
 
 	s.addInboxTools(srv)
 
@@ -114,8 +121,10 @@ func (s *Server) New() *mcp.Server {
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
 		mcp.AddTool(srv, &mcp.Tool{Name: "duplicate_task", Annotations: write(false),
 			Description: "Duplicate a task (with its description, assignee, dates, projects, tags, subtasks, attachments and followers)."}, s.duplicateTask)
-		mcp.AddTool(srv, &mcp.Tool{Name: "upload_attachment", Annotations: write(false),
-			Description: "Attach a local file to a task (max 100MB)."}, s.uploadAttachment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "upload_attachment", Annotations: write(true),
+			Description: "Attach a local file to a task (max 100MB). The file is sent to Asana, so only upload files the user asked for. " +
+				"path must be absolute and inside an allowed folder: " + s.uploadFolders() + ". " +
+				"Hidden files and asana-tui's own files are refused."}, s.uploadAttachment)
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_status_update", Annotations: write(false),
 			Description: "Post a status update on a project: status (on_track, at_risk, off_track, on_hold, complete), title and a Markdown text."}, s.createStatus)
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
@@ -771,6 +780,9 @@ func (s *Server) getSyncer(ctx context.Context) (*sync.Syncer, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Read-only: only pull. The outbox may hold changes the user queued in the TUI or
+	// CLI; an agent must not be able to send them.
+	syncer.PullOnly = s.ReadOnly
 	s.syncer = syncer
 	return syncer, nil
 }
@@ -854,7 +866,11 @@ func (s *Server) duplicateTask(ctx context.Context, _ *mcp.CallToolRequest, in D
 }
 
 func (s *Server) uploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, in UploadAttachmentInput) (*mcp.CallToolResult, WriteOutput, error) {
-	if _, err := s.Store.UploadAttachmentLocal(ctx, in.TaskGID, in.Path, s.CacheDir, s.Now()); err != nil {
+	path, err := s.Upload.Check(in.Path)
+	if err != nil {
+		return nil, WriteOutput{}, err
+	}
+	if _, err := s.Store.UploadAttachmentLocal(ctx, in.TaskGID, path, s.CacheDir, s.Now()); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.TaskGID), nil
