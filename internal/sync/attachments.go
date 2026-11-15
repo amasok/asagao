@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/store"
 )
@@ -20,7 +21,9 @@ const maxAttachmentSize = 100 << 20
 
 // DownloadAttachment returns a local path for an attachment of a task, downloading it on
 // first use. Once downloaded, the file is reused (and is available offline). Attachments
-// not yet in the store (e.g. images pasted into the description) are looked up first.
+// not yet in the store (e.g. images pasted into the description) are looked up first and
+// recorded under the task Asana says they belong to: taskGID, or another cached task (an
+// image copied from it). An attachment of neither is not recorded or downloaded.
 func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (string, error) {
 	a, err := s.Store.GetAttachment(ctx, gid)
 	if errors.Is(err, store.ErrNotFound) && s.API != nil {
@@ -28,7 +31,11 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 		if err != nil {
 			return "", fmt.Errorf("画像 %s の取得: %w", gid, err)
 		}
-		if err := s.Store.UpsertAttachment(ctx, taskGID, *meta); err != nil {
+		parent, err := s.attachmentParent(ctx, taskGID, meta)
+		if err != nil {
+			return "", err
+		}
+		if err := s.Store.UpsertAttachment(ctx, parent, *meta); err != nil {
 			return "", err
 		}
 		a, err = s.Store.GetAttachment(ctx, gid)
@@ -134,4 +141,23 @@ func httpDownload(ctx context.Context, url string) ([]byte, error) {
 		return nil, errors.New("ファイルが大きすぎます（100MB 超）")
 	}
 	return data, nil
+}
+
+// attachmentParent returns the task an attachment fetched by gid is recorded under: its
+// parent in Asana, if that is taskGID or a task in the store. Otherwise it is an error, so a
+// gid that is not the task's does not show up among the task's attachments.
+func (s *Syncer) attachmentParent(ctx context.Context, taskGID string, a *asana.Attachment) (string, error) {
+	if a.Parent == nil || a.Parent.GID == "" {
+		return "", fmt.Errorf("画像 %s の添付先が分かりません", a.GID)
+	}
+	parent := a.Parent.GID
+	if parent == taskGID {
+		return parent, nil
+	}
+	if _, err := s.Store.GetTask(ctx, parent); err == nil {
+		return parent, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", err
+	}
+	return "", fmt.Errorf("画像 %s はタスク %s の添付ではありません", a.GID, taskGID)
 }
