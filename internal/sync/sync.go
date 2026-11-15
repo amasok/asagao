@@ -372,8 +372,6 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		}
 	}
 
-	// An account always has a workspace: an empty list is a broken answer, and pruning by
-	// it would delete every task. The full sync is then done again next time.
 	// The events tokens are saved only now, after the subtasks of the tasks they reported:
 	// if anything failed, the next sync reads the same events again.
 	for gid, token := range tokens {
@@ -381,6 +379,8 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			return res, err
 		}
 	}
+	// An account always has a workspace: an empty list is a broken answer, and pruning by
+	// it would delete every task. The full sync is then done again next time.
 	if res.Full && len(workspaces) > 0 {
 		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
 			return res, err
