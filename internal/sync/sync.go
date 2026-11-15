@@ -175,6 +175,11 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if err := s.Store.UpsertWorkspaces(ctx, workspaces); err != nil {
 		return res, err
 	}
+	if res.Full {
+		if err := s.Store.PruneWorkspaces(ctx, workspaces); err != nil {
+			return res, err
+		}
+	}
 	res.Workspaces = len(workspaces)
 
 	for _, w := range workspaces {
@@ -293,14 +298,11 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	return res, nil
 }
 
-// keyCustomFields + project gid records when a project's custom fields were last fetched.
-const keyCustomFields = "custom_fields:"
-
 // syncCustomFields fetches a project's custom fields (with their choices) on a full sync,
 // or if they were never fetched. A workspace without custom fields (Asana answers e.g. 402
 // on a free plan) simply has none; any other failure is retried on the next sync.
 func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
-	key := keyCustomFields + projectGID
+	key := store.KeyCustomFields + projectGID
 	if !full {
 		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
 			return err
