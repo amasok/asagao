@@ -44,6 +44,9 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	if strings.TrimSpace(s) == "" {
 		return ""
 	}
+	// "<a data-asana-gid="1"/>" (a mention as FromMarkdown writes it, kept in the cache until
+	// the next sync) is not self-closing in HTML: the text after it would become its text
+	s = selfClosingA.ReplaceAllString(s, "<a$1></a>")
 	doc, err := html.Parse(strings.NewReader(s))
 	if err != nil {
 		return s
@@ -222,8 +225,7 @@ func (c *converter) atLineStart() bool {
 }
 
 func (c *converter) wrap(n *html.Node, mark string) {
-	inner := textOf(n)
-	if strings.TrimSpace(inner) == "" {
+	if strings.TrimSpace(textOf(n)) == "" && !hasAsanaRef(n) {
 		c.children(n)
 		return
 	}
@@ -232,13 +234,23 @@ func (c *converter) wrap(n *html.Node, mark string) {
 	c.write(mark)
 }
 
+// selfClosingA matches an <a> tag written as self-closing ("<a data-asana-gid="1"/>").
+var selfClosingA = regexp.MustCompile(`<a(\s[^<>]*?)\s*/>`)
+
 func (c *converter) link(n *html.Node) {
 	href := attr(n, "href")
 	text := strings.TrimSpace(textOf(n))
+	gid, typ := attr(n, "data-asana-gid"), attr(n, "data-asana-type")
+	// A mention as Asana returns it has data-asana-type="user" and the name; as FromMarkdown
+	// writes it, only the gid.
+	mention := gid != "" && (typ == "user" || (typ == "" && href == ""))
+	if mention && text == "" {
+		text = "@" + gid // the name is not known until the next sync
+	}
 	switch {
-	case c.editable && attr(n, "data-asana-type") == "user" && attr(n, "data-asana-gid") != "":
-		c.write("[" + escape(text, false) + "](" + mentionScheme + attr(n, "data-asana-gid") + ")")
-	case attr(n, "data-asana-type") == "user" || strings.HasPrefix(text, "@"):
+	case c.editable && mention:
+		c.write("[" + escape(text, false) + "](" + mentionScheme + gid + ")")
+	case mention || typ == "user" || strings.HasPrefix(text, "@"):
 		c.write("**" + escape(text, false) + "**") // mention
 	case (href == "" || text == href) && autolinkSafe(text):
 		c.write("<" + text + ">")
@@ -361,13 +373,25 @@ func (c *converter) image(n *html.Node) {
 		}
 		return
 	}
-	c.block()
 	if c.editable {
+		// in place, as FromMarkdown reads it back (a paragraph break would be added text)
 		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
-	} else {
-		c.write(ImageToken(gid))
+		return
 	}
 	c.block()
+	c.write(ImageToken(gid))
+	c.block()
+}
+
+// hasAsanaRef reports whether n contains a mention or an image (which have no text when
+// FromMarkdown wrote them).
+func hasAsanaRef(n *html.Node) bool {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		if ch.Type == html.ElementNode && attr(ch, "data-asana-gid") != "" || hasAsanaRef(ch) {
+			return true
+		}
+	}
+	return false
 }
 
 func attr(n *html.Node, key string) string {
