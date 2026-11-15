@@ -16,6 +16,7 @@ import (
 	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 type PushResult struct {
@@ -969,4 +970,9 @@ func apiFields(payload map[string]any) map[string]any {
 	return out
 }
 
-func same(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
+// same compares a server value with one from the store. The store hands out text without
+// terminal control characters (termsafe), so the server's is compared the same way;
+// otherwise a task whose server value has one would conflict on every push.
+func same(a, b any) bool {
+	return termsafe.String(fmt.Sprint(a)) == termsafe.String(fmt.Sprint(b))
+}

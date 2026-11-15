@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
@@ -48,7 +50,7 @@ type Error struct {
 func (e *Error) Error() string {
 	msg := http.StatusText(e.Status)
 	if len(e.Errors) > 0 {
-		msg = e.Errors[0].Message
+		msg = termsafe.String(e.Errors[0].Message) // shown in the TUI status line as is
 	}
 	if e.Hint != "" {
 		return fmt.Sprintf("asana: %d %s（%s）", e.Status, msg, e.Hint)
