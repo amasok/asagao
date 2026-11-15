@@ -44,6 +44,9 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	if strings.TrimSpace(s) == "" {
 		return ""
 	}
+	// "<a data-asana-gid="1"/>" (a mention as FromMarkdown writes it, kept in the cache until
+	// the next sync) is not self-closing in HTML: the text after it would become its text
+	s = selfClosingA.ReplaceAllString(s, "<a$1></a>")
 	doc, err := html.Parse(strings.NewReader(s))
 	if err != nil {
 		return s
@@ -128,12 +131,12 @@ func (c *converter) walk(n *html.Node) {
 		if c.pre > 0 {
 			c.children(n)
 		} else {
-			c.write("`" + textOf(n) + "`")
+			c.write(codeSpan(textOf(n)))
 		}
 	case atom.Pre:
 		c.block()
 		c.pre++
-		c.write("```\n" + strings.TrimRight(textOf(n), "\n") + "\n```")
+		c.codeBlock(strings.TrimRight(textOf(n), "\n"))
 		c.pre--
 		c.block()
 	case atom.A:
@@ -141,7 +144,7 @@ func (c *converter) walk(n *html.Node) {
 	case atom.H1, atom.H2, atom.H3:
 		c.block()
 		c.write(strings.Repeat("#", headingLevel(n.DataAtom)) + " ")
-		c.write(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")))
+		c.write(escape(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")), false))
 		c.block()
 	case atom.Hr:
 		c.block()
@@ -191,7 +194,9 @@ func (c *converter) text(n *html.Node) {
 	if len(c.lists) > 0 && strings.TrimSpace(t) == "" {
 		return // whitespace between list tags
 	}
-	t = escape(t, c.atLineStart())
+	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
+	// it stays a character reference, as indentation there is list structure.
+	t = escapeText(t, c.atLineStart(), c.editable && len(c.lists) == 0)
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
@@ -220,8 +225,7 @@ func (c *converter) atLineStart() bool {
 }
 
 func (c *converter) wrap(n *html.Node, mark string) {
-	inner := textOf(n)
-	if strings.TrimSpace(inner) == "" {
+	if strings.TrimSpace(textOf(n)) == "" && !hasAsanaRef(n) {
 		c.children(n)
 		return
 	}
@@ -230,22 +234,110 @@ func (c *converter) wrap(n *html.Node, mark string) {
 	c.write(mark)
 }
 
+// selfClosingA matches an <a> tag written as self-closing ("<a data-asana-gid="1"/>").
+var selfClosingA = regexp.MustCompile(`<a(\s[^<>]*?)\s*/>`)
+
 func (c *converter) link(n *html.Node) {
 	href := attr(n, "href")
 	text := strings.TrimSpace(textOf(n))
-	switch {
-	case c.editable && attr(n, "data-asana-type") == "user" && attr(n, "data-asana-gid") != "":
-		c.write("[" + escape(text, false) + "](" + mentionScheme + attr(n, "data-asana-gid") + ")")
-	case attr(n, "data-asana-type") == "user" || strings.HasPrefix(text, "@"):
-		c.write("**" + escape(text, false) + "**") // mention
-	case href == "" || text == href:
-		if href == "" {
-			href = text
-		}
-		c.write("<" + href + ">")
-	default:
-		c.write("[" + escape(text, false) + "](" + href + ")")
+	gid, typ := attr(n, "data-asana-gid"), attr(n, "data-asana-type")
+	// A mention as Asana returns it has data-asana-type="user" and the name; as FromMarkdown
+	// writes it, only the gid.
+	mention := gid != "" && (typ == "user" || (typ == "" && href == ""))
+	if mention && text == "" {
+		text = "@" + gid // the name is not known until the next sync
 	}
+	switch {
+	case c.editable && mention:
+		c.write("[" + escape(text, false) + "](" + mentionScheme + gid + ")")
+	case mention || typ == "user" || strings.HasPrefix(text, "@"):
+		c.write("**" + escape(text, false) + "**") // mention
+	case (href == "" || text == href) && autolinkSafe(text):
+		c.write("<" + text + ">")
+	case href == "":
+		c.write(escape(text, false)) // not a link
+	default:
+		// "!" just before the link would make it an image (of an attachment, for a local path)
+		if out := c.b.String(); strings.HasSuffix(out, "!") {
+			c.b.Reset()
+			c.write(out[:len(out)-1] + `\!`)
+		}
+		c.write("[" + escape(text, false) + "](" + linkDest(href) + ")")
+	}
+}
+
+// autolinkSafe reports whether u can be written as an autolink (<u>): a URL with a scheme
+// and nothing that would end the autolink early or make it raw HTML instead.
+var autolinkRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\x00-\x20<>\x7f]*$`)
+
+func autolinkSafe(u string) bool { return autolinkRe.MatchString(u) }
+
+// linkDest writes href as a Markdown link destination that reads back as the same href
+// (FromMarkdown resolves backslash escapes and character references in it).
+// Characters that would end the destination (")", ">", spaces, line breaks) or be read as
+// syntax ("\\", "&", "<", "(") are escaped, so a crafted href cannot close the link and
+// add Markdown of its own (e.g. a mention). Control characters are percent-encoded.
+func linkDest(href string) string {
+	var b strings.Builder
+	b.WriteByte('<')
+	for i := 0; i < len(href); i++ {
+		switch ch := href[i]; {
+		case ch < 0x20 || ch == 0x7f:
+			fmt.Fprintf(&b, "%%%02X", ch)
+		case strings.IndexByte(`\<>()&`+"`", ch) >= 0:
+			b.WriteByte('\\')
+			b.WriteByte(ch)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteByte('>')
+	d := b.String()
+	if strings.HasPrefix(d, "<"+assetScheme) {
+		// an Asana link to "asana:..." is not an image or a mention: FromMarkdown checks the
+		// destination as written, so "asana\:" keeps it a plain link
+		d = "<asana\\:" + d[len("<"+assetScheme):]
+	}
+	if !strings.ContainsAny(href, " ") {
+		// no spaces: the plain form reads better ("(" and ")" are escaped, so it stays closed)
+		d = d[1 : len(d)-1]
+	}
+	return d
+}
+
+// codeSpan writes s as an inline code span. The backtick fence is longer than any run of
+// backticks in s, so s cannot close it early; line breaks become spaces (a blank line
+// would end the paragraph and leave the rest of s to be read as Markdown).
+func codeSpan(s string) string {
+	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
+	fence := strings.Repeat("`", longestRun(s, '`')+1)
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") ||
+		(strings.HasPrefix(s, " ") && strings.HasSuffix(s, " ") && strings.TrimSpace(s) != "") {
+		s = " " + s + " " // Markdown strips one space on each side
+	}
+	return fence + s + fence
+}
+
+// codeBlock writes s as a fenced code block. The fence is longer than any run of backticks
+// in s, so a line of "```" in s does not close it. (Inside a blockquote the paragraph break
+// before it has already ended the quote, so its lines get no quote prefix.)
+func (c *converter) codeBlock(s string) {
+	fence := strings.Repeat("`", max(3, longestRun(s, '`')+1))
+	c.write(fence + "\n" + s + "\n" + fence)
+}
+
+// longestRun is the length of the longest run of ch in s.
+func longestRun(s string, ch byte) int {
+	longest, n := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ch {
+			n++
+			longest = max(longest, n)
+		} else {
+			n = 0
+		}
+	}
+	return longest
 }
 
 func (c *converter) listItem(n *html.Node) {
@@ -281,13 +373,25 @@ func (c *converter) image(n *html.Node) {
 		}
 		return
 	}
-	c.block()
 	if c.editable {
+		// in place, as FromMarkdown reads it back (a paragraph break would be added text)
 		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
-	} else {
-		c.write(ImageToken(gid))
+		return
 	}
 	c.block()
+	c.write(ImageToken(gid))
+	c.block()
+}
+
+// hasAsanaRef reports whether n contains a mention or an image (which have no text when
+// FromMarkdown wrote them).
+func hasAsanaRef(n *html.Node) bool {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		if ch.Type == html.ElementNode && attr(ch, "data-asana-gid") != "" || hasAsanaRef(ch) {
+			return true
+		}
+	}
+	return false
 }
 
 func attr(n *html.Node, key string) string {
@@ -335,7 +439,12 @@ var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
 // escape escapes Markdown syntax in text so that it reads back as the same text. lineStart
 // tells whether the text begins at the start of a line (otherwise only the lines after its
 // first newline are checked for block syntax and indentation).
-func escape(s string, lineStart bool) string {
+func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false) }
+
+// escapeText is escape. With rawIndent, indentation is written as it is (for editable
+// Markdown, where FromMarkdown keeps it, see keepIndentation); otherwise its first
+// character is a character reference, so any Markdown reader keeps it.
+func escapeText(s string, lineStart, rawIndent bool) string {
 	s = mdSpecial.Replace(s)
 	s = entityLike.ReplaceAllString(s, `\$0`) // "&copy;" in the text stays as written
 	lines := strings.Split(s, "\n")
@@ -349,23 +458,34 @@ func escape(s string, lineStart bool) string {
 			// Indentation would be dropped (or make a code block at the start of a paragraph).
 			// Writing its first character as a character reference keeps it exactly, and the
 			// line no longer starts with block syntax.
-			lines[i] = indentRef[indent[0]] + indent[1:] + trimmed
+			if rawIndent {
+				lines[i] = indent + escapeBlock(trimmed)
+			} else {
+				lines[i] = indentRef[indent[0]] + indent[1:] + trimmed
+			}
 			continue
 		}
-		// "#", ">", "- ", "+ ", "1. ", "1) " at the start of a line would become headings,
-		// quotes or lists, and a line of only "-" or "=" would turn the line above into a heading.
-		switch {
-		case strings.HasPrefix(trimmed, "#"), strings.HasPrefix(trimmed, ">"),
-			listBullet(trimmed, '-'), listBullet(trimmed, '+'),
-			onlyOf(trimmed, '-'), onlyOf(trimmed, '='):
-			lines[i] = `\` + trimmed
-		default:
-			if m := orderedMarker.FindStringSubmatchIndex(trimmed); m != nil {
-				lines[i] = trimmed[:m[4]] + `\` + trimmed[m[4]:]
-			}
+		if trimmed != "" {
+			lines[i] = escapeBlock(trimmed)
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// escapeBlock escapes block syntax at the start of a line: "#", ">", "- ", "+ ", "1. ", "1) "
+// would become headings, quotes or lists, and a line of only "-" or "=" would turn the line
+// above into a heading. (Lines that do not start with block syntax are returned as they are.)
+func escapeBlock(line string) string {
+	switch {
+	case strings.HasPrefix(line, "#"), strings.HasPrefix(line, ">"),
+		listBullet(line, '-'), listBullet(line, '+'),
+		onlyOf(line, '-'), onlyOf(line, '='):
+		return `\` + line
+	}
+	if m := orderedMarker.FindStringSubmatchIndex(line); m != nil {
+		return line[:m[4]] + `\` + line[m[4]:]
+	}
+	return line
 }
 
 // entityLike matches what Markdown would read as a character reference ("&amp;", "&#32;").
@@ -401,7 +521,10 @@ func tidy(s string) string {
 			lines[i] = ""
 		}
 	}
-	return strings.TrimSpace(manyBlank.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
+	// blank lines are empty now, so trimming newlines on the left keeps the indentation of
+	// the first line (editable Markdown writes it as it is)
+	s = manyBlank.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+	return strings.TrimRight(strings.TrimLeft(s, "\n"), " \t\n")
 }
 
 // FromPlain converts plain text (which may contain image tokens) to Markdown, keeping line
@@ -411,6 +534,15 @@ func FromPlain(text string) string {
 		return ""
 	}
 	return ToMarkdown("<body>" + html.EscapeString(text) + "</body>")
+}
+
+// FromPlainEditable is FromPlain for editing: indentation is written as it is (FromMarkdown
+// keeps it) instead of as character references. Image tokens are kept.
+func FromPlainEditable(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return ToEditableMarkdown("<body>" + html.EscapeString(text) + "</body>")
 }
 
 // EditableImageDest is the link target of an image in editable Markdown. Targets with

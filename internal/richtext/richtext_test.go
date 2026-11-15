@@ -146,7 +146,8 @@ func TestMarkdownRoundTrip(t *testing.T) {
 		"- 牛乳\n- 卵\n   1. 赤\n   2. 白\n\n以上",
 		"> 引用\n\n```\na < b\n```\n\n---\n\n後",
 		"[サイト](https://example.com) と <https://x.jp>\n\n![画像](asana:123)",
-		"前\n\n&#32;   字下げ  \n&#9;タブ  \n\\&amp; は文字",
+		"前\n\n    字下げ  \n\tタブ  \n\\&amp; は文字",
+		"  先頭の字下げ  \n次\n\n> 引用  \n>   字下げ引用",
 		`1\. 番号ではない  ` + "\n" + `\+ リストではない  ` + "\n" + `\# 見出しではない  ` + "\n" + `\~\~消さない\~\~ 10時\~12時`,
 	} {
 		h := FromMarkdown(md)
@@ -243,5 +244,105 @@ func TestEditableImagePathWithSpaces(t *testing.T) {
 	}
 	if out := FromMarkdown(md); !strings.Contains(out, `<img data-asana-gid="9"/>`) {
 		t.Fatalf("angle-bracket path should map back: %s", out)
+	}
+}
+
+// Text from Asana cannot turn into Markdown of its own in editable Markdown: a crafted href,
+// code or heading must not close its construct early and add a mention (which would notify
+// the user when the description is saved). Each input comes back unchanged. (#39)
+func TestEditableMarkdownDoesNotInjectMarkup(t *testing.T) {
+	const mention = "[@x](asana:user:999)"
+	for _, in := range []string{
+		`<body><a href="https://x.jp/a)` + mention + `">リンク</a></body>`,
+		`<body><a href="https://x.jp/a) ` + mention + ` (">リンク</a></body>`,
+		`<body><a href="https://x.jp/&gt;` + mention + `&lt;">https://x.jp/&gt;` + mention + `&lt;</a></body>`,
+		`<body><a href="https://x.jp/a b&gt;c">リンク</a></body>`,
+		`<body><a href="https://x.jp/\)` + mention + `">リンク</a></body>`,
+		`<body><a href="https://x.jp/a&amp;copy;b&amp;#41;">リンク</a></body>`,
+		`<body><a href="https://x.jp/` + "`" + `a">リンク</a></body>`,
+		"<body><pre>前\n```\n" + mention + "\n```\n後</pre></body>",
+		"<body><pre>````\n" + mention + "\n~~~</pre></body>",
+		`<body><a href="asana:user:999">リンク</a> <a href="asana:123">画像風</a></body>`,
+		`<body>注意!<a href="asana:123">リンク</a> !<a href="/x/attachments/5-a.png">リンク</a></body>`,
+		"<body><code>a` " + mention + " `b</code></body>",
+		"<body><code>``x``</code> と <code> 空白 </code></body>",
+		"<body><h1>見出し " + mention + "</h1>本文</body>",
+		"<body><h2># *強調* `x`</h2></body>",
+	} {
+		md := ToEditableMarkdown(in)
+		out := FromMarkdown(md)
+		if strings.Contains(out, "data-asana-gid") {
+			t.Errorf("mention injected\nin   %q\nmd   %q\nhtml %q", in, md, out)
+			continue
+		}
+		if out != in {
+			t.Errorf("changed\nin   %q\nmd   %q\nhtml %q", in, md, out)
+		}
+	}
+}
+
+// A code block inside a quote is written after the quote (Markdown cannot keep it there
+// as written), but its text still cannot become Markdown, even with another code block later.
+func TestCodeBlockInQuoteDoesNotInjectMarkup(t *testing.T) {
+	in := "<body><blockquote>引用<pre>コード\n```\n[@x](asana:user:9)</pre>後</blockquote><pre>[@y](asana:user:8)</pre></body>"
+	md := ToEditableMarkdown(in)
+	out := FromMarkdown(md)
+	if strings.Contains(out, "data-asana-gid") {
+		t.Fatalf("mention injected\nmd   %q\nhtml %q", md, out)
+	}
+	for _, want := range []string{"<pre>コード\n```\n[@x](asana:user:9)</pre>", "<pre>[@y](asana:user:8)</pre>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q\nmd   %q\nhtml %q", want, md, out)
+		}
+	}
+}
+
+// Inline code with line breaks do not leak Markdown either: a blank
+// line in <code> would end the paragraph and leave the rest to be read as Markdown.
+func TestInlineCodeWithBlankLine(t *testing.T) {
+	in := "<body><code>a\n\n[@x](asana:user:9)</code></body>"
+	out := FromMarkdown(ToEditableMarkdown(in))
+	if strings.Contains(out, "data-asana-gid") {
+		t.Fatalf("mention injected: %q", out)
+	}
+	if want := "<body><code>a  [@x](asana:user:9)</code></body>"; out != want {
+		t.Fatalf("got %q want %q", out, want)
+	}
+}
+
+// Indentation written as spaces or tabs in editable Markdown is kept as text, while
+// indentation that is Markdown structure (list items, quotes, code) keeps its meaning. (#22)
+func TestIndentationAsWhitespace(t *testing.T) {
+	for _, tc := range []struct{ md, html string }{
+		{"  前\n    四つ\n\tタブ", "<body>  前\n    四つ\n\tタブ</body>"},
+		{"    四つ\n後", "<body>    四つ\n後</body>"},
+		{"- a\n  続き\n  - 子\n\n本文", "<body><ul><li>a\n続き<ul><li>子</li></ul></li></ul>本文</body>"},
+		{"1. a\n   b", "<body><ol><li>a\nb</li></ol></body>"},
+		{"> 引用\n>   字下げ", "<body><blockquote>引用\n  字下げ</blockquote></body>"},
+		{"```\n  コード\n```\n  後", "<body><pre>  コード</pre>  後</body>"},
+		{"~~~\n  x\n~~~", "<body><pre>  x</pre></body>"},
+		{"  # 見出し", "<body><h1>見出し</h1></body>"},
+		{"前\n\n&#32; 古い形", "<body>前\n\n  古い形</body>"},
+	} {
+		if got := FromMarkdown(tc.md); got != tc.html {
+			t.Errorf("FromMarkdown(%q) = %q, want %q", tc.md, got, tc.html)
+		}
+	}
+	// what the editor and MCP show has no character references for indentation
+	for _, in := range []string{"<body>  前\n\tタブ\n\n    四つ</body>", "<body><blockquote>引用\n  字下げ</blockquote></body>"} {
+		md := ToEditableMarkdown(in)
+		if strings.Contains(md, "&#") {
+			t.Errorf("editable markdown of %q shows a character reference: %q", in, md)
+		}
+		if out := FromMarkdown(md); out != in {
+			t.Errorf("round trip of %q via %q = %q", in, md, out)
+		}
+	}
+	if md := FromPlainEditable("  前\n\tタブ"); md != "  前  \n\tタブ" {
+		t.Errorf("FromPlainEditable = %q", md)
+	}
+	// the display form keeps the character references (the renderer would drop the spaces)
+	if md := ToMarkdown("<body>  前</body>"); md != "&#32; 前" {
+		t.Errorf("ToMarkdown = %q", md)
 	}
 }

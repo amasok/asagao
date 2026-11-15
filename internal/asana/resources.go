@@ -274,9 +274,10 @@ type Attachment struct {
 	PermanentURL    string    `json:"permanent_url"`
 	Size            int64     `json:"size"`
 	CreatedAt       time.Time `json:"created_at"`
+	Parent          *Ref      `json:"parent,omitempty"` // the task (or project) it is attached to
 }
 
-var attachmentFields = []string{"name", "resource_subtype", "host", "download_url", "view_url", "permanent_url", "size", "created_at"}
+var attachmentFields = []string{"name", "resource_subtype", "host", "download_url", "view_url", "permanent_url", "size", "created_at", "parent"}
 
 // Attachments lists the attachments of a task (GET /attachments?parent=).
 func (c *Client) Attachments(ctx context.Context, parentGID string) ([]Attachment, error) {

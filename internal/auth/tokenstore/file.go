@@ -36,19 +36,51 @@ func (f *File) Load(context.Context) (*Credentials, error) {
 	return &c, nil
 }
 
+// Save writes the credentials to a new temporary file in the same folder (a random name,
+// created exclusively, so neither a leftover file nor a symbolic link is reused), makes it
+// 0600, syncs it and renames it over the token file. The folder is made 0700 as well.
 func (f *File) Save(_ context.Context, c *Credentials) error {
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(f.Path), 0o700); err != nil {
+	dir := filepath.Dir(f.Path)
+	if err := privateDir(dir); err != nil {
 		return err
 	}
-	tmp := f.Path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	// an old version wrote "token.json.tmp": do not leave a copy of a token lying around
+	// (Remove does not follow a symbolic link)
+	_ = os.Remove(f.Path + ".tmp")
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(f.Path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, f.Path)
+	done := false
+	defer func() {
+		if !done {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// Rename replaces the token file itself, even if it is a symbolic link.
+	if err := os.Rename(tmp.Name(), f.Path); err != nil {
+		return err
+	}
+	done = true
+	return nil
 }
 
 func (f *File) Delete(context.Context) error {
@@ -57,4 +89,20 @@ func (f *File) Delete(context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// privateDir creates dir (0700) if needed and makes sure only the owner can read it: an
+// existing folder that others can read or enter (e.g. 0755) is made 0700.
+func privateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm() != 0o700 {
+		return os.Chmod(dir, 0o700)
+	}
+	return nil
 }

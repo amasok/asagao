@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	stdsync "sync"
@@ -153,7 +154,7 @@ type TaskFilterInput struct {
 	Overdue    bool   `json:"overdue,omitempty" jsonschema:"only incomplete tasks whose due date has passed"`
 	Tag        string `json:"tag,omitempty" jsonschema:"tag name or gid"`
 	Field      string `json:"field,omitempty" jsonschema:"custom field filter: \"name=value\" (option name or value text), or \"name\" for any value"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum number of tasks (default 100)"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum number of tasks (default 100, at most 500)"`
 	// recent updates (an inbox substitute)
 	ModifiedWithinDays int `json:"modified_within_days,omitempty" jsonschema:"only tasks modified in the last N days, newest first (what changed recently)"`
 }
@@ -316,6 +317,17 @@ type WriteOutput struct {
 
 // --- read tools ---
 
+// maxLimit is the most rows a read tool returns, whatever limit the client asks for.
+const maxLimit = 500
+
+// clampLimit is limit, or def when it is not set, and at most maxLimit.
+func clampLimit(limit, def int) int {
+	if limit <= 0 {
+		return def
+	}
+	return min(limit, maxLimit)
+}
+
 func (s *Server) listTasks(ctx context.Context, _ *mcp.CallToolRequest, in TaskFilterInput) (*mcp.CallToolResult, TasksOutput, error) {
 	f, err := s.filter(ctx, in, "me", ptr(false))
 	if err != nil {
@@ -339,16 +351,12 @@ func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 }
 
 func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee string, defaultCompleted *bool) (store.TaskFilter, error) {
-	limit := in.Limit
-	if limit <= 0 {
-		limit = 100
-	}
 	return s.Store.BuildFilter(ctx, store.FilterSpec{
 		Assignee: in.Assignee, DefaultAssignee: defaultAssignee,
 		Project: in.Project, Section: in.Section, Tag: in.Tag, Field: in.Field,
 		DueBefore: in.DueBefore, DueAfter: in.DueAfter,
 		Completion: in.Completion, DefaultCompleted: defaultCompleted,
-		Overdue: in.Overdue, ModifiedWithinDays: in.ModifiedWithinDays, Limit: limit,
+		Overdue: in.Overdue, ModifiedWithinDays: in.ModifiedWithinDays, Limit: clampLimit(in.Limit, 100),
 	}, s.Now())
 }
 
@@ -384,7 +392,7 @@ func editableMarkdown(htmlText, plain string) string {
 	if htmlText != "" {
 		return richtext.ToEditableMarkdown(htmlText)
 	}
-	md := richtext.FromPlain(store.ReplaceInlineAssets(plain, func(gid string) string {
+	md := richtext.FromPlainEditable(store.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	}))
 	return richtext.ImageTokenRe.ReplaceAllString(md, "![画像](asana:$1)")
@@ -833,12 +841,18 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 	if err != nil {
 		return nil, AttachmentOutput{}, err
 	}
-	a, err := s.Store.GetAttachment(ctx, in.GID)
-	if err != nil {
+	out := AttachmentOutput{LocalPath: path}
+	if a, err := s.Store.GetAttachment(ctx, in.GID); err == nil {
+		out.Name, out.IsImage = a.Name, a.IsImage
+	} else if errors.Is(err, store.ErrNotFound) {
+		// not recorded: its task in Asana is not in the cache (e.g. an image copied from
+		// another task); the cached file is named "<gid>-name"
+		out.Name = strings.TrimPrefix(filepath.Base(path), in.GID+"-")
+		out.IsImage = store.IsImageName(out.Name)
+	} else {
 		return nil, AttachmentOutput{}, err
 	}
-	out := AttachmentOutput{Name: a.Name, LocalPath: path, IsImage: a.IsImage}
-	if !a.IsImage {
+	if !out.IsImage {
 		return nil, out, nil
 	}
 	data, err := os.ReadFile(path)
@@ -852,7 +866,7 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 	}
 	res := &mcp.CallToolResult{Content: []mcp.Content{
 		&mcp.ImageContent{Data: data, MIMEType: mime},
-		&mcp.TextContent{Text: a.Name + " (" + path + ")"},
+		&mcp.TextContent{Text: out.Name + " (" + path + ")"},
 	}}
 	return res, out, nil
 }

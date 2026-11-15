@@ -28,7 +28,7 @@ func (s *Server) addInboxTools(srv *mcp.Server) {
 
 type ListInboxInput struct {
 	Unread bool `json:"unread,omitempty" jsonschema:"only unread notifications"`
-	Limit  int  `json:"limit,omitempty" jsonschema:"maximum number of notifications (default 50)"`
+	Limit  int  `json:"limit,omitempty" jsonschema:"maximum number of notifications (default 50, at most 500)"`
 }
 
 type InboxOutput struct {
@@ -51,10 +51,7 @@ type MarkNotificationsOutput struct {
 }
 
 func (s *Server) listInbox(ctx context.Context, _ *mcp.CallToolRequest, in ListInboxInput) (*mcp.CallToolResult, InboxOutput, error) {
-	limit := in.Limit
-	if limit <= 0 {
-		limit = 50
-	}
+	limit := clampLimit(in.Limit, 50)
 	state, err := s.Store.InboxState(ctx)
 	if err != nil {
 		return nil, InboxOutput{}, err
