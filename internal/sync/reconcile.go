@@ -10,6 +10,7 @@ import (
 
 	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // Verifying entries whose result is unknown (see store/outbox_send.go).
@@ -302,7 +303,7 @@ func pick[T any](items []T, keep func(T) bool) (T, match) {
 // Markdown-derived text), so the visible words of either form are compared.
 func sameComment(st asana.Story, text, htmlText string) bool {
 	if textKey(text) == "" { // only emoji or symbols: nothing to compare loosely
-		return strings.TrimSpace(st.Text) == strings.TrimSpace(text)
+		return strings.TrimSpace(termsafe.String(st.Text)) == strings.TrimSpace(termsafe.String(text))
 	}
 	if textKey(st.Text) == textKey(text) {
 		return true

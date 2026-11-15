@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // Changes to things deleted in Asana are dropped automatically (Asana answered 404), and
@@ -110,7 +112,7 @@ func (s *Store) PendingDiscards(ctx context.Context) ([]Discard, error) {
 		if err := rows.Scan(&d.ID, &d.Kind, &d.TaskGID, &d.TaskName, &d.Summary, &d.Reason, &d.DiscardedAt, &payload); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(payload), &d.Payload); err != nil {
+		if err := termsafe.Unmarshal([]byte(payload), &d.Payload); err != nil {
 			return nil, fmt.Errorf("discarded change %d: %w", d.ID, err)
 		}
 		out = append(out, d)

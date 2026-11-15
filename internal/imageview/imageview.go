@@ -19,8 +19,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 )
 
@@ -96,25 +94,6 @@ func Resolve(protocol string) string {
 	return protocol
 }
 
-// OpenExternal opens files in the OS default viewer (macOS: open, Linux: xdg-open).
-func OpenExternal(paths ...string) error {
-	if len(paths) == 0 {
-		return nil
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", paths...).Start()
-	case "linux":
-		for _, p := range paths {
-			if err := exec.Command("xdg-open", p).Start(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	return errors.New("unsupported OS: " + runtime.GOOS)
-}
-
 // Box is the area to draw into, in terminal cells, plus the cell size in pixels
 // (0 if unknown).
 type Box struct {
@@ -139,6 +118,26 @@ func Fit(w, h int, b Box) (cols, rows int) {
 	return min(cols, b.Cols), min(rows, b.Rows)
 }
 
+// MaxPixels is the largest image (width × height) that is decoded or sent to the
+// terminal. The header of a few-KB file can claim 60000×60000 pixels; decoding it would
+// allocate gigabytes. 50 million pixels still covers a 48MP phone photo.
+const MaxPixels = 50_000_000
+
+// ErrUnknownSize means the image format cannot be read here, so its size cannot be
+// checked and it is not drawn in the terminal (open it in the OS viewer instead).
+var ErrUnknownSize = errors.New("この画像形式は端末に表示できません")
+
+// checkPixels refuses images whose header claims more than MaxPixels.
+func checkPixels(cfg image.Config) error {
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return fmt.Errorf("画像の大きさが不正です（%d×%d）", cfg.Width, cfg.Height)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > MaxPixels {
+		return fmt.Errorf("画像が大きすぎます（%d×%d px、上限 %d 万画素）", cfg.Width, cfg.Height, MaxPixels/10000)
+	}
+	return nil
+}
+
 // Write draws the image at the cursor position using the given protocol.
 func Write(out io.Writer, data []byte, protocol string, b Box) error {
 	switch protocol {
@@ -152,10 +151,18 @@ func Write(out io.Writer, data []byte, protocol string, b Box) error {
 
 func writeITerm(out io.Writer, data []byte, b Box) error {
 	cols, rows := b.Cols, b.Rows
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
-		cols, rows = Fit(cfg.Width, cfg.Height, b)
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		// Go cannot read it (HEIC, BMP, a damaged PNG...), so its size is unknown: it
+		// could claim any size, and iTerm2 would decode it. The viewer opens it in the
+		// OS viewer instead.
+		return fmt.Errorf("%w: %v", ErrUnknownSize, err)
 	}
-	_, err := fmt.Fprintf(out, "\x1b]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s\a",
+	if err := checkPixels(cfg); err != nil {
+		return err
+	}
+	cols, rows = Fit(cfg.Width, cfg.Height, b)
+	_, err = fmt.Fprintf(out, "\x1b]1337;File=inline=1;size=%d;width=%d;height=%d;preserveAspectRatio=1:%s\a",
 		len(data), cols, rows, base64.StdEncoding.EncodeToString(data))
 	return err
 }
@@ -163,7 +170,10 @@ func writeITerm(out io.Writer, data []byte, b Box) error {
 func writeKitty(out io.Writer, data []byte, b Box) error {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("この画像形式は表示できません: %w", err)
+		return fmt.Errorf("%w: %v", ErrUnknownSize, err)
+	}
+	if err := checkPixels(cfg); err != nil {
+		return err
 	}
 	if format != "png" {
 		img, _, err := image.Decode(bytes.NewReader(data))

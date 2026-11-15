@@ -224,8 +224,13 @@ func (s *Store) UploadAttachmentLocal(ctx context.Context, taskGID, srcPath, cac
 	if info.IsDir() {
 		return "", fmt.Errorf("%s はフォルダです", srcPath)
 	}
-	if info.Size() > 100<<20 {
-		return "", errors.New("100MB を超えるファイルは添付できません")
+	// Only regular files: /dev/zero, a FIFO or a socket has size 0 and would pass the
+	// size check, then be read without end (and opening a FIFO waits for a writer).
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s は通常のファイルではありません", srcPath)
+	}
+	if info.Size() > MaxUploadSize {
+		return "", errTooLarge
 	}
 	gid := LocalPrefix + randomID()
 	name := filepath.Base(srcPath)
@@ -238,13 +243,14 @@ func (s *Store) UploadAttachmentLocal(ctx context.Context, taskGID, srcPath, cac
 		}
 		return r
 	}, name))
-	if err := copyFile(srcPath, dst); err != nil {
+	size, err := copyFile(srcPath, dst, info, MaxUploadSize)
+	if err != nil {
 		return "", err
 	}
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO attachments(gid, parent_gid, name, resource_subtype, host, size, created_at, local_path)
-			VALUES(?, ?, ?, 'asana', 'asana', ?, ?, ?)`, gid, taskGID, name, info.Size(), ts, dst); err != nil {
+			VALUES(?, ?, ?, 'asana', 'asana', ?, ?, ?)`, gid, taskGID, name, size, ts, dst); err != nil {
 			return fmt.Errorf("task %s: %w", taskGID, err)
 		}
 		return saveOp(ctx, tx, &Op{Kind: OpUploadAttachment, TaskGID: taskGID, State: OpPending, CreatedAt: ts,
@@ -253,21 +259,40 @@ func (s *Store) UploadAttachmentLocal(ctx context.Context, taskGID, srcPath, cac
 	return gid, err
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+// MaxUploadSize is the largest file that can be attached (Asana's limit).
+const MaxUploadSize = 100 << 20
+
+var errTooLarge = errors.New("100MB を超えるファイルは添付できません")
+
+// copyFile copies the regular file src (statted as want) to dst, reading at most limit
+// bytes: the file may grow, or be replaced, after it was checked.
+func copyFile(src, dst string, want os.FileInfo, limit int64) (int64, error) {
+	in, err := openNoBlock(src)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer in.Close()
+	if got, err := in.Stat(); err != nil {
+		return 0, err
+	} else if !got.Mode().IsRegular() || !os.SameFile(got, want) {
+		return 0, fmt.Errorf("%s が確認中に変わりました", src)
+	}
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
+	n, err := io.Copy(out, io.LimitReader(in, limit+1))
+	if err == nil && n > limit {
+		err = errTooLarge
 	}
-	return out.Close()
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(dst)
+		return 0, err
+	}
+	return n, nil
 }
 
 // ReplaceLocalAttachment records the Asana gid of an uploaded file.

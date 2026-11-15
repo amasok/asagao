@@ -16,6 +16,7 @@ import (
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
 	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 var version = "dev"
@@ -45,6 +46,11 @@ func newRoot(a *app) *cobra.Command {
 				return err
 			}
 			a.cfg = cfg
+			// Task names, notes, comments and notifications are printed as they are; strip
+			// terminal control characters from everything the commands write. (--json goes
+			// to os.Stdout directly: JSON escapes them already.)
+			cmd.SetOut(termsafe.Writer(cmd.OutOrStdout()))
+			cmd.SetErr(termsafe.Writer(cmd.ErrOrStderr()))
 			return nil
 		},
 	}
@@ -56,7 +62,7 @@ func newRoot(a *app) *cobra.Command {
 
 func Execute() {
 	if err := NewRoot().ExecuteContext(context.Background()); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "error:", termsafe.String(err.Error()))
 		os.Exit(1)
 	}
 }

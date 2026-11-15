@@ -3,11 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // OpRenameSection renames a section. The outbox task_gid column holds the section gid.
@@ -69,7 +70,7 @@ func reapplySectionRenames(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		var p map[string]any
-		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
 			rows.Close()
 			return err
 		}
