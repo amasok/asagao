@@ -64,6 +64,30 @@ func Detect(getenv func(string) string) string {
 	return ProtocolOpen
 }
 
+// PlaceholdersSupported reports whether the terminal can draw kitty Unicode placeholders
+// (images placed inside text): kitty, Ghostty, or herdr running in one of them. herdr
+// draws them (confirmed in Ghostty), and its teams panes set TMUX to a fake socket, so
+// herdr is checked before TMUX. Other multiplexers (tmux, zellij, screen) leave them blank.
+func PlaceholdersSupported(getenv func(string) string) bool {
+	if getenv("HERDR_ENV") != "" || getenv("TERM_PROGRAM") == "herdr" {
+		return true
+	}
+	if getenv("TMUX") != "" || getenv("ZELLIJ") != "" || getenv("STY") != "" {
+		return false
+	}
+	term := getenv("TERM")
+	if strings.HasPrefix(term, "tmux") || strings.HasPrefix(term, "screen") {
+		return false
+	}
+	switch getenv("TERM_PROGRAM") {
+	case "ghostty":
+		return true
+	case "":
+		return getenv("KITTY_WINDOW_ID") != "" || term == "xterm-kitty" || term == "xterm-ghostty"
+	}
+	return false // some other terminal
+}
+
 // Resolve turns "auto" (or "") into a concrete protocol.
 func Resolve(protocol string) string {
 	if protocol == "" || protocol == ProtocolAuto {

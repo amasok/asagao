@@ -3,8 +3,11 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
@@ -33,6 +36,9 @@ type Syncer struct {
 	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
 	sleep    func(context.Context, time.Duration) error // replaced in tests
+	// accountOK is set once Asana answered as the account the local data belongs to, so
+	// Push asks /users/me only once per Syncer (see checkPushAccount).
+	accountOK atomic.Bool
 }
 
 // wait pauses for d (or until ctx is done).
@@ -104,6 +110,8 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, err
 	} else if want != "" && me.GID != want {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	} else if want != "" {
+		s.accountOK.Store(true)
 	}
 	// The whole sync holds the push lock: no other process sends meanwhile, and the store
 	// cannot be reset (store.Reset) between our push and our pull, which would bring the
@@ -195,6 +203,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			if err := s.Store.ReplaceSections(ctx, p.GID, secs); err != nil {
 				return res, err
 			}
+			if err := s.syncCustomFields(ctx, p.GID, res.Full); err != nil {
+				return res, err
+			}
 			if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
 				if err := s.Store.ReplaceStatusUpdates(ctx, p.GID, updates); err != nil {
 					return res, err
@@ -210,6 +221,16 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				return res, err
 			}
 			res.Projects++
+		}
+	}
+	if err := s.syncInboxes(ctx, workspaces); err != nil {
+		return res, err
+	}
+	if st, err := s.Store.InboxState(ctx); err != nil {
+		return res, err
+	} else if st.Available() {
+		if err := s.fetchNotificationTargets(ctx, keep, res.Full, modifiedSince, upsert); err != nil {
+			return res, err
 		}
 	}
 
@@ -250,13 +271,47 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	return res, nil
 }
 
+// keyCustomFields + project gid records when a project's custom fields were last fetched.
+const keyCustomFields = "custom_fields:"
+
+// syncCustomFields fetches a project's custom fields (with their choices) on a full sync,
+// or if they were never fetched. A workspace without custom fields (Asana answers e.g. 402
+// on a free plan) simply has none; any other failure is retried on the next sync.
+func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
+	key := keyCustomFields + projectGID
+	if !full {
+		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+			return err
+		}
+	}
+	settings, err := s.API.CustomFieldSettings(ctx, projectGID)
+	switch {
+	case err == nil:
+		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, settings); err != nil {
+			return err
+		}
+	case asana.IsPaymentRequired(err) || isForbidden(err): // not available on this plan: no custom fields
+		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, nil); err != nil {
+			return err
+		}
+	default:
+		return nil // e.g. an expired token or a 5xx: keep what is cached, try again next time
+	}
+	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+}
+
+func isForbidden(err error) bool {
+	var apiErr *asana.Error
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden
+}
+
 // FetchDetails refreshes one task with its subtasks and stories (comments and activity).
 // Comments do not change a task's modified_at, so they are fetched on demand rather than by Run.
 func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if store.IsLocalGID(taskGID) {
 		return nil // created offline; nothing on the server yet
 	}
-	t, err := s.API.Task(ctx, taskGID)
+	t, err := s.API.TaskDetail(ctx, taskGID)
 	if err != nil {
 		return err
 	}
@@ -282,10 +337,29 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err := s.Store.ReplaceStories(ctx, taskGID, stories, s.clock()); err != nil {
 		return err
 	}
+	s.fetchDependencies(ctx, *t)
 	if attErr != nil {
 		return &AttachmentsError{Err: attErr}
 	}
 	return nil
+}
+
+// fetchDependencies stores the names and states of a task's dependencies and dependents,
+// which may not be cached (the task itself only lists their gids). Without dependencies
+// (e.g. a free plan) or offline, the task simply keeps what it has.
+func (s *Syncer) fetchDependencies(ctx context.Context, t asana.Task) {
+	if len(t.Dependencies) == 0 && len(t.Dependents) == 0 {
+		return
+	}
+	deps, err := s.API.Dependencies(ctx, t.GID)
+	if err != nil {
+		return
+	}
+	dependents, err := s.API.Dependents(ctx, t.GID)
+	if err != nil {
+		return
+	}
+	_ = s.Store.ReplaceDependencies(ctx, t.GID, deps, dependents)
 }
 
 // AttachmentsError means a task's details were refreshed except for its attachments.

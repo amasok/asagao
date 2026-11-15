@@ -45,7 +45,7 @@ func (a *app) runTUI(ctx context.Context) error {
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
 		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
 		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys,
-		CacheDir: filepath.Join(config.CacheDir(), "attachments"), BackupDir: backupDir()}
+		CacheDir: filepath.Join(config.CacheDir(), "attachments"), BackupDir: backupDir(), AuthScopes: a.cfg.Auth.Scopes}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)
@@ -78,13 +78,24 @@ func (a *app) viewImages(paths []string) tea.Cmd {
 // inlineImages reports whether to draw images inside the detail pane (kitty Unicode
 // placeholders; supported by kitty and Ghostty, not through multiplexers).
 func (a *app) inlineImages() bool {
-	switch a.cfg.UI.InlineImages {
+	return inlineImagesEnabled(a.cfg.UI.InlineImages, a.cfg.UI.ImageProtocol, os.Getenv)
+}
+
+// inlineImagesEnabled decides ui.inline_images. "auto" turns it on only when the terminal
+// is known to draw Unicode placeholders (kitty, Ghostty, herdr): ui.image_protocol = "kitty"
+// is not enough, as tmux and zellij pass kitty images through but leave placeholders blank.
+// Otherwise images are shown as "[画像N]（i で表示）"; inline_images = "on" forces it.
+func inlineImagesEnabled(setting, protocol string, getenv func(string) string) bool {
+	switch setting {
 	case "on":
 		return true
 	case "off":
 		return false
 	}
-	return imageview.Resolve(a.cfg.UI.ImageProtocol) == imageview.ProtocolKitty
+	if protocol != "" && protocol != imageview.ProtocolAuto && protocol != imageview.ProtocolKitty {
+		return false // iterm / open chosen explicitly
+	}
+	return imageview.PlaceholdersSupported(getenv)
 }
 
 // runEditor opens path in ui.editor, $VISUAL, $EDITOR, nvim or vi (in that order) while the

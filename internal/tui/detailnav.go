@@ -29,6 +29,13 @@ const (
 	itemProjects // "＋ プロジェクトに追加 / 外す"
 	itemAttachment
 	itemAddAttachment
+	itemCustomField   // sub: index into CustomFields
+	itemSubtype       // task type
+	itemApproval      // approval status
+	itemDependency    // sub: index into Dependencies
+	itemAddDependency //
+	itemDependent     // sub: index into Dependents
+	itemAddDependent  //
 )
 
 type detailItem struct {
@@ -160,6 +167,26 @@ func (m *Model) activateItem() tea.Cmd {
 		return nil
 	case itemLike:
 		return m.toggleLike()
+	case itemSubtype:
+		return m.openSubtypePicker(d.TaskSummary)
+	case itemApproval:
+		return m.openApprovalPicker(d.TaskSummary)
+	case itemDependency:
+		if it.sub < len(d.Dependencies) {
+			return m.openDependencyActions(d.TaskSummary, d.Dependencies[it.sub], false)
+		}
+	case itemDependent:
+		if it.sub < len(d.Dependents) {
+			return m.openDependencyActions(d.TaskSummary, d.Dependents[it.sub], true)
+		}
+	case itemAddDependency:
+		return m.openDependencyTargets(d.TaskSummary, false, "")
+	case itemAddDependent:
+		return m.openDependencyTargets(d.TaskSummary, true, "")
+	case itemCustomField:
+		if it.sub < len(d.CustomFields) {
+			return m.editCustomField(d.TaskSummary, d.CustomFields[it.sub])
+		}
 	case itemFollowers:
 		return m.openFollowers()
 	case itemProjects:

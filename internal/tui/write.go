@@ -30,6 +30,8 @@ const (
 	promptDuplicate
 	promptAttach
 	promptNewProject
+	promptField     // a custom field (fields.go)
+	promptDepSearch // search for a task to link (deps.go)
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -112,6 +114,12 @@ func (m *Model) afterWrite() tea.Cmd {
 }
 
 func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if cmd, ok := m.updateFields(msg); ok {
+		return m, cmd, true
+	}
+	if cmd, ok := m.updateDeps(msg); ok {
+		return m, cmd, true
+	}
 	switch msg := msg.(type) {
 	case outboxLoadedMsg:
 		if msg.err == nil {
@@ -264,6 +272,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptNewProject:
 		m.prompt.Prompt = "新しいプロジェクト: "
 		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+	case promptDepSearch:
+		m.prompt.Prompt = "タスクを検索: "
+		m.prompt.Placeholder = "タスク名の一部"
 	case promptAttach:
 		m.prompt.Prompt = "添付するファイル: "
 		m.prompt.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
@@ -284,6 +295,9 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if kind == promptDue { // empty clears the due date
 			return m, m.submitDue(value)
 		}
+		if kind == promptField { // empty clears the field
+			return m, m.submitField(value)
+		}
 		if value == "" {
 			return m, nil
 		}
@@ -302,6 +316,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.attach(value)
 		case promptNewProject:
 			return m, m.createProject(value)
+		case promptDepSearch:
+			return m, m.openDependencyTargets(m.depTask, m.depDependents, value)
 		}
 		if m.commentGID != "" {
 			return m, m.addComment(m.commentGID, value)
@@ -492,7 +508,7 @@ func (m *Model) outboxCursorLine() int {
 	line := 2 // help, blank
 	for _, op := range m.ops[:min(m.opCursor, len(m.ops))] {
 		line++
-		line += len(op.Conflict)
+		line += len(store.ConflictLines(op))
 		if _, text := store.OpNote(op); text != "" {
 			line++
 		}
@@ -526,8 +542,8 @@ func (m *Model) outboxLines(inner int) []string {
 		}
 		line := style.Render(padRight("["+store.OpLabel(op)+"]", opStateWidth)) + " " + store.DescribeOp(op)
 		lines = append(lines, m.highlight(line, inner, i == m.opCursor, true))
-		for k, v := range op.Conflict {
-			lines = append(lines, fmt.Sprintf("%s%s: こちら=%v / Asana=%v", opDetailIndent, store.FieldLabel(k), op.Payload[k], v))
+		for _, c := range store.ConflictLines(op) {
+			lines = append(lines, opDetailIndent+c)
 		}
 		if _, text := store.OpNote(op); text != "" {
 			note := m.st.dim // e.g. being checked against Asana: nothing to do

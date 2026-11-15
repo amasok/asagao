@@ -13,7 +13,32 @@ go install github.com/amasok/asana-tui/cmd/asana-tui@latest
 
 ## セットアップ
 
-### 1. Asana に OAuth アプリを登録する
+ログインの方法は 2 つあります。設定ファイルを作らずにすぐ使えるのは Personal Access Token (PAT) です。
+
+| 方法 | 手間 | トークン |
+|------|------|----------|
+| Personal Access Token | トークンを作って貼るだけ | 期限なし（Asana で取り消すまで有効） |
+| OAuth | OAuth アプリの登録と `auth.client_id` の設定が必要 | 1 時間ごとに自動更新 |
+
+### Personal Access Token でログインする（かんたん）
+
+1. https://app.asana.com/0/my-apps の「Personal access tokens」でトークンを作り、コピーする
+2. ログインして同期する
+
+```sh
+asana-tui auth login --pat   # トークンを貼り付ける（入力は表示されません）
+asana-tui sync
+```
+
+- 標準入力からも渡せます: `pbpaste | asana-tui auth login --pat`、`op read "op://Private/Asana/token" | asana-tui auth login --pat`。トークンはシェルの履歴に残らないよう、コマンドの引数では受け付けません。
+- `auth.client_id` が設定されていなければ、`--pat` を付けなくても PAT でのログインになります。
+- ログイン時に `/users/me` で確かめてから、OAuth と同じ保存先（`auth.token_store`。既定はキーチェーン）に保存します。保存先を変えるときだけ下の設定ファイルを作ってください。
+- トークンを取り消した・失効した場合は、TUI / CLI / MCP にその旨と `asana-tui auth login --pat` が表示されます。新しいトークンでログインし直せば、未送信の変更はそのまま送られます（TUI と MCP サーバーは再起動不要）。
+- OAuth と PAT はいつでも乗り換えられます（あとからログインした方に置き換わります）。前と違うアカウントでログインすると、ローカルのデータを守るため同期を止めて案内を出します。
+
+### OAuth でログインする
+
+#### 1. Asana に OAuth アプリを登録する
 
 1. https://app.asana.com/0/my-apps で「Create new app」
 2. **OAuth** の設定で Redirect URL を 2 つ追加する
@@ -22,7 +47,7 @@ go install github.com/amasok/asana-tui/cmd/asana-tui@latest
 3. **Permission scopes** で「Full permissions」を選ぶ
 4. Client ID と Client secret を控える
 
-### 2. 設定ファイルを作る
+#### 2. 設定ファイルを作る
 
 `~/.config/asana-tui/config.toml`:
 
@@ -43,9 +68,11 @@ completed_days = 14     # 完了済みタスクを何日分保存するか
 # all_projects = true   # 参加していないプロジェクトも同期する
 ```
 
-1Password に保存する場合は、[1Password CLI](https://developer.1password.com/docs/cli/get-started/) をインストールし、デスクトップアプリとの連携を有効にしてください。リフレッシュトークンと Client secret が指定した保管庫のアイテムに保存されます。
+PAT だけで使う場合は `[auth]` の `client_id` は不要です（保存先を変えるときだけ `token_store` を書きます）。
 
-### 3. ログインして同期する
+1Password に保存する場合は、[1Password CLI](https://developer.1password.com/docs/cli/get-started/) をインストールし、デスクトップアプリとの連携を有効にしてください。リフレッシュトークン（PAT でログインした場合は PAT）と Client secret が指定した保管庫のアイテムに保存されます。
+
+#### 3. ログインして同期する
 
 ```sh
 asana-tui auth login     # ブラウザが開く。Client secret を聞かれたら入力
@@ -96,13 +123,16 @@ asana-tui --offline  # 同期せず、ローカルストアだけで起動
 | `N` / `M` / `X` | 新しいプロジェクト / メンバー / アーカイブ（オンラインのみ） | |
 | **その他** | | |
 | `r` / `!` | 今すぐ同期 / 未送信の変更・競合 | `r` / `!` |
+| **受信トレイ** | | |
+| `R` / `Y` | 通知を既読 / 未読にする / すべて既読にする | `R` |
 
 ### 画面ごとの動き
 
 - **タスク一覧**: `l` でサブタスクをツリー表示、`h` で閉じる・親へ。`enter` で詳細を全画面で開きます。My Tasks は期日ごと、プロジェクトはセクションごとに表示します。
 - **ボード**（`v`）: `h/l` で列、`j/k` でカード、`H/L` でカードを左右の列へ移します。
 - **カレンダー**（`v` をもう一度。My Tasks では 1 回）: 期日のあるタスクを月表示します。`h/l` で日、`j/k` で週、`n/p` で月、`.` で今日、`enter` でその日のタスク一覧（選ぶと詳細）、`a` でその日が期日のタスクを追加します。
-- **最近の更新**（プロジェクト一覧の 2 番目）: 直近 7 日に変更されたタスクを、新しい順・日付ごとに表示します（Asana の受信箱の代わり。受信箱は API で取得できないため）。
+- **受信トレイ**（プロジェクト一覧の 2 番目）: Asana の通知（コメント・担当・メンションなど）を新しい順・日付ごとに表示します。`●` が未読、`↑` は既読・未読の変更がまだ送られていない印です。カーソルを合わせると詳細ペインに対象のタスクが出ます。`enter` でそのタスクを開き、通知を既読にします（プロジェクトの通知はそのプロジェクトへ移ります）。`R` で既読 / 未読を切り替え、`space Y` ですべて既読にします。通知は同期のたびに最新 100 件（ワークスペースごと）を保存するので、オフラインでも見られます。既読・未読の変更はほかの変更と同じく未送信の変更として送ります（同じ向きの変更は 50 件ずつまとめて送ります）。Asana が既読の変更を受け付けないとき（ログインに `notifications:write` がない）は、変更を元に戻して案内を一覧の先頭に出し、開いただけでは既読にしなくなります（`R` などで自分で既読にすると、もう一度送ってみます）。ログインし直すか、送った変更が受け付けられれば元に戻ります。
+- **最近の更新**: 通知を取得できないとき（ログインに通知の権限 `notifications:read` がない、プランで使えないなど）は、受信トレイの代わりに直近 7 日に変更されたタスクを表示し、理由と対処を一覧の先頭に出します。`config.toml` で `auth.scopes` を指定していない（Full permissions の）場合は、`asana-tui auth login` でログインし直せば次の同期から受信トレイになります。
 - **詳細**: `j/k` で項目（担当・期日・プロジェクト/セクション・タグ・フォロワー・いいね・状態・親タスク・説明・添付ファイル・サブタスク・「＋追加」）を選び、`enter` で変更します。添付ファイルは `enter` で開きます（画像はビューア、それ以外は OS のアプリ）。担当・期日・セクション・タグは一覧から選びます（期日は「日付を入力…」で自由入力も可）。名前と説明はエディタで編集します。サブタスクは `enter` で開き、`backspace` で戻ります。
 - 折りたたんだセクション、詳細ペインの幅、プロジェクト一覧の表示状態は記憶します。
 
@@ -122,9 +152,10 @@ due = ["D", "ctrl+t"]
 
 | コマンド | 内容 |
 |----------|------|
-| `auth login [--manual] [--no-browser]` | OAuth でログイン |
-| `auth status` | ログイン状態 |
-| `auth logout` | 保存したトークンを削除 |
+| `auth login --pat` | Personal Access Token でログイン（貼り付けるか標準入力から渡す） |
+| `auth login [--manual] [--no-browser]` | OAuth でログイン（`auth.client_id` が未設定なら PAT でのログインになる） |
+| `auth status` | ログイン状態と方式（OAuth / Personal Access Token） |
+| `auth logout` | 保存したトークン（OAuth / PAT）を削除 |
 | `auth migrate --to <store>` | トークンの保存先を移す |
 | `sync [--full]` | Asana からローカルストアへ同期（通常は前回以降の変更分。24 時間ごとに自動で全件） |
 | `sync status` | ローカルストアの状態 |
@@ -148,6 +179,8 @@ due = ["D", "ctrl+t"]
 | `comment add <gid> <コメント>` | コメントする |
 | `outbox list` | 未送信の変更・競合・失敗を一覧表示 |
 | `outbox resolve <id> --keep local\|remote` | 競合を解決（こちらの値で上書き / Asana の値を採用） |
+| `inbox [--unread] [--limit N]` | 受信トレイ（Asana の通知）を新しい順に表示（`●` が未読。取得できないときは理由と最近の更新を表示） |
+| `inbox read <ID>... [--all]` / `inbox unread <ID>...` | 通知を既読にする / 未読に戻す（ID は一覧の右端。末尾の数桁でも可） |
 | `outbox retry <id>` / `outbox discard <id>` | 失敗した変更を再送 / 変更を取り消す |
 | `mcp [--read-only]` | MCP サーバーとして起動（stdio） |
 | `keys` | キー設定で使える操作名の一覧 |
@@ -198,6 +231,8 @@ claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
 | `create_status_update` | ステータス更新を投稿（`--read-only` では無効） |
 | `create_project` / `update_project` | プロジェクトを作る / アーカイブ・メンバー（オンラインのみ。`--read-only` では無効） |
 | `list_users` | ワークスペースのメンバー（担当者の指定に使う） |
+| `list_inbox` | 受信トレイ（Asana の通知）。取得できないときは理由と最近の更新を返す |
+| `mark_notifications` | 通知を既読 / 未読にする（`--read-only` では無効） |
 | `add_comment` | コメント（マークダウン。`--read-only` では無効） |
 
 - 読み取りはローカルストアから行うので、高速でオフラインでも動きます。
@@ -249,8 +284,11 @@ section: 家具
 ```toml
 [ui]
 image_protocol = "kitty"   # auto / iterm / kitty / open
-inline_images = "auto"     # 本文中に画像を表示するか: auto（kitty 方式のとき）/ on / off
+inline_images = "auto"     # 本文中に画像を表示するか: auto / on / off
 ```
+
+- 本文の途中に貼った画像は、kitty・Ghostty（herdr 経由も含む）のときに、詳細画面のその位置に表示します（kitty の Unicode placeholder 方式）。tmux・zellij などのマルチプレクサの中では、`i` の全画面表示は映っても本文中の画像は空白になることがあるため、`image_protocol = "kitty"` を指定していても `auto` では表示せず、`[画像N]（i で表示）` と出します。使っている環境で本文中に表示できる場合は `inline_images = "on"` にしてください。
+- 本文中の画像を読み込めなかったときは、`[画像N]（表示できません: 理由）` と出し、ステータスバーに理由を表示します。
 
 ## オフライン編集
 
@@ -264,7 +302,7 @@ inline_images = "auto"     # 本文中に画像を表示するか: auto（kitty 
 
 | 変数 | 内容 |
 |------|------|
-| `ASANA_TOKEN` | Personal Access Token。設定されていれば OAuth より優先（開発・ヘッドレス用） |
+| `ASANA_TOKEN` | Personal Access Token。設定されていれば保存したトークンより優先（CI・ヘッドレス用。ふだんは `auth login --pat` で保存する方が手軽） |
 | `ASANA_CLIENT_ID` | `auth.client_id` を上書き |
 | `ASANA_CLIENT_SECRET` | ログイン時に Client secret を聞かずにこれを使う（例: `op run` と組み合わせる） |
 | `XDG_CONFIG_HOME` / `XDG_DATA_HOME` | 設定 / データの置き場所 |

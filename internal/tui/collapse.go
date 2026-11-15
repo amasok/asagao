@@ -16,6 +16,8 @@ import (
 func (m *Model) scopeKey() string {
 	if sc := m.currentScope(); sc.kind == scopeProject {
 		return sc.project
+	} else if sc.kind == scopeInbox {
+		return "inbox"
 	}
 	return "my"
 }
@@ -65,8 +67,8 @@ func (m *Model) visibleRows() []row {
 	out := make([]row, 0, len(m.allRows))
 	hiding := false
 	for _, r := range m.allRows {
-		if r.task == nil {
-			r.collapsed = m.collapsed[r.key]
+		if r.isHeader() {
+			r.collapsed = m.collapsed[r.key] && !r.note
 			hiding = r.collapsed
 			out = append(out, r)
 			continue
@@ -81,7 +83,7 @@ func (m *Model) visibleRows() []row {
 // groupAt returns the index of the group header for the row at i.
 func (m *Model) groupAt(i int) int {
 	for ; i >= 0; i-- {
-		if i < len(m.rows) && m.rows[i].task == nil {
+		if i < len(m.rows) && m.rows[i].isHeader() && !m.rows[i].note {
 			return i
 		}
 	}
@@ -124,13 +126,13 @@ func (m *Model) setAllGroups(collapse bool) tea.Cmd {
 		return nil
 	}
 	var prev string
-	if t := m.selectedTask(); t != nil {
-		prev = t.GID
+	if m.listCursor >= 0 && m.listCursor < len(m.rows) {
+		prev = m.rows[m.listCursor].id()
 	}
 	m.collapsed = map[string]bool{}
 	if collapse {
 		for _, r := range m.allRows {
-			if r.task == nil {
+			if r.isHeader() && !r.note {
 				m.collapsed[r.key] = true
 			}
 		}

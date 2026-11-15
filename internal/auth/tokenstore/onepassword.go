@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-// OnePassword stores the refresh token and client secret in a 1Password item via the `op` CLI.
+// OnePassword stores the refresh token (or a Personal Access Token) and client secret in a
+// 1Password item via the `op` CLI.
 //
 // Only long-lived values are stored, so 1Password is written at login (or when Asana rotates
 // the refresh token) and not on every hourly access-token refresh. Secrets are passed to `op`
@@ -26,6 +27,7 @@ type OnePassword struct {
 
 const (
 	fieldRefreshToken = "refresh_token"
+	fieldPAT          = "personal_access_token"
 	fieldClientSecret = "client_secret"
 	fieldUserGID      = "user_gid"
 	fieldUserName     = "user_name"
@@ -57,13 +59,14 @@ func (o *OnePassword) Load(ctx context.Context) (*Credentials, error) {
 		return nil, err
 	}
 	c := &Credentials{
-		RefreshToken: item.field(fieldRefreshToken),
-		ClientSecret: item.field(fieldClientSecret),
-		UserGID:      item.field(fieldUserGID),
-		UserName:     item.field(fieldUserName),
-		UserEmail:    item.field(fieldUserEmail),
+		PersonalAccessToken: item.field(fieldPAT),
+		RefreshToken:        item.field(fieldRefreshToken),
+		ClientSecret:        item.field(fieldClientSecret),
+		UserGID:             item.field(fieldUserGID),
+		UserName:            item.field(fieldUserName),
+		UserEmail:           item.field(fieldUserEmail),
 	}
-	if c.RefreshToken == "" {
+	if c.RefreshToken == "" && c.PersonalAccessToken == "" {
 		return nil, ErrNotFound
 	}
 	return c, nil
@@ -78,7 +81,9 @@ func (o *OnePassword) Save(ctx context.Context, c *Credentials) error {
 	if !exists {
 		item = &opItem{Title: o.Item, Category: "API_CREDENTIAL"}
 	}
+	// Both are always written, so switching between OAuth and PAT clears the other one.
 	item.set(fieldRefreshToken, "CONCEALED", c.RefreshToken)
+	item.set(fieldPAT, "CONCEALED", c.PersonalAccessToken)
 	item.set(fieldClientSecret, "CONCEALED", c.ClientSecret)
 	item.set(fieldUserGID, "STRING", c.UserGID)
 	item.set(fieldUserName, "STRING", c.UserName)

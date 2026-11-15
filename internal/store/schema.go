@@ -233,4 +233,72 @@ CREATE TABLE discarded_changes (
 -- The dropped change itself (outbox payload JSON), so what the user wrote can be recovered.
 ALTER TABLE discarded_changes ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';
 `,
+	`
+-- The user's Asana inbox (notifications), newest first per workspace (see notifications.go).
+CREATE TABLE notifications (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	is_read       INTEGER NOT NULL DEFAULT 0,
+	created_at    TEXT NOT NULL DEFAULT '',
+	actor_gid     TEXT NOT NULL DEFAULT '',
+	actor_name    TEXT NOT NULL DEFAULT '',
+	subtype       TEXT NOT NULL DEFAULT '',
+	text          TEXT NOT NULL DEFAULT '',
+	target_gid    TEXT NOT NULL DEFAULT '',
+	target_type   TEXT NOT NULL DEFAULT '',
+	target_name   TEXT NOT NULL DEFAULT '',
+	position      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX notifications_created ON notifications(created_at);
+`,
+	`
+-- Custom fields: definitions (from project settings and tasks), the fields of each project,
+-- and the values of tasks. value is JSON in the form Asana accepts (enum option gid,
+-- [option gids], number, text, "YYYY-MM-DD", [user gids]; null when empty); display is
+-- the value as text. Forget the last full sync so the next sync fetches every task's values.
+CREATE TABLE custom_fields (
+	gid          TEXT PRIMARY KEY,
+	name         TEXT NOT NULL DEFAULT '',
+	type         TEXT NOT NULL DEFAULT '',
+	precision    INTEGER NOT NULL DEFAULT 0,
+	read_only    INTEGER NOT NULL DEFAULT 0,
+	enum_options TEXT NOT NULL DEFAULT '' -- JSON [{gid, name, color, enabled}]; '' = not known
+);
+CREATE TABLE project_custom_fields (
+	project_gid  TEXT NOT NULL,
+	field_gid    TEXT NOT NULL,
+	position     INTEGER NOT NULL DEFAULT 0,
+	is_important INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (project_gid, field_gid)
+);
+CREATE TABLE task_custom_fields (
+	task_gid  TEXT NOT NULL REFERENCES tasks(gid) ON DELETE CASCADE,
+	field_gid TEXT NOT NULL,
+	position  INTEGER NOT NULL DEFAULT 0,
+	value     TEXT NOT NULL DEFAULT 'null',
+	display   TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (task_gid, field_gid)
+);
+CREATE INDEX task_custom_fields_field ON task_custom_fields(field_gid);
+DELETE FROM sync_state WHERE key = 'last_full_sync';
+`,
+	`
+-- Dependencies between tasks (task_gid waits for dependency_gid), the approval status of
+-- approval tasks, and the names of referenced tasks that are not cached (task_refs).
+-- Forget the last full sync so the next sync fetches them for every task.
+CREATE TABLE task_dependencies (
+	task_gid       TEXT NOT NULL,
+	dependency_gid TEXT NOT NULL,
+	PRIMARY KEY (task_gid, dependency_gid)
+);
+CREATE INDEX task_dependencies_dependency ON task_dependencies(dependency_gid);
+CREATE TABLE task_refs (
+	gid              TEXT PRIMARY KEY,
+	name             TEXT NOT NULL DEFAULT '',
+	completed        INTEGER NOT NULL DEFAULT 0,
+	resource_subtype TEXT NOT NULL DEFAULT ''
+);
+ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT '';
+DELETE FROM sync_state WHERE key = 'last_full_sync';
+`,
 }

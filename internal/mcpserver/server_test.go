@@ -112,8 +112,8 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_project", "create_status_update", "create_task", "duplicate_task", "get_attachment", "get_project", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_project", "update_task", "upload_attachment"}},
-		{true, []string{"get_attachment", "get_project", "get_task", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
+		{false, []string{"add_comment", "create_project", "create_status_update", "create_task", "duplicate_task", "get_attachment", "get_project", "get_task", "list_inbox", "list_projects", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_project", "update_task", "upload_attachment"}},
+		{true, []string{"get_attachment", "get_project", "get_task", "list_inbox", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
@@ -226,6 +226,8 @@ func fakeAsana(t *testing.T) *httptest.Server {
 		}
 		_ = json.Unmarshal(b, &body)
 		switch {
+		case r.URL.Path == "/users/me": // Push checks the account first
+			fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/tasks":
 			fmt.Fprintf(w, `{"data":{"gid":"999","name":%q,"assignee":{"gid":"me"}}}`, body.Data["name"])
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/tasks/"):

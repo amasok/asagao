@@ -16,7 +16,8 @@ import (
 // tasks (choose one to open it) and a adds a task due on the selected day.
 
 func (m *Model) calendarActive() bool {
-	return m.calendar && m.currentScope().kind != scopeRecent && m.query == ""
+	k := m.currentScope().kind
+	return m.calendar && k != scopeRecent && k != scopeInbox && m.query == ""
 }
 
 type calendarLoadedMsg struct {
@@ -47,7 +48,7 @@ func (m *Model) loadCalendar() tea.Cmd {
 	}
 	month := monthStart(m.calDay)
 	start, end := calendarRange(month)
-	f := store.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter}
+	f := store.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter, Field: m.fieldFilter.field, FieldValue: m.fieldFilter.value}
 	switch m.filter {
 	case filterCompleted:
 		f.Completed = boolPtr(true)

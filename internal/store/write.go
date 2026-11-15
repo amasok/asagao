@@ -102,6 +102,12 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 			if err := reapplyRelationOps(ctx, tx, t.GID); err != nil {
 				return err
 			}
+			if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
+				return err
+			}
+			if err := reapplyDependencyOps(ctx, tx, t.GID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -166,6 +172,14 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE tasks SET liked = ?, num_likes = ? WHERE gid = ?", t.Liked, t.NumLikes, t.GID); err != nil {
 		return err
 	}
+	if !t.Partial { // fetched without the optional fields: keep what is known
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET approval_status = ? WHERE gid = ?", t.ApprovalStatus, t.GID); err != nil {
+			return err
+		}
+	}
+	if err := upsertTaskDependencies(ctx, tx, t); err != nil {
+		return err
+	}
 	if t.Followers != nil {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM task_followers WHERE task_gid = ?", t.GID); err != nil {
 			return err
@@ -180,6 +194,9 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 				return err
 			}
 		}
+	}
+	if err := upsertTaskCustomFields(ctx, tx, t); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ?", t.GID); err != nil {
 		return err
@@ -251,6 +268,13 @@ func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, er
 				return err
 			}
 		}
+		// Tasks linked by a dependency stay known by name and state (task_refs).
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO task_refs(gid, name, completed, resource_subtype)
+			SELECT gid, name, completed, resource_subtype FROM tasks
+			WHERE gid NOT IN (SELECT gid FROM keep_tasks) AND gid NOT IN (SELECT task_gid FROM outbox)
+			  AND (gid IN (SELECT dependency_gid FROM task_dependencies) OR gid IN (SELECT task_gid FROM task_dependencies))`); err != nil {
+			return err
+		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM tasks
 			WHERE gid NOT IN (SELECT gid FROM keep_tasks)
 			  AND gid NOT IN (SELECT task_gid FROM outbox)
@@ -292,6 +316,8 @@ func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []a
 				"DELETE FROM sections WHERE project_gid = ?",
 				"DELETE FROM project_members WHERE project_gid = ?",
 				"DELETE FROM status_updates WHERE project_gid = ?",
+				"DELETE FROM project_custom_fields WHERE project_gid = ?",
+				"DELETE FROM sync_state WHERE key = 'custom_fields:' || ?", // fetch them again if it comes back
 				"DELETE FROM task_memberships WHERE project_gid = ?",
 				"DELETE FROM projects WHERE gid = ?",
 			} {

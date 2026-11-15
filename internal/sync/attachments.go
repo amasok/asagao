@@ -52,11 +52,21 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 			}
 			// Downloaded by an older version under a name with spaces: rename it so the
 			// path can be used as a Markdown link (editor image plugins need that).
-			if err := os.Rename(a.LocalPath, path); err == nil {
-				return path, s.Store.SetAttachmentPath(ctx, gid, path)
+			if err := os.MkdirAll(dir, 0o700); err == nil {
+				if err := os.Rename(a.LocalPath, path); err == nil {
+					// The file is usable even if the path cannot be recorded now; the
+					// check below finds it next time.
+					_ = s.Store.SetAttachmentPath(ctx, gid, path)
+					return path, nil
+				}
 			}
 			return a.LocalPath, nil
 		}
+	}
+	// Already in the cache under its usual name (e.g. the path could not be recorded).
+	if _, err := os.Stat(path); err == nil {
+		_ = s.Store.SetAttachmentPath(ctx, gid, path)
+		return path, nil
 	}
 	if s.API == nil {
 		return "", errors.New("オフラインのためダウンロードできません")

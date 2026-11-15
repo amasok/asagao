@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +21,11 @@ type Client struct {
 	BaseURL    string
 	HTTP       *http.Client // must add the Authorization header (e.g. oauth2.NewClient)
 	MaxRetries int
+	// AuthHint tells the user how to fix a 401 (e.g. how to log in again); it is added to
+	// the message of 401 errors.
+	AuthHint string
+	// plainTasks: Asana refused the optional task fields; request tasks without them.
+	plainTasks atomic.Bool
 	// sleep is replaced in tests.
 	sleep func(context.Context, time.Duration) error
 }
@@ -31,6 +37,8 @@ func NewClient(httpClient *http.Client) *Client {
 // Error is an Asana API error response.
 type Error struct {
 	Status int
+	// Hint is what the user can do about it (set on 401 from Client.AuthHint).
+	Hint   string `json:"-"`
 	Errors []struct {
 		Message string `json:"message"`
 		Help    string `json:"help"`
@@ -38,10 +46,31 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	msg := http.StatusText(e.Status)
 	if len(e.Errors) > 0 {
-		return fmt.Sprintf("asana: %d %s", e.Status, e.Errors[0].Message)
+		msg = e.Errors[0].Message
 	}
-	return fmt.Sprintf("asana: %d %s", e.Status, http.StatusText(e.Status))
+	if e.Hint != "" {
+		return fmt.Sprintf("asana: %d %s（%s）", e.Status, msg, e.Hint)
+	}
+	return fmt.Sprintf("asana: %d %s", e.Status, msg)
+}
+
+// IsUnauthorized reports whether Asana rejected the token (401: revoked or expired PAT,
+// revoked OAuth grant).
+func IsUnauthorized(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Status == http.StatusUnauthorized
+}
+
+// newError builds the error for a >= 400 response with body b.
+func (c *Client) newError(status int, b []byte) *Error {
+	e := &Error{Status: status}
+	_ = json.Unmarshal(b, e)
+	if status == http.StatusUnauthorized {
+		e.Hint = c.AuthHint
+	}
+	return e
 }
 
 // IsPaymentRequired reports whether the endpoint needs a paid Asana plan.
@@ -101,9 +130,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			continue
 		}
 		if resp.StatusCode >= 400 {
-			e := &Error{Status: resp.StatusCode}
-			_ = json.Unmarshal(b, e)
-			return nil, e
+			return nil, c.newError(resp.StatusCode, b)
 		}
 		var env envelope
 		if err := json.Unmarshal(b, &env); err != nil {

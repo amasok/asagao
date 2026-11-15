@@ -3,11 +3,14 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/oauth2"
 
+	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
 	"github.com/amasok/asana-tui/internal/config"
 )
@@ -39,6 +42,8 @@ func (m *memStore) Save(_ context.Context, c *tokenstore.Credentials) error {
 		return m.saveErr
 	}
 	m.saved = append(m.saved, *c)
+	saved := *c
+	m.creds = &saved
 	return nil
 }
 func (m *memStore) Delete(context.Context) error { return nil }
@@ -72,11 +77,9 @@ func TestPersistingSource(t *testing.T) {
 		{"1password saves only on rotation", false, []string{"rt2/"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st := &memStore{caches: tc.caches}
-			p := &persistingSource{
-				ctx: context.Background(), base: tokens(), store: st,
-				creds: tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp},
-			}
+			creds := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp}
+			st := &memStore{caches: tc.caches, creds: &creds}
+			p := &persistingSource{ctx: context.Background(), base: tokens(), store: st, creds: creds}
 			for range 4 {
 				if _, err := p.Token(); err != nil {
 					t.Fatal(err)
@@ -150,10 +153,10 @@ func TestPersistingSourceSaveFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saveErr := errors.New("keychain locked")
-			st := &memStore{caches: tc.caches, saveErr: saveErr}
+			creds := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "9"}
+			st := &memStore{caches: tc.caches, saveErr: saveErr, creds: &creds}
 			tok := tc.tok
-			p := &persistingSource{ctx: context.Background(), base: &seqSource{&tok}, store: st,
-				creds: tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "9"}}
+			p := &persistingSource{ctx: context.Background(), base: &seqSource{&tok}, store: st, creds: creds}
 			if got, err := p.Token(); got != nil || !errors.Is(err, saveErr) {
 				t.Fatalf("Token() = %v, %v; want the save error", got, err)
 			}
@@ -200,10 +203,38 @@ func TestTokenSource(t *testing.T) {
 	})
 
 	t.Setenv(EnvToken, "")
-	t.Run("no client id", func(t *testing.T) {
-		_, err := TokenSource(ctx, config.AuthConfig{}, &memStore{})
+	t.Run("no client id with OAuth credentials", func(t *testing.T) {
+		st := &memStore{creds: &tokenstore.Credentials{RefreshToken: "rt"}}
+		_, err := TokenSource(ctx, config.AuthConfig{}, st)
 		if err == nil || errors.Is(err, ErrNotLoggedIn) {
 			t.Fatalf("err = %v, want a client_id error", err)
+		}
+	})
+	t.Run("nothing stored and no client id", func(t *testing.T) {
+		if _, err := TokenSource(ctx, config.AuthConfig{}, &memStore{}); !errors.Is(err, ErrNotLoggedIn) {
+			t.Fatalf("err = %v, want ErrNotLoggedIn", err)
+		}
+	})
+	t.Run("stored PAT needs no client id and is never refreshed", func(t *testing.T) {
+		st := &memStore{caches: true, creds: &tokenstore.Credentials{PersonalAccessToken: "pat", ClientSecret: "old-secret"}}
+		src, err := TokenSource(ctx, config.AuthConfig{}, st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src.Method != tokenstore.MethodPAT || src.FromEnv {
+			t.Fatalf("source = %+v, want a stored PAT", src)
+		}
+		for range 2 {
+			tok, err := src.Token()
+			if err != nil || tok.AccessToken != "pat" || tok.TokenType != "Bearer" || !tok.Expiry.IsZero() || tok.RefreshToken != "" {
+				t.Fatalf("Token() = %+v, %v", tok, err)
+			}
+		}
+		if len(st.saved) != 0 {
+			t.Fatalf("a PAT must never be saved back: %v", st.saved)
+		}
+		if h := src.UnauthorizedHint(); !strings.Contains(h, "auth login --pat") {
+			t.Fatalf("hint = %q, want the PAT login command", h)
 		}
 	})
 	t.Run("nothing stored", func(t *testing.T) {
@@ -233,4 +264,114 @@ func TestTokenSource(t *testing.T) {
 			t.Fatalf("unchanged token should not be saved: %v", st.saved)
 		}
 	})
+}
+
+func TestLoginHelp(t *testing.T) {
+	patHint := (&Source{Method: tokenstore.MethodPAT}).UnauthorizedHint()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string // substring; "" = not a login problem
+	}{
+		{"nil", nil, ""},
+		{"other", errors.New("boom"), ""},
+		{"403", &asana.Error{Status: 403}, ""},
+		{"not logged in", fmt.Errorf("x: %w", ErrNotLoggedIn), "auth login --pat"},
+		{"401 with hint", fmt.Errorf("ユーザー情報の取得: %w", &asana.Error{Status: 401, Hint: patHint}), patHint},
+		{"401 without hint", &asana.Error{Status: 401}, "auth login"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := LoginHelp(tc.err)
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Fatalf("LoginHelp(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// A running OAuth session must not overwrite a login made meanwhile in another process
+// (auth login --pat, another OAuth login): it switches to the same user's login instead.
+// After a logout it stops with ErrNotLoggedIn and does not save the old login back.
+func TestPersistingSourceAdoptsNewLogin(t *testing.T) {
+	exp := time.Now().Add(time.Hour)
+	ours := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "1"}
+	refreshed := func() *seqSource { return &seqSource{{AccessToken: "at2", RefreshToken: "rt1", Expiry: exp}} }
+	for _, tc := range []struct {
+		name    string
+		base    oauth2.TokenSource
+		stored  *tokenstore.Credentials // what another process saved meanwhile (nil: logged out)
+		want    string                  // access token now used ("" = ErrNotLoggedIn)
+		newBase bool                    // the OAuth source is rebuilt for the stored login
+	}{
+		{"PAT saved meanwhile (refresh)", refreshed(), &tokenstore.Credentials{PersonalAccessToken: "pat", UserGID: "1"}, "pat", false},
+		{"PAT saved meanwhile (invalid_grant)", errSource{&oauth2.RetrieveError{ErrorCode: "invalid_grant"}},
+			&tokenstore.Credentials{PersonalAccessToken: "pat", UserGID: "1"}, "pat", false},
+		{"other OAuth login saved meanwhile", refreshed(), &tokenstore.Credentials{RefreshToken: "rt9", AccessToken: "at9", Expiry: exp, UserGID: "1"}, "at9", true},
+		{"logged out meanwhile", refreshed(), nil, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &memStore{caches: true, creds: tc.stored}
+			var rebuilt bool
+			p := &persistingSource{ctx: context.Background(), base: tc.base, store: st, creds: ours,
+				newBase: func(c *tokenstore.Credentials) oauth2.TokenSource {
+					rebuilt = true
+					return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: c.AccessToken, RefreshToken: c.RefreshToken, Expiry: c.Expiry})
+				}}
+			for range 2 {
+				tok, err := p.Token()
+				if tc.want == "" {
+					if !errors.Is(err, ErrNotLoggedIn) {
+						t.Fatalf("Token() = %v, %v; want ErrNotLoggedIn", tok, err)
+					}
+					continue
+				}
+				if err != nil || tok.AccessToken != tc.want {
+					t.Fatalf("Token() = %v, %v; want %s", tok, err, tc.want)
+				}
+			}
+			if len(st.saved) != 0 {
+				t.Fatalf("the login made elsewhere must not be overwritten: saved %+v", st.saved)
+			}
+			if rebuilt != tc.newBase {
+				t.Fatalf("OAuth source rebuilt = %v, want %v", rebuilt, tc.newBase)
+			}
+			if tc.stored != nil && p.creds.UserGID != tc.stored.UserGID {
+				t.Fatalf("creds = %+v, want the stored login", p.creds)
+			}
+		})
+	}
+}
+
+// Another (or an unknown) user's login saved meanwhile is neither adopted nor overwritten:
+// the session stops with ErrLoginReplaced, so its caller rebuilds it and the next sync's
+// account check (sync.ErrAccountChanged) applies.
+func TestPersistingSourceRefusesOtherUser(t *testing.T) {
+	exp := time.Now().Add(time.Hour)
+	ours := tokenstore.Credentials{RefreshToken: "rt1", AccessToken: "at1", Expiry: exp, UserGID: "1"}
+	for _, tc := range []struct {
+		name   string
+		base   oauth2.TokenSource
+		stored tokenstore.Credentials
+	}{
+		{"other user's PAT (refresh)", &seqSource{{AccessToken: "at2", RefreshToken: "rt1", Expiry: exp}},
+			tokenstore.Credentials{PersonalAccessToken: "pat", UserGID: "2"}},
+		{"other user's OAuth (invalid_grant)", errSource{&oauth2.RetrieveError{ErrorCode: "invalid_grant"}},
+			tokenstore.Credentials{RefreshToken: "rt9", UserGID: "2"}},
+		{"unknown user", &seqSource{{AccessToken: "at2", RefreshToken: "rt1", Expiry: exp}},
+			tokenstore.Credentials{PersonalAccessToken: "pat"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stored := tc.stored
+			st := &memStore{caches: true, creds: &stored}
+			p := &persistingSource{ctx: context.Background(), base: tc.base, store: st, creds: ours,
+				newBase: func(*tokenstore.Credentials) oauth2.TokenSource { t.Fatal("must not adopt another user"); return nil }}
+			tok, err := p.Token()
+			if tok != nil || !errors.Is(err, ErrLoginReplaced) || LoginHelp(err) == "" {
+				t.Fatalf("Token() = %v, %v; want ErrLoginReplaced", tok, err)
+			}
+			if len(st.saved) != 0 || p.creds.UserGID != "1" {
+				t.Fatalf("saved %+v, creds %+v", st.saved, p.creds)
+			}
+		})
+	}
 }

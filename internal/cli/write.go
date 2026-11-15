@@ -94,7 +94,7 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 	if err != nil {
 		r.Error = err.Error()
 	} else {
-		r.Sent = push.Remaining == 0 && push.Failed == 0 && push.Conflicts == 0
+		r.Sent = push.Remaining == 0 && push.Failed == 0 && push.Conflicts == 0 && !push.InboxReadOnly
 	}
 	out := cmd.OutOrStdout()
 	r.Discarded = takeDiscards(cmd.Context(), st, out, !a.json)
@@ -112,6 +112,8 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 		return a.printJSON(r)
 	}
 	switch {
+	case push != nil && push.InboxReadOnly:
+		fmt.Fprintf(out, "%s。ただし Asana が受け付けなかったため、元に戻しました\n%s\n", done, sync.InboxReadOnlyMessage(a.cfg.Auth.Scopes))
 	case errors.Is(err, sync.ErrAccountChanged):
 		fmt.Fprintf(out, "%s（まだ送っていません）\n%v\n", done, accountChanged(cmd.Context(), st))
 	case dropped:
@@ -353,7 +355,112 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			_, err := st.UploadAttachmentLocal(cmd.Context(), args[0], args[1], filepath.Join(config.CacheDir(), "attachments"), time.Now())
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})
-	return []*cobra.Command{like, follow, project, duplicate, attach}
+	field := a.writeCommand("field <gid> <フィールド> [値]", "カスタムフィールドを設定する（値なし / --clear で空に）", cobra.RangeArgs(2, 3),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			ctx := cmd.Context()
+			f, err := st.ResolveCustomField(ctx, args[0], args[1])
+			if err != nil {
+				return "", "", err
+			}
+			var input any
+			if len(args) == 3 {
+				input = args[2]
+			}
+			if clear, _ := cmd.Flags().GetBool("clear"); clear {
+				input = nil
+			} else if input == nil {
+				return "", "", fmt.Errorf("値を指定してください（空にするなら --clear）")
+			}
+			value, err := st.ParseCustomFieldValue(ctx, f.GID, input, time.Now())
+			if err != nil {
+				return "", "", err
+			}
+			display, err := st.SetCustomFieldLocal(ctx, args[0], f.GID, value, time.Now())
+			if err != nil {
+				return "", "", err
+			}
+			if display == "" {
+				return args[0], fmt.Sprintf("「%s」を空にしました", f.Name), nil
+			}
+			return args[0], fmt.Sprintf("「%s」を「%s」にしました", f.Name, display), nil
+		})
+	field.Flags().Bool("clear", false, "値を空にする")
+	field.Example = `  asana-tui task field 1203455468597469 優先度 高
+  asana-tui task field 1203455468597469 見積もり 3.5
+  asana-tui task field 1203455468597469 ラベル "バグ,UI"     # 複数選択はカンマ区切り
+  asana-tui task field 1203455468597469 締切 +7d
+  asana-tui task field 1203455468597469 優先度 --clear`
+	depend := a.writeCommand("depend <gid> [--add 待つタスク]... [--remove 待つタスク]... [--add-dependent タスク]... [--remove-dependent タスク]...",
+		"依存関係を追加 / 解除する（待つタスク・待たれるタスクを gid で）", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			ctx := cmd.Context()
+			type change struct {
+				task, dep string
+				add       bool
+			}
+			var changes []change
+			for _, f := range []struct {
+				flag       string
+				add, swapd bool
+			}{{"add", true, false}, {"remove", false, false}, {"add-dependent", true, true}, {"remove-dependent", false, true}} {
+				gids, _ := cmd.Flags().GetStringSlice(f.flag)
+				for _, g := range gids {
+					other, err := st.ResolveTaskGID(ctx, g)
+					if err != nil {
+						return "", "", fmt.Errorf("--%s: %w", f.flag, err)
+					}
+					c := change{args[0], other, f.add}
+					if f.swapd {
+						c.task, c.dep = other, args[0]
+					}
+					changes = append(changes, c)
+				}
+			}
+			if len(changes) == 0 {
+				return "", "", errors.New("--add / --remove / --add-dependent / --remove-dependent のどれかを指定してください")
+			}
+			for _, c := range changes {
+				if err := st.SetDependencyLocal(ctx, c.task, c.dep, c.add, time.Now()); err != nil {
+					return "", "", err
+				}
+			}
+			return args[0], "依存関係を変更しました", nil
+		})
+	depend.Flags().StringSlice("add", nil, "このタスクが待つタスク（gid）を追加")
+	depend.Flags().StringSlice("remove", nil, "このタスクが待つタスク（gid）を外す")
+	depend.Flags().StringSlice("add-dependent", nil, "このタスクを待つタスク（gid）を追加")
+	depend.Flags().StringSlice("remove-dependent", nil, "このタスクを待つタスク（gid）を外す")
+
+	kind := a.writeCommand("type <gid> <task|milestone|approval>", "タスクの種類を変える（タスク / マイルストーン / 承認）", cobra.ExactArgs(2),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			v, err := store.ParseSubtype(args[1])
+			if err != nil {
+				return "", "", err
+			}
+			return args[0], "種類を「" + store.SubtypeLabel(v) + "」にしました",
+				st.UpdateTaskLocal(cmd.Context(), args[0], map[string]any{"resource_subtype": v}, time.Now())
+		})
+
+	approve := a.writeCommand("approve <gid> [approved|rejected|changes_requested|pending]", "承認タスクの承認の状態を変える（省略時は承認）", cobra.RangeArgs(1, 2),
+		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+			v := "approved"
+			if len(args) == 2 {
+				var err error
+				if v, err = store.ParseApprovalStatus(args[1]); err != nil {
+					return "", "", err
+				}
+			}
+			d, err := st.GetTask(cmd.Context(), args[0])
+			if err != nil {
+				return "", "", err
+			}
+			if d.ResourceSubtype != "approval" {
+				return "", "", fmt.Errorf("「%s」は承認タスクではありません（task type %s approval で変えられます）", d.Name, args[0])
+			}
+			return args[0], "承認の状態を「" + store.ApprovalLabel(v) + "」にしました",
+				st.UpdateTaskLocal(cmd.Context(), args[0], map[string]any{"approval_status": v}, time.Now())
+		})
+	return []*cobra.Command{like, follow, project, duplicate, attach, field, depend, kind, approve}
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {
@@ -559,8 +666,8 @@ func (a *app) outboxCmd() *cobra.Command {
 			}
 			for _, op := range ops {
 				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, store.OpLabel(op), store.DescribeOp(op))
-				for k, v := range op.Conflict {
-					fmt.Fprintf(cmd.OutOrStdout(), "      %s: こちら=%v / Asana=%v\n", store.FieldLabel(k), op.Payload[k], v)
+				for _, c := range store.ConflictLines(op) {
+					fmt.Fprintf(cmd.OutOrStdout(), "      %s\n", c)
 				}
 				if heading, text := store.OpNote(op); text != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", heading, text)

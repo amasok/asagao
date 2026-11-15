@@ -11,7 +11,10 @@ import (
 	"os"
 	"slices"
 
+	"golang.org/x/oauth2"
+
 	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -26,6 +29,9 @@ type PushResult struct {
 	// Discarded lists changes dropped because what they change was deleted in Asana. They
 	// are also kept for the front ends to show once (store.PendingDiscards).
 	Discarded []store.Discard `json:"discarded,omitempty"`
+	// InboxReadOnly is set when Asana refused to mark notifications read / unread (no
+	// notifications:write scope): those changes were dropped (see pushMarkNotification).
+	InboxReadOnly bool `json:"inbox_read_only,omitempty"`
 }
 
 // ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
@@ -39,6 +45,7 @@ const (
 	sent       outcome = iota
 	conflicted         // left for the user to resolve
 	followUp           // sent; the entry now holds a follow-up change to send right away
+	dropped            // not sent and removed (e.g. Asana refuses read / unread changes)
 )
 
 // sentNotSavedError wraps a failure to record a change that Asana already accepted.
@@ -81,8 +88,36 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 		return res, err
 	}
 	defer unlock()
+	if err := s.checkPushAccount(ctx); err != nil {
+		res.Remaining, _, _, _ = s.Store.OutboxCounts(context.WithoutCancel(ctx))
+		return res, err
+	}
 	res, _, err = s.pushLocked(ctx, &dropState{})
 	return res, err
+}
+
+// checkPushAccount makes sure, before Push sends anything, that the API acts as the user
+// the local data was synced with: changes queued by one account must never be sent as
+// another (after a login as someone else). Run checks this itself at its start. Before the
+// first sync there is no account to compare with. Once confirmed, it is not asked again
+// for this Syncer: its token source never switches to another user (auth.ErrLoginReplaced).
+func (s *Syncer) checkPushAccount(ctx context.Context) error {
+	if s.accountOK.Load() {
+		return nil
+	}
+	want, err := s.Store.SyncState(ctx, store.KeyMeGID)
+	if err != nil || want == "" {
+		return err
+	}
+	me, err := s.API.Me(ctx)
+	if err != nil {
+		return err // offline or logged out: nothing could be sent anyway
+	}
+	if me.GID != want {
+		return fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
+	}
+	s.accountOK.Store(true)
+	return nil
 }
 
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
@@ -115,6 +150,7 @@ func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops 
 	res.Conflicts += more.Conflicts
 	res.Failed += more.Failed
 	res.Discarded = append(res.Discarded, more.Discarded...)
+	res.InboxReadOnly = res.InboxReadOnly || more.InboxReadOnly
 	res.Remaining = more.Remaining
 	return res, last, err
 }
@@ -188,6 +224,11 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 						return res, last, err
 					}
 					sendIt = false
+				case asana.IsUnauthorized(err): // the token is rejected: keep it for after a new login
+					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
+						return res, last, rerr
+					}
+					return res, last, err
 				case isRejected(err): // e.g. not ours (403)
 					if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
 						return res, last, err
@@ -233,21 +274,29 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 				return res, last, err
 			}
 			op.Attempts++
-			out, err = s.send(ctx, *op)
+			if op.Kind == store.OpMarkNotification {
+				var batched int // entries sent along with this one, whatever happened to it
+				out, batched, err = s.pushMarkNotification(ctx, *op)
+				res.Sent += batched
+			} else {
+				out, err = s.send(ctx, *op)
+			}
 			switch {
 			case err == nil:
 				switch {
 				case out == conflicted:
 					res.Conflicts++
+				case out == dropped:
+					res.InboxReadOnly = true
 				case !wasFollowUp:
 					res.Sent++ // a follow-up is part of the change already counted
 				}
 				again = out == followUp
-			case isNetworkError(err) || isRateLimited(err):
+			case isNetworkError(err) || isRateLimited(err) || asana.IsUnauthorized(err):
 				if err := s.holdBack(ctx, *op, err); err != nil {
 					return res, last, err
 				}
-				return res, last, err // offline or cancelled: keep the rest for later
+				return res, last, err // offline, cancelled or logged out: keep the rest for later
 			case isNotFound(err): // what it changes was deleted in Asana
 				if err := s.dropGone(ctx, *op, err, drops); err != nil {
 					return res, last, err
@@ -279,7 +328,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op store.Op) (bool, error) 
 	switch op.Kind {
 	case store.OpCreateTask:
 		gid, _ = op.Payload["parent"].(string)
-	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection:
+	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection, store.OpMarkNotification:
 		return false, nil
 	}
 	if !store.IsLocalGID(gid) {
@@ -298,6 +347,8 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 	switch op.Kind {
 	case store.OpUpdateTask:
 		return s.pushUpdate(ctx, op)
+	case store.OpSetCustomField:
+		return s.pushCustomField(ctx, op)
 	case store.OpRenameSection:
 		return s.pushRenameSection(ctx, op)
 	case store.OpCreateTask:
@@ -310,12 +361,17 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 		err = s.pushTag(ctx, op)
 	case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
 		err = s.pushRelation(ctx, op)
+	case store.OpAddDependency, store.OpRemoveDependency:
+		err = s.pushDependency(ctx, op)
 	case store.OpDuplicateTask:
 		err = s.pushDuplicate(ctx, op)
 	case store.OpUploadAttachment:
 		err = s.pushUpload(ctx, op)
 	case store.OpCreateStatus:
 		err = s.pushStatus(ctx, op)
+	case store.OpMarkNotification:
+		out, _, err := s.pushMarkNotification(ctx, op)
+		return out, err
 	default:
 		err = &asana.Error{Status: 400}
 	}
@@ -324,9 +380,11 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 
 // holdBack handles a network error while sending op: it goes back in the queue, to be
 // verified first if Asana may have received it and sending it twice would duplicate it.
+// A 429 or a 401 (the token is rejected, e.g. an expired PAT) was not processed: the entry
+// waits, unchanged, for the next push (after the user logs in again).
 func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
-	if requestNotSent(cause) || isRateLimited(cause) {
+	if requestNotSent(cause) || isRateLimited(cause) || asana.IsUnauthorized(cause) {
 		return s.Store.ReleaseNotSent(ctx, op.ID)
 	}
 	safe, err := s.Store.SafeToResend(ctx, op)
@@ -389,7 +447,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 	// account or organization than the one the store was synced with). Make sure it is
 	// the same user before dropping anything.
 	if err := s.checkAccount(ctx, st); err != nil {
-		if isTemporary(err) {
+		if isTemporary(err) || asana.IsUnauthorized(err) {
 			if rerr := s.Store.ReleaseOp(context.WithoutCancel(ctx), op.ID); rerr != nil {
 				return rerr
 			}
@@ -420,7 +478,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case store.OpRenameSection, store.OpCreateStatus:
+	case store.OpRenameSection, store.OpCreateStatus, store.OpMarkNotification:
 		var d store.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []store.Discard{d}
@@ -451,6 +509,10 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 				return ferr
 			}
 		} else {
+			if op.Kind == store.OpAddDependency || op.Kind == store.OpRemoveDependency {
+				// the other task is missing, or private to someone else
+				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			}
 			var d store.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 			discards = []store.Discard{d}
@@ -485,10 +547,17 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 	if st.checked {
 		return st.account
 	}
+	if s.accountOK.Load() { // confirmed by this Syncer already (Push or Run)
+		st.checked = true
+		return nil
+	}
 	me, err := s.API.Me(ctx)
 	if err != nil {
 		if isTemporary(err) {
 			return err // not checked: try again next time
+		}
+		if asana.IsUnauthorized(err) {
+			return err // the token is rejected (e.g. an expired PAT): log in again, not reset
 		}
 		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
 		return st.account
@@ -534,8 +603,12 @@ func isNetworkError(err error) bool {
 }
 
 // requestNotSent reports whether a network error happened before the request could reach
-// the server (no connection could be made).
+// the server (no connection could be made, or no token: logged out, refresh failed).
 func requestNotSent(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if errors.Is(err, auth.ErrNotLoggedIn) || errors.Is(err, auth.ErrLoginReplaced) || errors.As(err, &retrieveErr) {
+		return true
+	}
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && (opErr.Op == "dial" || opErr.Op == "proxyconnect") {
 		return true
@@ -558,7 +631,10 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 		if k == "html_notes" {
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
-		sv := current[k]
+		sv, known := current[k]
+		if !known {
+			continue // not fetched (Task.Partial): nothing to compare with
+		}
 		if !same(sv, op.Base[k]) && !same(sv, local) {
 			conflicts[k] = sv
 		}
@@ -575,6 +651,64 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 	}
 	s.refresh(ctx, *t)
 	return sent, nil
+}
+
+// pushCustomField sets one custom field, after checking that nobody changed it in Asana
+// since it was edited here. A field the task no longer has is treated like a 404 (the
+// change is dropped and the user told).
+func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, error) {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return sent, err
+	}
+	if store.IsLocalGID(task) {
+		return sent, &asana.Error{Status: 404} // its create failed
+	}
+	field, _ := op.Payload["field"].(string)
+	server, err := s.API.Task(ctx, task)
+	if err != nil {
+		return sent, err
+	}
+	local := op.Payload["value"]
+	if !server.Partial { // else Asana gave no custom fields to compare with: just send
+		sv, display, found := store.ServerCustomField(server, field)
+		if !found {
+			return sent, &asana.Error{Status: http.StatusNotFound} // removed from the task's projects
+		}
+		if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
+			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
+		}
+	}
+	fieldType, _ := op.Payload["type"].(string)
+	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: store.CustomFieldAPIValue(fieldType, local)}})
+	var apiErr *asana.Error
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
+		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
+		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
+	}
+	if err != nil {
+		return sent, err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sent, sentNotSaved(err)
+	}
+	s.refresh(ctx, *t)
+	return sent, nil
+}
+
+// normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
+func normalize(v any) any {
+	if l, ok := v.([]any); ok {
+		out := make([]string, 0, len(l))
+		for _, e := range l {
+			out = append(out, fmt.Sprint(e))
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return v
 }
 
 // refresh stores a task as Asana returned it after a change. The change is already
@@ -742,6 +876,31 @@ func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
 		err = s.API.AddProject(ctx, task, project, section)
 	case store.OpRemoveProject:
 		err = s.API.RemoveProject(ctx, task, project)
+	}
+	if err != nil {
+		return err
+	}
+	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
+}
+
+// pushDependency adds or removes a dependency. Both are harmless to repeat: Asana adds only
+// tasks that are not dependencies yet.
+func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	dep, _ := op.Payload["dependency"].(string)
+	if dep, err = s.Store.RealGID(ctx, dep); err != nil {
+		return err
+	}
+	if store.IsLocalGID(task) || store.IsLocalGID(dep) {
+		return &asana.Error{Status: 404} // its create failed
+	}
+	if op.Kind == store.OpAddDependency {
+		err = s.API.AddDependencies(ctx, task, []string{dep})
+	} else {
+		err = s.API.RemoveDependencies(ctx, task, []string{dep})
 	}
 	if err != nil {
 		return err

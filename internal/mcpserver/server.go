@@ -9,14 +9,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	stdsync "sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
@@ -32,7 +35,8 @@ const instructions = `Asana tasks from a local cache that asana-tui keeps in syn
   the response says whether the change was sent.
 - Task and project arguments accept a gid. Projects also accept a name or a unique part of it.
 - Dates are YYYY-MM-DD, or relative: today, tomorrow, yesterday, +7d, -3d.
-- Task names and comments are often in Japanese; search_tasks matches substrings.`
+- Task names and comments are often in Japanese; search_tasks matches substrings.
+- list_inbox shows my Asana inbox notifications (what others did on my tasks); mark_notifications marks them read.`
 
 // Server holds the dependencies of the MCP tools.
 type Server struct {
@@ -43,8 +47,10 @@ type Server struct {
 	ReadOnly bool
 	// CacheDir is where files to upload are copied before sending.
 	CacheDir string
-	Version  string
-	Now      func() time.Time
+	// AuthScopes is config auth.scopes (to explain how to enable the inbox).
+	AuthScopes []string
+	Version    string
+	Now        func() time.Time
 
 	mu     stdsync.Mutex
 	syncer *sync.Syncer
@@ -86,6 +92,8 @@ func (s *Server) New() *mcp.Server {
 		Description: "Send queued local changes to Asana, then pull changes from Asana into the cache " +
 			"(incremental; full=true re-fetches everything and removes deleted tasks)."}, s.sync)
 
+	s.addInboxTools(srv)
+
 	if !s.ReadOnly {
 		write := func(destructive bool) *mcp.ToolAnnotations {
 			return &mcp.ToolAnnotations{DestructiveHint: ptr(destructive), OpenWorldHint: ptr(true)}
@@ -96,7 +104,8 @@ func (s *Server) New() *mcp.Server {
 				"With parent it is created as a subtask of that task."}, s.createTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
-				"assignee, tags, followers, likes or the projects it is in. Only the fields you pass are changed. " +
+				"assignee, tags, followers, likes, custom fields, dependencies (tasks it waits for / that wait for it), " +
+				"its type (milestone / approval), an approval's status, or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
@@ -134,6 +143,7 @@ type TaskFilterInput struct {
 	DueAfter   string `json:"due_after,omitempty" jsonschema:"due on or after this date"`
 	Overdue    bool   `json:"overdue,omitempty" jsonschema:"only incomplete tasks whose due date has passed"`
 	Tag        string `json:"tag,omitempty" jsonschema:"tag name or gid"`
+	Field      string `json:"field,omitempty" jsonschema:"custom field filter: \"name=value\" (option name or value text), or \"name\" for any value"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"maximum number of tasks (default 100)"`
 	// recent updates (an inbox substitute)
 	ModifiedWithinDays int `json:"modified_within_days,omitempty" jsonschema:"only tasks modified in the last N days, newest first (what changed recently)"`
@@ -216,19 +226,26 @@ type CreateTaskInput struct {
 }
 
 type UpdateTaskInput struct {
-	GID             string   `json:"gid" jsonschema:"task gid"`
-	Completed       *bool    `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
-	Name            *string  `json:"name,omitempty" jsonschema:"new name"`
-	Notes           *string  `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
-	DueOn           *string  `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
-	Assignee        *string  `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
-	AddTags         []string `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
-	RemoveTags      []string `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
-	Liked           *bool    `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
-	AddFollowers    []string `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
-	RemoveFollowers []string `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
-	AddProjects     []string `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
-	RemoveProjects  []string `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
+	GID                string         `json:"gid" jsonschema:"task gid"`
+	Completed          *bool          `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
+	Name               *string        `json:"name,omitempty" jsonschema:"new name"`
+	Notes              *string        `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
+	DueOn              *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	Assignee           *string        `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
+	AddTags            []string       `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
+	RemoveTags         []string       `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
+	Liked              *bool          `json:"liked,omitempty" jsonschema:"true to like the task, false to unlike"`
+	AddFollowers       []string       `json:"add_followers,omitempty" jsonschema:"\"me\", user names or gids to add as followers"`
+	RemoveFollowers    []string       `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
+	AddProjects        []string       `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
+	RemoveProjects     []string       `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
+	ResourceSubtype    *string        `json:"resource_subtype,omitempty" jsonschema:"task type: default_task, milestone or approval"`
+	ApprovalStatus     *string        `json:"approval_status,omitempty" jsonschema:"for an approval task: pending, approved, rejected or changes_requested"`
+	AddDependencies    []string       `json:"add_dependencies,omitempty" jsonschema:"gids of tasks this task should wait for (be blocked by)"`
+	RemoveDependencies []string       `json:"remove_dependencies,omitempty" jsonschema:"gids of tasks this task should stop waiting for"`
+	AddDependents      []string       `json:"add_dependents,omitempty" jsonschema:"gids of tasks that should wait for this task"`
+	RemoveDependents   []string       `json:"remove_dependents,omitempty" jsonschema:"gids of tasks that should stop waiting for this task"`
+	CustomFields       map[string]any `json:"custom_fields,omitempty" jsonschema:"custom fields to set, by field name or gid (see get_task custom_fields): an option name for enum, a list of option names for multi_enum, a number, text, a date (YYYY-MM-DD, +7d), user names or gids for people; null or empty string clears"`
 }
 
 type DuplicateTaskInput struct {
@@ -319,7 +336,7 @@ func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee
 	}
 	return s.Store.BuildFilter(ctx, store.FilterSpec{
 		Assignee: in.Assignee, DefaultAssignee: defaultAssignee,
-		Project: in.Project, Section: in.Section, Tag: in.Tag,
+		Project: in.Project, Section: in.Section, Tag: in.Tag, Field: in.Field,
 		DueBefore: in.DueBefore, DueAfter: in.DueAfter,
 		Completion: in.Completion, DefaultCompleted: defaultCompleted,
 		Overdue: in.Overdue, ModifiedWithinDays: in.ModifiedWithinDays, Limit: limit,
@@ -409,6 +426,10 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 		return nil, out, err
 	}
 	if out.Result, err = syncer.Run(ctx, in.Full); err != nil {
+		s.dropSyncerOn(err)
+		if help := auth.LoginHelp(err); help != "" {
+			return nil, out, fmt.Errorf("sync failed: not logged in to Asana. Tell the user to log in again (they must run it in a terminal): %s", help)
+		}
 		if errors.Is(err, sync.ErrAccountChanged) {
 			return nil, out, fmt.Errorf("sync stopped: %s", s.accountChangedNote(ctx))
 		}
@@ -492,6 +513,20 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if in.Liked != nil {
 		changes["liked"] = *in.Liked
 	}
+	if in.ResourceSubtype != nil {
+		v, err := store.ParseSubtype(*in.ResourceSubtype)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("resource_subtype: %w", err)
+		}
+		changes["resource_subtype"] = v
+	}
+	if in.ApprovalStatus != nil {
+		v, err := store.ParseApprovalStatus(*in.ApprovalStatus)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("approval_status: %w", err)
+		}
+		changes["approval_status"] = v
+	}
 	if in.DueOn != nil {
 		due, err := dates.Parse(*in.DueOn, now)
 		if err != nil {
@@ -526,11 +561,51 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if err != nil {
 		return nil, WriteOutput{}, fmt.Errorf("remove_projects: %w", err)
 	}
-	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects) == 0 {
+	type depChange struct {
+		task, dep string
+		add       bool
+	}
+	var deps []depChange
+	for _, d := range []struct {
+		name    string
+		gids    []string
+		add, of bool // of: the given tasks wait for this one
+	}{{"add_dependencies", in.AddDependencies, true, false}, {"remove_dependencies", in.RemoveDependencies, false, false},
+		{"add_dependents", in.AddDependents, true, true}, {"remove_dependents", in.RemoveDependents, false, true}} {
+		for _, g := range d.gids {
+			other, err := s.Store.ResolveTaskGID(ctx, g)
+			if err != nil {
+				return nil, WriteOutput{}, fmt.Errorf("%s: %w", d.name, err)
+			}
+			c := depChange{in.GID, other, d.add}
+			if d.of {
+				c.task, c.dep = other, in.GID
+			}
+			deps = append(deps, c)
+		}
+	}
+	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields)+len(deps) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
 	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
 		return nil, WriteOutput{}, err
+	}
+	// Resolve every custom field value before changing anything.
+	type fieldValue struct {
+		gid   string
+		value any
+	}
+	var fields []fieldValue
+	for _, name := range slices.Sorted(maps.Keys(in.CustomFields)) {
+		f, err := s.Store.ResolveCustomField(ctx, in.GID, name)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("custom_fields: %w", err)
+		}
+		v, err := s.Store.ParseCustomFieldValue(ctx, f.GID, in.CustomFields[name], now)
+		if err != nil {
+			return nil, WriteOutput{}, fmt.Errorf("custom_fields: %w", err)
+		}
+		fields = append(fields, fieldValue{f.GID, v})
 	}
 
 	if len(changes) > 0 {
@@ -540,6 +615,16 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	}
 	if err := s.Store.ApplyTagEdit(ctx, in.GID, tags, now); err != nil {
 		return nil, WriteOutput{}, err
+	}
+	for _, f := range fields {
+		if _, err := s.Store.SetCustomFieldLocal(ctx, in.GID, f.gid, f.value, now); err != nil {
+			return nil, WriteOutput{}, err
+		}
+	}
+	for _, d := range deps {
+		if err := s.Store.SetDependencyLocal(ctx, d.task, d.dep, d.add, now); err != nil {
+			return nil, WriteOutput{}, err
+		}
 	}
 	for _, f := range []struct {
 		users  []string
@@ -620,11 +705,16 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	syncer, err := s.getSyncer(ctx)
 	if err != nil {
 		out.Note = "saved locally; will be sent on the next sync (" + err.Error() + ")"
+		if help := auth.LoginHelp(err); help != "" {
+			out.Note = "saved locally but NOT sent: not logged in to Asana. Tell the user to log in (in a terminal); " +
+				"the change is sent by the next sync after that: " + help
+		}
 		return out
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	res, err := syncer.Push(ctx)
+	s.dropSyncerOn(err)
 	out.Discarded = res.Discarded
 	if len(res.Discarded) > 0 {
 		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
@@ -632,10 +722,15 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	switch {
 	case errors.Is(err, sync.ErrAccountChanged):
 		out.Note += "saved locally but NOT sent: " + s.accountChangedNote(ctx)
+	case auth.LoginHelp(err) != "":
+		out.Note += "saved locally but NOT sent: Asana rejected the login token. Tell the user to log in again (in a terminal); " +
+			"the change is sent by the next sync after that: " + auth.LoginHelp(err)
 	case errors.Is(err, sync.ErrPushBusy):
 		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
 	case err != nil:
 		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
+	case res.InboxReadOnly:
+		out.Note += "Asana refused to mark notifications read / unread, so the change was undone: " + sync.InboxReadOnlyMessage(s.AuthScopes)
 	case res.Conflicts > 0 || res.Failed > 0:
 		out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
 	default:
@@ -678,6 +773,17 @@ func (s *Server) getSyncer(ctx context.Context) (*sync.Syncer, error) {
 	}
 	s.syncer = syncer
 	return syncer, nil
+}
+
+// dropSyncerOn forgets the syncer after a login problem or another account, so the next
+// call builds it again and picks up a login made meanwhile (asana-tui auth login).
+func (s *Server) dropSyncerOn(err error) {
+	if auth.LoginHelp(err) == "" && !errors.Is(err, sync.ErrAccountChanged) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.syncer = nil
 }
 
 func ptr[T any](v T) *T { return &v }

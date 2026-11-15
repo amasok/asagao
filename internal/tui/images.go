@@ -75,7 +75,7 @@ func (m *Model) viewImages() tea.Cmd {
 	}
 	syncer := m.syncer
 	if syncer == nil {
-		syncer = &sync.Syncer{Store: m.deps.Store} // offline: cached files only
+		syncer = &sync.Syncer{Store: m.deps.Store, CacheDir: m.deps.CacheDir} // offline: cached files only
 	}
 	taskGID := d.GID
 	m.status = fmt.Sprintf("画像を準備しています（%d 件）…", len(images))

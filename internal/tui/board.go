@@ -199,7 +199,10 @@ func (m *Model) cardLine(t *store.TaskSummary, w int, today string, selected boo
 		check = "☑"
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
-	name := t.Name
+	name := t.Name + fieldBadges(t)
+	if badges := store.TaskBadges(*t); badges != "" {
+		name = t.Name + " " + badges + fieldBadges(t)
+	}
 	if t.Pending {
 		name += " ↑"
 	}
@@ -258,6 +261,13 @@ const (
 	pickMembers
 	pickArchive
 	pickReset
+	pickField       // an enum custom field (fields.go)
+	pickFieldMulti  // a multi_enum custom field: toggles
+	pickFieldFilter // filter by a custom field option
+	pickSubtype     // task type (deps.go)
+	pickApproval    // approval status
+	pickDepAction   // open / remove a linked task
+	pickDepTarget   // a task to link
 )
 
 type pickerItem struct {
@@ -273,6 +283,9 @@ type picker struct {
 	// for pickSection
 	task    store.TaskSummary
 	project string
+	field   store.CustomFieldView // pickField, pickFieldMulti
+	// pickDepAction, pickDepTarget: the chosen task waits for p.task (else p.task waits for it)
+	dependents bool
 }
 
 type tagsLoadedMsg struct {
@@ -374,14 +387,27 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.toggleProject(p.task, item)
 		case pickMembers:
 			return m, m.toggleMember(p.project, item)
+		case pickFieldMulti:
+			return m, m.toggleFieldOption(p, item)
 		}
 		if key == "space" {
 			return m, nil
 		}
 		m.picker = nil
+		if cmd, ok := m.handleDepPicker(p, item); ok {
+			return m, cmd
+		}
 		switch p.kind {
 		case pickDayTask:
 			return m, m.openTaskDetail(item.value)
+		case pickField:
+			var value any
+			if item.value != "" {
+				value = item.value
+			}
+			return m, m.setField(p.task, p.field, value, false)
+		case pickFieldFilter:
+			return m, m.applyFieldFilter(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickReset:
@@ -454,8 +480,8 @@ func (m *Model) viewKey(key string) tea.Cmd {
 			m.status = "検索中は表示を切り替えられません（esc で検索を解除）"
 			return nil
 		}
-		if m.currentScope().kind == scopeRecent {
-			m.status = "最近の更新はリスト表示だけです"
+		if k := m.currentScope().kind; k == scopeRecent || k == scopeInbox {
+			m.status = m.currentScope().name + "はリスト表示だけです"
 			return nil
 		}
 		selected := m.selectedTask()
