@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,14 +49,6 @@ func TestStoreReadsAreTerminalSafe(t *testing.T) {
 	if d.Notes != "本文]52;c;ZXZpbA==_Ga=T;AAAA\\2J\n2行目" {
 		t.Errorf("notes = %q", d.Notes)
 	}
-
-	// JSON kept in TEXT columns: escapes are removed too, so decoding it is safe.
-	if err := s.SetSyncState(ctx, "k", `{"name":"x\u001b]52;c;Zm9v\u0007","n":"a\nb"}`); err != nil {
-		t.Fatal(err)
-	}
-	if v, _ := s.SyncState(ctx, "k"); strings.Contains(v, `\u001b`) || strings.Contains(v, `\u0007`) || !strings.Contains(v, `x]52;c;Zm9v`) {
-		t.Errorf("json = %q", v)
-	}
 }
 
 // Plain text that only mentions an escape (`\u001b[31m` written as characters) is not JSON
@@ -76,5 +69,54 @@ func TestStoreKeepsLiteralEscapeTextInPlainText(t *testing.T) {
 	}
 	if want := strings.TrimSuffix(notes, "\r"); d.Notes != want { // only the raw \r goes
 		t.Errorf("notes = %q, want %q", d.Notes, want)
+	}
+}
+
+// Notes that are JSON as a whole are text all the same: an escape written in them stays.
+func TestStoreKeepsEscapesInJSONLikeNotes(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for i, notes := range []string{`"a\u001b"`, `{"color":"\u001b[31m"}`, `["\u009b"]`} {
+		gid := fmt.Sprintf("j%d", i)
+		if err := s.UpsertTasks(ctx, []asana.Task{{GID: gid, Name: notes, Notes: notes}}); err != nil {
+			t.Fatal(err)
+		}
+		d, err := s.GetTask(ctx, gid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Name != notes || d.Notes != notes {
+			t.Errorf("got name %q notes %q, want %q", d.Name, d.Notes, notes)
+		}
+	}
+}
+
+// JSON columns are decoded with termsafe.Unmarshal: a custom field value that Asana sent
+// with ESC in it (stored as the JSON string "...\u001b...") comes out without it.
+func TestStoreCustomFieldValueIsTerminalSafe(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	val := "値" + evil
+	if err := s.UpsertTasks(ctx, []asana.Task{{GID: "f1", Name: "フィールド",
+		CustomFields: []asana.CustomField{{GID: "cf", Name: "メモ", ResourceSubtype: "text", TextValue: &val}}}}); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := s.db.QueryRowContext(ctx, "SELECT value FROM task_custom_fields WHERE task_gid = 'f1'").Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stored, `\u001b`) {
+		t.Fatalf("the column should hold the escape (that is the case under test): %q", stored)
+	}
+	d, err := s.GetTask(ctx, "f1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.CustomFields) != 1 {
+		t.Fatalf("fields = %+v", d.CustomFields)
+	}
+	f := d.CustomFields[0]
+	if v, _ := f.Value.(string); v != "値]52;c;ZXZpbA==_Ga=T;AAAA\\2J" || !termsafe.Safe(f.Display) {
+		t.Errorf("value %q display %q", f.Value, f.Display)
 	}
 }

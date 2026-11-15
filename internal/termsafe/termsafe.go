@@ -9,9 +9,7 @@
 package termsafe
 
 import (
-	"encoding/json"
 	"io"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -94,48 +92,4 @@ func incompleteTail(b []byte) int {
 		}
 	}
 	return len(b)
-}
-
-// JSON is String for JSON text: it also removes control characters written as escapes inside
-// its strings (\u001b, \u009b, \b, \f, \r; \n, \t and \u000a/\u0009 stay), so decoding the
-// result cannot produce them. Text that is not valid JSON gets String only.
-func JSON(s string) string {
-	s = String(s)
-	if !strings.Contains(s, `\`) || !json.Valid([]byte(s)) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	inString := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !inString {
-			inString = c == '"'
-			b.WriteByte(c)
-			continue
-		}
-		switch c {
-		case '"':
-			inString = false
-			b.WriteByte(c)
-		case '\\': // valid JSON: a complete escape follows
-			switch s[i+1] {
-			case 'b', 'f', 'r':
-				i++
-			case 'u':
-				if r, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil && unsafeRune(rune(r)) {
-					i += 5
-					continue
-				}
-				b.WriteString(s[i : i+6])
-				i += 5
-			default:
-				b.WriteString(s[i : i+2])
-				i++
-			}
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
 }

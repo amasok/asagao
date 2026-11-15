@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // Offline editing: every write is applied to the local tables immediately and recorded in
@@ -843,7 +844,7 @@ func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
 			rows.Close()
 			return err
 		}
-		if err := json.Unmarshal([]byte(p), &e.payload); err != nil {
+		if err := termsafe.Unmarshal([]byte(p), &e.payload); err != nil {
 			rows.Close()
 			return err
 		}
@@ -983,7 +984,7 @@ func unmarshalOp(op *Op, payload, base, conflict string) error {
 	}{{payload, &op.Payload}, {base, &op.Base}, {conflict, &op.Conflict}} {
 		*f.dst = map[string]any{}
 		if f.src != "" {
-			if err := json.Unmarshal([]byte(f.src), f.dst); err != nil {
+			if err := termsafe.Unmarshal([]byte(f.src), f.dst); err != nil {
 				return fmt.Errorf("outbox %d: %w", op.ID, err)
 			}
 		}

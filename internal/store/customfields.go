@@ -14,6 +14,7 @@ import (
 
 	"github.com/amasok/asana-tui/internal/asana"
 	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // Custom fields. Values are kept in the form Asana accepts when setting them (PUT
@@ -347,7 +348,7 @@ func loadFieldDefs(ctx context.Context, q dbQuerier) (map[string]fieldDef, error
 		}
 		if options != "" {
 			d.OptionsKnown = true
-			if err := json.Unmarshal([]byte(options), &d.Options); err != nil {
+			if err := termsafe.Unmarshal([]byte(options), &d.Options); err != nil {
 				return nil, fmt.Errorf("custom field %s: %w", d.GID, err)
 			}
 		}
@@ -402,7 +403,7 @@ func (d fieldDef) view(value any, display string, important bool) CustomFieldVie
 
 func decodeCFValue(s string) (any, error) {
 	var v any
-	if err := json.Unmarshal([]byte(s), &v); err != nil {
+	if err := termsafe.Unmarshal([]byte(s), &v); err != nil {
 		return nil, err
 	}
 	return normalizeCFValue(v), nil

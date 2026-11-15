@@ -3,6 +3,7 @@ package termsafe
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -50,26 +51,32 @@ func TestWriter(t *testing.T) {
 	}
 }
 
-func TestJSON(t *testing.T) {
-	raw, _ := json.Marshal(map[string]any{"name": "x" + osc52 + apc, "notes": "a\nb\tc\rd", "list": []string{"\u009b2J", `\u001b literal`}})
-	got := JSON(string(raw))
-	var v struct {
-		Name  string   `json:"name"`
-		Notes string   `json:"notes"`
-		List  []string `json:"list"`
+func TestUnmarshal(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{"name": "x" + osc52 + apc, "list": []any{"a\rb", map[string]any{"k" + csi: "v\x1b"}}})
+	var m map[string]any
+	if err := Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(got), &v); err != nil {
-		t.Fatalf("%s: %v", got, err)
+	want := map[string]any{"name": "x]52;c;ZXZpbA==_Ga=T,f=100;AAAA\\", "list": []any{"ab", map[string]any{"k[2J2J": "v"}}}
+	if !reflect.DeepEqual(m, want) {
+		t.Fatalf("got %q, want %q", m, want)
 	}
-	if !Safe(v.Name) || !Safe(v.Notes) || !Safe(v.List[0]) {
-		t.Fatalf("control characters left: %q", v)
+
+	type opt struct {
+		Name string
+		Sub  *struct{ Notes []string }
+		any  string // unexported: left alone
 	}
-	if v.Notes != "a\nb\tcd" || v.List[1] != `\u001b literal` || v.Name != "x]52;c;ZXZpbA==_Ga=T,f=100;AAAA\\" {
-		t.Fatalf("got %q", v)
+	var o []opt
+	if err := Unmarshal([]byte(`[{"Name":"a\u001b[31m","Sub":{"Notes":["\u009b2J","ok\n"]}}]`), &o); err != nil {
+		t.Fatal(err)
 	}
-	for _, s := range []string{"[メモ] \\u001b", `{"a":1}`, "plain"} {
-		if JSON(s) != s {
-			t.Errorf("JSON(%q) changed it", s)
-		}
+	if o[0].Name != "a[31m" || o[0].Sub.Notes[0] != "2J" || o[0].Sub.Notes[1] != "ok\n" {
+		t.Fatalf("got %+v %q", o[0], o[0].Sub.Notes)
+	}
+
+	var v any
+	if err := Unmarshal([]byte(`"\u001b]52;c;Zm9v\u0007"`), &v); err != nil || v != "]52;c;Zm9v" {
+		t.Fatalf("got %q, %v", v, err)
 	}
 }

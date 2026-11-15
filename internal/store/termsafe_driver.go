@@ -15,9 +15,10 @@ import (
 // whichever front end shows it (TUI, CLI, MCP) and whenever it was stored. Doing it here, at
 // the one place all reads go through, means no query can forget it.
 //
-// JSON stored in TEXT columns (outbox payloads, custom field values, enum options) may hold
-// control characters as \u escapes, which decoding turns back into raw characters; those
-// escapes are removed too (see safeText).
+// JSON kept in TEXT columns (outbox payloads, custom field values, enum options, ...) may
+// hold control characters as \u escapes, which only decoding turns into raw characters; the
+// code that decodes those columns uses termsafe.Unmarshal. The driver cannot tell JSON from
+// text that merely contains a JSON snippet, which must be kept as written.
 
 type safeConnector struct {
 	dsn string
@@ -119,7 +120,5 @@ func (r safeRows) Next(dest []driver.Value) error {
 	return nil
 }
 
-// safeText is a TEXT value as the store hands it out. termsafe.JSON also covers JSON kept in
-// TEXT columns (objects, arrays, and strings such as custom field values); it only parses
-// values that contain a backslash and are valid JSON, and is termsafe.String otherwise.
-func safeText(s string) string { return termsafe.JSON(s) }
+// safeText is a TEXT value as the store hands it out.
+func safeText(s string) string { return termsafe.String(s) }
