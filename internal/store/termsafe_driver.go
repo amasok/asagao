@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
-	"strings"
 
 	"modernc.org/sqlite"
 
@@ -16,9 +15,9 @@ import (
 // whichever front end shows it (TUI, CLI, MCP) and whenever it was stored. Doing it here, at
 // the one place all reads go through, means no query can forget it.
 //
-// JSON stored in TEXT columns (outbox payloads, notification payloads, enum options) may
-// hold control characters as \u escapes, which decoding turns back into raw characters;
-// for values that look like JSON (objects, arrays, strings) those escapes are removed too.
+// JSON stored in TEXT columns (outbox payloads, custom field values, enum options) may hold
+// control characters as \u escapes, which decoding turns back into raw characters; those
+// escapes are removed too (see safeText).
 
 type safeConnector struct {
 	dsn string
@@ -120,11 +119,7 @@ func (r safeRows) Next(dest []driver.Value) error {
 	return nil
 }
 
-// safeText is a TEXT value as the store hands it out.
-func safeText(s string) string {
-	// JSON values: objects, arrays, and strings (custom field values are stored as JSON).
-	if t := strings.TrimLeft(s, " \t\n\r"); t != "" && strings.ContainsRune(`{["`, rune(t[0])) {
-		return termsafe.JSON(s)
-	}
-	return termsafe.String(s)
-}
+// safeText is a TEXT value as the store hands it out. termsafe.JSON also covers JSON kept in
+// TEXT columns (objects, arrays, and strings such as custom field values); it only parses
+// values that contain a backslash and are valid JSON, and is termsafe.String otherwise.
+func safeText(s string) string { return termsafe.JSON(s) }

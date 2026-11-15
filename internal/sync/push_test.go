@@ -61,8 +61,10 @@ func (w *writeServer) taskJSON(gid string) string {
 	if st.Project != "" {
 		ms = fmt.Sprintf(`[{"project":{"gid":%q},"section":{"gid":%q}}]`, st.Project, st.Section)
 	}
-	return fmt.Sprintf(`{"gid":%q,"name":%q,"notes":%q,"completed":%t,"due_on":%q,"memberships":%s,"modified_at":"2026-11-13T00:00:00Z","created_at":%q,"created_by":{"gid":"me"}}`,
-		gid, st.Name, st.Notes, st.Completed, st.DueOn, ms, st.Created.Format(time.RFC3339))
+	// name and notes as JSON strings (%q writes Go escapes such as \x1b, which are not JSON)
+	quote := func(s string) string { b, _ := json.Marshal(s); return string(b) }
+	return fmt.Sprintf(`{"gid":%q,"name":%s,"notes":%s,"completed":%t,"due_on":%q,"memberships":%s,"modified_at":"2026-11-13T00:00:00Z","created_at":%q,"created_by":{"gid":"me"}}`,
+		gid, quote(st.Name), quote(st.Notes), st.Completed, st.DueOn, ms, st.Created.Format(time.RFC3339))
 }
 
 // addTask registers a task created just now (e.g. by a request whose answer was lost).
@@ -2657,5 +2659,38 @@ func TestDownloadAttachmentFindsCachedFileWithoutRecordedPath(t *testing.T) {
 	}
 	if a, _ := st.GetAttachment(ctx, "78"); a.LocalPath != cached {
 		t.Fatalf("stored path = %q", a.LocalPath)
+	}
+}
+
+// The store hands out task names without control characters; a server name that has them
+// must still count as unchanged, and "keep local" must get out of a conflict.
+func TestPushWithControlCharactersOnServer(t *testing.T) {
+	const evil = "\x1b]52;c;ZXZpbA==\x07\r"
+	ws, _, s, st := setupPush(t)
+	ctx := context.Background()
+	ws.tasks["t1"].Name = "A" + evil
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A" + evil, Workspace: &asana.Ref{GID: "w1"},
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "C (local)"}, now)
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Conflicts != 0 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+
+	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "D (local)"}, now)
+	ws.tasks["t1"].Name = "B (server)" + evil
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	ops, _ := st.ListOps(ctx)
+	if err := st.ResolveKeepLocal(ctx, ops[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Conflicts != 0 {
+		t.Fatalf("push after keep local = %+v, %v", res, err)
+	}
+	if ws.tasks["t1"].Name != "D (local)" {
+		t.Fatalf("server name = %q", ws.tasks["t1"].Name)
 	}
 }
