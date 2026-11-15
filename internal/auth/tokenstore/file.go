@@ -38,14 +38,14 @@ func (f *File) Load(context.Context) (*Credentials, error) {
 
 // Save writes the credentials to a new temporary file in the same folder (a random name,
 // created exclusively, so neither a leftover file nor a symbolic link is reused), makes it
-// 0600, syncs it and renames it over the token file.
+// 0600, syncs it and renames it over the token file. The folder is made 0700 as well.
 func (f *File) Save(_ context.Context, c *Credentials) error {
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
 	dir := filepath.Dir(f.Path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := privateDir(dir); err != nil {
 		return err
 	}
 	// an old version wrote "token.json.tmp": do not leave a copy of a token lying around
@@ -91,3 +91,18 @@ func (f *File) Delete(context.Context) error {
 	return err
 }
 
+// privateDir creates dir (0700) if needed and makes sure only the owner can read it: an
+// existing folder that others can read or enter (e.g. 0755) is made 0700.
+func privateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm() != 0o700 {
+		return os.Chmod(dir, 0o700)
+	}
+	return nil
+}

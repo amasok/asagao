@@ -80,3 +80,22 @@ func TestFileSaveFailureCleansUp(t *testing.T) {
 		t.Fatalf("files left in the folder: %v", entries)
 	}
 }
+
+// An existing config folder that others can read (0755) is made 0700 when the token is
+// saved. (#38)
+func TestFileSaveMakesExistingFolderPrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "asana-tui")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil { // regardless of umask
+		t.Fatal(err)
+	}
+	f := &File{Path: filepath.Join(dir, "token.json")}
+	if err := f.Save(context.Background(), &Credentials{RefreshToken: "rt"}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("folder mode = %v (%v), want 0700", fi.Mode().Perm(), err)
+	}
+}
