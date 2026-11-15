@@ -183,6 +183,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 
 	completedSince := stamp.AddDate(0, 0, -s.Cfg.CompletedDays)
 	keep := map[string]bool{}
+	tokens := map[string]string{} // project gid -> events token, saved once everything is stored
 	var withSubtasks []string
 
 	upsert := func(tasks []asana.Task) error {
@@ -336,11 +337,8 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 					}
 				}
 			}
-			// Saved only now: if anything above failed, the next sync reads the same events.
 			if ev.token != "" {
-				if err := s.Store.SetSyncState(ctx, store.KeyEvents+p.GID, ev.token); err != nil {
-					return res, err
-				}
+				tokens[p.GID] = ev.token
 			}
 			res.Projects++
 		}
@@ -376,6 +374,13 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 
 	// An account always has a workspace: an empty list is a broken answer, and pruning by
 	// it would delete every task. The full sync is then done again next time.
+	// The events tokens are saved only now, after the subtasks of the tasks they reported:
+	// if anything failed, the next sync reads the same events again.
+	for gid, token := range tokens {
+		if err := s.Store.SetSyncState(ctx, store.KeyEvents+gid, token); err != nil {
+			return res, err
+		}
+	}
 	if res.Full && len(workspaces) > 0 {
 		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
 			return res, err
