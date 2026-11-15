@@ -38,6 +38,9 @@ type PushResult struct {
 // the outbox. The entries stay queued; they are sent by that process or the next push.
 var ErrPushBusy = store.ErrPushBusy
 
+// ErrPullOnly is returned by Push on a Syncer with PullOnly set (the read-only MCP server).
+var ErrPullOnly = errors.New("read-only: queued changes are not sent")
+
 // outcome is what happened to an entry Asana accepted.
 type outcome int
 
@@ -83,6 +86,9 @@ func sentNotSaved(err error) error {
 // deleted) mark the entry failed and Push continues. Changes to a task whose create has
 // not been sent yet wait for it.
 func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
+	if s.PullOnly {
+		return res, ErrPullOnly
+	}
 	unlock, err := s.lock(ctx, &res)
 	if err != nil {
 		return res, err

@@ -36,6 +36,10 @@ type Syncer struct {
 	Download func(ctx context.Context, url string) ([]byte, error)
 	now      func() time.Time
 	sleep    func(context.Context, time.Duration) error // replaced in tests
+	// PullOnly makes Run only fetch from Asana: queued local changes are left in the
+	// outbox (they stay protected from being overwritten) and Push refuses to send.
+	// Used by the read-only MCP server, so an agent cannot send what the user queued.
+	PullOnly bool
 	// accountOK is set once Asana answered as the account the local data belongs to, so
 	// Push asks /users/me only once per Syncer (see checkPushAccount).
 	accountOK atomic.Bool
@@ -123,7 +127,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	defer unlock()
 	var lastSent int64
 	drops := &dropState{} // one account check and one drop limit for the whole sync
-	if res.Push, lastSent, err = s.pushLocked(ctx, drops); err != nil {
+	if s.PullOnly {
+		res.Push.Remaining, _, _, _ = s.Store.OutboxCounts(ctx)
+	} else if res.Push, lastSent, err = s.pushLocked(ctx, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
@@ -261,7 +267,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		}
 	}
 	// Changes queued by other processes during the pull (they were told this sync sends them).
-	if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
+	if s.PullOnly {
+		// Nothing is sent: they stay queued for a process that may push.
+	} else if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, started.UTC().Format(time.RFC3339)); err != nil {

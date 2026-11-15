@@ -189,3 +189,24 @@ func TestDirs(t *testing.T) {
 		t.Errorf("DataDir fallback = %q", got)
 	}
 }
+
+func TestMCPUploadDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := Default()
+	if err := parse([]byte("[mcp]\nupload_dirs = [\"~/Documents/receipts\", \"/srv/share/\", \"~\"]\n"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.MCP.ExpandedUploadDirs()
+	want := []string{filepath.Join(home, "Documents", "receipts"), "/srv/share", home}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("upload_dirs = %v, want %v", got, want)
+	}
+	cfg.MCP.UploadDirs = []string{"Downloads"}
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "mcp.upload_dirs") {
+		t.Fatalf("a relative folder should be refused: %v", err)
+	}
+}

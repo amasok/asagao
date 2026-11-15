@@ -224,8 +224,12 @@ func (m *Model) openAttachment(a store.AttachmentView) tea.Cmd {
 		if err != nil {
 			return statusMsg("開けませんでした: " + err.Error())
 		}
-		if err := imageview.OpenExternal(path); err != nil {
+		revealed, err := imageview.OpenFiles(path)
+		if err != nil {
 			return statusMsg("開けませんでした: " + err.Error())
+		}
+		if len(revealed) > 0 {
+			return statusMsg("プログラムとして動く種類のファイルなので、開かずにフォルダで表示しました: " + a.Name)
 		}
 		return statusMsg("開きました: " + a.Name)
 	}

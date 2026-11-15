@@ -2,6 +2,7 @@ package imageview
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,8 +35,16 @@ func Run(paths []string, protocol string) error {
 		fmt.Fprint(out, "\x1b[2J\x1b[?25h\x1b[?1049l")
 	}()
 
+	opened := map[int]bool{}
+	external := func(i int) error { // once per image, not on every redraw
+		if opened[i] {
+			return nil
+		}
+		opened[i] = true
+		return OpenExternal(paths[i])
+	}
 	browse(bufio.NewReader(in), len(paths),
-		func(i int) { draw(out, paths, i, protocol, terminalBox()) },
+		func(i int) { draw(out, paths, i, protocol, terminalBox(), external) },
 		func(i int) { _ = OpenExternal(paths[i]) })
 	return nil
 }
@@ -60,7 +69,9 @@ func browse(keys *bufio.Reader, n int, show, open func(i int)) {
 }
 
 // draw shows image i of paths in the terminal box b, with a caption on the last line.
-func draw(out io.Writer, paths []string, i int, protocol string, b Box) {
+// An image whose size cannot be checked is not drawn but handed to external (the OS
+// viewer, which marks it as downloaded first).
+func draw(out io.Writer, paths []string, i int, protocol string, b Box, external func(i int) error) {
 	Clear(out, protocol)
 	fmt.Fprint(out, "\x1b[2J\x1b[H")
 	b.Rows = max(1, b.Rows-2) // leave room for the caption
@@ -69,7 +80,14 @@ func draw(out io.Writer, paths []string, i int, protocol string, b Box) {
 		err = Write(out, data, protocol, b)
 	}
 	caption := fmt.Sprintf(" %s  (%d/%d)   n/→ 次  p/← 前  o 外部ビューアで開く  q 戻る", displayName(paths[i]), i+1, len(paths))
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrUnknownSize) && external != nil:
+		if oerr := external(i); oerr != nil {
+			caption = fmt.Sprintf(" %s: %v（外部ビューアで開けませんでした: %v）  q 戻る", displayName(paths[i]), err, oerr)
+		} else {
+			caption = fmt.Sprintf(" %s: 端末に表示できない形式なので、外部ビューアで開きました  (%d/%d)   n/→ 次  p/← 前  q 戻る", displayName(paths[i]), i+1, len(paths))
+		}
+	case err != nil:
 		caption = fmt.Sprintf(" %s: %v   o 外部ビューアで開く  q 戻る", displayName(paths[i]), err)
 	}
 	fmt.Fprintf(out, "\x1b[%d;1H\x1b[2K%s", b.Rows+2, caption)

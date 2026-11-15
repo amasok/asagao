@@ -399,7 +399,8 @@ func TestTaskExtras(t *testing.T) {
 	_ = st.UpsertUsers(ctx, []asana.User{{GID: "u2", Name: "Partner"}})
 	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
 	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
-	cs := connect(t, &Server{Store: st, CacheDir: t.TempDir()})
+	uploads := t.TempDir()
+	cs := connect(t, &Server{Store: st, CacheDir: t.TempDir(), Upload: UploadPolicy{Allowed: []string{uploads}}})
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "liked": true, "add_followers": []string{"Partner", "me"}, "add_projects": []string{"家計"}}, &w)
 	d, _ := st.GetTask(ctx, "t1")
@@ -415,7 +416,7 @@ func TestTaskExtras(t *testing.T) {
 	if c, err := st.GetTask(ctx, w.TaskGID); err != nil || c.Name != "ソファを買う のコピー" || len(c.Memberships) != 1 {
 		t.Fatalf("copy = %+v %v", c, err)
 	}
-	file := filepath.Join(t.TempDir(), "見積 書.pdf")
+	file := filepath.Join(uploads, "見積 書.pdf")
 	_ = os.WriteFile(file, []byte("pdf"), 0o600)
 	call(t, cs, "upload_attachment", map[string]any{"task_gid": "t1", "path": file}, &w)
 	d, _ = st.GetTask(ctx, "t1")
