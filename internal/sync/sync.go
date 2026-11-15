@@ -19,7 +19,8 @@ const (
 	keyLastFullSync = "last_full_sync"
 	// FullSyncInterval forces a full sync (which also removes deleted tasks) this often.
 	FullSyncInterval = 24 * time.Hour
-	// modifiedSinceMargin absorbs clock skew between this machine and Asana.
+	// modifiedSinceMargin covers what the measured clock offset (see Syncer.serverNow) cannot:
+	// its resolution, and a task saved in Asana with a modified_at just before the sync started.
 	modifiedSinceMargin = 2 * time.Minute
 )
 
@@ -77,6 +78,16 @@ func (s *Syncer) clock() time.Time {
 	return time.Now()
 }
 
+// serverNow is the current time by Asana's clock (as far as the responses so far tell):
+// what is compared with Asana's timestamps or sent as modified_since must not depend on
+// this machine's clock being right.
+func (s *Syncer) serverNow() time.Time {
+	if s.API == nil {
+		return s.clock()
+	}
+	return s.clock().Add(s.API.ClockOffset())
+}
+
 // Run syncs Asana into the store.
 //
 // An incremental sync fetches only tasks modified since the previous sync. A full sync
@@ -87,21 +98,6 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	started := s.clock()
 	res := Result{Full: forceFull}
 
-	lastSync, err := s.stateTime(ctx, store.KeyLastSync)
-	if err != nil {
-		return res, err
-	}
-	lastFull, err := s.stateTime(ctx, keyLastFullSync)
-	if err != nil {
-		return res, err
-	}
-	if lastSync.IsZero() || lastFull.IsZero() || started.Sub(lastFull) >= FullSyncInterval {
-		res.Full = true
-	}
-	var modifiedSince time.Time
-	if !res.Full {
-		modifiedSince = lastSync.Add(-modifiedSinceMargin)
-	}
 	// Send local changes first, so the pull below sees them and a network error means
 	// we are offline before anything else is attempted.
 	// The store holds one account's data. If Asana now answers as someone else, nothing is
@@ -116,6 +112,24 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	} else if want != "" {
 		s.accountOK.Store(true)
+	}
+	// The times recorded and compared below are by Asana's clock (measured from the Date
+	// header of the answer to Me), as modified_since is compared with Asana's modified_at.
+	stamp := started.Add(s.API.ClockOffset())
+	lastSync, err := s.stateTime(ctx, store.KeyLastSync)
+	if err != nil {
+		return res, err
+	}
+	lastFull, err := s.stateTime(ctx, keyLastFullSync)
+	if err != nil {
+		return res, err
+	}
+	if lastSync.IsZero() || lastFull.IsZero() || stamp.Sub(lastFull) >= FullSyncInterval {
+		res.Full = true
+	}
+	var modifiedSince time.Time
+	if !res.Full {
+		modifiedSince = lastSync.Add(-modifiedSinceMargin)
 	}
 	// The whole sync holds the push lock: no other process sends meanwhile, and the store
 	// cannot be reset (store.Reset) between our push and our pull, which would bring the
@@ -133,7 +147,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
-	completedSince := started.AddDate(0, 0, -s.Cfg.CompletedDays)
+	completedSince := stamp.AddDate(0, 0, -s.Cfg.CompletedDays)
 	keep := map[string]bool{}
 	var withSubtasks []string
 
@@ -262,7 +276,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
 			return res, err
 		}
-		if err := s.Store.SetSyncState(ctx, keyLastFullSync, started.UTC().Format(time.RFC3339)); err != nil {
+		if err := s.Store.SetSyncState(ctx, keyLastFullSync, stamp.UTC().Format(time.RFC3339)); err != nil {
 			return res, err
 		}
 	}
@@ -272,7 +286,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	} else if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
-	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, started.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, stamp.UTC().Format(time.RFC3339)); err != nil {
 		return res, err
 	}
 	res.Duration = s.clock().Sub(started)

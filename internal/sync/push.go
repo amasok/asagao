@@ -213,7 +213,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 			} else if wait {
 				break
 			}
-			if ok, err := s.Store.BeginSend(ctx, op.ID, s.clock()); err != nil {
+			if ok, err := s.Store.BeginSend(ctx, op.ID, s.serverNow()); err != nil {
 				return res, last, err
 			} else if !ok {
 				break
@@ -277,7 +277,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 			if !sendIt {
 				continue
 			}
-			if err := s.Store.CountAttempt(ctx, op.ID, s.clock()); err != nil {
+			if err := s.Store.CountAttempt(ctx, op.ID, s.serverNow()); err != nil {
 				return res, last, err
 			}
 			op.Attempts++

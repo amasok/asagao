@@ -49,7 +49,12 @@ type writeServer struct {
 	statuses  map[string][]string // project gid -> status update JSON objects
 	tags      []string            // tag JSON objects
 	requests  int
+	// shift is how far Asana's clock is from this PC's: it moves created_at and the Date header.
+	shift time.Duration
 }
+
+// serverTime is the time by the fake Asana's clock.
+func (w *writeServer) serverTime() time.Time { return time.Now().Add(w.shift).UTC() }
 
 // maxRequests stops a Push that loops: the fake server fails the test and rejects
 // everything after this many requests, which ends the loop (4xx marks entries failed).
@@ -71,7 +76,7 @@ func (w *writeServer) taskJSON(gid string) string {
 func (w *writeServer) addTask(gid, name, project string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.tasks[gid] = &serverTask{Name: name, Project: project, Created: time.Now().UTC()}
+	w.tasks[gid] = &serverTask{Name: name, Project: project, Created: w.serverTime()}
 }
 
 // addComment registers a comment created just now.
@@ -87,7 +92,7 @@ func (w *writeServer) addStoryLocked(task, text string) string {
 		w.stories = map[string][]string{}
 	}
 	js := fmt.Sprintf(`{"gid":"story%d","type":"comment","text":%q,"created_by":{"gid":"me","name":"Me"},"created_at":%q}`,
-		w.next, text, time.Now().UTC().Format(time.RFC3339))
+		w.next, text, w.serverTime().Format(time.RFC3339))
 	w.stories[task] = append(w.stories[task], js)
 	return js
 }
@@ -107,7 +112,7 @@ func (w *writeServer) addRichStoryLocked(task, htmlText string) string {
 		w.stories = map[string][]string{}
 	}
 	js := fmt.Sprintf(`{"gid":"story%d","type":"comment","text":%q,"html_text":%q,"created_by":{"gid":"me","name":"Me"},"created_at":%q}`,
-		w.next, plain, full, time.Now().UTC().Format(time.RFC3339))
+		w.next, plain, full, w.serverTime().Format(time.RFC3339))
 	w.stories[task] = append(w.stories[task], js)
 	return js
 }
@@ -137,6 +142,9 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	if w.shift != 0 {
+		rw.Header().Set("Date", w.serverTime().Format(http.TimeFormat))
+	}
 	if w.hook != nil && w.hook(rw, r) {
 		return
 	}
@@ -158,7 +166,7 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 	case r.Method == http.MethodPost && r.URL.Path == "/tasks":
 		w.next++
 		gid := fmt.Sprintf("new%d", w.next)
-		st := &serverTask{Created: time.Now().UTC()}
+		st := &serverTask{Created: w.serverTime()}
 		st.Name, _ = body.Data["name"].(string)
 		st.Completed, _ = body.Data["completed"].(bool)
 		if ps, ok := body.Data["projects"].([]any); ok && len(ps) > 0 {
@@ -182,7 +190,7 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		if m := regexp.MustCompile(`filename="([^"]+)"`).FindSubmatch(b); m != nil {
 			name = string(m[1])
 		}
-		js := fmt.Sprintf(`{"gid":"att%d","name":%q,"view_url":"https://x/att%d","created_at":%q}`, w.next, name, w.next, time.Now().UTC().Format(time.RFC3339))
+		js := fmt.Sprintf(`{"gid":"att%d","name":%q,"view_url":"https://x/att%d","created_at":%q}`, w.next, name, w.next, w.serverTime().Format(time.RFC3339))
 		if w.atts == nil {
 			w.atts = map[string][]string{}
 		}
@@ -192,7 +200,7 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		w.next++
 		parent, _ := body.Data["parent"].(string)
 		js := fmt.Sprintf(`{"gid":"su%d","status_type":%q,"title":%q,"text":%q,"author":{"gid":"me"},"created_at":%q}`,
-			w.next, body.Data["status_type"], body.Data["title"], body.Data["text"], time.Now().UTC().Format(time.RFC3339))
+			w.next, body.Data["status_type"], body.Data["title"], body.Data["text"], w.serverTime().Format(time.RFC3339))
 		if w.statuses == nil {
 			w.statuses = map[string][]string{}
 		}
@@ -218,7 +226,7 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		w.next++
 		gid := fmt.Sprintf("dup%d", w.next)
 		name, _ := body.Data["name"].(string)
-		w.tasks[gid] = &serverTask{Name: name, Project: src.Project, Section: src.Section, Created: time.Now().UTC()}
+		w.tasks[gid] = &serverTask{Name: name, Project: src.Project, Section: src.Section, Created: w.serverTime()}
 		fmt.Fprintf(rw, `{"data":{"gid":"job%d","new_task":{"gid":%q,"name":%q}}}`, w.next, gid, name)
 	case r.Method == http.MethodGet && r.URL.Path == "/attachments":
 		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(w.atts[r.URL.Query().Get("parent")], ","))
@@ -239,7 +247,7 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		w.next++
 		gid := fmt.Sprintf("new%d", w.next)
 		name, _ := body.Data["name"].(string)
-		w.tasks[gid] = &serverTask{Name: name, Created: time.Now().UTC()}
+		w.tasks[gid] = &serverTask{Name: name, Created: w.serverTime()}
 		fmt.Fprintf(rw, `{"data":%s}`, w.taskJSON(gid))
 	case len(parts) == 3 && parts[0] == "sections" && parts[2] == "addTask":
 		if parts[1] == "gone" {

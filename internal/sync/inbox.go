@@ -177,7 +177,7 @@ func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out out
 	var batch []store.Op
 	gids := []string{op.TaskGID}
 	for _, p := range peers {
-		if ok, err := s.Store.BeginSend(ctx, p.ID, s.clock()); err != nil {
+		if ok, err := s.Store.BeginSend(ctx, p.ID, s.serverNow()); err != nil {
 			return sent, batched, err
 		} else if ok {
 			batch = append(batch, p)

@@ -18,8 +18,7 @@ import (
 // Asana has no idempotency keys (and a task's external.gid can only be set by OAuth apps,
 // while asana-tui also supports personal access tokens), so reconcile looks for what the
 // entry would have created: same name/text (and, for tasks, the same due date, assignee
-// and notes), created at or after the entry was first sent (minus clockSkew, as the local
-// clock and Asana's may differ), by us where Asana says who created it, and not already
+// and notes), created at or after the entry was first sent (minus clockSkew), by us where Asana says who created it, and not already
 // recorded as the result of another entry. One candidate is taken as the entry's result;
 // several (or no way to look) are left to the user. None is trusted only once settleTime
 // has passed since the entry was sent: right after a 5xx or a timeout, Asana may still be
@@ -35,6 +34,11 @@ const (
 	tooEarly               // not found yet, but Asana may still show it: check again later
 )
 
+// clockSkew is the margin when comparing when an entry was sent with Asana's created_at.
+// Send times are recorded by Asana's clock (Syncer.serverNow, measured from the Date
+// header of Asana's responses), so a PC clock that is minutes or hours off does not
+// matter; the margin covers what that measurement cannot (resolution, network delay, a
+// clock changed since).
 const clockSkew = 2 * time.Minute
 
 // settleTime is how long after sending an entry its result may still be missing from
@@ -65,7 +69,7 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 		lastSent = t
 	}
 	out, m, err := s.find(ctx, op, sentAt.Add(-clockSkew))
-	if err != nil || m != notFound || s.clock().Sub(lastSent) >= settleTime(op.Kind) {
+	if err != nil || m != notFound || s.serverNow().Sub(lastSent) >= settleTime(op.Kind) {
 		return out, m, err
 	}
 	// Not found so soon after sending: wait, unless what was found made it harmless to

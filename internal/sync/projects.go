@@ -68,6 +68,7 @@ func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, star
 	if (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil {
 		return nil, cause // not created
 	}
+	started = started.Add(s.API.ClockOffset()) // by Asana's clock, like created_at
 	for try := 0; try < 2; try++ {
 		if try > 0 {
 			if err := s.wait(ctx, projectSettle); err != nil {
