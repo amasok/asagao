@@ -156,6 +156,11 @@ func TestRunStampsInFutureForceFullSync(t *testing.T) {
 			if res, err := s.Run(ctx, false); err != nil || res.Full {
 				t.Fatalf("normal second run = %+v %v", res, err)
 			}
+			_ = st.SetSyncState(ctx, key, pc.Add(5*time.Minute+30*time.Second).Format(time.RFC3339)) // 30s ahead at the next run
+			pc = pc.Add(5 * time.Minute)
+			if res, err := s.Run(ctx, false); err != nil || res.Full {
+				t.Fatalf("a few seconds in the future is noise, not a reason for a full sync: %+v %v", res, err)
+			}
 			_ = st.SetSyncState(ctx, key, pc.Add(3*time.Hour).Format(time.RFC3339))
 			pc = pc.Add(5 * time.Minute)
 			if res, err := s.Run(ctx, false); err != nil || !res.Full {

@@ -142,8 +142,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	}
 	// A stamp in the future by Asana's clock was written by the PC's clock (an older
 	// version, or the clock was changed since): modified_since from it would miss changes,
-	// and the next full sync would come late. Start again from a full sync.
-	if lastSync.After(stamp) || lastFull.After(stamp) {
+	// and the next full sync would come late. Start again from a full sync. Less than the
+	// margin is harmless (modified_since looks back by it) and may be noise of the offset.
+	if limit := stamp.Add(modifiedSinceMargin); lastSync.After(limit) || lastFull.After(limit) {
 		res.Full = true
 	}
 	lastPoll, err := s.stateTime(ctx, keyLastPoll)
