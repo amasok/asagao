@@ -91,9 +91,9 @@
 ```
  入り口 ──▶ app.Tasks.Create(ctx, CreateTaskInput) ──▶ (①の解釈) ──▶ store.CreateTaskLocal (②③)
         ◀── gid / FieldError
- 入り口 ──▶ Sender.Send(ctx, gid) ──▶ 入り口ごとの送り方 (CLI・MCP: Push を 20 秒 / TUI: 同期を頼む)
-        ◀── WriteResult{TaskGID, Sent, Push, Discarded}
+ 入り口 ──▶ 入り口ごとの送り方 (CLI・MCP: Push を 20 秒 / TUI: 同期を頼む)
+        ◀── WriteResult{TaskGID, Sent, Push, Discarded} (CLI・MCP)
  入り口 ──▶ 結果を自分の形で表示する
 ```
 
-- ④ をいつ・どう行うかは入り口ごとに違うので、ユースケースの中で決めない。ユースケースは ②③ までを行って gid を返し、**入り口が**、組み立てのときに受け取った `Sender` を呼ぶ。CLI と MCP の `Sender` は `Push` を 20 秒で呼んで結果を返し、TUI の `Sender` は同期を頼むだけで、結果は「未送信」として返す。`sent` の決め方 (CLI は未送信の数も見る、MCP は見ない) と `task_gid` の返し方 (CLI は送れたら空、MCP は本物の gid) も入り口ごとに違うので、`Sender` の結果から入り口が決める (write-flow の仕様、ADR 0006)。
+- ④ をいつ・どう行うかは入り口ごとに違うので、ユースケースの中で決めない。ユースケースは ②③ までを行って gid を返し、**入り口が**送る。CLI と MCP は `Push` を 20 秒で呼んで結果を返し、TUI は同期を頼むだけで、送れたかは未送信の数で示す。`sent` の決め方 (CLI は未送信の数も見る、MCP は見ない) と `task_gid` の返し方 (CLI は送れたら空、MCP は本物の gid) も入り口ごとに違うので、送った結果から入り口が決める (write-flow の仕様、ADR 0006)。送り方のポート (`Sender`) は作らない (a3 で決めた。ADR 0008)。

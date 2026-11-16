@@ -81,3 +81,48 @@ func (t *Tasks) Create(ctx context.Context, in CreateTaskInput) (string, error) 
 	}
 	return gid, nil
 }
+
+// CreateHereInput is a task to create where the user already is, as the TUI does: Parent,
+// Project and Section are gids the entry point already has, not names, and Due is already
+// a date (YYYY-MM-DD, or ""). Nothing in it is resolved by name.
+type CreateHereInput struct {
+	Name, Due string
+	Parent    string // gid of the parent task: a subtask
+	Project   string // gid of the project the user is looking at
+	Section   string // gid of a section of Project ("": the first section)
+}
+
+// CreateHere creates a task from gids, without resolving names, locally and queued in the
+// outbox:
+//
+//   - A subtask (Parent) gets its workspace from the parent and is in no project.
+//   - In Project, the task goes to Section, or to the first section, assigned to no one.
+//   - Otherwise it goes to the default workspace, assigned to me.
+//
+// Errors are the store's, as they are (there is no user input to name in a *FieldError).
+// Nothing is written when one comes before the task is created.
+func (t *Tasks) CreateHere(ctx context.Context, in CreateHereInput) (string, error) {
+	now := t.Clock()
+	nt := task.NewTask{Name: in.Name, DueOn: in.Due, ParentGID: in.Parent}
+	var err error
+	switch {
+	case in.Parent != "":
+		// workspace comes from the parent; no project or section
+	case in.Project != "":
+		nt.ProjectGID, nt.SectionGID = in.Project, in.Section
+		if nt.SectionGID == "" {
+			if nt.SectionGID, err = t.Store.FirstSection(ctx, in.Project); err != nil {
+				return "", err
+			}
+		}
+	default:
+		if nt.WorkspaceGID, err = t.Store.DefaultWorkspace(ctx); err != nil {
+			return "", err
+		}
+		// "me" resolves to my gid without a name lookup (the store's MeGID)
+		if nt.AssigneeGID, err = t.Store.ResolveUser(ctx, "me"); err != nil {
+			return "", err
+		}
+	}
+	return t.Store.CreateTaskLocal(ctx, nt, now)
+}
