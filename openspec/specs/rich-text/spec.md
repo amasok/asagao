@@ -141,15 +141,31 @@ Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コ�
 
 ### Requirement: エディタの往復は 1 回で落ち着く
 Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。次の要件の、既知の例外は除く。
-根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go TestUserMarkdownFollowsNestingRules (除く形は unstableOnMain、除いた件数をログに出す); target_attack_test.go TestTargetRandomAttack (adjacentLists)
+根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go TestUserMarkdownFollowsNestingRules (除く形は unstableOnMain、除いた件数をログに出す); target_attack_test.go TestTargetRandomAttack
 
 #### Scenario: 2 回目の往復
 - **WHEN** html を ToEditableMarkdown → FromMarkdown と 2 回続けて往復する
 - **THEN** 1 回目の結果と 2 回目の結果が同じになる
 
+### Requirement: 隣り合うリストは分けたまま
+同じ種類のリストが隣り合っていても、1 つにまとめない (MUST)。Asana の rich text の文書は隣り合うリストについて何も書いておらず、まとめると書かれたものが変わるため。エディタ用の Markdown では、直前が同じ種類のリストなら印を替える (`-` のあとは `*`、`1.` のあとは `1)`)。Markdown は印の違うリストを別のリストとして読む (#61)。
+根拠: richtext.go altMarker, listItem; lists_test.go TestAdjacentListsStayApart
+
+#### Scenario: 隣り合う箇条書き
+- **WHEN** `<ul><li>a</li></ul><ul><li>b</li></ul>` をエディタで開く
+- **THEN** `- a\n\n* b` になり、戻すと 2 つのリストのまま
+
+### Requirement: リンクの文字の端の空白はリンクの外に出す
+リンクの文字の端の空白と改行は、リンクの外の文字にする (MUST)。リンクの文字は端を切り詰めて書くので、そのままだと前後の語がくっつくため (#61)。表示用 (ToMarkdown) でも同じで、ブロックの末尾に来た空白は文字として残る。
+根拠: richtext.go moveEdgeSpaceOutOfMarks; lists_test.go TestLinkEdgeSpaces
+
+#### Scenario: リンクの端の空白
+- **WHEN** `a<a href="http://x.jp"> b c </a>d` をエディタで往復する
+- **THEN** `a <a href="http://x.jp">b c</a> d` になる
+
 ### Requirement: 往復で安定しない既知の形
-次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): リスト項目の中の入れ子のリストのあとの文 (#59)、隣り合うリスト (印が同じでも違っても 1 つになる、#61)、先頭に空白がある見出し (字下げした setext の見出し、#78)、リスト項目の中の区切り線 (#80)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
-根拠: nesting_spec_test.go unstableOnMain; target_attack_test.go adjacentLists
+次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): リスト項目の中の入れ子のリストのあとの文 (#59)、先頭に空白がある見出し (字下げした setext の見出し、#78)、リスト項目の中の区切り線 (#80)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
+根拠: nesting_spec_test.go unstableOnMain
 
 #### Scenario: 項目の中の区切り線
 - **WHEN** `<ul><li>a<hr/></li></ul>` をエディタで往復する

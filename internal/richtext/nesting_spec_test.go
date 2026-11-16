@@ -163,9 +163,8 @@ func TestPlainFromMarkdownNestedText(t *testing.T) {
 // genUserMarkdown writes Markdown as a user might, mixing quotes, lists, headings, fences
 // and indentation on each line. Each word is unique (w0, w1, ...), to check none is lost.
 func genUserMarkdown(r *rand.Rand) (string, []string) {
-	// one bullet and one ordered marker outside quotes: adjacent lists with different
-	// markers ("- " then "* ") become one list on the next trip, on main too
-	prefixes := []string{"", "> ", "> > ", "- ", "1. ", "  ", "   ", "    ", "  - ", "   1. ", "> - ", "> * ", "> 1. ", "> 2) ", "> + ", ">    - ", "- > ", "  > ", "- # ", "  ## ", "# ", "> # ", "- >     ", "  > > "}
+	// lists with different markers next to each other stay apart (#61)
+	prefixes := []string{"", "> ", "> > ", "- ", "1. ", "* ", "2) ", "  ", "   ", "    ", "  - ", "   1. ", "> - ", "> * ", "> 1. ", "> 2) ", "> + ", ">    - ", "- > ", "  > ", "- # ", "  ## ", "# ", "> # ", "- >     ", "  > > "}
 	inlines := []string{"", "**b** ", "*e* ", "~~s~~ ", "`c` ", "[l](http://x.jp) ", "a@x.jp ", "![画像](asana:7) ", "[@A](asana:user:9) ", "[l][r] ", " ", "\t"}
 	var lines, words []string
 	fence := false
@@ -248,13 +247,12 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 
 // unstableOnMain reports whether rich text has a shape that does not survive a trip on main
 // either, apart from nesting: text after a nested list in an item (#59); a heading with a
-// space at its start (an indented setext heading's, #78); a rule in an item; and lists next
-// to each other (they become one, #61).
+// space at its start (an indented setext heading's, #78); and a rule in an item.
 func unstableOnMain(h string) bool {
 	return textAfterNestedList(h) || knownUnstable.MatchString(h)
 }
 
-var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]|<li>(?:[^<]|<[^/l]|</[^l])*<hr/>|</(?:ul|ol)><(?:ul|ol)>`)
+var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]|<li>(?:[^<]|<[^/l]|</[^l])*<hr/>`)
 
 // textAfterNestedList reports whether a list item has text after a list inside it.
 func textAfterNestedList(s string) bool {

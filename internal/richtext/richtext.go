@@ -129,10 +129,11 @@ type converter struct {
 	editable  bool
 	imageDest func(gid string) string
 	b         bytes.Buffer
-	lists     []listState // nesting of ul/ol
-	pre       int         // inside <pre>
-	quote     int         // inside <blockquote>
-	heading   int         // inside <h1>, <h2>, <h3>: one line (see heading)
+	lists     []listState         // nesting of ul/ol
+	altLists  map[*html.Node]bool // lists written with the other marker (see altMarker)
+	pre       int                 // inside <pre>
+	quote     int                 // inside <blockquote>
+	heading   int                 // inside <h1>, <h2>, <h3>: one line (see heading)
 	// headingImages are the images of the heading being written for display, which go
 	// after it, each as a block of its own (see image).
 	headingImages []string
@@ -147,6 +148,7 @@ type converter struct {
 
 type listState struct {
 	ordered bool
+	alt     bool // written with the other marker ("*", "1)"): see altMarker
 	n       int
 }
 
@@ -352,7 +354,7 @@ func (c *converter) walk(n *html.Node) {
 		if len(c.lists) == 0 {
 			c.block()
 		}
-		c.lists = append(c.lists, listState{ordered: n.DataAtom == atom.Ol})
+		c.lists = append(c.lists, listState{ordered: n.DataAtom == atom.Ol, alt: c.altMarker(n)})
 		c.children(n)
 		c.lists = c.lists[:len(c.lists)-1]
 		if len(c.lists) == 0 {
@@ -575,7 +577,9 @@ func moveEdgeSpaceOutOfMarks(n *html.Node) {
 	for ch := n.FirstChild; ch != nil; {
 		next := ch.NextSibling
 		moveEdgeSpaceOutOfMarks(ch) // inner marks first: their spaces then are at our edges
-		if ch.Type == html.ElementNode && markAtoms[ch.DataAtom] && ch.Parent != nil {
+		// a link's text is trimmed too (see link): its spaces go outside, so the words
+		// around it stay apart (#61)
+		if ch.Type == html.ElementNode && (markAtoms[ch.DataAtom] || ch.DataAtom == atom.A) && ch.Parent != nil {
 			for _, s := range edgeSpace(ch, true) {
 				ch.Parent.InsertBefore(s, ch)
 			}
@@ -798,9 +802,14 @@ func (c *converter) listItem(n *html.Node) {
 		c.newline()
 	}
 	c.write(strings.Repeat("   ", depth-1))
-	if l.ordered {
+	switch {
+	case l.ordered && l.alt:
+		c.write(fmt.Sprintf("%d) ", l.n))
+	case l.ordered:
 		c.write(fmt.Sprintf("%d. ", l.n))
-	} else {
+	case l.alt:
+		c.write("* ")
+	default:
 		c.write("- ")
 	}
 	c.markLineStart()
@@ -824,6 +833,25 @@ func (c *converter) listItem(n *html.Node) {
 	}
 	// a block in a nested item has ended the outer lists too
 	c.outOfItem = outer || c.outOfItem
+}
+
+// altMarker reports whether list n is written with the other marker ("*" for "-", "1)" for
+// "1."): when it comes right after a list of its kind, which written with the same marker
+// would be read back as one list with it (#61). Asana's rich text documentation says nothing
+// against lists next to each other, and they are kept apart as they were written.
+func (c *converter) altMarker(n *html.Node) bool {
+	prev := n.PrevSibling
+	for prev != nil && (prev.Type == html.TextNode && asciiBlank(prev.Data) || prev.Type == html.CommentNode) {
+		prev = prev.PrevSibling
+	}
+	alt := prev != nil && prev.Type == html.ElementNode && prev.DataAtom == n.DataAtom && !c.altLists[prev]
+	if alt {
+		if c.altLists == nil {
+			c.altLists = map[*html.Node]bool{}
+		}
+		c.altLists[n] = true
+	}
+	return alt
 }
 
 // trimLeadingBreaks removes line breaks (and the whitespace before them) at the start of
