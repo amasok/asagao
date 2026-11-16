@@ -417,7 +417,7 @@ func (c *converter) text(n *html.Node) {
 	// after indentation written by text before (in another element), the line still starts
 	// here as Markdown reads it: "\t" then "#" would be a heading, or code
 	lineStart := c.atLineStart() || len(bytes.Trim(c.b.Bytes()[c.lineStart:], " \t")) == 0
-	t = escapeText(t, lineStart, rawIndent, c.prevByte())
+	t = escapeText(t, lineStart, rawIndent, c.prevByte(), c.nextOnLine(n))
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	last := len(lines) - 1
@@ -440,6 +440,34 @@ func (c *converter) text(n *html.Node) {
 		}
 		c.write(l)
 	}
+}
+
+// nextOnLine is the first byte written after text n on its line, '\n' if the line ends
+// there: text, or a placeholder for what an inline element writes first.
+func (c *converter) nextOnLine(n *html.Node) byte {
+	for ; n != nil; n = n.Parent {
+		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
+			switch {
+			case sib.Type == html.TextNode:
+				if sib.Data != "" {
+					return sib.Data[0]
+				}
+			case sib.Type != html.ElementNode:
+			case sib.DataAtom == atom.Br, blockAtoms[sib.DataAtom]:
+				return '\n'
+			case transparentAtoms[sib.DataAtom] && !markAtoms[sib.DataAtom]:
+				if t := textOf(sib); t != "" {
+					return t[0]
+				}
+			default:
+				return 'x' // a delimiter, a link, code or an image
+			}
+		}
+		if p := n.Parent; p == nil || p.Type != html.ElementNode || blockAtoms[p.DataAtom] {
+			return '\n'
+		}
+	}
+	return '\n'
 }
 
 // prevByte is the output byte before the next text, as Linkify sees it (see escapeInline):
@@ -507,7 +535,7 @@ func (c *converter) contentFollows(n *html.Node, blocks bool) bool {
 		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
 			switch {
 			case sib.Type == html.TextNode:
-				if strings.TrimSpace(sib.Data) != "" {
+				if !asciiBlank(sib.Data) {
 					return true
 				}
 			case sib.Type != html.ElementNode, sib.DataAtom == atom.Br:
@@ -515,7 +543,7 @@ func (c *converter) contentFollows(n *html.Node, blocks bool) bool {
 				return blocks
 			case sib.DataAtom == atom.Img:
 				return c.editable || blocks // displayed as a block of its own
-			case strings.TrimSpace(textOf(sib)) != "" || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
+			case !asciiBlank(textOf(sib)) || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
 				return true
 			}
 		}
@@ -534,7 +562,7 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 			switch {
 			case sib.Type == html.TextNode:
 				line, _, nl := strings.Cut(sib.Data, "\n")
-				if strings.TrimSpace(line) != "" {
+				if !asciiBlank(line) {
 					return true
 				}
 				if nl {
@@ -548,7 +576,7 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 			default:
 				// an inline element: what it writes first
 				t := textOf(sib)
-				if line, _, nl := strings.Cut(t, "\n"); strings.TrimSpace(line) != "" ||
+				if line, _, nl := strings.Cut(t, "\n"); !asciiBlank(line) ||
 					attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib) {
 					return true
 				} else if nl {
@@ -581,7 +609,7 @@ func asciiBlank(s string) bool { return strings.TrimFunc(s, asciiSpace) == "" }
 // nonBlank reports whether one of lines has something other than spaces and tabs.
 func nonBlank(lines []string) bool {
 	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
+		if !asciiBlank(l) {
 			return true
 		}
 	}
@@ -638,9 +666,10 @@ func moveEdgeSpaceOutOfMarks(n *html.Node) {
 			for _, s := range edgeSpace(ch, true) {
 				ch.Parent.InsertBefore(s, ch)
 			}
-			after := edgeSpace(ch, false)
-			for i := len(after) - 1; i >= 0; i-- {
-				ch.Parent.InsertBefore(after[i], next)
+			// in document order, right before what followed the mark ("x<br>\u00a0" stays so:
+			// the other way round, the <br> would meet one after the mark, a blank line)
+			for _, s := range edgeSpace(ch, false) {
+				ch.Parent.InsertBefore(s, next)
 			}
 		}
 		ch = next
@@ -1432,17 +1461,22 @@ var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
 // escape escapes Markdown syntax in text so that it reads back as the same text. lineStart
 // tells whether the text begins at the start of a line (otherwise only the lines after its
 // first newline are checked for block syntax and indentation).
-func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false, ' ') }
+func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false, ' ', '\n') }
 
 // escapeText is escape. With rawIndent, indentation is written as it is (for editable
 // Markdown, where FromMarkdown keeps it, see keepIndentation); otherwise its first
 // character is a character reference, so any Markdown reader keeps it.
-func escapeText(s string, lineStart, rawIndent bool, prev byte) string {
+func escapeText(s string, lineStart, rawIndent bool, prev, next byte) string {
 	s = escapeInline(s, prev)
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		if i == 0 && !lineStart {
 			continue
+		}
+		escapeBlock := escapeBlock
+		if i == len(lines)-1 && next != '\n' {
+			// the line goes on in what comes next: "1." then "a" is not a list marker
+			escapeBlock = func(l string) string { return strings.TrimSuffix(escapeBlockLine(l+string(next)), string(next)) }
 		}
 		trimmed := strings.TrimLeft(l, " \t") // indentation: spaces and tabs
 		indent := l[:len(l)-len(trimmed)]
@@ -1467,7 +1501,10 @@ func escapeText(s string, lineStart, rawIndent bool, prev byte) string {
 // escapeBlock escapes block syntax at the start of a line: "#", ">", "- ", "+ ", "1. ", "1) "
 // would become headings, quotes or lists, and a line of only "-" or "=" would turn the line
 // above into a heading. (Lines that do not start with block syntax are returned as they are.)
-func escapeBlock(line string) string {
+func escapeBlock(line string) string { return escapeBlockLine(line) }
+
+// escapeBlockLine is escapeBlock.
+func escapeBlockLine(line string) string {
 	switch {
 	case strings.HasPrefix(line, "#"), strings.HasPrefix(line, ">"),
 		listBullet(line, '-'), listBullet(line, '+'),

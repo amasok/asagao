@@ -37,12 +37,27 @@ func markDelim(n *html.Node) string {
 //   - emphasis inside the same emphasis is the outer one ("<em>a<em>b</em></em>" would be
 //     "*a*b**", and "<em><em>a</em></em>" bold);
 //   - emphasis over a blank line is emphasis of each paragraph: a blank line ends the
-//     paragraph, and with it the emphasis.
+//     paragraph, and with it the emphasis;
+//   - text that unwrapping split is one text again.
 //
 // None of these changes how the text looks.
 func normalizeMarks(doc *html.Node) {
 	flattenMarks(doc, map[string]bool{})
+	mergeText(doc)
 	splitMarksAtBlankLines(doc)
+}
+
+// mergeText makes text nodes next to each other one (as html.Parse leaves text): text that
+// an unwrapped emphasis split is escaped as a whole ("1." then "a@x.jp" is not a list
+// marker at the end of a line).
+func mergeText(n *html.Node) {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		for ch.Type == html.TextNode && ch.NextSibling != nil && ch.NextSibling.Type == html.TextNode {
+			ch.Data += ch.NextSibling.Data
+			n.RemoveChild(ch.NextSibling)
+		}
+		mergeText(ch)
+	}
 }
 
 func flattenMarks(n *html.Node, active map[string]bool) {

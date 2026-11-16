@@ -188,8 +188,12 @@ Asana が受け付けないリスト項目の中の引用・コード片・見�
 - **THEN** `<ol><li>a\n---</li><li>b</li></ol>` になる
 
 ### Requirement: 強調は隣の文字によらず残す (#58)
-html の太字・斜体・取り消し線は、句読点・リンク・画像・コード・ほかの強調・メールアドレス・URL と隣り合っても、エディタを往復したあと同じ文字に同じ装飾が付いている (MUST)。Markdown の区切り (`**`・`*`・`~~`、コードの `` ` ``) がそのままでは開かない・閉じない所、隣の区切りとつながる所、Linkify にメールアドレスや URL の一部として読まれる所では、区切りの外側に `\ ` (エスケープした空白) を書く。Markdown → rich text では `\ ` を何も書かないものとして読む (goldmark の CJK 拡張と同じ)。
+html の太字・斜体・取り消し線は、句読点・リンク・画像・コード・ほかの強調・メールアドレス・URL と隣り合っても、エディタを往復したあと同じ文字に同じ装飾が付いている (MUST)。Markdown の区切り (`**`・`*`・`~~`、コードの `` ` ``) がそのままでは開かない・閉じない所、隣の区切りとつながる所、Linkify にメールアドレスや URL の一部として読まれる所では、区切りの外側に `\ ` (エスケープした空白) を書く。Markdown → rich text では、区切りのすぐ隣の `\ ` を何も書かないものとして読む (goldmark の CJK 拡張と同じ)。ほかの所の `\ ` は文字にする。
 根拠: marks.go separateTokens; frommd.go escapedSpaceParser; marks_test.go; stability_attack_test.go genInlineRT
+
+#### Scenario: 利用者が打った `\ `
+- **WHEN** `cd My\ Documents` を変換する
+- **THEN** `\ ` は打ったとおりに残り、`cd My\ Documents` になる (TestEscapedSpaceNextToDelimitersOnly)
 
 #### Scenario: 表示用の Markdown
 - **WHEN** `これは<strong>「重要」</strong>です` を表示用に変換する
@@ -224,8 +228,8 @@ html → Markdown の前に、強調を Markdown で書ける形にする (MUST)
 - **THEN** `z<code>a@x.jp</code>` のままになる
 
 ### Requirement: エスケープを含む URL は文字のまま残す (#77)
-Linkify が読む URL (エスケープしない文字で読んだときの範囲) がエスケープする文字を含むときは、リンクにせず文字のまま残す (MUST)。スキームの `:` か `www` の `.` もエスケープする (`\` の手前で切れたリンクになっていた)。含まないときは、Linkify が読むとおりのリンクになる。
-根拠: richtext.go escapeInline, linkifyURL; marks_test.go TestLinkifyAsWithoutEscapes
+Linkify が読む URL (エスケープしない文字で読んだときの範囲) がエスケープする文字を含むときは、リンクにせず文字のまま残す (MUST)。スキームの `:` か `www` の `.` もエスケープする (`\` の手前で切れたリンクになっていた)。含まないときは、html の URL の文字は、エスケープなしの Markdown として読んだときのリンクになる (末尾の句読点は外れる)。
+根拠: richtext.go escapeInline, linkifyURL; marks_test.go TestLinkifyAsWithoutEscapes, TestLinkifyURLAsGoldmark (goldmark と同じ範囲か)
 
 #### Scenario: エスケープを含む URL
 - **WHEN** `see https://x.jp/a_b` をエディタで往復する
@@ -252,7 +256,7 @@ Linkify が読む URL (エスケープしない文字で読んだときの範囲
 - **THEN** `#` になり、戻すと `<h1></h1>` になる
 
 ### Requirement: 変換で落ちるもの
-次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)、`\ ` (エスケープした空白、#58)。
+次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)、区切りのすぐ隣で利用者が打った `\ ` (#58)。
 根拠: richtext.go walk (atom.U、知らない要素), headingLine, image; frommd.go block の Heading (h3 以下は h2), inline の Image
 
 #### Scenario: 下線

@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode"
 
+	gast "github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
@@ -162,14 +164,21 @@ func TestAdjacentCodeSpans(t *testing.T) {
 	}
 }
 
-// An escaped space is nothing, in text and link text; in code it is as typed.
-func TestEscapedSpaceIsNothing(t *testing.T) {
+// An escaped space right next to a delimiter is nothing (ToEditableMarkdown writes it
+// there); elsewhere it is text as typed (in Markdown a space cannot be escaped).
+func TestEscapedSpaceNextToDelimitersOnly(t *testing.T) {
 	for md, want := range map[string]string{
-		`a\ b`:                  "<body>ab</body>",
+		`x\ **(a)**\ y`:         "<body>x<strong>(a)</strong>y</body>",
+		`a\ ~~(b)~~\ c`:         "<body>a<s>(b)</s>c</body>",
+		"`a`\\ `b`":             "<body><code>a</code><code>b</code></body>",
+		`x\ [l](https://x.jp/)`: `<body>x<a href="https://x.jp/">l</a></body>`,
+		`https://x.jp/a\ &#32;`: `<body><a href="https://x.jp/a">https://x.jp/a</a> </body>`,
+		// typed by the user: kept
+		`cd My\ Documents`:      `<body>cd My\ Documents</body>`,
+		`C:\ drive`:             `<body>C:\ drive</body>`,
 		`a\\ b`:                 `<body>a\ b</body>`,
 		"`a\\ b`":               "<body><code>a\\ b</code></body>",
-		`[a\ b](https://x.jp/)`: `<body><a href="https://x.jp/">ab</a></body>`,
-		`x\ www.x.jp`:           `<body>x<a href="http://www.x.jp">www.x.jp</a></body>`, // as after "**"
+		`[a\ b](https://x.jp/)`: `<body><a href="https://x.jp/">a\ b</a></body>`,
 	} {
 		if got := FromMarkdown(md); got != want {
 			t.Errorf("%q -> %q, want %q", md, got, want)
@@ -177,6 +186,12 @@ func TestEscapedSpaceIsNothing(t *testing.T) {
 	}
 	if got := PlainFromMarkdown(`x\ **(a)**\ y`); got != "x(a)y" {
 		t.Errorf("plain %q", got)
+	}
+	// and what the user typed goes back to the editor as typed
+	for _, md := range []string{`cd My\ Documents`, `C:\ drive`} {
+		if got := ToEditableMarkdown(FromMarkdown(md)); got != strings.ReplaceAll(md, `\`, `\\`) {
+			t.Errorf("%q -> %q", md, got)
+		}
 	}
 }
 
@@ -203,7 +218,7 @@ func TestEmphasisBoundariesInHeading(t *testing.T) {
 	}
 }
 
-var markTexts = []string{"a", "b c", "日本", "(", ")", "「", "」", "!", ".", "-", "_", "*", "~", "`", "@", "a@x.jp", "x.jp", "www.x.jp", "https://x.jp/a", " ", "\n", "\n\n", "\n \n", "\t", "&", "<", "#"}
+var markTexts = []string{"a", "b c", "日本", "(", ")", "「", "」", "!", ".", "-", "_", "*", "~", "`", "@", "a@x.jp", "x.jp", "www.x.jp", "https://x.jp/a", "1.", "-", "\u00a0", "\u3000", " ", "\n", "\n\n", "\n \n", "\t", "&", "<", "#"}
 
 func genMarkInline(r *rand.Rand, depth int) string {
 	var sb strings.Builder
@@ -310,6 +325,59 @@ func TestBlockSyntaxAfterIndentInAnotherElement(t *testing.T) {
 		md1, h1, _, h2 := rt2(in)
 		if want := strings.NewReplacer("<u>", "", "</u>", "").Replace(in); h1 != want || h1 != h2 {
 			t.Errorf("%q -> %q -> %q -> %q", in, md1, h1, h2)
+		}
+	}
+}
+
+// linkifyURL is a copy of goldmark's Linkify (its regular expressions and what it leaves
+// out at the end): it must find the same URL as goldmark does, or escapeInline decides on
+// a URL that is not the one linked.
+func TestLinkifyURLAsGoldmark(t *testing.T) {
+	r := rand.New(rand.NewSource(77))
+	chars := "aZ09-_.~#!?&/=();,'\"^{}[]`*:@%+$<> "
+	for i := 0; i < 20000; i++ {
+		var sb strings.Builder
+		sb.WriteString([]string{"https://x.jp", "http://x.jp", "ftp://x.jp", "www.x.jp", "https://x", "www.x"}[r.Intn(6)])
+		for j := r.Intn(12); j > 0; j-- {
+			sb.WriteByte(chars[r.Intn(len(chars))])
+		}
+		s := sb.String()
+		want := linkifyURL(s)
+		// goldmark's link text, read from what it makes of the URL after a space
+		got := 0
+		doc := md.Parser().Parse(text.NewReader([]byte("x " + s)))
+		_ = gast.Walk(doc, func(n gast.Node, entering bool) (gast.WalkStatus, error) {
+			if l, ok := n.(*gast.AutoLink); ok && entering && got == 0 {
+				got = len(l.Label([]byte("x " + s)))
+				return gast.WalkStop, nil
+			}
+			return gast.WalkContinue, nil
+		})
+		if got != want {
+			t.Fatalf("%q: linkifyURL %d, goldmark %d", s, want, got)
+		}
+	}
+}
+
+// Line structure next to emphasis and text that is not ASCII whitespace:
+//   - a line break and an NBSP at the end of emphasis move out of it in their order (the
+//     NBSP went before the <br>, which then met the next one: a blank line in the italic);
+//   - "1." before more text on its line, in another element, is not a list marker (it was
+//     escaped, which kept "1.a@x.jp" from being linked, until the text was one);
+//   - spaces at the end of a line before a line of only NBSP or U+3000 are kept (that line
+//     is text, not the end of the block).
+func TestLineStructureNextToEmphasis(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><em><strong>x<br> </strong><br>a</em></body>": "<body><em><strong>x</strong>\n \na</em></body>",
+		"<body><em>x<br>1.<i>a@x.jp</i></em></body>":         `<body><em>x` + "\n" + `<a href="mailto:1.a@x.jp">1.a@x.jp</a></em></body>`,
+		"<body>x<br>1.<u>a@x.jp</u></body>":                  `<body>x` + "\n" + `<a href="mailto:1.a@x.jp">1.a@x.jp</a></body>`,
+		"<body>x<br>1.<u> a</u></body>":                      "<body>x\n1. a</body>",
+		"<body>a\t \n </body>":                               "<body>a\t \n </body>",
+		"<body>x \t<br>　</body>":                             "<body>x \t\n　</body>",
+	} {
+		md1, h1, md2, h2 := rt2(in)
+		if h1 != want || h1 != h2 {
+			t.Errorf("%q\nmd1 %q\nh1  %q want %q\nmd2 %q\nh2  %q", in, md1, h1, want, md2, h2)
 		}
 	}
 }
