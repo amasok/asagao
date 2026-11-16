@@ -17,8 +17,15 @@ func genInlineRT(r *rand.Rand, depth int) string {
 		case 1:
 			sb.WriteString("\n")
 		case 2:
-			if false { // emphasis with spaces at its ends loses its marks on main already (#49)
-				sb.WriteString("<b>" + genInlineRT(r, depth+1) + "</b>")
+			// emphasis with spaces and line breaks at its ends (#49). Its text starts and ends
+			// with a letter (apart from the spaces), it is not nested, and a space follows it:
+			// "**" next to punctuation (a link) or to another "**" is not emphasis in Markdown,
+			// and an email address right after "**" is linked with the "**" in it (on main
+			// already, not about spaces).
+			if depth == 0 {
+				ws := []string{"", " ", "\n", "<br>", "\t", " \n"}
+				sb.WriteString("<b>" + ws[r.Intn(len(ws))] + "m " + genInlineRT(r, depth+1) + " m" + ws[r.Intn(len(ws))] + "</b> ")
+				continue
 			}
 		case 3:
 			// (a link whose text is only whitespace keeps the spaces before it raw: not worth it)
@@ -43,11 +50,11 @@ func escHTML(s string) string {
 func genBlockRT(r *rand.Rand, depth int) string {
 	switch r.Intn(6) {
 	case 0:
-		if false { // quotes holding lists are unstable on main already (#51; TestBlockLookalikesStayText covers quotes)
+		if depth < 2 { // quotes holding lists and code (#51)
 			return "<blockquote>" + genBlockRT(r, depth+1) + "</blockquote>"
 		}
 	case 1:
-		if false { // whitespace-only text between inline nodes in a list item is dropped on main already (#51)
+		{ // whitespace-only text between inline nodes in a list item (#51), empty items (#52)
 			tag := []string{"ul", "ol"}[r.Intn(2)]
 			s := "<" + tag + ">"
 			for i := r.Intn(3) + 1; i > 0; i-- {

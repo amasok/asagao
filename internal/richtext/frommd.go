@@ -77,6 +77,9 @@ func isBlockElement(n gast.Node) bool {
 func (w *htmlWriter) blocks(n gast.Node) {
 	var prev gast.Node
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if n.Kind() == gast.KindBlockquote && w.blankText(c) {
+			continue // "> &#32;": an empty quote
+		}
 		if prev != nil {
 			switch {
 			case isBlockElement(prev):
@@ -163,7 +166,7 @@ func (w *htmlWriter) block(n gast.Node) {
 }
 
 // blankText reports whether n is a paragraph of nothing but whitespace (as ToEditableMarkdown
-// writes an empty list item: "- &#32;").
+// writes an empty list item or quote: "- &#32;", "> &#32;").
 func (w *htmlWriter) blankText(n gast.Node) bool {
 	switch n.(type) {
 	case *gast.Paragraph, *gast.TextBlock:

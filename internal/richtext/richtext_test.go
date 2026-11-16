@@ -539,3 +539,34 @@ func TestEmptyListItems(t *testing.T) {
 	roundTrip(t, `<body><ul><li>a<ul><li><a data-asana-gid="9"/></li></ul></li></ul></body>`,
 		`<body><ul><li>a<ul><li><a data-asana-gid="9"/></li></ul></li></ul></body>`)
 }
+
+// Line breaks inside a list item keep the rest of the item in it: a blank line in the text
+// is written as a backslash line break (a blank line would end the item), and line breaks
+// at the start of the item go (Markdown cannot keep them; after the marker they would make
+// the rest leave the list). Spaces before inline content at the start of an item line stay.
+// An empty quote stays a quote. (#51, #52)
+func TestLineBreaksInListItems(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><ul><li>a\n\nb</li><li>c</li></ul></body>":                                        "<body><ul><li>a\n\nb</li><li>c</li></ul></body>",
+		"<body><ul><li>a<br><br>b</li></ul></body>":                                              "<body><ul><li>a\n\nb</li></ul></body>",
+		"<body><ul><li>a<br>\n\nb</li></ul></body>":                                              "<body><ul><li>a\n\n\nb</li></ul></body>",
+		"<body><ul><li>a<b>x</b>\n\n<b>y</b></li></ul></body>":                                   "<body><ul><li>a<strong>x</strong>\n\n<strong>y</strong></li></ul></body>",
+		"<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>":                         "<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>",
+		"<body><ul><li>a<ul><li>b\n\n<a href=\"https://x.jp/\">c</a></li></ul></li></ul></body>": "<body><ul><li>a<ul><li>b\n\n<a href=\"https://x.jp/\">c</a></li></ul></li></ul></body>",
+		"<body><ul><li>a\n\n</li><li>b</li></ul></body>":                                         "<body><ul><li>a</li><li>b</li></ul></body>",
+		"<body><ul><li><br>a</li></ul></body>":                                                   "<body><ul><li>a</li></ul></body>",
+		"<body><ul><li>\n\n  a</li></ul></body>":                                                 "<body><ul><li>  a</li></ul></body>",
+		"<body><ul><li>\t<b><br>m</b></li></ul></body>":                                          "<body><ul><li><strong>m</strong></li></ul></body>",
+		"<body><ul><li>    <a href=\"https://x.jp/\">a</a></li></ul></body>":                     "<body><ul><li>    <a href=\"https://x.jp/\">a</a></li></ul></body>",
+		"<body><ul><li>a<br>  <a href=\"https://x.jp/\">b</a></li></ul></body>":                  "<body><ul><li>a\n  <a href=\"https://x.jp/\">b</a></li></ul></body>",
+		"<body><blockquote></blockquote>a</body>":                                                "<body><blockquote></blockquote>a</body>",
+		"<body><blockquote>\n<br></blockquote></body>":                                           "<body><blockquote></blockquote></body>",
+		"<body><blockquote><blockquote></blockquote></blockquote></body>":                        "<body><blockquote><blockquote></blockquote></blockquote></body>",
+	} {
+		roundTrip(t, in, want)
+	}
+	// a transparent element with nothing but a comment at the start of an item does not hang
+	if got := ToEditableMarkdown("<body><ul><li><b><!-- c --></b><br>a</li></ul></body>"); got != "- a" {
+		t.Errorf("got %q", got)
+	}
+}
