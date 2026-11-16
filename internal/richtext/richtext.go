@@ -154,16 +154,13 @@ func (c *converter) block() {
 		c.setPrefix()
 		return
 	}
+	// The blank line goes after the line above, at the depth of both it and the next line;
+	// if the line above is already blank, it is rewritten so that quotes that have ended end.
 	prev := c.lineStartOf(cur - 1)
-	if c.lineBlank(prev) {
-		// already after a blank line: make it end the quotes that have ended
-		d := min(quoteDepth(c.b.Bytes()[prev:cur-1]), c.quote)
-		c.b.Truncate(prev)
-		c.write(blankQuoteLine(d) + "\n")
-		c.setPrefix()
-		return
-	}
 	d := min(quoteDepth(c.b.Bytes()[prev:cur-1]), c.quote)
+	if c.lineBlank(prev) {
+		cur = prev
+	}
 	c.b.Truncate(cur)
 	c.write(blankQuoteLine(d) + "\n")
 	c.setPrefix()
