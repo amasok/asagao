@@ -31,3 +31,12 @@ func (t Target) FromMarkdown(src string) string { return fromMarkdown(src, t) }
 // PlainFromMarkdown returns the text of Markdown without markup, as FromMarkdown writes it
 // for the target (for Asana's plain notes / text).
 func (t Target) PlainFromMarkdown(src string) string { return plainFromMarkdown(src, t) }
+
+// Converter converts Markdown to Asana rich text, one method per target. It satisfies
+// app.RichText, so that internal/app does not depend on Target.
+type Converter struct{}
+
+// TaskNotes converts a task description to html_notes and its plain notes.
+func (Converter) TaskNotes(md string) (html, plain string) {
+	return TaskNotes.FromMarkdown(md), TaskNotes.PlainFromMarkdown(md)
+}

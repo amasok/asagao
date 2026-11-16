@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	usecase "github.com/amasok/asana-tui/internal/app" // the cli package has its own type app
 	"github.com/amasok/asana-tui/internal/config"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
@@ -164,39 +165,16 @@ type createOpts struct {
 // createTask resolves every option and then creates the task locally. Nothing is written
 // when an option is invalid.
 func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Time) (string, error) {
-	nt := store.NewTask{Name: o.name, ParentGID: o.parent}
-	if o.notes != "" { // Markdown -> Asana rich text
-		nt.Notes, nt.HTMLNotes = richtext.TaskNotes.PlainFromMarkdown(o.notes), richtext.TaskNotes.FromMarkdown(o.notes)
+	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	gid, err := tasks.Create(ctx, usecase.CreateTaskInput{
+		Name: o.name, Parent: o.parent, Project: o.project, Section: o.section,
+		Due: o.due, Assignee: o.assignee, Notes: o.notes,
+	})
+	var fe *usecase.FieldError
+	if errors.As(err, &fe) {
+		return "", fmt.Errorf("--%s: %w", fe.Field, fe.Err) // the field names are the flag names
 	}
-	var err error
-	if nt.DueOn, err = parseDate(o.due, now); err != nil {
-		return "", fmt.Errorf("--due: %w", err)
-	}
-	if o.parent != "" {
-		// subtask: workspace comes from the parent; no project/section
-	} else if o.project != "" {
-		if nt.ProjectGID, err = st.ResolveProject(ctx, o.project); err != nil {
-			return "", err
-		}
-		if o.section != "" {
-			nt.SectionGID, err = st.ResolveSection(ctx, nt.ProjectGID, o.section)
-		} else {
-			nt.SectionGID, err = st.FirstSection(ctx, nt.ProjectGID)
-		}
-		if err != nil {
-			return "", err
-		}
-	} else if nt.WorkspaceGID, err = st.DefaultWorkspace(ctx); err != nil {
-		return "", err
-	}
-	assignee := o.assignee
-	if o.project == "" && o.parent == "" && assignee == "" {
-		assignee = "me"
-	}
-	if nt.AssigneeGID, err = st.ResolveUser(ctx, assignee); err != nil {
-		return "", fmt.Errorf("--assignee: %w", err)
-	}
-	return st.CreateTaskLocal(ctx, nt, now)
+	return gid, err
 }
 
 func (a *app) taskCreateCmd() *cobra.Command {

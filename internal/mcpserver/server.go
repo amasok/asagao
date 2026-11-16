@@ -20,6 +20,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
@@ -463,50 +464,19 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 // --- write tools ---
 
 func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in CreateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	now := s.Now()
-	nt := store.NewTask{Name: in.Name, ParentGID: in.Parent}
-	if in.Notes != "" {
-		nt.Notes, nt.HTMLNotes = richtext.TaskNotes.PlainFromMarkdown(in.Notes), richtext.TaskNotes.FromMarkdown(in.Notes)
+	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	gid, err := tasks.Create(ctx, app.CreateTaskInput{
+		Name: in.Name, Parent: in.Parent, Project: in.Project, Section: in.Section,
+		Due: in.DueOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
+	})
+	var fe *app.FieldError
+	if errors.As(err, &fe) {
+		if fe.Field == "due" {
+			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", fe.Err)
+		}
+		return nil, WriteOutput{}, fe.Err // the assignee's error is reported as the store gives it
 	}
-	var err error
-	if nt.DueOn, err = dates.Parse(in.DueOn, now); err != nil {
-		return nil, WriteOutput{}, fmt.Errorf("due_on: %w", err)
-	}
-	assignee := in.Assignee
-	if in.Parent != "" {
-		// subtask: workspace comes from the parent
-	} else if in.Project != "" {
-		if nt.ProjectGID, err = s.Store.ResolveProject(ctx, in.Project); err != nil {
-			return nil, WriteOutput{}, err
-		}
-		if in.Section != "" {
-			nt.SectionGID, err = s.Store.ResolveSection(ctx, nt.ProjectGID, in.Section)
-		} else {
-			nt.SectionGID, err = s.Store.FirstSection(ctx, nt.ProjectGID)
-		}
-		if err != nil {
-			return nil, WriteOutput{}, err
-		}
-	} else {
-		if nt.WorkspaceGID, err = s.Store.DefaultWorkspace(ctx); err != nil {
-			return nil, WriteOutput{}, err
-		}
-		if assignee == "" {
-			assignee = "me"
-		}
-	}
-	if nt.AssigneeGID, err = s.Store.ResolveUser(ctx, assignee); err != nil {
-		return nil, WriteOutput{}, err
-	}
-	tags, err := s.Store.ResolveTagEdit(ctx, in.Tags, nil)
 	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	gid, err := s.Store.CreateTaskLocal(ctx, nt, now)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	if err := s.Store.ApplyTagEdit(ctx, gid, tags, now); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, gid), nil
