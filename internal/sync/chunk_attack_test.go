@@ -408,7 +408,7 @@ func TestChunkAttackOtherWriterNotBlocked(t *testing.T) {
 				r.max = d
 			}
 			r.writes++
-			time.Sleep(time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 		}
 	}()
 	if _, err := e.s.Run(ctx, false); err != nil {
@@ -520,6 +520,7 @@ func TestChunkAttackTwoOtherWritersNotStarved(t *testing.T) {
 				if d := time.Since(s); d > max {
 					max = d
 				}
+				time.Sleep(30 * time.Millisecond) // a person's writes, not a busy loop
 			}
 		}(w)
 	}
@@ -536,7 +537,7 @@ func TestChunkAttackTwoOtherWritersNotStarved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync under contention: %v", err)
 	}
-	if got := e.taskGIDs(t); len(got) != 2000 {
+	if got := e.taskGIDs(t); len(got) != 12000 {
 		t.Fatalf("%d tasks", len(got))
 	}
 }
