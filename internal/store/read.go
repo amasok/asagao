@@ -12,6 +12,16 @@ import (
 // ErrNotFound is returned when a task or project is not in the local store.
 var ErrNotFound = errors.New("not found in local store")
 
+// notFound reports a lookup's error: only a missing row (sql.ErrNoRows) is ErrNotFound;
+// any other error (busy, I/O, a closed store, a cancelled context) is returned as it is,
+// so that it is not shown as "not found" (#54). what names the thing looked up.
+func notFound(err error, what string) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%s: %w", what, ErrNotFound)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
 // ErrAmbiguous is returned when a project name matches more than one project.
 var ErrAmbiguous = errors.New("ambiguous name")
 

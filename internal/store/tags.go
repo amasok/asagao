@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -55,7 +54,7 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var workspace string
 		if err := tx.QueryRowContext(ctx, "SELECT workspace_gid FROM tasks WHERE gid = ?", taskGID).Scan(&workspace); err != nil {
-			return fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
+			return notFound(err, "task "+taskGID)
 		}
 		if tagGID == "" {
 			if tagName == "" {
@@ -72,7 +71,7 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 				return err
 			}
 		} else if err := tx.QueryRowContext(ctx, "SELECT name FROM tags WHERE gid = ?", tagGID).Scan(&tagName); err != nil {
-			return fmt.Errorf("tag %s: %w", tagGID, ErrNotFound)
+			return notFound(err, "tag "+tagGID)
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)", taskGID, tagGID); err != nil {
 			return err

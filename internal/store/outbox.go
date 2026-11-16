@@ -263,13 +263,13 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	}
 	if nt.ParentGID != "" {
 		if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM tasks WHERE gid = ?", nt.ParentGID).Scan(&nt.WorkspaceGID); err != nil {
-			return "", fmt.Errorf("parent task %s: %w", nt.ParentGID, ErrNotFound)
+			return "", notFound(err, "parent task "+nt.ParentGID)
 		}
 		nt.ProjectGID, nt.SectionGID = "", "" // subtasks are not in projects
 	}
 	if nt.WorkspaceGID == "" && nt.ProjectGID != "" {
 		if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", nt.ProjectGID).Scan(&nt.WorkspaceGID); err != nil {
-			return "", fmt.Errorf("project %s: %w", nt.ProjectGID, ErrNotFound)
+			return "", notFound(err, "project "+nt.ProjectGID)
 		}
 	}
 	if nt.WorkspaceGID == "" && nt.ParentGID == "" { // subtasks inherit it from the parent in Asana

@@ -474,16 +474,17 @@ func TestEmphasisWithSpaceAtItsEdges(t *testing.T) {
 	}
 }
 
-// Blocks inside a quote (lists, code, paragraphs) stay in the quote, and whitespace
-// between inline content in a list item is text, not layout between list tags (#51).
+// Blocks inside a quote (code, paragraphs, quotes) stay in the quote; a list there, which
+// Asana does not accept (#60), stays in the quote as its Markdown text. Whitespace between
+// inline content in a list item is text, not layout between list tags (#51).
 func TestBlocksInQuoteAndSpacesInListItems(t *testing.T) {
 	for in, want := range map[string]string{
-		"<body><blockquote><ul><li># x</li></ul></blockquote></body>":                                "<body><blockquote><ul><li># x</li></ul></blockquote></body>",
-		"<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>":   "<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>",
+		"<body><blockquote><ul><li># x</li></ul></blockquote></body>":                                "<body><blockquote>- # x</blockquote></body>",
+		"<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>":   "<body><blockquote>1. a\n2. b\n   - c\nd</blockquote>e</body>",
 		"<body><blockquote><pre>p\n> q</pre></blockquote></body>":                                    "<body><blockquote><pre>p\n&gt; q</pre></blockquote></body>",
 		"<body><blockquote>q<pre>p</pre>r</blockquote></body>":                                       "<body><blockquote>q\n<pre>p</pre>r</blockquote></body>",
 		"<body><blockquote><p>a</p><p>b</p></blockquote><p>c</p></body>":                             "<body><blockquote>a\n\nb</blockquote>c</body>",
-		"<body><blockquote>a<blockquote>b<ul><li>c</li></ul></blockquote>d</blockquote>e</body>":     "<body><blockquote>a\n<blockquote>b\n<ul><li>c</li></ul></blockquote>d</blockquote>e</body>",
+		"<body><blockquote>a<blockquote>b<ul><li>c</li></ul></blockquote>d</blockquote>e</body>":     "<body><blockquote>a\n<blockquote>b\n- c</blockquote>d</blockquote>e</body>",
 		`<body><ul><li><a href="https://x.jp/">a</a> <a href="https://x.jp/">b</a></li></ul></body>`: `<body><ul><li><a href="https://x.jp/">a</a> <a href="https://x.jp/">b</a></li></ul></body>`,
 		"<body><ul><li><strong>a </strong>b</li></ul></body>":                                        "<body><ul><li><strong>a</strong> b</li></ul></body>",
 		"<body><ul><li><b>a</b><i> </i><b>c</b></li></ul></body>":                                    "<body><ul><li><strong>a</strong> <strong>c</strong></li></ul></body>",
@@ -529,7 +530,7 @@ func TestEmptyListItems(t *testing.T) {
 		"<body><ul><li></li></ul></body>":                                             "<body><ul><li></li></ul></body>",
 		"<body><ul><li>a<ul><li><ul><li>b</li></ul></li></ul></li></ul></body>":       "<body><ul><li>a<ul><li><ul><li>b</li></ul></li></ul></li></ul></body>",
 		"<body><ul><li><b> </b><ul><li></li></ul></li></ul></body>":                   "<body><ul><li><ul><li></li></ul></li></ul></body>",
-		"<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>": "<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>",
+		"<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>": "<body><blockquote>- a\n  -</blockquote></body>", // no lists in a quote (#60)
 	} {
 		roundTrip(t, in, want)
 	}
@@ -551,7 +552,7 @@ func TestLineBreaksInListItems(t *testing.T) {
 		"<body><ul><li>a<br><br>b</li></ul></body>":                                              "<body><ul><li>a\n\nb</li></ul></body>",
 		"<body><ul><li>a<br>\n\nb</li></ul></body>":                                              "<body><ul><li>a\n\n\nb</li></ul></body>",
 		"<body><ul><li>a<b>x</b>\n\n<b>y</b></li></ul></body>":                                   "<body><ul><li>a<strong>x</strong>\n\n<strong>y</strong></li></ul></body>",
-		"<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>":                         "<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>",
+		"<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>":                         "<body><blockquote>1. a\n\nb</blockquote></body>", // no lists in a quote (#60)
 		"<body><ul><li>a<ul><li>b\n\n<a href=\"https://x.jp/\">c</a></li></ul></li></ul></body>": "<body><ul><li>a<ul><li>b\n\n<a href=\"https://x.jp/\">c</a></li></ul></li></ul></body>",
 		"<body><ul><li>a\n\n</li><li>b</li></ul></body>":                                         "<body><ul><li>a</li><li>b</li></ul></body>",
 		"<body><ul><li><br>a</li></ul></body>":                                                   "<body><ul><li>a</li></ul></body>",

@@ -3,6 +3,7 @@ package richtext
 import (
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -47,6 +48,22 @@ type htmlWriter struct {
 	b     strings.Builder
 	src   []byte
 	plain bool
+	quote int  // open <blockquote>s: a list here is written as text (see asText)
+	item  int  // open <li>s: a quote, heading or code block here is written as text
+	text  bool // writing Markdown blocks as text (see markdownText)
+}
+
+// sub returns a writer for a part of the output that is put together afterwards.
+func (w *htmlWriter) sub() *htmlWriter {
+	return &htmlWriter{src: w.src, plain: w.plain, quote: w.quote, item: w.item, text: true}
+}
+
+// esc is s as it is written to the output (escaped, unless the output is plain text).
+func (w *htmlWriter) esc(s string) string {
+	if w.plain {
+		return s
+	}
+	return html.EscapeString(s)
 }
 
 func (w *htmlWriter) tag(open string) {
@@ -62,6 +79,37 @@ func (w *htmlWriter) textOut(s string) {
 		w.b.WriteString(html.EscapeString(s))
 	}
 }
+
+// asText reports whether block n, a child at the writer's position, is written as text
+// rather than as an element: Asana's rich text does not let lists nest inside a quote, nor
+// a quote, heading or code block inside a list item, and rejects such html_text with 400
+// (#60). The Markdown for it is kept as the text of the quote or item instead, so that what
+// the user wrote stays, around it the quote or the list (its items and numbers) stay as
+// they are, and what is sent is accepted.
+func (w *htmlWriter) asText(n gast.Node) bool {
+	switch n.Kind() {
+	case gast.KindList:
+		return w.quote > 0
+	case gast.KindBlockquote, gast.KindHeading, gast.KindFencedCodeBlock, gast.KindCodeBlock:
+		return w.item > 0
+	}
+	return false
+}
+
+// demoted returns block n written as text (see asText and markdownText).
+func (w *htmlWriter) demoted(n gast.Node) string {
+	sub := w.sub()
+	sub.markdownText(n)
+	out := sub.b.String()
+	if w.quote > 0 {
+		// a quote keeps one blank line between its lines, not more
+		out = blankLines.ReplaceAllString(out, "\n\n")
+	}
+	return out
+}
+
+// elementBlock reports whether n is written as a block element (which ends its line).
+func (w *htmlWriter) elementBlock(n gast.Node) bool { return isBlockElement(n) && !w.asText(n) }
 
 func isBlockElement(n gast.Node) bool {
 	switch n.Kind() {
@@ -82,9 +130,9 @@ func (w *htmlWriter) blocks(n gast.Node) {
 		}
 		if prev != nil {
 			switch {
-			case isBlockElement(prev):
+			case w.elementBlock(prev):
 				// a block element already ends its line
-			case isBlockElement(c):
+			case isBlockElement(prev), isBlockElement(c):
 				w.b.WriteString("\n")
 			default:
 				w.b.WriteString("\n\n")
@@ -96,6 +144,10 @@ func (w *htmlWriter) blocks(n gast.Node) {
 }
 
 func (w *htmlWriter) block(n gast.Node) {
+	if w.asText(n) {
+		w.b.WriteString(w.demoted(n))
+		return
+	}
 	switch n := n.(type) {
 	case *gast.Paragraph, *gast.TextBlock:
 		w.inlines(n)
@@ -114,20 +166,16 @@ func (w *htmlWriter) block(n gast.Node) {
 		w.tag("<hr/>")
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
 		w.tag("<pre>")
-		lines := n.Lines()
-		var code strings.Builder
-		for i := 0; i < lines.Len(); i++ {
-			seg := lines.At(i)
-			code.Write(seg.Value(w.src))
-		}
-		w.textOut(strings.TrimRight(code.String(), "\n"))
+		w.textOut(w.codeText(n))
 		w.tag("</pre>")
 		if w.plain {
 			w.b.WriteString("\n")
 		}
 	case *gast.Blockquote:
 		w.tag("<blockquote>")
+		w.quote++
 		w.blocks(n)
+		w.quote--
 		w.tag("</blockquote>")
 	case *gast.List:
 		t := "ul"
@@ -135,6 +183,7 @@ func (w *htmlWriter) block(n gast.Node) {
 			t = "ol"
 		}
 		w.tag("<" + t + ">")
+		w.item++
 		for li := n.FirstChild(); li != nil; li = li.NextSibling() {
 			w.tag("<li>")
 			first := true
@@ -142,7 +191,19 @@ func (w *htmlWriter) block(n gast.Node) {
 				if w.blankText(c) {
 					continue // "- &#32;": an empty item (#52)
 				}
-				if !first && !isBlockElement(c) {
+				if w.asText(c) {
+					out := w.demoted(c)
+					if out == "" {
+						continue // an empty code block: nothing to keep
+					}
+					if !first {
+						w.b.WriteString("\n")
+					}
+					w.b.WriteString(out)
+					first = false
+					continue
+				}
+				if !first && !w.elementBlock(c) {
 					w.b.WriteString("\n")
 				}
 				w.block(c)
@@ -153,6 +214,7 @@ func (w *htmlWriter) block(n gast.Node) {
 				w.b.WriteString("\n")
 			}
 		}
+		w.item--
 		w.tag("</" + t + ">")
 	case *gast.HTMLBlock:
 		lines := n.Lines()
@@ -163,6 +225,114 @@ func (w *htmlWriter) block(n gast.Node) {
 	default:
 		w.blocks(n)
 	}
+}
+
+// markdownText writes block n as the Markdown it stands for, as text: list markers ("- ",
+// "1. "), quote markers ("> ") and heading markers ("# ") are text, and the blocks inside
+// are text too (inline markup stays). A code block becomes inline code, line by line.
+func (w *htmlWriter) markdownText(n gast.Node) {
+	switch n := n.(type) {
+	case *gast.Heading:
+		w.textOut(strings.Repeat("#", n.Level) + " ")
+		w.inlines(n)
+	case *gast.ThematicBreak:
+		w.textOut("---")
+	case *gast.FencedCodeBlock, *gast.CodeBlock:
+		// Each line as inline code, which a quote or an item takes: the code stays code (and
+		// is not read as Markdown or links on the next trip); the fences go with <pre>.
+		// Blank lines around the code go: an item or a quote does not keep them there.
+		for i, l := range strings.Split(strings.Trim(w.codeText(n), "\n"), "\n") {
+			if i > 0 {
+				w.b.WriteString("\n")
+			}
+			if l != "" {
+				w.tag("<code>")
+				w.textOut(l)
+				w.tag("</code>")
+			}
+		}
+	case *gast.Blockquote:
+		sub := w.sub()
+		sub.textBlocks(n, "")
+		w.b.WriteString(w.prefixLines(sub.b.String(), "> ", "> "))
+	case *gast.List:
+		num := n.Start
+		for li := n.FirstChild(); li != nil; li = li.NextSibling() {
+			if li != n.FirstChild() {
+				w.b.WriteString("\n")
+				if !n.IsTight {
+					w.b.WriteString("\n")
+				}
+			}
+			marker := string(n.Marker) + " "
+			if n.IsOrdered() {
+				marker = strconv.Itoa(num) + string(n.Marker) + " "
+				num++
+			}
+			sub := w.sub()
+			sub.textBlocks(li, strings.Repeat(" ", len(marker)))
+			w.b.WriteString(w.prefixLines(sub.b.String(), marker, ""))
+		}
+	default:
+		w.block(n)
+	}
+}
+
+// textBlocks writes the blocks inside n as text (see markdownText), each on its own line;
+// paragraphs (of a loose list item) are apart by a blank line, as they are written. The
+// lines of a list inside are indented by indent (the width of the item's marker), so that
+// it shows as nested; other lines are not indented, so no character is added in front of
+// their text.
+func (w *htmlWriter) textBlocks(n gast.Node, indent string) {
+	var prev gast.Node
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if w.blankText(c) {
+			continue // "- &#32;", "> &#32;": empty
+		}
+		if prev != nil {
+			if prev.Kind() == gast.KindParagraph && c.Kind() == gast.KindParagraph {
+				w.b.WriteString("\n\n")
+			} else {
+				w.b.WriteString("\n")
+			}
+		}
+		if c.Kind() == gast.KindList && indent != "" {
+			sub := w.sub()
+			sub.markdownText(c)
+			w.b.WriteString(w.prefixLines(sub.b.String(), indent, indent))
+		} else {
+			w.markdownText(c)
+		}
+		prev = c
+	}
+}
+
+// prefixLines puts first before the first line of s (written output) and rest before the
+// others; blank lines get them without trailing spaces.
+func (w *htmlWriter) prefixLines(s, first, rest string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		p := rest
+		if i == 0 {
+			p = first
+		}
+		if l == "" {
+			p = strings.TrimRight(p, " ")
+		}
+		lines[i] = w.esc(p) + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// codeText is the text of a code block, without its last line break.
+func (w *htmlWriter) codeText(n gast.Node) string {
+	lines := n.Lines()
+	var code strings.Builder
+	for i := 0; i < lines.Len(); i++ {
+		seg := lines.At(i)
+		code.Write(seg.Value(w.src))
+	}
+	return strings.TrimRight(code.String(), "\n")
 }
 
 // blankText reports whether n is a paragraph of nothing but whitespace (as ToEditableMarkdown
@@ -206,13 +376,9 @@ func (w *htmlWriter) inline(n gast.Node) {
 		if n.Level >= 2 {
 			t = "strong"
 		}
-		w.tag("<" + t + ">")
-		w.inlines(n)
-		w.tag("</" + t + ">")
+		w.mark(n, t, strings.Repeat("*", n.Level))
 	case *east.Strikethrough:
-		w.tag("<s>")
-		w.inlines(n)
-		w.tag("</s>")
+		w.mark(n, "s", "~~")
 	case *gast.Link:
 		// Mentions and images are recognised by the destination as written; the href is the
 		// destination with backslash escapes and character references resolved.
@@ -258,6 +424,36 @@ func (w *htmlWriter) inline(n gast.Node) {
 	default:
 		w.inlines(n)
 	}
+}
+
+// blankLine matches a blank line inside text, blankLines a run of them.
+var (
+	blankLine  = regexp.MustCompile(`\n[ \t]*\n`)
+	blankLines = regexp.MustCompile(`\n(?:[ \t]*\n){2,}`)
+)
+
+// mark writes inline n as the element t. Written as text (see markdownText), a mark that
+// spans a blank line (which a list item keeps, as "\" lines) is written as its delimiters
+// instead: outside an item a blank line ends the paragraph, so the mark would not read
+// back, and Markdown reads such delimiters as text.
+func (w *htmlWriter) mark(n gast.Node, t, delim string) {
+	if !w.text {
+		w.tag("<" + t + ">")
+		w.inlines(n)
+		w.tag("</" + t + ">")
+		return
+	}
+	in := w.sub()
+	in.inlines(n)
+	if blankLine.MatchString(in.b.String()) {
+		w.textOut(delim)
+		w.b.WriteString(in.b.String())
+		w.textOut(delim)
+		return
+	}
+	w.tag("<" + t + ">")
+	w.b.WriteString(in.b.String())
+	w.tag("</" + t + ">")
 }
 
 // textEscape matches a backslash escape ("\*") or a character reference ("&amp;", "&#32;").
