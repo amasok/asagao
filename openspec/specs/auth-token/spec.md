@@ -63,12 +63,24 @@ OAuth のトークンを更新したら、refresh token が変わったとき (�
 - **THEN** refresh token・PAT・client secret・ユーザー情報だけを保存し、アクセストークンは空にする
 
 ### Requirement: ファイルの保存先は自分だけが読める
-`file` の保存先は、排他で作った一時ファイルを 0600 にして fsync し、rename で置き換える (MUST)。トークンのファイル自体と古い `token.json.tmp` がシンボリックリンクでも、その先には書かない。フォルダは 0700 にするが、フォルダの確かめと、読み込み (`Load`) はシンボリックリンクをたどる。
-根拠: internal/auth/tokenstore/file.go:25-107; TestFileSaveDoesNotFollowSymlinks, TestFileSaveMakesExistingFolderPrivate, TestFileConcurrentSaves
+`file` の保存先は、排他で作った一時ファイルを 0600 にして fsync し、rename で置き換える (MUST)。トークンのファイル自体と古い `token.json.tmp` がシンボリックリンクでも、その先には書かない。フォルダは 0700 にする (シンボリックリンクのときは次の要件)。
+根拠: internal/auth/tokenstore/file.go; file_unix.go; TestFileSaveDoesNotFollowSymlinks, TestFileSaveMakesExistingFolderPrivate, TestFileConcurrentSaves
 
 #### Scenario: 既存のフォルダが 0755
 - **WHEN** 保存先のフォルダが 0755 で既にある
 - **THEN** 保存のときに 0700 にする
+
+### Requirement: ファイルの保存先のシンボリックリンクは確かめてから使う
+`file` の保存先のフォルダがシンボリックリンクなら、リンク先の権限は変えず、リンク先が自分の持ち物で、ほかの人が何もできない (0700 相当) フォルダのときだけ使う。そうでなければ保存しない (MUST、#73)。読み込み (`Load`) は、通常のファイルか、自分の持ち物でほかの人が読み書きできない (0600 相当) 通常のファイルへのシンボリックリンクだけを読む (MUST、#73)。FIFO などを開いて待つことはない。リンク先がなければ、ログインしていないのと同じにする。Windows ではこれらを確かめない。
+根拠: internal/auth/tokenstore/file_unix.go; TestFileSaveFolderSymlink, TestFileLoadSymlink, TestOwnedPrivateRefusesOtherOwner
+
+#### Scenario: 保存先のフォルダがシンボリックリンク
+- **WHEN** 保存先のフォルダが、0755 のフォルダへのシンボリックリンク
+- **THEN** リンク先の権限を変えず、保存しない (エラーにする)
+
+#### Scenario: トークンのファイルがシンボリックリンク
+- **WHEN** `token.json` が、ほかの人も読める (0644) ファイルへのシンボリックリンク
+- **THEN** 読まずにエラーにする
 
 ### Requirement: ログインしていないときの知らせ方
 保存先に何もなければ `ErrNotLoggedIn` にし、ログインの方法を案内する (MUST)。CLI の書き込みのコマンドは失敗にせず、未送信として積んだことを知らせる。TUI は「未ログイン」と表示し、MCP の書き込みは「ローカルに保存したが送っていない」と返す。push はこれを「送っていない」(再送してよい) とみなす。
