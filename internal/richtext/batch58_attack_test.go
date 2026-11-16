@@ -150,3 +150,27 @@ func TestBatch58ListMarkerEscapeBeforeAddress(t *testing.T) {
 		}
 	}
 }
+
+// emphasis inside list items keeps its style after the list-item rewrites (#59/#80): over
+// blank lines, in text after a nested list, in a quote written as text.
+func TestBatch58MarksInListItems(t *testing.T) {
+	for _, in := range []string{
+		"<body><ul><li><strong>a<br><br>b</strong></li></ul></body>",
+		"<body><ul><li>x<ul><li>y</li></ul><strong>after</strong> <em>z</em></li></ul></body>",
+		"<body><ul><li>x<ul><li>y</li></ul><strong>a<br><br>b</strong></li></ul></body>",
+		"<body><ul><li><blockquote><strong>q</strong> <em>r<br>s</em></blockquote></li></ul></body>",
+		"<body><ul><li><blockquote><strong>q<br><br>r</strong></blockquote></li></ul></body>",
+		"<body><ol><li>a<ul><li><s>b</s></li></ul>c <code>d</code> <strong>e</strong></li></ol></body>",
+		"<body><ul><li><pre>p</pre><strong>b</strong></li></ul></body>",
+		"<body><ul><li><h1><strong>h</strong></h1><em>e</em></li></ul></body>",
+	} {
+		md, h1, md2, h2 := rt2(in)
+		want := styledText(in)
+		// blocks that are not allowed in an item are sent as text ("> ", "# ", code): their
+		// styles change by design, so only stability is compared for them
+		blocks := strings.Contains(in, "<blockquote>") || strings.Contains(in, "<pre>") || strings.Contains(in, "<h1>")
+		if (!blocks && !sameStyle(want, styledText(h1))) || h1 != h2 {
+			t.Errorf("in %q\nmd1 %q\nh1 %q\nmd2 %q\nh2 %q\n%v\n%v", in, md, h1, md2, h2, want, styledText(h1))
+		}
+	}
+}
