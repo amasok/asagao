@@ -283,8 +283,8 @@ func (m *Model) applyEdit(msg editDoneMsg) tea.Cmd {
 			changes["completed"] = doc.Completed
 		}
 		if strings.TrimSpace(doc.Body) != strings.TrimSpace(orig.Body) {
-			changes["notes"] = richtext.PlainFromMarkdown(doc.Body)
-			changes["html_notes"] = richtext.FromMarkdown(doc.Body)
+			changes["notes"] = richtext.TaskNotes.PlainFromMarkdown(doc.Body)
+			changes["html_notes"] = richtext.TaskNotes.FromMarkdown(doc.Body)
 		}
 		moved := false
 		if doc.HasSection && orig.HasSection && doc.Section != orig.Section {
@@ -331,7 +331,7 @@ func (m *Model) applyComment(msg commentDoneMsg) tea.Cmd {
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
-		if _, err := st.AddRichCommentLocal(m.ctx, gid, richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, now); err != nil {
+		if _, err := st.AddRichCommentLocal(m.ctx, gid, richtext.Comment.PlainFromMarkdown(text), richtext.Comment.FromMarkdown(text), me, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}

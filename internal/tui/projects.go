@@ -244,7 +244,7 @@ func (m *Model) applyStatus(msg statusEditDoneMsg) tea.Cmd {
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
-		if _, err := st.CreateStatusLocal(m.ctx, msg.project, status, title, richtext.PlainFromMarkdown(body), richtext.FromMarkdown(body), me, now); err != nil {
+		if _, err := st.CreateStatusLocal(m.ctx, msg.project, status, title, richtext.StatusUpdate.PlainFromMarkdown(body), richtext.StatusUpdate.FromMarkdown(body), me, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "ステータスを投稿しました（" + store.StatusLabel(status) + "）"}

@@ -385,7 +385,7 @@ func (m *Model) addComment(taskGID, text string) tea.Cmd {
 			return writeDoneMsg{err: err}
 		}
 		// Markdown -> Asana rich text, like the comment editor (C), the CLI and MCP
-		if _, err := st.AddRichCommentLocal(m.ctx, taskGID, richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, now); err != nil {
+		if _, err := st.AddRichCommentLocal(m.ctx, taskGID, richtext.Comment.PlainFromMarkdown(text), richtext.Comment.FromMarkdown(text), me, now); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}

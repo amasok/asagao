@@ -104,12 +104,12 @@ func TestPushNestedMarkdownIsAccepted(t *testing.T) {
 	}
 	notes := "> 引用\n> - 項目1\n> - 項目2\n\n1. 手順\n   > 注意\n   ```\n   go test\n   ```\n2. 次"
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{
-		"notes": richtext.PlainFromMarkdown(notes), "html_notes": richtext.FromMarkdown(notes),
+		"notes": richtext.TaskNotes.PlainFromMarkdown(notes), "html_notes": richtext.TaskNotes.FromMarkdown(notes),
 	}, now); err != nil {
 		t.Fatal(err)
 	}
 	comment := "- > 引用した返事\n- # 見出し"
-	if _, err := st.AddRichCommentLocal(ctx, "t1", richtext.PlainFromMarkdown(comment), richtext.FromMarkdown(comment), store.UserRef{GID: "me"}, now); err != nil {
+	if _, err := st.AddRichCommentLocal(ctx, "t1", richtext.Comment.PlainFromMarkdown(comment), richtext.Comment.FromMarkdown(comment), store.UserRef{GID: "me"}, now); err != nil {
 		t.Fatal(err)
 	}
 	api := asana.NewClient(srv.Client())

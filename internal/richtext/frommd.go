@@ -10,7 +10,9 @@ import (
 	gast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 // Editable Markdown keeps Asana-specific references in a form that survives editing:
@@ -22,40 +24,64 @@ const (
 	mentionScheme = "asana:user:"
 )
 
-var md = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.Linkify))
+var md = goldmark.New(
+	goldmark.WithExtensions(extension.Strikethrough, extension.Linkify),
+	goldmark.WithParserOptions(parser.WithBlockParsers(
+		// ahead of the default thematic break parser (200), which it wraps
+		util.Prioritized(ruleSource{parser.NewThematicBreakParser()}, 199))),
+)
 
-// FromMarkdown converts Markdown to Asana rich text (the HTML subset accepted in
-// html_notes / html_text), wrapped in <body>.
-func FromMarkdown(src string) string {
+// ruleAttr is the attribute a rule (thematic break) keeps its line in, as written ("***").
+var ruleAttr = []byte("asana-tui-rule")
+
+// ruleSource is a thematic break parser that keeps the line of the rule (see ruleText).
+type ruleSource struct{ parser.BlockParser }
+
+func (p ruleSource) Open(parent gast.Node, reader text.Reader, pc parser.Context) (gast.Node, parser.State) {
+	line, _ := reader.PeekLine()
+	src := strings.TrimSpace(string(line))
+	n, st := p.BlockParser.Open(parent, reader, pc)
+	if n != nil {
+		n.SetAttribute(ruleAttr, src)
+	}
+	return n, st
+}
+
+// fromMarkdown converts Markdown to Asana rich text for target t (the HTML subset accepted
+// in html_notes / html_text), wrapped in <body>.
+func fromMarkdown(src string, t Target) string {
 	b := []byte(keepIndentation(src))
 	doc := md.Parser().Parse(text.NewReader(b))
-	w := &htmlWriter{src: b}
+	w := &htmlWriter{src: b, target: t}
 	w.blocks(doc)
 	return "<body>" + strings.TrimRight(w.b.String(), "\n") + "</body>"
 }
 
-// PlainFromMarkdown returns the text of Markdown without markup (for Asana's plain notes).
-func PlainFromMarkdown(src string) string {
+// plainFromMarkdown returns the text of Markdown without markup, as fromMarkdown writes it
+// for target t (for Asana's plain notes).
+func plainFromMarkdown(src string, t Target) string {
 	b := []byte(keepIndentation(src))
 	doc := md.Parser().Parse(text.NewReader(b))
-	w := &htmlWriter{src: b, plain: true}
+	w := &htmlWriter{src: b, plain: true, target: t}
 	w.blocks(doc)
 	// keep the indentation of the first line (see keepIndentation)
 	return strings.TrimLeft(strings.TrimRight(w.b.String(), " \t\n"), "\n")
 }
 
 type htmlWriter struct {
-	b     strings.Builder
-	src   []byte
-	plain bool
-	quote int  // open <blockquote>s: a list here is written as text (see asText)
-	item  int  // open <li>s: a quote, heading or code block here is written as text
-	text  bool // writing Markdown blocks as text (see markdownText)
+	b      strings.Builder
+	src    []byte
+	plain  bool
+	target Target
+	bold   int  // open <strong>s written for a heading (see heading): no <strong> inside
+	quote  int  // open <blockquote>s: a list here is written as text (see asText)
+	item   int  // open <li>s: a quote, heading or code block here is written as text
+	text   bool // writing Markdown blocks as text (see markdownText)
 }
 
 // sub returns a writer for a part of the output that is put together afterwards.
 func (w *htmlWriter) sub() *htmlWriter {
-	return &htmlWriter{src: w.src, plain: w.plain, quote: w.quote, item: w.item, text: true}
+	return &htmlWriter{src: w.src, plain: w.plain, target: w.target, bold: w.bold, quote: w.quote, item: w.item, text: true}
 }
 
 // esc is s as it is written to the output (escaped, unless the output is plain text).
@@ -109,13 +135,16 @@ func (w *htmlWriter) demoted(n gast.Node) string {
 }
 
 // elementBlock reports whether n is written as a block element (which ends its line).
-func (w *htmlWriter) elementBlock(n gast.Node) bool { return isBlockElement(n) && !w.asText(n) }
+func (w *htmlWriter) elementBlock(n gast.Node) bool { return w.isBlockElement(n) && !w.asText(n) }
 
-func isBlockElement(n gast.Node) bool {
+// isBlockElement reports whether n is a block element in the target. A heading or a rule is
+// one only where Asana accepts <h1>, <h2> and <hr/>; elsewhere it is written as a paragraph.
+func (w *htmlWriter) isBlockElement(n gast.Node) bool {
 	switch n.Kind() {
-	case gast.KindList, gast.KindHeading, gast.KindThematicBreak, gast.KindFencedCodeBlock,
-		gast.KindCodeBlock, gast.KindBlockquote:
+	case gast.KindList, gast.KindFencedCodeBlock, gast.KindCodeBlock, gast.KindBlockquote:
 		return true
+	case gast.KindHeading, gast.KindThematicBreak:
+		return w.target.layout()
 	}
 	return false
 }
@@ -128,11 +157,14 @@ func (w *htmlWriter) blocks(n gast.Node) {
 		if n.Kind() == gast.KindBlockquote && w.blankText(c) {
 			continue // "> &#32;": an empty quote
 		}
+		if w.emptyHeading(c) {
+			continue // "#" where it is a paragraph: nothing to write, no blank lines either
+		}
 		if prev != nil {
 			switch {
 			case w.elementBlock(prev):
 				// a block element already ends its line
-			case isBlockElement(prev), isBlockElement(c):
+			case w.isBlockElement(prev), w.isBlockElement(c):
 				w.b.WriteString("\n")
 			default:
 				w.b.WriteString("\n\n")
@@ -152,6 +184,10 @@ func (w *htmlWriter) block(n gast.Node) {
 	case *gast.Paragraph, *gast.TextBlock:
 		w.inlines(n)
 	case *gast.Heading:
+		if !w.target.layout() {
+			w.heading(n)
+			return
+		}
 		t := "h2"
 		if n.Level == 1 {
 			t = "h1"
@@ -163,6 +199,10 @@ func (w *htmlWriter) block(n gast.Node) {
 			w.b.WriteString("\n")
 		}
 	case *gast.ThematicBreak:
+		if !w.target.layout() {
+			w.textOut(w.ruleText(n))
+			return
+		}
 		w.tag("<hr/>")
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
 		w.tag("<pre>")
@@ -236,7 +276,7 @@ func (w *htmlWriter) markdownText(n gast.Node) {
 		w.textOut(strings.Repeat("#", n.Level) + " ")
 		w.inlines(n)
 	case *gast.ThematicBreak:
-		w.textOut("---")
+		w.textOut(w.ruleText(n))
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
 		// Each line as inline code, which a quote or an item takes: the code stays code (and
 		// is not read as Markdown or links on the next trip); the fences go with <pre>.
@@ -276,6 +316,56 @@ func (w *htmlWriter) markdownText(n gast.Node) {
 	default:
 		w.block(n)
 	}
+}
+
+// heading writes heading n where Asana accepts no <h1>/<h2> (see Target): as a bold
+// paragraph, so its words stay and still stand out. Bold inside it is not marked again
+// (<strong> in <strong>); an empty heading writes nothing.
+func (w *htmlWriter) heading(n *gast.Heading) {
+	in := w.sub()
+	in.text = w.text
+	in.bold++
+	in.inlines(n)
+	if in.b.Len() == 0 {
+		return // (blocks skips it, see emptyHeading)
+	}
+	// Spaces around the text (an indented setext heading's) go outside: Markdown does not
+	// read "** a**" as bold, so the editor writes them outside, and so does this.
+	s := in.b.String()
+	rest := strings.TrimLeft(s, " \t")
+	body := strings.TrimRight(rest, " \t")
+	if body == "" {
+		w.b.WriteString(s)
+		return
+	}
+	w.b.WriteString(s[:len(s)-len(rest)])
+	w.tag("<strong>")
+	w.b.WriteString(body)
+	w.tag("</strong>")
+	w.b.WriteString(rest[len(body):])
+}
+
+// emptyHeading reports whether n is a heading without text that is written as a paragraph
+// (see heading), and so writes nothing.
+func (w *htmlWriter) emptyHeading(n gast.Node) bool {
+	if n.Kind() != gast.KindHeading || w.target.layout() || w.asText(n) {
+		return false
+	}
+	in := w.sub()
+	in.inlines(n)
+	return in.b.Len() == 0
+}
+
+// ruleText is rule n as text, where it is not an element: the line as written ("***",
+// "- - -"). For a task's notes it is "---", as it always was (only a rule in a quote's
+// list or a list item's quote is written as text there).
+func (w *htmlWriter) ruleText(n gast.Node) string {
+	if v, ok := n.Attribute(ruleAttr); ok && !w.target.layout() {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return "---"
 }
 
 // textBlocks writes the blocks inside n as text (see markdownText), each on its own line;
@@ -343,7 +433,7 @@ func (w *htmlWriter) blankText(n gast.Node) bool {
 	default:
 		return false
 	}
-	sub := &htmlWriter{src: w.src, plain: w.plain}
+	sub := &htmlWriter{src: w.src, plain: w.plain, target: w.target}
 	sub.inlines(n)
 	return asciiBlank(sub.b.String()) // "　" (U+3000) or NBSP alone is text, not a filler
 }
@@ -407,6 +497,14 @@ func (w *htmlWriter) inline(n gast.Node) {
 	case *gast.Image:
 		dest := string(n.Destination)
 		if gid, ok := ImageGID(dest); ok {
+			if !w.target.layout() {
+				// No <img> here (see Target): the image stays as the Markdown that refers
+				// to it, by gid (a cached file's path is local to this machine).
+				w.textOut("![")
+				w.inlines(n)
+				w.textOut("](" + assetScheme + gid + ")")
+				return
+			}
 			if !w.plain {
 				w.b.WriteString(`<img data-asana-gid="` + html.EscapeString(gid) + `"/>`)
 			}
@@ -437,6 +535,10 @@ var (
 // instead: outside an item a blank line ends the paragraph, so the mark would not read
 // back, and Markdown reads such delimiters as text.
 func (w *htmlWriter) mark(n gast.Node, t, delim string) {
+	if t == "strong" && w.bold > 0 {
+		w.inlines(n) // already bold (a heading written as a bold paragraph)
+		return
+	}
 	if !w.text {
 		w.tag("<" + t + ">")
 		w.inlines(n)
