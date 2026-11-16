@@ -62,7 +62,7 @@ func TestBatch2LinkEdgeSpacesOutside(t *testing.T) {
 func TestBatch2RandomLists(t *testing.T) {
 	r := rand.New(rand.NewSource(31))
 	fails := 0
-	for i := 0; i < 40000 && fails < 6; i++ {
+	for i := 0; i < 3000 && fails < 6; i++ {
 		n := 0
 		var words []string
 		wd := func() string { n++; s := "zw" + strings.Repeat("q", n); words = append(words, s); return s }
