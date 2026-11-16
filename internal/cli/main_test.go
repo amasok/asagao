@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
+	"github.com/amasok/asana-tui/internal/config"
 )
 
 // The tests of this package run commands as a user would, so before any of them:
@@ -23,6 +25,8 @@ import (
 //     would also be refreshed against the real Asana);
 //   - the token, client id and client secret from the environment are cleared, so one
 //     exported in the developer's shell is not used;
+//   - XDG_DATA_HOME, XDG_CONFIG_HOME, XDG_CACHE_HOME and XDG_STATE_HOME are a private
+//     temporary directory, so the user's store.db and config.toml are never opened;
 //   - requests may only go to this machine (httptest servers). One that goes elsewhere is
 //     blocked, and the run fails.
 //
@@ -50,6 +54,21 @@ func (l loopbackOnly) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestMain(m *testing.M) {
+	// The store (store.db), config.toml and caches are under these: a test that does not
+	// set its own reads and writes a private directory, never the user's data.
+	tmp, err := os.MkdirTemp("", "asana-tui-cli-test-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, k := range []string{"XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
+		dir := filepath.Join(tmp, k)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Setenv(k, dir)
+	}
 	keyring.MockInit()
 	keyringMocked = true
 	for _, k := range []string{auth.EnvToken, "ASANA_CLIENT_ID", EnvClientSecret} {
@@ -61,6 +80,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "FAIL: %d request(s) left for a real host\n", n)
 		code = 1
 	}
+	os.RemoveAll(tmp)
 	os.Exit(code)
 }
 
@@ -92,6 +112,18 @@ func TestDefaultTokenStoreIsTheMock(t *testing.T) {
 	for _, k := range []string{auth.EnvToken, "ASANA_CLIENT_ID", EnvClientSecret} {
 		if v := os.Getenv(k); v != "" {
 			t.Errorf("%s is set in the tests", k)
+		}
+	}
+}
+
+// Without setting its own, a test sees the private directories of TestMain, not the
+// user's: the store and config.toml paths are under the temporary directory.
+func TestDataAndConfigArePrivate(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	tmp := os.TempDir()
+	for _, p := range []string{config.DataDir(), config.ConfigDir(), config.FilePath()} {
+		if !strings.Contains(p, "asana-tui-cli-test-") || (home != "" && strings.HasPrefix(p, filepath.Join(home, ".config"))) {
+			t.Errorf("%s is not under the private test directory (TMPDIR %s)", p, tmp)
 		}
 	}
 }
