@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBatch2HandPicked(t *testing.T) {
@@ -153,6 +154,57 @@ func TestBatch2ExactShapes(t *testing.T) {
 	} {
 		if got := FromMarkdown(ToEditableMarkdown("<body>" + in + "</body>")); got != want {
 			t.Errorf("%q\n got  %q\n want %q", in, got, want)
+		}
+	}
+}
+
+func TestBatch2DeepQuoteListTerminatesFast(t *testing.T) {
+	for _, depth := range []int{10, 40, 120} {
+		in := "<body><ul><li>a"
+		for i := 0; i < depth; i++ {
+			in += "<blockquote>q<ul><li>x<br>y<pre>c\n\nd</pre>"
+		}
+		for i := 0; i < depth; i++ {
+			in += "</li></ul></blockquote>"
+		}
+		in += "</li></ul></body>"
+		done := make(chan [3]string, 1)
+		go func() {
+			md := ToEditableMarkdown(in)
+			h1 := FromMarkdown(md)
+			done <- [3]string{md, h1, FromMarkdown(ToEditableMarkdown(h1))}
+		}()
+		select {
+		case r := <-done:
+			if strings.Contains(r[1], "<li><blockquote") || strings.Contains(r[1], "<li>a<pre") {
+				t.Errorf("depth %d: block in li sent", depth)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("depth %d: too slow", depth)
+		}
+	}
+}
+
+func TestBatch2QuoteListsInItems(t *testing.T) {
+	cases := []string{
+		"<body><ul><li>a<blockquote><ul><li>x<br>y</li><li><pre>c\n\nd</pre></li></ul></blockquote></li></ul></body>",
+		"<body><ul><li>a<blockquote>p1<br><br>p2</blockquote>b</li></ul></body>",
+		"<body><ul><li>a<blockquote><blockquote><ol><li>z</li></ol></blockquote></blockquote></li></ul></body>",
+		"<body><ul><li>a</li></ul><br><ul><li>b</li></ul></body>",
+		"<body><ul><li>a</li></ul><!-- c --><br><ul><li>b</li></ul><ul><li>c</li></ul></body>",
+		"<body><blockquote><ul><li>a</li></ul><ul><li>b</li></ul></blockquote></body>",
+	}
+	for _, in := range cases {
+		md1, h1, md2, h2 := rt2(in)
+		if h1 != h2 && !onlyLinksAdded(h1, h2) {
+			t.Errorf("unstable\nin  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
+		}
+		for _, w := range []string{"x", "y", "c", "d", "z", "p1", "p2"} {
+			if strings.Contains(in, ">"+w) || strings.Contains(in, "\n"+w) || strings.Contains(in, "<br>"+w) {
+				if !strings.Contains(h1, w) {
+					t.Errorf("lost %q: %q -> %q", w, in, h1)
+				}
+			}
 		}
 	}
 }
