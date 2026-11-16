@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -27,6 +28,9 @@ type app struct {
 	offline bool
 	// baseURL overrides the Asana API URL (tests).
 	baseURL string
+	// jsonOut is where --json output goes: the command's output before the termsafe
+	// wrapper (JSON escapes control characters already, and must stay byte-exact).
+	jsonOut io.Writer
 }
 
 func NewRoot() *cobra.Command { return newRoot(&app{}) }
@@ -48,7 +52,8 @@ func newRoot(a *app) *cobra.Command {
 			a.cfg = cfg
 			// Task names, notes, comments and notifications are printed as they are; strip
 			// terminal control characters from everything the commands write. (--json goes
-			// to os.Stdout directly: JSON escapes them already.)
+			// to the output as it is: JSON escapes them already.)
+			a.jsonOut = cmd.OutOrStdout()
 			cmd.SetOut(termsafe.Writer(cmd.OutOrStdout()))
 			cmd.SetErr(termsafe.Writer(cmd.ErrOrStderr()))
 			return nil
@@ -97,8 +102,13 @@ func (a *app) openStore(ctx context.Context) (*store.Store, error) {
 	return store.Open(ctx, a.storePath())
 }
 
+// printJSON writes v as indented JSON to the command's output (#25).
 func (a *app) printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+	w := a.jsonOut
+	if w == nil {
+		w = os.Stdout
+	}
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

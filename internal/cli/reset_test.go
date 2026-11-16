@@ -26,6 +26,19 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// runCLISplit is runCLI with the command's output (where --json goes) and its error output
+// kept apart.
+func runCLISplit(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	cmd := NewRoot()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+	err = cmd.ExecuteContext(context.Background())
+	return out.String(), errOut.String(), err
+}
+
 func TestResetCommand(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

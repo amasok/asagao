@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,24 +51,6 @@ func inboxStore(t *testing.T, state store.InboxState) (*store.Store, string) {
 	return st, task
 }
 
-// captureStdout runs fn and returns what it wrote to os.Stdout (--json output goes there).
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := os.Stdout
-	os.Stdout = w
-	done := make(chan string)
-	go func() { b, _ := io.ReadAll(r); done <- string(b) }()
-	defer func() { os.Stdout = old }()
-	fn()
-	w.Close()
-	os.Stdout = old
-	return <-done
-}
-
 func TestInboxCommandListsNotifications(t *testing.T) {
 	inboxStore(t, store.InboxState{Status: store.InboxOK})
 	out, err := runCLI(t, "inbox")
@@ -86,11 +67,10 @@ func TestInboxCommandListsNotifications(t *testing.T) {
 	}
 
 	var got inboxOutput
-	raw := captureStdout(t, func() {
-		if _, err := runCLI(t, "--json", "inbox", "--unread", "--limit", "1"); err != nil {
-			t.Error(err)
-		}
-	})
+	raw, _, err := runCLISplit(t, "--json", "inbox", "--unread", "--limit", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatalf("json %q: %v", raw, err)
 	}
@@ -115,11 +95,10 @@ func TestInboxCommandFallsBackToRecent(t *testing.T) {
 	if strings.Contains(out, "1200001") {
 		t.Errorf("stale notifications shown while unavailable:\n%s", out)
 	}
-	raw := captureStdout(t, func() {
-		if _, err := runCLI(t, "--json", "inbox"); err != nil {
-			t.Error(err)
-		}
-	})
+	raw, _, err := runCLISplit(t, "--json", "inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var m map[string]any
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		t.Fatalf("json %q: %v", raw, err)
