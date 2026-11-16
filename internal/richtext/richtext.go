@@ -70,8 +70,11 @@ var preStartBreak = regexp.MustCompile(`(?i)(<pre(?:\s[^<>]*)?>)(\r\n|\r|\n)`)
 // splitCodeLines makes inline code over line breaks (<code>x\ny</code>) code of each line
 // with the line breaks between them as text (<code>x</code>\n<code>y</code>): a code span
 // cannot hold a line break (Markdown reads it as a space, and a blank line would end the
-// paragraph), and text keeps it as text keeps any other (#65). Empty lines get no code.
+// paragraph), and text keeps it as text keeps any other (#65). A blank line (or one of only
+// spaces) is text too, not code: it is the blank line between lines of code (code of spaces
+// would be content that is not text, so a list item would end at the blank line before it).
 func splitCodeLines(n *html.Node) {
+	split := false
 	for ch := n.FirstChild; ch != nil; {
 		next := ch.NextSibling
 		switch {
@@ -83,18 +86,33 @@ func splitCodeLines(n *html.Node) {
 					if i > 0 {
 						n.InsertBefore(&html.Node{Type: html.TextNode, Data: "\n"}, ch)
 					}
-					if l != "" {
+					if asciiBlank(l) {
+						if l != "" {
+							n.InsertBefore(&html.Node{Type: html.TextNode, Data: l}, ch)
+						}
+					} else {
 						code := &html.Node{Type: html.ElementNode, Data: "code", DataAtom: atom.Code}
 						code.AppendChild(&html.Node{Type: html.TextNode, Data: l})
 						n.InsertBefore(code, ch)
 					}
 				}
 				n.RemoveChild(ch)
+				split = true
 			}
 		default:
 			splitCodeLines(ch)
 		}
 		ch = next
+	}
+	if split {
+		// one text node with the text around it, so that a line of it is escaped as a whole
+		// ("  " then " ---" would be a setext underline, as two pieces of text)
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			for ch.Type == html.TextNode && ch.NextSibling != nil && ch.NextSibling.Type == html.TextNode {
+				ch.Data += ch.NextSibling.Data
+				n.RemoveChild(ch.NextSibling)
+			}
+		}
 	}
 }
 

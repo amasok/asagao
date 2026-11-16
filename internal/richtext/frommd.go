@@ -584,22 +584,38 @@ func (w *htmlWriter) inline(n gast.Node) {
 		w.textOut(string(n.Value))
 	case *gast.CodeSpan:
 		// Code over a line break is code of each line, with the line break as text between
-		// them, as ToEditableMarkdown writes it (see splitCodeLines, #65).
+		// them, as ToEditableMarkdown writes it (see splitCodeLines, #65). Blank lines at its
+		// start and end go (a line break there would end a block, which an edit drops);
+		// blank lines between are text.
 		var code strings.Builder
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 			if t, ok := c.(*gast.Text); ok {
 				code.Write(t.Segment.Value(w.src))
 			}
 		}
-		for i, l := range strings.Split(code.String(), "\n") {
+		lines := strings.Split(code.String(), "\n")
+		if len(lines) > 1 {
+			for len(lines) > 0 && asciiBlank(lines[0]) {
+				lines = lines[1:]
+			}
+			for len(lines) > 0 && asciiBlank(lines[len(lines)-1]) {
+				lines = lines[:len(lines)-1]
+			}
+			if len(lines) == 0 {
+				lines = []string{" "} // only line breaks: a space, as Markdown reads it
+			}
+		}
+		for i, l := range lines {
 			if i > 0 {
 				w.b.WriteString(w.lineBreak())
 			}
-			if l != "" {
-				w.tag("<code>")
+			if len(lines) > 1 && asciiBlank(l) {
 				w.textOut(l)
-				w.tag("</code>")
+				continue
 			}
+			w.tag("<code>")
+			w.textOut(l)
+			w.tag("</code>")
 		}
 	case *gast.Emphasis:
 		t := "em"

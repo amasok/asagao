@@ -108,8 +108,8 @@ Markdown の中の生の HTML (インラインもブロックも) は、エス�
 - **THEN** `<pre data-language="go">x</pre>` になり、エディタで開くと ```` ```go ```` に戻る
 
 ### Requirement: 改行をまたぐインラインのコード
-改行をまたぐインラインのコードは、行ごとのコードと、そのあいだの改行の文字にする (MUST)。コードの中の改行は Markdown では空白になり、空行は段落を終えるため (#65)。
-根拠: richtext.go splitCodeLines; frommd.go inline の CodeSpan; blocks_test.go TestInlineCodeOverLineBreak
+改行をまたぐインラインのコードは、行ごとのコードと、そのあいだの改行の文字にする (MUST)。コードの中の改行は Markdown では空白になり、空行は段落を終えるため。空行と空白だけの行はコードにせず文字にし、Markdown のコードの最初と最後の空行は落とす (改行だけのコードは空白 1 つのコード) (#65)。
+根拠: richtext.go splitCodeLines; frommd.go inline の CodeSpan; blocks_test.go TestInlineCodeOverLineBreak, TestInlineCodeBlankLines
 
 #### Scenario: 改行をまたぐインラインのコード
 - **WHEN** `` `x\ny` `` を変換する

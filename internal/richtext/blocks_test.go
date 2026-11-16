@@ -224,3 +224,31 @@ func TestHeadingKeepsInlines(t *testing.T) {
 		t.Errorf("plain = %q", p)
 	}
 }
+
+// #65: lines of inline code that are blank (or only spaces) are not code: they are the line
+// breaks (or the spaces) between the lines of code. Code is not split into lines that end
+// a block with a line break, nor into code an item takes for nothing (and so ends at a blank
+// line before it).
+func TestInlineCodeBlankLines(t *testing.T) {
+	for _, md := range []string{"q ```\n```", "> > w1\n```\n```", "`x\n`", "a `\nx` b", "- a `x\n  ` b\n- c",
+		"> >  w1[@A](asana:user:9)\n    ```\n    ```", "> > w1\n    ```\n    ```\n1. a"} {
+		h1 := FromMarkdown(md)
+		md2 := ToEditableMarkdown(h1)
+		if h2 := FromMarkdown(md2); h2 != h1 {
+			t.Errorf("not stable: %q\nh1  %q\nmd2 %q\nh2  %q", md, h1, md2, h2)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{"<body><ol><li>a <code>x\n\n  </code> </li><li>b</li></ol></body>", "<body><ol><li>a <code>x</code></li><li>b</li></ol></body>"},
+		{"<body><ul><li>a <code>x\n\n  \ny</code></li><li>b</li></ul></body>", "<body><ul><li>a <code>x</code>\n\n\n<code>y</code></li><li>b</li></ul></body>"},
+		{"<body>a <code>x\n \ny</code> b</body>", "<body>a <code>x</code>\n\n<code>y</code> b</body>"},
+		// a line of the text around it is escaped as a whole: "---" is not an underline
+		{"<body>a <code>x\n  </code> ---</body>", "<body>a <code>x</code>\n   ---</body>"},
+		{"<body><ul><li>a <code>x\n </code> - b</li></ul></body>", "<body><ul><li>a <code>x</code>\n  - b</li></ul></body>"},
+	} {
+		md1, h1, md2, h2 := roundtrip(c.in)
+		if h1 != c.want || h2 != h1 {
+			t.Errorf("in %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q\nwant %q", c.in, md1, h1, md2, h2, c.want)
+		}
+	}
+}
