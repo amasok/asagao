@@ -381,7 +381,7 @@ func TestTrailingWhitespaceRoundTrip(t *testing.T) {
 		"<body><strong>太</strong>  \n次</body>",
 		"<body><blockquote>a  \nb</blockquote></body>",
 		"<body><ul><li>a  \nb</li></ul></body>",
-		"<body>a  \n<strong>b</strong></body>",      // text after the break is in an element
+		"<body>a  \n<strong>b</strong></body>",       // text after the break is in an element
 		"<body>a \n<a data-asana-gid=\"9\"/></body>", // or a mention
 	} {
 		md := ToEditableMarkdown(in)
