@@ -76,6 +76,9 @@ type converter struct {
 	lists     []listState // nesting of ul/ol
 	pre       int         // inside <pre>
 	quote     int         // inside <blockquote>
+	// outOfItem is set when a block in a list item (a quote, a code block) has started a
+	// new paragraph: Markdown has ended the list there, so what follows is not in the item.
+	outOfItem bool
 	// lineStart is where the text of the current Markdown line starts in b: after the
 	// newline and the structure written at the start of the line (blockquote prefixes, list
 	// item markers). Keeping it as state makes atLineStart constant time (#23).
@@ -145,6 +148,9 @@ func blockEnds() bool { return true }
 // line is a quote line too (">"), so the quote goes on; when a quote ends, the blank line
 // is at the depth outside it, which ends the quote (#51).
 func (c *converter) block() {
+	if len(c.lists) > 0 {
+		c.outOfItem = true
+	}
 	if !c.lineBlank(c.lineStartOf(c.b.Len())) {
 		c.keepTrailingSpace(blockEnds)
 		c.write("\n")
@@ -364,7 +370,7 @@ func betweenListTags(n *html.Node) bool {
 // would leave the list. A line of only a backslash is a line break instead (a hard break at
 // its end), so the item goes on (#51). It reports whether it wrote one.
 func (c *converter) keepBlankLineInItem(inlineFollows func() bool) bool {
-	if len(c.lists) == 0 || c.pre > 0 || len(bytes.TrimLeft(c.b.Bytes()[c.lineStart:], " \t")) > 0 ||
+	if len(c.lists) == 0 || c.outOfItem || c.pre > 0 || len(bytes.TrimLeft(c.b.Bytes()[c.lineStart:], " \t")) > 0 ||
 		!inlineFollows() {
 		return false
 	}
@@ -702,16 +708,20 @@ func (c *converter) listItem(n *html.Node) {
 	if !itemHasText(n) {
 		// An empty marker ("-", "1.") after a line of text would be read as a setext heading
 		// underline, or as text: write a space as a character reference after it, which
-		// FromMarkdown reads back as an empty item (#52). What comes before a nested list
-		// here is whitespace, line breaks or empty elements, which Markdown cannot keep anyway.
+		// FromMarkdown reads back as an empty item (#52). What comes before a nested list (or
+		// another block) here is whitespace, line breaks or empty elements, which Markdown
+		// cannot keep anyway.
 		c.write("&#32;")
-		for ch != nil && !(ch.Type == html.ElementNode && (ch.DataAtom == atom.Ul || ch.DataAtom == atom.Ol)) {
+		for ch != nil && !(ch.Type == html.ElementNode && blockAtoms[ch.DataAtom]) {
 			ch = ch.NextSibling
 		}
 	}
+	outer := c.outOfItem
+	c.outOfItem = false
 	for ; ch != nil; ch = ch.NextSibling {
 		c.walk(ch)
 	}
+	c.outOfItem = outer
 }
 
 // trimLeadingBreaks removes line breaks (and the whitespace before them) at the start of
@@ -779,7 +789,7 @@ func removeFirstLeaf(n *html.Node) {
 }
 
 // itemHasText reports whether list item n has something to write on its first line: text,
-// an image or a mention before its first nested list.
+// an image or a mention before its first nested list or other block.
 func itemHasText(n *html.Node) bool {
 	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
 		switch {
@@ -788,7 +798,7 @@ func itemHasText(n *html.Node) bool {
 				return true
 			}
 		case ch.Type != html.ElementNode:
-		case ch.DataAtom == atom.Ul || ch.DataAtom == atom.Ol:
+		case blockAtoms[ch.DataAtom]:
 			return false
 		case ch.DataAtom == atom.Img || attr(ch, "data-asana-gid") != "" ||
 			strings.TrimSpace(textOf(ch)) != "" || hasAsanaRef(ch):
