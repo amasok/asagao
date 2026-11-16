@@ -23,6 +23,11 @@ type Client struct {
 	BaseURL    string
 	HTTP       *http.Client // must add the Authorization header (e.g. oauth2.NewClient)
 	MaxRetries int
+	// MaxRetryDelay caps the wait before a retry, including one asked for by Retry-After
+	// (0: no cap). An interactive check sets it so that it does not keep the user waiting.
+	MaxRetryDelay time.Duration
+	// OnRetry, if set, is called before waiting to retry a request that got status.
+	OnRetry func(status int, wait time.Duration)
 	// AuthHint tells the user how to fix a 401 (e.g. how to log in again); it is added to
 	// the message of 401 errors.
 	AuthHint string
@@ -167,7 +172,14 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		}
 
 		if (retryable(method, resp.StatusCode) || (path == batchPath && resp.StatusCode >= 500)) && attempt < c.MaxRetries {
-			if err := c.wait(ctx, retryDelay(resp, attempt)); err != nil {
+			d := retryDelay(resp, attempt)
+			if c.MaxRetryDelay > 0 && d > c.MaxRetryDelay {
+				d = c.MaxRetryDelay
+			}
+			if c.OnRetry != nil {
+				c.OnRetry(resp.StatusCode, d)
+			}
+			if err := c.wait(ctx, d); err != nil {
 				return nil, err
 			}
 			continue
@@ -198,9 +210,13 @@ func retryable(method string, status int) bool {
 	return status >= 500 && method != http.MethodPost
 }
 
+// maxRetryAfter is the longest Retry-After taken as it is; a larger (or negative, or
+// unreadable) value is ignored for the usual backoff.
+const maxRetryAfter = 24 * time.Hour
+
 func retryDelay(resp *http.Response, attempt int) time.Duration {
 	if s := resp.Header.Get("Retry-After"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= int(maxRetryAfter/time.Second) {
 			return time.Duration(n) * time.Second
 		}
 	}
