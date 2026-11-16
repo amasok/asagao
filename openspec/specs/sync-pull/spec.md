@@ -116,8 +116,8 @@ batch の取得で 404 か 403 になったタスクは、どの同期でもサ�
 - **THEN** そのタスクは消えない
 
 ### Requirement: 受信箱の取り込み
-ワークスペースごとに通知を 100 件まで取り、そのワークスペースの行を置き換える (MUST)。401 と接続のエラーは同期を止める。4xx の拒否は状態を記録して同期を続ける。5xx と 429 はキャッシュを残す。通知の対象のタスクは、保存した受信箱の状態が使える (`InboxState().Available()`) ときだけ、1 回に 50 件まで新しい順に取り、上限を超えた分も片付けから守る。
-根拠: internal/sync/inbox.go:23-65, :120-158; sync.go:345-355; TestInboxPerWorkspace, TestInboxUnauthorizedStopsSync, TestInboxRefusedKeepsSyncGoing, TestFullSyncKeepsNotificationTargetsBeyondFetchLimit
+ワークスペースごとに通知を 100 件まで取り、そのワークスペースの行を置き換える (MUST)。401 と接続のエラーは同期を止める。4xx の拒否でも同期を続ける。どれか 1 つのワークスペースが取れたら状態を OK にし、どれも取れず拒否があったときだけ、最初の拒否の状態 (forbidden・payment など) を記録する。5xx と 429 はキャッシュを残す。通知の対象のタスクは、保存した受信箱の状態が使える (`InboxState().Available()`) ときだけ、1 回に 50 件まで新しい順に取り、上限を超えた分も片付けから守る。
+根拠: internal/sync/inbox.go:23-65 (状態は :56-63), :120-158; sync.go:345-355; TestInboxPerWorkspace, TestInboxUnauthorizedStopsSync, TestInboxRefusedKeepsSyncGoing, TestFullSyncKeepsNotificationTargetsBeyondFetchLimit
 
 #### Scenario: 受信箱が 402
 - **WHEN** 受信箱の取得が 402 を返す
