@@ -39,8 +39,8 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **WHEN** `| a | b |` の表を任意の送り先に変換する
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
-### Requirement: タスクの説明の変換は #63 の前と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、#63 の前の main (45ff98d) の結果と同じである (MUST)。
+### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -48,7 +48,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** html と plain が testdata/tasknotes_golden.json と一致する
 
 ### Requirement: 入れ子の決まりを守る (#60)
-引用の中のリスト、リスト項目の中の引用・見出し・コード片は、タグにせず Markdown の文字として書く (MUST)。引用の中の見出しとコード片は許す。
+引用の中のリスト、リスト項目の中の引用・見出し・コード片は、タグにせず Markdown の文字として書く (MUST)。引用の中の見出しとコード片は許す。リスト項目の中の空の見出しは、印だけ (`#`) を書き、あとに空白を付けない (#72)。
 根拠: frommd.go:115-135, :282-328; nesting_spec_test.go TestFromMarkdownFollowsNestingRules, TestUserMarkdownFollowsNestingRules; spec_attack_test.go TestSpecNoListInQuoteOrHeading
 
 #### Scenario: 引用の中のリスト
@@ -60,12 +60,32 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** `<li>&gt; q</li>` になる
 
 ### Requirement: 生の HTML は文字として扱う
-Markdown の中の生の HTML (インラインもブロックも) は、エスケープした文字として書く (MUST)。タグとして送らない。
-根拠: frommd.go:268-273, :529-534; richtext_test.go TestFromMarkdown
+Markdown の中の生の HTML (インラインもブロックも) は、エスケープした文字として書く (MUST)。タグとして送らない。ブロックの HTML は、最後の行の改行を付けない (MUST、段落と同じく次のブロックとの区切りだけにする。引用やリスト項目の中で往復すると消えるため、#72)。
+根拠: frommd.go block の HTMLBlock、inline の RawHTML; richtext_test.go TestFromMarkdown; blocks_test.go TestFromMarkdownHTMLBlockEnd
 
 #### Scenario: タグに見える文字
 - **WHEN** `<tag>` を含む Markdown を変換する
 - **THEN** `&lt;tag&gt;` になる
+
+#### Scenario: 引用の中の HTML のブロック
+- **WHEN** `> <div>x</div>` を変換する
+- **THEN** `<blockquote>&lt;div&gt;x&lt;/div&gt;</blockquote>` になり、`</blockquote>` の前に改行はない
+
+### Requirement: 改行は LF にそろえる
+Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コードのブロックや生の HTML にも `\r` を残さない (#72)。
+根拠: frommd.go normalizeNewlines; blocks_test.go TestFromMarkdownCRLF
+
+#### Scenario: CRLF のコード
+- **WHEN** ```` ```\r\na\r\nb\r\n``` ```` を変換する
+- **THEN** `<pre>a\nb</pre>` になる
+
+### Requirement: 書式なしの文字でブロックは行を分ける
+`PlainFromMarkdown` では、引用・コードのブロック・見出し・リスト項目のあとで行を分ける (MUST)。前後のブロックの文字をつなげない (#72)。
+根拠: frommd.go block (w.plain のとき); blocks_test.go TestPlainFromMarkdownQuoteEndsLine
+
+#### Scenario: 引用のあとのコード
+- **WHEN** `> q\n\n```\ncode\n```` の plain を作る
+- **THEN** `q\ncode` になる
 
 ### Requirement: メンションと画像の書き方
 エディタ用の Markdown では、メンションを `[名前](asana:user:GID)`、画像を `![画像](asana:GID)` またはキャッシュ済みのローカルのパスで表す (MUST)。Markdown → html では、メンションを `<a data-asana-gid="GID"/>` に戻す。画像を `<img data-asana-gid="GID"/>` に戻すのは `TaskNotes` だけで、ほかの送り先では文字として残す (前の要件)。asana の gid でない画像の宛先はリンクにする。

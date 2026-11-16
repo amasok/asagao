@@ -50,7 +50,7 @@ func (p ruleSource) Open(parent gast.Node, reader text.Reader, pc parser.Context
 // fromMarkdown converts Markdown to Asana rich text for target t (the HTML subset accepted
 // in html_notes / html_text), wrapped in <body>.
 func fromMarkdown(src string, t Target) string {
-	b := []byte(keepIndentation(src))
+	b := []byte(keepIndentation(normalizeNewlines(src)))
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b, target: t}
 	w.blocks(doc)
@@ -60,12 +60,19 @@ func fromMarkdown(src string, t Target) string {
 // plainFromMarkdown returns the text of Markdown without markup, as fromMarkdown writes it
 // for target t (for Asana's plain notes).
 func plainFromMarkdown(src string, t Target) string {
-	b := []byte(keepIndentation(src))
+	b := []byte(keepIndentation(normalizeNewlines(src)))
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b, plain: true, target: t}
 	w.blocks(doc)
 	// keep the indentation of the first line (see keepIndentation)
 	return strings.TrimLeft(strings.TrimRight(w.b.String(), " \t\n"), "\n")
+}
+
+// normalizeNewlines makes line breaks typed as CRLF or CR (an editor on Windows, a paste)
+// "\n", as Asana keeps them: Markdown reads them as line breaks too, but code and raw HTML
+// would keep the "\r" as text (#72).
+func normalizeNewlines(s string) string {
+	return strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(s)
 }
 
 type htmlWriter struct {
@@ -226,6 +233,9 @@ func (w *htmlWriter) block(n gast.Node) {
 		w.blocks(n)
 		w.quote--
 		w.tag("</blockquote>")
+		if w.plain && !strings.HasSuffix(w.b.String(), "\n") {
+			w.b.WriteString("\n") // ends its line, as </blockquote> does (#72)
+		}
 	case *gast.List:
 		t := "ul"
 		if n.IsOrdered() {
@@ -266,11 +276,15 @@ func (w *htmlWriter) block(n gast.Node) {
 		w.item--
 		w.tag("</" + t + ">")
 	case *gast.HTMLBlock:
+		// its lines as text, without the line break of the last one: a block ends where the
+		// next starts (as a paragraph does), and a quote or an item would keep it once (#72)
+		var raw strings.Builder
 		lines := n.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			seg := lines.At(i)
-			w.textOut(string(seg.Value(w.src)))
+			raw.Write(seg.Value(w.src))
 		}
+		w.textOut(strings.TrimSuffix(raw.String(), "\n"))
 	default:
 		w.blocks(n)
 	}
@@ -282,8 +296,11 @@ func (w *htmlWriter) block(n gast.Node) {
 func (w *htmlWriter) markdownText(n gast.Node) {
 	switch n := n.(type) {
 	case *gast.Heading:
-		w.textOut(strings.Repeat("#", n.Level) + " ")
-		w.inlines(n)
+		w.textOut(strings.Repeat("#", n.Level))
+		if n.HasChildren() {
+			w.textOut(" ") // an empty heading is its marker alone, not "# " (#72)
+			w.inlines(n)
+		}
 	case *gast.ThematicBreak:
 		w.textOut(w.ruleText(n))
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
