@@ -249,3 +249,16 @@ func TestBatch1SendThenReopenSame(t *testing.T) {
 		}
 	}
 }
+
+func TestBatch1CodeBlockExact(t *testing.T) {
+	for in, want := range map[string]string{
+		"<PRE>\n\nx</PRE>":      "<body><pre>\n\nx</pre></body>",
+		"<pre>\n\nx</pre>":      "<body><pre>\n\nx</pre></body>",
+		"<pre>x\n\n</pre>":      "<body><pre>x</pre></body>",
+		"<pre>x\n\n\n\ny</pre>": "<body><pre>x\n\n\n\ny</pre></body>",
+	} {
+		if got := FromMarkdown(ToEditableMarkdown("<body>" + in + "</body>")); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+}
