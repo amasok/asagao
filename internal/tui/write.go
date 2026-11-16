@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -249,17 +248,11 @@ func (m *Model) writeKey(key string) tea.Cmd {
 }
 
 func (m *Model) toggleComplete(t store.TaskSummary) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
-	return func() tea.Msg {
-		done := !t.Completed
-		if err := st.UpdateTaskLocal(m.ctx, t.GID, map[string]any{"completed": done}, now); err != nil {
-			return writeDoneMsg{err: err}
-		}
-		if done {
-			return writeDoneMsg{status: "完了にしました: " + t.Name}
-		}
-		return writeDoneMsg{status: "未完了に戻しました: " + t.Name}
+	done := !t.Completed
+	if done {
+		return m.updateTask(t, app.TaskUpdate{Completed: &done}, "完了にしました: "+t.Name)
 	}
+	return m.updateTask(t, app.TaskUpdate{Completed: &done}, "未完了に戻しました: "+t.Name)
 }
 
 func (m *Model) openPrompt(kind promptKind) {
@@ -402,7 +395,7 @@ func parseCreateInput(input string, now time.Time) (name, due string, err error)
 			words = append(words, w)
 			continue
 		}
-		if due, err = dates.Parse(v, now); err != nil {
+		if due, err = app.ParseDue(v, now); err != nil {
 			return "", "", err
 		}
 	}

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/imageview"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -19,16 +20,11 @@ func (m *Model) toggleLike() tea.Cmd {
 	if t == nil {
 		return nil
 	}
-	task, st, now := *t, m.deps.Store, m.deps.Now()
-	return func() tea.Msg {
-		if err := st.UpdateTaskLocal(m.ctx, task.GID, map[string]any{"liked": !task.Liked}, now); err != nil {
-			return writeDoneMsg{err: err}
-		}
-		if task.Liked {
-			return writeDoneMsg{status: "いいねを取り消しました"}
-		}
-		return writeDoneMsg{status: "いいねしました"}
+	liked := !t.Liked
+	if liked {
+		return m.updateTask(*t, app.TaskUpdate{Liked: &liked}, "いいねしました")
 	}
+	return m.updateTask(*t, app.TaskUpdate{Liked: &liked}, "いいねを取り消しました")
 }
 
 // --- followers (multi-select) ---

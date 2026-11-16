@@ -11,7 +11,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asana-tui/internal/dates"
+	usecase "github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -210,7 +210,7 @@ func (a *app) fetchDetails(ctx context.Context, st *store.Store, gid string) err
 }
 
 // parseDate accepts YYYY-MM-DD, "today", "tomorrow", "yesterday" and "+Nd" / "-Nd".
-func parseDate(s string, now time.Time) (string, error) { return dates.Parse(s, now) }
+func parseDate(s string, now time.Time) (string, error) { return usecase.ParseDue(s, now) }
 
 var weekdays = [...]string{"日", "月", "火", "水", "木", "金", "土"}
 

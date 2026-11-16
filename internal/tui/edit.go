@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -259,32 +259,29 @@ func (m *Model) applyEdit(msg editDoneMsg) tea.Cmd {
 	os.Remove(msg.path)
 	orig := msg.original
 	st, now, gid := m.deps.Store, m.deps.Now(), msg.gid
+	tasks := m.tasks(now)
 	return func() tea.Msg {
 		ctx := m.ctx
-		changes := map[string]any{}
+		var in app.UpdateTaskInput
 		if doc.Name != orig.Name {
-			changes["name"] = doc.Name
+			in.Name = &doc.Name
 		}
 		if doc.Due != orig.Due {
-			due, err := dates.Parse(doc.Due, now)
-			if err != nil {
-				return writeDoneMsg{err: fmt.Errorf("due: %w", err)}
-			}
-			changes["due_on"] = due
+			in.Due = &doc.Due
 		}
 		if doc.Assignee != orig.Assignee {
-			gid, err := st.ResolveUser(ctx, doc.Assignee)
-			if err != nil {
-				return writeDoneMsg{err: fmt.Errorf("assignee: %w", err)}
-			}
-			changes["assignee"] = gid
+			in.Assignee = &doc.Assignee
 		}
 		if doc.Completed != orig.Completed {
-			changes["completed"] = doc.Completed
+			in.Completed = &doc.Completed
 		}
 		if strings.TrimSpace(doc.Body) != strings.TrimSpace(orig.Body) {
-			changes["notes"] = richtext.TaskNotes.PlainFromMarkdown(doc.Body)
-			changes["html_notes"] = richtext.TaskNotes.FromMarkdown(doc.Body)
+			in.Notes = &doc.Body
+		}
+		// A *app.FieldError reads "due: …" and "assignee: …", as the screen says it.
+		u, err := tasks.ResolveUpdate(ctx, in)
+		if err != nil {
+			return writeDoneMsg{err: err}
 		}
 		moved := false
 		if doc.HasSection && orig.HasSection && doc.Section != orig.Section {
@@ -297,15 +294,13 @@ func (m *Model) applyEdit(msg editDoneMsg) tea.Cmd {
 			}
 			moved = true
 		}
-		if len(changes) > 0 {
-			if err := st.UpdateTaskLocal(ctx, gid, changes, now); err != nil {
-				return writeDoneMsg{err: err}
-			}
+		if err := tasks.UpdateHere(ctx, gid, u); err != nil {
+			return writeDoneMsg{err: err}
 		}
-		if len(changes) == 0 && !moved {
+		if u.Count() == 0 && !moved {
 			return statusMsg("変更はありません")
 		}
-		return writeDoneMsg{status: fmt.Sprintf("タスクを更新しました（%d 項目）", len(changes)+btoi(moved)-btoi(changes["html_notes"] != nil))}
+		return writeDoneMsg{status: fmt.Sprintf("タスクを更新しました（%d 項目）", u.Count()+btoi(moved))}
 	}
 }
 

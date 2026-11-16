@@ -194,12 +194,6 @@ func (m *Model) showAssigneePicker(users []store.UserRef) {
 }
 
 func (m *Model) assign(t store.TaskSummary, userGID, label string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
-	return func() tea.Msg {
-		if err := st.UpdateTaskLocal(m.ctx, t.GID, map[string]any{"assignee": userGID}, now); err != nil {
-			return writeDoneMsg{err: err}
-		}
-		label = strings.TrimSuffix(label, "（自分）")
-		return writeDoneMsg{status: "担当者を変更しました: " + t.Name + " → " + label}
-	}
+	label = strings.TrimSuffix(label, "（自分）")
+	return m.updateTask(t, app.TaskUpdate{Assignee: &userGID}, "担当者を変更しました: "+t.Name+" → "+label)
 }
