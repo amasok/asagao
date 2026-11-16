@@ -131,9 +131,7 @@ func TestUpsertTasksLetsOtherWritersIn(t *testing.T) {
 // setWriteSlices makes UpsertTasks write one task per transaction and wait yield between
 // them, until the test ends.
 func setWriteSlices(t *testing.T, yield time.Duration) {
-	slice, oldYield := writeSlice, writeYield
-	writeSlice, writeYield = 0, yield
-	t.Cleanup(func() { writeSlice, writeYield = slice, oldYield })
+	t.Cleanup(SetTaskWriteSlicesForTest(0, yield))
 }
 
 // storedTasks is the gids of the stored tasks, with how many memberships and tags each has.

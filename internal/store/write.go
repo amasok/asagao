@@ -98,6 +98,15 @@ var (
 	writeYield = 150 * time.Millisecond
 )
 
+// SetTaskWriteSlicesForTest makes UpsertTasks write in transactions of about slice (0: one
+// task each) with yield between them, until the returned function restores them. It is for
+// tests of other packages that need a few tasks written in several transactions.
+func SetTaskWriteSlicesForTest(slice, yield time.Duration) (restore func()) {
+	oldSlice, oldYield := writeSlice, writeYield
+	writeSlice, writeYield = slice, yield
+	return func() { writeSlice, writeYield = oldSlice, oldYield }
+}
+
 // UpsertTasks stores tasks with their memberships, tags and assignee.
 //
 // Many tasks are written in several transactions (see writeSlice): if it fails or ctx is
