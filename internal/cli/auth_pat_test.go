@@ -176,7 +176,14 @@ func TestAuthLoginPATServerErrorFailsFast(t *testing.T) {
 			if !strings.Contains(out, "もう一度確かめます") || !strings.Contains(out, fmt.Sprint(tc.status)) {
 				t.Errorf("the wait should be announced:\n%s", out)
 			}
-			if msg := err.Error(); !strings.Contains(msg, "一時的") || !strings.Contains(msg, fmt.Sprint(tc.status)) || strings.Contains(msg, "new-pat") {
+			busy := "一時的"
+			if tc.status == http.StatusTooManyRequests {
+				busy = "混み合っています" // a rate limit, not a failure
+			}
+			if !strings.Contains(out, busy) {
+				t.Errorf("the retry notice should say %q:\n%s", busy, out)
+			}
+			if msg := err.Error(); !strings.Contains(msg, busy) || !strings.Contains(msg, "保存していません") || !strings.Contains(msg, fmt.Sprint(tc.status)) || strings.Contains(msg, "new-pat") {
 				t.Errorf("error = %q", msg)
 			}
 			if c, err := ts.Load(ctx); err != nil || *c != *earlier {
@@ -208,5 +215,34 @@ func TestAuthLoginPATRetriesOnce(t *testing.T) {
 	}
 	if c, err := ts.Load(context.Background()); err != nil || c.PersonalAccessToken != "good-pat" || c.UserGID != "42" {
 		t.Fatalf("saved %+v, %v", c, err)
+	}
+}
+
+// An Asana that takes the connection but never answers does not keep login waiting: the
+// check gives up after loginTimeout, saves nothing and says so.
+func TestAuthLoginPATTimesOut(t *testing.T) {
+	ts := authTestEnv(t, "")
+	old := loginTimeout
+	loginTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { loginTimeout = old })
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	start := time.Now()
+	out, err := runAuthCLI(t, srv.URL, "new-pat\n", "auth", "login", "--pat")
+	if err == nil || !strings.Contains(err.Error(), "返事がありませんでした") || !strings.Contains(err.Error(), "保存していません") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("took %v", d)
+	}
+	if _, err := ts.Load(context.Background()); err != tokenstore.ErrNotFound {
+		t.Errorf("nothing should be saved: %v", err)
 	}
 }

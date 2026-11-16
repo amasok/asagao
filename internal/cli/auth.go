@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -90,8 +91,22 @@ OAuth で使うなら、Asana に OAuth アプリを登録して config.toml の
 	return cmd
 }
 
-// loginRetryDelay is the longest wait before retrying the token check at login.
-var loginRetryDelay = 2 * time.Second
+// loginRetryDelay is the longest wait before retrying the token check at login, and
+// loginTimeout the longest the whole check may take (an Asana that accepts the connection
+// but never answers would keep the user waiting otherwise).
+var (
+	loginRetryDelay = 2 * time.Second
+	loginTimeout    = 20 * time.Second
+)
+
+// busyMessage says what an HTTP status the token check got means: 429 is a rate limit,
+// 5xx a failure on Asana's side.
+func busyMessage(status int) string {
+	if status == http.StatusTooManyRequests {
+		return fmt.Sprintf("Asana が混み合っています (HTTP %d)", status)
+	}
+	return fmt.Sprintf("Asana が一時的に応答しません (HTTP %d)", status)
+}
 
 // loginPAT reads a Personal Access Token, checks it with /users/me and saves it.
 func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
@@ -100,20 +115,25 @@ func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	if err != nil {
 		return err
 	}
-	c := a.newClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"}))
+	checkCtx, cancel := context.WithTimeout(ctx, loginTimeout)
+	defer cancel()
+	c := a.newClient(checkCtx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"}))
 	// The user is waiting: retry a busy or failing Asana once, briefly and saying so, not
 	// with the backoff of a sync (about 30 s in all, #24).
 	c.MaxRetries, c.MaxRetryDelay = 1, loginRetryDelay
 	c.OnRetry = func(status int, wait time.Duration) {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Asana が応答しません (HTTP %d)。%s後にもう一度確かめます…\n", status, wait.Round(time.Second))
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s。%s後にもう一度確かめます…\n", busyMessage(status), wait.Round(time.Second))
 	}
-	me, err := c.Me(ctx)
+	me, err := c.Me(checkCtx)
 	if asana.IsUnauthorized(err) {
 		return fmt.Errorf("Asana がこのトークンを受け付けませんでした。貼り付け間違いがないか確かめるか、%s で作り直してください", auth.PATConsoleURL)
 	}
 	var ae *asana.Error
 	if errors.As(err, &ae) && (ae.Status >= 500 || ae.Status == http.StatusTooManyRequests) {
-		return fmt.Errorf("Asana が一時的に応答しません (HTTP %d)。トークンは保存していません。少し待ってから、もう一度 asana-tui auth login --pat を実行してください", ae.Status)
+		return fmt.Errorf("%s。トークンは保存していません。少し待ってから、もう一度 asana-tui auth login --pat を実行してください", busyMessage(ae.Status))
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return fmt.Errorf("Asana から %s 以内に返事がありませんでした。トークンは保存していません。少し待ってから、もう一度 asana-tui auth login --pat を実行してください", loginTimeout)
 	}
 	if err != nil {
 		return fmt.Errorf("トークンの確認 (/users/me): %w", err)

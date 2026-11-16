@@ -210,9 +210,13 @@ func retryable(method string, status int) bool {
 	return status >= 500 && method != http.MethodPost
 }
 
+// maxRetryAfter is the longest Retry-After taken as it is; a larger (or negative, or
+// unreadable) value is ignored for the usual backoff.
+const maxRetryAfter = 24 * time.Hour
+
 func retryDelay(resp *http.Response, attempt int) time.Duration {
 	if s := resp.Header.Get("Retry-After"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= int(maxRetryAfter/time.Second) {
 			return time.Duration(n) * time.Second
 		}
 	}

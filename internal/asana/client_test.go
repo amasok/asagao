@@ -215,3 +215,31 @@ func TestMaxRetryDelayAndOnRetry(t *testing.T) {
 		t.Errorf("uncapped wait %v", slept[0])
 	}
 }
+
+// A Retry-After that is negative or too large for a wait is ignored for the usual backoff
+// (it used to be taken as it was: "-5" made a negative wait, a huge one overflowed).
+func TestRetryAfterOutOfRange(t *testing.T) {
+	for _, ra := range []string{"-5", "99999999999999", "86401"} {
+		n := 0
+		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			n++
+			if n == 1 {
+				w.Header().Set("Retry-After", ra)
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			fmt.Fprint(w, `{"data":{"gid":"1"}}`)
+		})
+		var slept []time.Duration
+		c.sleep = func(_ context.Context, d time.Duration) error { slept = append(slept, d); return nil }
+		if _, err := c.Me(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(slept) != 1 || slept[0] != time.Second {
+			t.Errorf("Retry-After %q: slept %v, want the 1 s backoff", ra, slept)
+		}
+	}
+	if d := retryDelay(&http.Response{Header: http.Header{"Retry-After": {"86400"}}}, 0); d != 24*time.Hour {
+		t.Errorf("a day is still taken: %v", d)
+	}
+}
