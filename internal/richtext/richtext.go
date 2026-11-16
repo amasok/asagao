@@ -59,11 +59,17 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	splitCodeLines(doc)
 	demoteBlocksInItems(doc)
 	moveTextAfterNestedLists(doc)
+	normalizeMarks(doc)
 	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
 	c.keepTrailingSpace(blockEnds)
-	return tidy(c.b.String())
+	// For display a space sets delimiters apart: the renderer would show "\ " as it is.
+	sep := " "
+	if editable {
+		sep = `\ `
+	}
+	return tidy(separateTokens(c.b.String(), c.tokens, sep))
 }
 
 // preStartBreak matches a <pre> tag and the line break right after it.
@@ -146,6 +152,10 @@ type converter struct {
 	// newline and the structure written at the start of the line (blockquote prefixes, list
 	// item markers). Keeping it as state makes atLineStart constant time (#23).
 	lineStart int
+	// tokens are the emphasis delimiters and code fences written to b, in order, for
+	// separateTokens (#58).
+	tokens []inlineToken
+	strong int // inside <strong>: a mention shown as bold is not bold again
 }
 
 type listState struct {
@@ -201,8 +211,16 @@ func (c *converter) keepTrailingSpace(follows func() bool) {
 	}
 	ch := b[n-1]
 	c.b.Truncate(n - 1)
+	if c.editable && n-1 > c.lineStart && urlBefore(lastWord(b[c.lineStart:n-1])) {
+		// Linkify would read the reference on as part of the URL (#77): an escaped space,
+		// which FromMarkdown reads as nothing, ends the URL
+		c.write(`\ `)
+	}
 	c.write(indentRef[ch])
 }
+
+// lastWord is the text after the last whitespace in b.
+func lastWord(b []byte) string { return string(b[bytes.LastIndexFunc(b, unicode.IsSpace)+1:]) }
 
 // blockEnds is keepTrailingSpace's follows where a block ends right after the text.
 func blockEnds() bool { return true }
@@ -304,7 +322,7 @@ func (c *converter) walk(n *html.Node) {
 		if c.pre > 0 {
 			c.children(n)
 		} else {
-			c.write(codeSpan(textOf(n)))
+			c.codeSpan(textOf(n))
 		}
 	case atom.Pre:
 		c.block()
@@ -396,7 +414,10 @@ func (c *converter) text(n *html.Node) {
 	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
 	// it stays a character reference, as indentation there is list structure.
 	rawIndent := c.editable && !inList
-	t = escapeText(t, c.atLineStart(), rawIndent)
+	// after indentation written by text before (in another element), the line still starts
+	// here as Markdown reads it: "\t" then "#" would be a heading, or code
+	lineStart := c.atLineStart() || len(bytes.Trim(c.b.Bytes()[c.lineStart:], " \t")) == 0
+	t = escapeText(t, lineStart, rawIndent, c.prevByte(), c.nextOnLine(n))
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	last := len(lines) - 1
@@ -419,6 +440,47 @@ func (c *converter) text(n *html.Node) {
 		}
 		c.write(l)
 	}
+}
+
+// nextOnLine is the first byte written after text n on its line, '\n' if the line ends
+// there: text, or a placeholder for what an inline element writes first.
+func (c *converter) nextOnLine(n *html.Node) byte {
+	for ; n != nil; n = n.Parent {
+		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
+			switch {
+			case sib.Type == html.TextNode:
+				if sib.Data != "" {
+					return sib.Data[0]
+				}
+			case sib.Type != html.ElementNode:
+			case sib.DataAtom == atom.Br, blockAtoms[sib.DataAtom]:
+				return '\n'
+			case transparentAtoms[sib.DataAtom] && !markAtoms[sib.DataAtom]:
+				if t := textOf(sib); t != "" {
+					return t[0]
+				}
+			default:
+				return 'x' // a delimiter, a link, code or an image
+			}
+		}
+		if p := n.Parent; p == nil || p.Type != html.ElementNode || blockAtoms[p.DataAtom] {
+			return '\n'
+		}
+	}
+	return '\n'
+}
+
+// prevByte is the output byte before the next text, as Linkify sees it (see escapeInline):
+// a line break at the start of a line, and a space right after a delimiter or a link
+// (Linkify starts a link right after an inline element).
+func (c *converter) prevByte() byte {
+	switch {
+	case c.atLineStart():
+		return '\n'
+	case len(c.tokens) > 0 && c.tokens[len(c.tokens)-1].end() == c.b.Len():
+		return ' '
+	}
+	return c.b.Bytes()[c.b.Len()-1]
 }
 
 // betweenListTags reports whether whitespace-only text n is layout between list tags: a
@@ -473,7 +535,7 @@ func (c *converter) contentFollows(n *html.Node, blocks bool) bool {
 		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
 			switch {
 			case sib.Type == html.TextNode:
-				if strings.TrimSpace(sib.Data) != "" {
+				if !asciiBlank(sib.Data) {
 					return true
 				}
 			case sib.Type != html.ElementNode, sib.DataAtom == atom.Br:
@@ -481,7 +543,7 @@ func (c *converter) contentFollows(n *html.Node, blocks bool) bool {
 				return blocks
 			case sib.DataAtom == atom.Img:
 				return c.editable || blocks // displayed as a block of its own
-			case strings.TrimSpace(textOf(sib)) != "" || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
+			case !asciiBlank(textOf(sib)) || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
 				return true
 			}
 		}
@@ -500,7 +562,7 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 			switch {
 			case sib.Type == html.TextNode:
 				line, _, nl := strings.Cut(sib.Data, "\n")
-				if strings.TrimSpace(line) != "" {
+				if !asciiBlank(line) {
 					return true
 				}
 				if nl {
@@ -514,7 +576,7 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 			default:
 				// an inline element: what it writes first
 				t := textOf(sib)
-				if line, _, nl := strings.Cut(t, "\n"); strings.TrimSpace(line) != "" ||
+				if line, _, nl := strings.Cut(t, "\n"); !asciiBlank(line) ||
 					attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib) {
 					return true
 				} else if nl {
@@ -547,7 +609,7 @@ func asciiBlank(s string) bool { return strings.TrimFunc(s, asciiSpace) == "" }
 // nonBlank reports whether one of lines has something other than spaces and tabs.
 func nonBlank(lines []string) bool {
 	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
+		if !asciiBlank(l) {
 			return true
 		}
 	}
@@ -559,9 +621,28 @@ func (c *converter) wrap(n *html.Node, mark string) {
 		c.children(n)
 		return
 	}
-	c.write(mark)
+	if mark == "**" {
+		c.strong++
+		defer func() { c.strong-- }()
+	}
+	c.token(mark, true, true)
 	c.children(n)
-	c.write(mark)
+	c.token(mark, false, true)
+}
+
+// token writes delimiter s and records it (see separateTokens).
+func (c *converter) token(s string, open, mark bool) {
+	c.tokens = append(c.tokens, inlineToken{pos: c.b.Len(), s: s, open: open, mark: mark})
+	c.write(s)
+}
+
+// codeSpan writes s as an inline code span (see codeSpan), recording its fences.
+func (c *converter) codeSpan(s string) {
+	span := codeSpan(s)
+	fence := span[:strings.IndexFunc(span, func(r rune) bool { return r != '`' })]
+	c.token(fence, true, false)
+	c.write(span[len(fence) : len(span)-len(fence)])
+	c.token(fence, false, false)
 }
 
 // markAtoms are the elements written as emphasis marks ("**", "*", "~~", see walk).
@@ -585,9 +666,10 @@ func moveEdgeSpaceOutOfMarks(n *html.Node) {
 			for _, s := range edgeSpace(ch, true) {
 				ch.Parent.InsertBefore(s, ch)
 			}
-			after := edgeSpace(ch, false)
-			for i := len(after) - 1; i >= 0; i-- {
-				ch.Parent.InsertBefore(after[i], next)
+			// in document order, right before what followed the mark ("x<br>\u00a0" stays so:
+			// the other way round, the <br> would meet one after the mark, a blank line)
+			for _, s := range edgeSpace(ch, false) {
+				ch.Parent.InsertBefore(s, next)
 			}
 		}
 		ch = next
@@ -676,9 +758,18 @@ func (c *converter) link(n *html.Node) {
 	}
 	switch {
 	case c.editable && mention:
-		c.write("[" + escape(text, false) + "](" + mentionScheme + gid + ")")
+		c.token("[", true, false) // (a URL right before it would be read on into it)
+		c.write(escape(text, false) + "](" + mentionScheme + gid)
+		c.token(")", false, false)
 	case mention || typ == "user" || strings.HasPrefix(text, "@"):
-		c.write("**" + escape(text, false) + "**") // mention
+		// a mention, bold (unless it is in bold already: "****" is not bold)
+		if c.strong > 0 {
+			c.write(escape(text, false))
+			return
+		}
+		c.token("**", true, true)
+		c.write(escape(text, false))
+		c.token("**", false, true)
 	case (href == "" || text == href) && autolinkSafe(text):
 		c.write("<" + text + ">")
 	case href == "":
@@ -689,7 +780,9 @@ func (c *converter) link(n *html.Node) {
 			c.b.Truncate(c.b.Len() - 1)
 			c.write(`\!`)
 		}
-		c.write("[" + escape(text, false) + "](" + linkDest(href) + ")")
+		c.token("[", true, false)
+		c.write(escape(text, false) + "](" + linkDest(href))
+		c.token(")", false, false)
 	}
 }
 
@@ -1245,14 +1338,22 @@ func (c *converter) headingLine(n *html.Node) {
 		return
 	}
 	start := c.b.Len()
+	tokens := len(c.tokens)
 	c.heading++
 	c.children(n)
 	c.heading--
-	body := strings.Trim(string(c.b.Bytes()[start:]), " \t")
+	raw := string(c.b.Bytes()[start:])
+	body := strings.Trim(raw, " \t")
 	c.b.Truncate(start)
 	if body == "" {
+		c.tokens = c.tokens[:tokens]
 		c.write(marker)
 		return
+	}
+	// the body moves: after the marker, without the spaces it started with
+	shift := len(marker) + 1 - (len(raw) - len(strings.TrimLeft(raw, " \t")))
+	for i := tokens; i < len(c.tokens); i++ {
+		c.tokens[i].pos += shift
 	}
 	if run := len(body) - len(strings.TrimRight(body, "#")); run > 0 {
 		if rest := body[:len(body)-run]; rest == "" || strings.HasSuffix(rest, " ") || strings.HasSuffix(rest, "\t") {
@@ -1290,7 +1391,9 @@ func (c *converter) image(n *html.Node) {
 	}
 	if c.editable {
 		// in place, as FromMarkdown reads it back (a paragraph break would be added text)
-		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
+		c.token("![", true, false)
+		c.write("画像](" + EditableImageDest(gid, c.imageDest))
+		c.token(")", false, false)
 		return
 	}
 	if c.heading > 0 {
@@ -1358,18 +1461,22 @@ var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
 // escape escapes Markdown syntax in text so that it reads back as the same text. lineStart
 // tells whether the text begins at the start of a line (otherwise only the lines after its
 // first newline are checked for block syntax and indentation).
-func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false) }
+func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false, ' ', '\n') }
 
 // escapeText is escape. With rawIndent, indentation is written as it is (for editable
 // Markdown, where FromMarkdown keeps it, see keepIndentation); otherwise its first
 // character is a character reference, so any Markdown reader keeps it.
-func escapeText(s string, lineStart, rawIndent bool) string {
-	s = mdSpecial.Replace(s)
-	s = entityLike.ReplaceAllString(s, `\$0`) // "&copy;" in the text stays as written
+func escapeText(s string, lineStart, rawIndent bool, prev, next byte) string {
+	s = escapeInline(s, prev)
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		if i == 0 && !lineStart {
 			continue
+		}
+		escapeBlock := escapeBlock
+		if i == len(lines)-1 && next != '\n' {
+			// the line goes on in what comes next: "1." then "a" is not a list marker
+			escapeBlock = func(l string) string { return strings.TrimSuffix(escapeBlockLine(l+string(next)), string(next)) }
 		}
 		trimmed := strings.TrimLeft(l, " \t") // indentation: spaces and tabs
 		indent := l[:len(l)-len(trimmed)]
@@ -1394,7 +1501,10 @@ func escapeText(s string, lineStart, rawIndent bool) string {
 // escapeBlock escapes block syntax at the start of a line: "#", ">", "- ", "+ ", "1. ", "1) "
 // would become headings, quotes or lists, and a line of only "-" or "=" would turn the line
 // above into a heading. (Lines that do not start with block syntax are returned as they are.)
-func escapeBlock(line string) string {
+func escapeBlock(line string) string { return escapeBlockLine(line) }
+
+// escapeBlockLine is escapeBlock.
+func escapeBlockLine(line string) string {
 	switch {
 	case strings.HasPrefix(line, "#"), strings.HasPrefix(line, ">"),
 		listBullet(line, '-'), listBullet(line, '+'),
@@ -1405,6 +1515,90 @@ func escapeBlock(line string) string {
 		return line[:m[4]] + `\` + line[m[4]:]
 	}
 	return line
+}
+
+// escapeInline escapes inline Markdown syntax in text that follows the output byte prev. A
+// URL that Linkify would read holding such syntax is kept as text: the ":" after its scheme
+// (or the "." after "www") is escaped too. Linkify would otherwise end the link at the first
+// backslash, and link a URL cut short (#77). (A URL right after a character that can be in
+// an email address is not one Linkify starts there; the "." could be in an address.)
+func escapeInline(s string, prev byte) string {
+	esc := func(s string) string {
+		return entityLike.ReplaceAllString(mdSpecial.Replace(s), `\$0`) // "&copy;" stays as written
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range urlStart.FindAllStringIndex(s, -1) {
+		before := prev
+		if m[0] > 0 {
+			before = s[m[0]-1]
+		}
+		if emailLocal(before) {
+			continue
+		}
+		u := s[m[0] : m[0]+linkifyURL(s[m[0]:])]
+		if esc(u) == u {
+			continue // linked as it is
+		}
+		p := m[1] - 1 // the ":" of "https://", the "." of "www."
+		if s[p] == '/' {
+			p -= 2
+		}
+		b.WriteString(esc(s[last:p]) + `\`)
+		last = p
+	}
+	b.WriteString(esc(s[last:]))
+	return b.String()
+}
+
+// urlStart matches where Linkify may read a URL.
+var urlStart = regexp.MustCompile(`https?://|ftp://|www\.`)
+
+// linkifyWWW and linkifyURLRe are the URLs goldmark's Linkify (v1.8.7) reads.
+var (
+	linkifyWWW   = regexp.MustCompile(`^www\.[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-z]+(?:[/#?][-a-zA-Z0-9@:%_\+.~#!?&/=\(\);,'">\^{}\[\]` + "`" + `]*)?`)
+	linkifyURLRe = regexp.MustCompile(`^(?:http|https|ftp)://[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-z]+(?::\d+)?(?:[/#?][-a-zA-Z0-9@:%_+.~#$!?&/=\(\);,'">\^{}\[\]` + "`" + `]*)?`)
+)
+
+// linkifyURL is the length of the URL at the start of s as Linkify reads it, 0 if none:
+// the match, without the punctuation it leaves at the end (as goldmark's linkifyParser).
+func linkifyURL(s string) int {
+	m := linkifyURLRe.FindStringIndex(s)
+	if m == nil {
+		m = linkifyWWW.FindStringIndex(s)
+	}
+	if m == nil {
+		return 0
+	}
+	line := s[:m[1]]
+	opening, closing := strings.Count(line, "("), strings.Count(line, ")")
+	i := m[1]
+	for i > 1 {
+		switch line[i-1] {
+		case '?', '!', '.', ',', ':', '*', '_', '~':
+			i--
+			continue
+		case ')':
+			if closing <= opening {
+				return i
+			}
+			closing--
+			i--
+			continue
+		case ';':
+			j := i - 2
+			for j > 0 && (line[j] >= '0' && line[j] <= '9' || line[j] >= 'a' && line[j] <= 'z' || line[j] >= 'A' && line[j] <= 'Z') {
+				j--
+			}
+			if j == i-2 || line[j] != '&' {
+				return i
+			}
+			i = j
+			continue
+		}
+		return i
+	}
+	return i
 }
 
 // entityLike matches what Markdown would read as a character reference ("&amp;", "&#32;").

@@ -1,6 +1,7 @@
 package richtext
 
 import (
+	"bytes"
 	"html"
 	"regexp"
 	"strconv"
@@ -28,8 +29,55 @@ var md = goldmark.New(
 	goldmark.WithExtensions(extension.Strikethrough, extension.Linkify),
 	goldmark.WithParserOptions(parser.WithBlockParsers(
 		// ahead of the default thematic break parser (200), which it wraps
-		util.Prioritized(ruleSource{parser.NewThematicBreakParser()}, 199))),
+		util.Prioritized(ruleSource{parser.NewThematicBreakParser()}, 199)),
+		parser.WithInlineParsers(util.Prioritized(escapedSpaceParser{}, 100),
+			util.Prioritized(spaceRefParser{}, 100))),
 )
+
+// escapedSpaceParser reads "\ " (an escaped space) right next to a delimiter as nothing,
+// as goldmark's CJK extension renders it: ToEditableMarkdown writes it there where emphasis
+// would not open or close without a space (#58), after closing delimiters ("*", "~", "`",
+// a link's ")") or before opening ones ("*", "~", "`", "[", "![", and "&" of a reference
+// after a URL). It is an inline node of its own, so what follows it is read as what
+// follows the delimiter is (Linkify starts a link there, as it does after "**"), whether or
+// not the space is there. Elsewhere "\ " is text as typed ("cd My\ Documents").
+type escapedSpaceParser struct{}
+
+func (escapedSpaceParser) Trigger() []byte { return []byte{'\\'} }
+
+func (escapedSpaceParser) Parse(_ gast.Node, block text.Reader, _ parser.Context) gast.Node {
+	line, _ := block.PeekLine()
+	if len(line) < 2 || line[1] != ' ' {
+		return nil
+	}
+	if b := block.PrecendingCharacter(); !strings.ContainsRune("*~`)", b) &&
+		(len(line) < 3 || strings.IndexByte("*~`[!&", line[2]) < 0) {
+		return nil
+	}
+	block.Advance(2)
+	return gast.NewString(nil)
+}
+
+// spaceRefParser reads "&#32;" and "&#9;" (indentation and spaces at the end of a line,
+// as ToEditableMarkdown and keepIndentation write them) as an inline node of their own, so
+// that what follows them is read as what follows a space is: Linkify starts a link there
+// (#77; "&#32;www.x.jp" was text, " www.x.jp" a link).
+type spaceRefParser struct{}
+
+func (spaceRefParser) Trigger() []byte { return []byte{'&'} }
+
+func (spaceRefParser) Parse(_ gast.Node, block text.Reader, _ parser.Context) gast.Node {
+	line, _ := block.PeekLine()
+	for _, r := range spaceRefs {
+		if bytes.HasPrefix(line, r.ref) {
+			block.Advance(len(r.ref))
+			return gast.NewString(r.text)
+		}
+	}
+	return nil
+}
+
+var spaceRefs = []struct{ ref, text []byte }{{[]byte("&#32;"), []byte(" ")}, {[]byte("&#9;"), []byte("\t")}}
 
 // ruleAttr is the attribute a rule (thematic break) keeps its line in, as written ("***").
 var ruleAttr = []byte("asana-tui-rule")
@@ -739,7 +787,8 @@ var textEscape = regexp.MustCompile(`\\[!-/:-@\[-` + "`" + `{-~]|&(?:#[0-9]{1,7}
 
 // decodeText turns the raw source of a text segment into its text: backslash escapes and
 // character references are resolved in one pass (as goldmark's renderer does), so "\&amp;"
-// is the text "&amp;". Unknown references ("&foo;") stay as written.
+// is the text "&amp;". Unknown references ("&foo;") stay as written. (An escaped space is
+// not text, see escapedSpaceParser.)
 func decodeText(src []byte) string {
 	return textEscape.ReplaceAllStringFunc(string(src), func(m string) string {
 		if m[0] == '\\' {

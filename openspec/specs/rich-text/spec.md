@@ -72,7 +72,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** `<li>a\n---</li>` になり、`## a` にはならない
 
 ### Requirement: 文字にした入れ子は、もう一度変換しない
-文字にしたブロックの文字は、エディタで読み直したときの形 (リンクなど) に変えずに送る (MUST NOT 変える)。文字の中の生の HTML にある URL は、リンクにしない。エディタで読み直すと #77 の不具合で URL が切れたリンクになることがあり、利用者はリンクを打っていないため (#66)。
+文字にしたブロックの文字は、エディタで読み直したときの形 (リンクなど) に変えずに送る (MUST NOT 変える)。文字の中の生の HTML にある URL は、リンクにしない。利用者はリンクを打っていないため (#66)。
 根拠: frommd.go fromMarkdown; nesting_spec_test.go TestFromMarkdownDemotedTextAsTyped
 
 #### Scenario: 項目の中の引用の生の HTML の URL
@@ -164,8 +164,8 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `a <a href="http://x.jp">b c</a> d` になる
 
 ### Requirement: 往復で安定しない既知の形
-次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): 先頭に空白がある見出し (字下げした setext の見出し、#78)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
-根拠: nesting_spec_test.go unstableOnMain; stability_attack_test.go onlyLinksAdded
+次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): 先頭に空白がある見出し (字下げした setext の見出し、#78)。
+根拠: nesting_spec_test.go unstableOnMain
 
 #### Scenario: 字下げした setext の見出し
 - **WHEN** `   a\n  ---` を変換して、エディタで往復する
@@ -186,6 +186,54 @@ Asana が受け付けないリスト項目の中の引用・コード片・見�
 #### Scenario: 項目の中の区切り線
 - **WHEN** `<ol><li>a<hr/></li><li>b</li></ol>` をエディタで往復する
 - **THEN** `<ol><li>a\n---</li><li>b</li></ol>` になる
+
+### Requirement: 強調は隣の文字によらず残す (#58)
+html の太字・斜体・取り消し線は、句読点・リンク・画像・コード・ほかの強調・メールアドレス・URL と隣り合っても、エディタを往復したあと同じ文字に同じ装飾が付いている (MUST)。Markdown の区切り (`**`・`*`・`~~`、コードの `` ` ``) がそのままでは開かない・閉じない所、隣の区切りとつながる所、Linkify にメールアドレスや URL の一部として読まれる所では、区切りの外側に `\ ` (エスケープした空白) を書く。Markdown → rich text では、区切りのすぐ隣の `\ ` を何も書かないものとして読む (goldmark の CJK 拡張と同じ)。ほかの所の `\ ` は文字にする。
+根拠: marks.go separateTokens; frommd.go escapedSpaceParser; marks_test.go; stability_attack_test.go genInlineRT
+
+#### Scenario: 利用者が打った `\ `
+- **WHEN** `cd My\ Documents` を変換する
+- **THEN** `\ ` は打ったとおりに残り、`cd My\ Documents` になる (TestEscapedSpaceNextToDelimitersOnly)
+
+#### Scenario: 表示用の Markdown
+- **WHEN** `これは<strong>「重要」</strong>です` を表示用に変換する
+- **THEN** `\ ` の代わりに空白を書き、`これは **「重要」** です` になる
+
+#### Scenario: かぎかっこを太字にする
+- **WHEN** `これは<strong>「重要」</strong>です` をエディタで開く
+- **THEN** `これは\ **「重要」**\ です` になり、戻すと `これは<strong>「重要」</strong>です` になる
+
+#### Scenario: 太字のあとのメールアドレス
+- **WHEN** `z<strong>a</strong>b@x.jp` をエディタで往復する
+- **THEN** `**` はリンクに入らず、`z<strong>a</strong><a href="mailto:b@x.jp">b@x.jp</a>` になる (`**` のすぐあとのアドレスと同じ)
+
+### Requirement: 強調を Markdown で書ける形にする (#58)
+html → Markdown の前に、強調を Markdown で書ける形にする (MUST)。見た目は変えない。同じ強調の中の同じ強調は外の 1 つにする (`<em><em>a</em></em>` が太字にならない)。空行をまたぐ強調は、段落ごとの強調に分ける (空行で段落が終わり、強調も終わるため)。`~` の直後の `~~` は開かない・閉じないので、その `~` を `&#126;` と書く。表示用にメンションを太字にするとき、太字の中では重ねない。
+根拠: marks.go normalizeMarks, separateTokens; richtext.go link; marks_test.go TestEmphasisBoundaries, TestEmphasisBoundariesForDisplay
+
+#### Scenario: 空行をまたぐ太字
+- **WHEN** `<strong>a\n\nb</strong>` をエディタで往復する
+- **THEN** `<strong>a</strong>\n\n<strong>b</strong>` になる
+
+### Requirement: 空白のあとと同じ所で Linkify がリンクにする (#77)
+字下げや行末の空白を書いた文字参照 (`&#32;`・`&#9;`) のすぐあとのメールアドレスや URL は、空白のあとと同じくリンクにする (MUST)。インラインのコードの直前が語の文字でも、コードの中のメールアドレスはリンクにしない。URL のすぐあとの文字参照・取り消し線・コード・リンクは、URL に含めない (`\ ` で区切る)。
+根拠: frommd.go spaceRefParser; richtext.go keepTrailingSpace; marks.go separateTokens; marks_test.go TestLinkifyAsWithoutEscapes, TestEmphasisNextToEmailNotLinked; nesting_spec_test.go TestFromMarkdownDemotedTextAsTyped
+
+#### Scenario: 字下げのあとのメールアドレス
+- **WHEN** `> - a\n> - &#32;b@x.jp` を変換する
+- **THEN** `b@x.jp` は `mailto:` のリンクになる
+
+#### Scenario: 文字のすぐあとのコードのメールアドレス
+- **WHEN** `z<code>a@x.jp</code>` をエディタで往復する
+- **THEN** `z<code>a@x.jp</code>` のままになる
+
+### Requirement: エスケープを含む URL は文字のまま残す (#77)
+Linkify が読む URL (エスケープしない文字で読んだときの範囲) がエスケープする文字を含むときは、リンクにせず文字のまま残す (MUST)。スキームの `:` か `www` の `.` もエスケープする (`\` の手前で切れたリンクになっていた)。含まないときは、html の URL の文字は、エスケープなしの Markdown として読んだときのリンクになる (末尾の句読点は外れる)。
+根拠: richtext.go escapeInline, linkifyURL; marks_test.go TestLinkifyAsWithoutEscapes, TestLinkifyURLAsGoldmark (goldmark と同じ範囲か)
+
+#### Scenario: エスケープを含む URL
+- **WHEN** `see https://x.jp/a_b` をエディタで往復する
+- **THEN** `see https\://x.jp/a\_b` になり、戻すと `see https://x.jp/a_b` の文字のままになる
 
 ### Requirement: 文の文字は往復で落とさない
 入れ子の決まりに合う html の、文として見える文字 (空白を除く) は、エディタを 1 回往復しても落とさない (MUST)。plain の文字列は、同じ Markdown から作った html の文字と、同じ空白以外の文字を持つ。空白を埋めるための `\` や `&#32;` は、文字として出さない。
@@ -208,7 +256,7 @@ Asana が受け付けないリスト項目の中の引用・コード片・見�
 - **THEN** `#` になり、戻すと `<h1></h1>` になる
 
 ### Requirement: 変換で落ちるもの
-次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
+次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)、区切りのすぐ隣で利用者が打った `\ ` (#58)。
 根拠: richtext.go walk (atom.U、知らない要素), headingLine, image; frommd.go block の Heading (h3 以下は h2), inline の Image
 
 #### Scenario: 下線
