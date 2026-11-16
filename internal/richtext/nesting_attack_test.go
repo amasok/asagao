@@ -21,19 +21,24 @@ func genNestInline(r *rand.Rand, d int) string {
 			sb.WriteString("\n")
 		case 2:
 			if d < 1 {
-				sb.WriteString("<strong>" + genNestInline(r, d+1) + "x</strong>")
+				sb.WriteString("<strong>" + genNestWS(r) + "x" + genNestWS(r) + "</strong>t")
 			}
 		case 3:
 			if d < 1 {
-				sb.WriteString("<em>x" + genNestInline(r, d+1) + "</em>")
+				sb.WriteString("<em>" + genNestWS(r) + "x" + genNestWS(r) + "</em>t")
 			}
 		case 4:
-			sb.WriteString("<code>" + escHTML(nestTexts[r.Intn(len(nestTexts))]) + "c</code>")
+			sb.WriteString("<code>" + escHTML(nestTexts[r.Intn(len(nestTexts))]) + "c</code>t")
 		default:
 			sb.WriteString(escHTML(nestTexts[r.Intn(len(nestTexts))]))
 		}
 	}
 	return sb.String()
+}
+
+// whitespace (spaces, tabs, line breaks) at the edge of a mark; letters keep the marks flanking
+func genNestWS(r *rand.Rand) string {
+	return []string{"", "", " ", "  ", "\t", "\n", "<br>", " <br>"}[r.Intn(8)]
 }
 
 func genNestBlock(r *rand.Rand, d int) string {
@@ -46,16 +51,7 @@ func genNestBlock(r *rand.Rand, d int) string {
 	}
 	switch r.Intn(n) {
 	case 2, 3:
-		tag := []string{"ul", "ol"}[r.Intn(2)]
-		s := "<" + tag + ">"
-		for i := r.Intn(3) + 1; i > 0; i-- {
-			s += "<li>" + genNestInline(r, 0)
-			for j := r.Intn(2); j > 0; j-- {
-				s += genNestBlock(r, d+1)
-			}
-			s += genNestInline(r, 0) + "</li>"
-		}
-		return s + "</" + tag + ">"
+		return genNestList(r, d)
 	case 4:
 		return "<blockquote>" + genNestInline(r, 0) + strings.Repeat(genNestBlock(r, d+1), r.Intn(3)) + "</blockquote>"
 	case 5:
@@ -66,6 +62,23 @@ func genNestBlock(r *rand.Rand, d int) string {
 		}
 	}
 	return genNestInline(r, 0)
+}
+
+func genNestList(r *rand.Rand, d int) string {
+	{
+		tag := []string{"ul", "ol"}[r.Intn(2)]
+		s := "<" + tag + ">"
+		for i := r.Intn(3) + 1; i > 0; i-- {
+			// inline content, then at most one nested list (blocks in items and text after a
+			// nested list are broken on main already)
+			s += "<li>" + genNestInline(r, 0)
+			if r.Intn(3) == 0 && d < 3 {
+				s += genNestList(r, d+1)
+			}
+			s += "</li>"
+		}
+		return s + "</" + tag + ">"
+	}
 }
 
 func roundtrip(in string) (md1, h1, md2, h2 string) {
