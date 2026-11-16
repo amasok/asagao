@@ -112,6 +112,16 @@ func (m *Model) tasks(now time.Time) *app.Tasks {
 	return &app.Tasks{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
 }
 
+// comments is the comment use case, with a clock that reads now (see tasks).
+func (m *Model) comments(now time.Time) *app.Comments {
+	return &app.Comments{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+}
+
+// statusUpdates is the status update use cases, with a clock that reads now (see tasks).
+func (m *Model) statusUpdates(now time.Time) *app.Status {
+	return &app.Status{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+}
+
 // afterWrite reloads everything a write can change and asks for a sync.
 func (m *Model) afterWrite() tea.Cmd {
 	cmds := []tea.Cmd{m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.requestSync()}
@@ -373,14 +383,10 @@ func (m *Model) createTask(input string) tea.Cmd {
 }
 
 func (m *Model) addComment(taskGID, text string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	comments := m.comments(m.deps.Now())
 	return func() tea.Msg {
-		me, err := st.Me(m.ctx)
-		if err != nil {
-			return writeDoneMsg{err: err}
-		}
 		// Markdown -> Asana rich text, like the comment editor (C), the CLI and MCP
-		if _, err := st.AddRichCommentLocal(m.ctx, taskGID, richtext.Comment.PlainFromMarkdown(text), richtext.Comment.FromMarkdown(text), me, now); err != nil {
+		if _, err := comments.Add(m.ctx, taskGID, text); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}

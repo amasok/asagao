@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	usecase "github.com/amasok/asana-tui/internal/app" // the cli package has its own type app
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -104,15 +105,8 @@ func (a *app) projectStatusCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := st.ResolveProject(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			me, err := st.Me(ctx)
-			if err != nil {
-				return err
-			}
-			if _, err := st.CreateStatusLocal(ctx, gid, status, title, richtext.StatusUpdate.PlainFromMarkdown(text), richtext.StatusUpdate.FromMarkdown(text), me, time.Now()); err != nil {
+			statuses := usecase.Status{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			if _, err := statuses.Create(ctx, usecase.StatusInput{Project: args[0], Status: status, Title: title, Text: text}); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{}, "ステータスを投稿しました")
