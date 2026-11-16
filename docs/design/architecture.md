@@ -59,7 +59,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 ## 依存の決まり
 
 1. **ドメイン** (`internal/domain/...`、`internal/dates`) は、標準ライブラリとほかのドメインのパッケージだけを import する。`time.Now`、`os`、`net`、`database/sql` を使わない。時刻と乱数は引数で受ける。
-2. **アプリ** (`internal/app`、`internal/sync`) は、ドメイン・`asana/model`・`readmodel`・`termsafe` と、標準ライブラリだけを import する。外部ライブラリを (間接にも) 使わない。Asana・キャッシュ・時計・rich text の変換・送り方は、自分で定義したポートで受ける。ポートの引数と戻り値にも、adapter の型を使わない (ドメインか共有の型にする)。
+2. **アプリ** (`internal/app`、`internal/sync`) は、ドメイン・`asana/model`・`readmodel`・`termsafe` と、標準ライブラリだけを import する。外部ライブラリを (間接にも) 使わない。Asana・キャッシュ・時計・rich text の変換は、自分で定義したポートで受ける (送るのは入り口で、app は送らない。ADR 0006)。ポートの引数と戻り値にも、adapter の型を使わない (ドメインか共有の型にする)。
 3. **adapter** は、ドメイン・共有の型 (`asana/model`・`readmodel`)・`termsafe`・自分の外部ライブラリを import してよい。アプリと入り口と、ほかの adapter は import しない。例外: `auth` は `auth/tokenstore`・`config`・`browser` を、`auth/tokenstore` は `config` を使ってよい (同じ認証のまとまりと、その設定)。
 4. **入り口** は、アプリ・ドメイン・共有の型・`termsafe`・自分の画面のライブラリを import してよい。adapter のうち、次の 4 つだけは入り口から使ってよい:
    - `auth`: 認証のまとまりが公開するもの (`LoginHelp`・`ErrNotLoggedIn`・`ErrLoginReplaced`、CLI のログインのコマンドが使う `Login` など)。

@@ -21,7 +21,7 @@
 
 - import のパスが変わるのは、新しいパッケージに移した関数を呼ぶところだけになる。PR の差分が小さく、並行する作業 (richtext の修正など) とぶつかりにくい。
 - 層はディレクトリの名前からは分からない。`architecture.md` の表と、依存の向きのテスト (ADR 0007) の表が、層の定義になる。
-- `internal/app` と `internal/sync` は、同じ層にある 2 つのパッケージになる。app から sync を import しない (送り方は `Sender` ポートで受ける。ADR 0006)。
+- `internal/app` と `internal/sync` は、同じ層にある 2 つのパッケージになる。app から sync を import しない (送るのは入り口。ADR 0006)。
 
 ## 選ばなかった案
 
