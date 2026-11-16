@@ -175,7 +175,7 @@ func (w *htmlWriter) blankText(n gast.Node) bool {
 	}
 	sub := &htmlWriter{src: w.src, plain: w.plain}
 	sub.inlines(n)
-	return strings.TrimSpace(sub.b.String()) == ""
+	return asciiBlank(sub.b.String()) // "　" (U+3000) or NBSP alone is text, not a filler
 }
 
 func (w *htmlWriter) inlines(n gast.Node) {

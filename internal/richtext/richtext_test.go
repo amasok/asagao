@@ -570,3 +570,25 @@ func TestLineBreaksInListItems(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// Whitespace that Markdown does not treat as structure (U+3000, NBSP) is text: an item or a
+// quote holding only it is not empty, and it is not removed as a leading break or filler.
+func TestNonASCIISpaceIsText(t *testing.T) {
+	for _, sp := range []string{"　", " "} {
+		for _, in := range []string{
+			"<body><blockquote>" + sp + "</blockquote></body>",
+			"<body><ul><li>" + sp + "</li></ul></body>",
+			"<body><ul><li>a<ul><li>" + sp + "</li></ul></li></ul></body>",
+			"<body><ol><li>" + sp + "<br>a</li></ol></body>",
+		} {
+			want := strings.ReplaceAll(in, "<br>", "\n")
+			roundTrip(t, in, want)
+		}
+		if got := FromMarkdown("> " + sp); got != "<body><blockquote>"+sp+"</blockquote></body>" {
+			t.Errorf("typed quote of %q: %q", sp, got)
+		}
+		if got := FromMarkdown("- " + sp); got != "<body><ul><li>"+sp+"</li></ul></body>" {
+			t.Errorf("typed item of %q: %q", sp, got)
+		}
+	}
+}

@@ -312,7 +312,7 @@ func (c *converter) text(n *html.Node) {
 		return
 	}
 	inList := len(c.lists) > 0
-	if inList && strings.TrimSpace(t) == "" && betweenListTags(n) {
+	if inList && asciiBlank(t) && betweenListTags(n) {
 		return // whitespace between list tags
 	}
 	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
@@ -333,7 +333,7 @@ func (c *converter) text(n *html.Node) {
 			}
 			c.newline()
 		}
-		if i == last && !rawIndent && l != "" && strings.TrimSpace(l) == "" && c.atLineStart() &&
+		if i == last && !rawIndent && l != "" && asciiBlank(l) && c.atLineStart() &&
 			c.lineContentFollows(n) {
 			// whitespace before inline content at the start of a line (in a list item, or
 			// for display): Markdown would drop it as indentation
@@ -457,6 +457,14 @@ var blockAtoms = map[atom.Atom]bool{
 	atom.H1: true, atom.H2: true, atom.H3: true, atom.Hr: true, atom.Blockquote: true,
 	atom.Ul: true, atom.Ol: true, atom.Li: true,
 }
+
+// asciiSpace reports whether r is whitespace as Markdown structure sees it (spaces, tabs,
+// line breaks). Other whitespace (U+3000, NBSP) is text: an item or quote holding only it
+// is not empty, and it is not indentation.
+func asciiSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' }
+
+// asciiBlank reports whether s holds nothing but asciiSpace characters.
+func asciiBlank(s string) bool { return strings.TrimFunc(s, asciiSpace) == "" }
 
 // nonBlank reports whether one of lines has something other than spaces and tabs.
 func nonBlank(lines []string) bool {
@@ -745,7 +753,7 @@ func breakBeforeContent(n *html.Node) int {
 				switch {
 				case r == '\n' || r == '\r':
 					return 1
-				case !unicode.IsSpace(r):
+				case !asciiSpace(r):
 					return -1
 				}
 			}
@@ -773,7 +781,7 @@ func removeFirstLeaf(n *html.Node) {
 	switch {
 	case ch == nil:
 	case ch.Type == html.TextNode:
-		if i := strings.IndexAny(ch.Data, "\n\r"); i >= 0 && strings.TrimSpace(ch.Data[:i]) == "" {
+		if i := strings.IndexAny(ch.Data, "\n\r"); i >= 0 && asciiBlank(ch.Data[:i]) {
 			ch.Data = ch.Data[i+1:]
 		} else {
 			ch.Data = ""
@@ -794,14 +802,14 @@ func itemHasText(n *html.Node) bool {
 	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
 		switch {
 		case ch.Type == html.TextNode:
-			if strings.TrimSpace(ch.Data) != "" {
+			if !asciiBlank(ch.Data) {
 				return true
 			}
 		case ch.Type != html.ElementNode:
 		case blockAtoms[ch.DataAtom]:
 			return false
 		case ch.DataAtom == atom.Img || attr(ch, "data-asana-gid") != "" ||
-			strings.TrimSpace(textOf(ch)) != "" || hasAsanaRef(ch):
+			!asciiBlank(textOf(ch)) || hasAsanaRef(ch):
 			return true
 		}
 	}
