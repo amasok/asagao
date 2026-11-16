@@ -25,7 +25,7 @@ Asana をローカルの SQLite にキャッシュして扱う Go 製ツール�
 go build ./... && go vet ./... && go test -race ./...
 ```
 
-CI は ubuntu と macOS で `go vet` と `go test` を回す。出力を読むときは `| grep -v '^ok\|no test files'` で失敗だけに絞る。
+CI は PR のときだけ ubuntu で `go vet`・`go test`・仕様の検証を回す (文書だけの変更では回らない)。macOS は週に 1 回と手動 (`gh workflow run CI`) だけ。使う分を抑えるため、PR はいくつかの作業をまとめて 1 つにする。出力を読むときは `| grep -v '^ok\|no test files'` で失敗だけに絞る。
 
 ## 守ること
 

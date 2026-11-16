@@ -1,9 +1,23 @@
 name: CI
 
+# 使う分を抑えるため (private リポジトリでは macOS の 1 分は 10 分として数える):
+# - PR でだけ回す。main への push では回さない (PR で通ったものしか取り込まないため)。
+# - 文書だけの変更 (docs/、*.md など) では回さない。
+# - PR では ubuntu だけ。macOS は週に 1 回と、手で動かしたときに回す。
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths:
+      - '**.go'
+      - '**/testdata/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'openspec/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ci.yml'
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,7 +26,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
