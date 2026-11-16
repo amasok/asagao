@@ -186,7 +186,11 @@ func (s *Store) SetDependencyLocal(ctx context.Context, taskGID, dependencyGID s
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("cancel unsent %s: %w", opposite, err)
+		}
+		if n > 0 {
 			return nil // cancelled an unsent change
 		}
 		return saveOp(ctx, tx, &op)

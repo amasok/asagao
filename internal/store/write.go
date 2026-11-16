@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -334,7 +335,9 @@ func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, er
 		if err != nil {
 			return err
 		}
-		deleted, _ = res.RowsAffected()
+		if deleted, err = res.RowsAffected(); err != nil {
+			return fmt.Errorf("prune tasks: %w", err)
+		}
 		_, err = tx.ExecContext(ctx, "DROP TABLE keep_tasks")
 		return err
 	})
@@ -367,7 +370,9 @@ func (s *Store) DeleteGoneTasks(ctx context.Context, gids []string) (int64, erro
 		if err != nil {
 			return err
 		}
-		deleted, _ = res.RowsAffected()
+		if deleted, err = res.RowsAffected(); err != nil {
+			return fmt.Errorf("delete gone tasks: %w", err)
+		}
 		return nil
 	})
 	return deleted, err
