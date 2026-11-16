@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64。#65 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66。#65 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -58,6 +58,26 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 #### Scenario: リスト項目の中の引用
 - **WHEN** `- > q` を変換する
 - **THEN** `<li>&gt; q</li>` になる
+
+### Requirement: 文字にした入れ子は打ったとおりに残す
+入れ子の決まりで文字にした Markdown は、打ったとおりの文字にする (MUST): 番号付きリストの番号 (`1.` を続けたら `1.` のまま)、見出しの `#` と閉じの `#`、setext の見出しの線 (リスト項目の `a` の下の `---` は `a` と `---` のまま)、区切り線の書き方 (`***` など)。参照リンクの定義 (`[ref]: url`) は何も書かず、その前に改行も足さない (#66)。
+根拠: frommd.go headingText, markdownText, ruleText; nesting_spec_test.go TestFromMarkdownFollowsNestingRules
+
+#### Scenario: 引用の中で同じ番号を続ける
+- **WHEN** `> 1. a\n> 1. b` を変換する
+- **THEN** `<blockquote>1. a\n1. b</blockquote>` になる
+
+#### Scenario: リスト項目の中の setext の線
+- **WHEN** `- a\n  ---` を変換する
+- **THEN** `<li>a\n---</li>` になり、`## a` にはならない
+
+### Requirement: 文字にした入れ子は、もう一度変換して送る
+文字にしたブロックがあるときは、結果をエディタ用の Markdown に戻してもう一度変換したものを送る (MUST)。文字の中のリンクなどが、次の編集で初めて見つかって変わらないようにするため。エディタ用の Markdown に書き戻せない形 (項目の中の入れ子のリストのあとの文 #59、項目の中の区切り線) があるときは、もう一度は変換しない (MUST NOT、その形が動いてしまうため) (#66)。
+根拠: frommd.go fromMarkdown, writerFlags; nesting_spec_test.go TestUserMarkdownFollowsNestingRules
+
+#### Scenario: 引用の中のリストの空の項目のあとのメール
+- **WHEN** 引用の中で文字にしたリストの項目に、字下げのあとのメールがある
+- **THEN** 送る html は、エディタで往復しても変わらない
 
 ### Requirement: 生の HTML は文字として扱う
 Markdown の中の生の HTML (インラインもブロックも) は、エスケープした文字として書く (MUST)。タグとして送らない。ブロックの HTML は、最後の行の改行を付けない (MUST、段落と同じく次のブロックとの区切りだけにする。引用やリスト項目の中で往復すると消えるため、#72)。

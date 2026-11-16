@@ -90,7 +90,19 @@ func TestFromMarkdownFollowsNestingRules(t *testing.T) {
 		{"> - x", "<body><blockquote>- x</blockquote></body>"},
 		{"> * x\n> * y", "<body><blockquote>* x\n* y</blockquote></body>"},
 		{"> 引用\n> - 項目1\n> - 項目2", "<body><blockquote>引用\n- 項目1\n- 項目2</blockquote></body>"},
-		{"> 1. a\n> 1. b\n>    - c", "<body><blockquote>1. a\n2. b\n   - c</blockquote></body>"},
+		// numbers as typed (#66): "1." on every item stays so
+		{"> 1. a\n> 1. b\n>    - c", "<body><blockquote>1. a\n1. b\n   - c</blockquote></body>"},
+		{"> 1. a\n> 1. b\n> 1. c", "<body><blockquote>1. a\n1. b\n1. c</blockquote></body>"},
+		{"> 9. a\n> 10. b", "<body><blockquote>9. a\n10. b</blockquote></body>"},
+		{"> 1. a\n> 5. b", "<body><blockquote>1. a\n5. b</blockquote></body>"},
+		{"> + a\n> + b", "<body><blockquote>+ a\n+ b</blockquote></body>"},
+		{"> - ***", "<body><blockquote>- ***</blockquote></body>"},
+		{"> - <div>x</div>", "<body><blockquote>- &lt;div&gt;x&lt;/div&gt;</blockquote></body>"},
+		// a reference definition writes nothing, and no line break either (#66)
+		{"> - [ref]\n>\n> [ref]: http://x.jp", `<body><blockquote>- <a href="http://x.jp">ref</a></blockquote></body>`},
+		{"> - [ref]\n>   [ref]: http://x.jp", `<body><blockquote>- [ref]` + "\n" + `[ref]: <a href="http://x.jp">http://x.jp</a></blockquote></body>`},
+		{"[r]\n\n[r]: http://x.jp\n\nb", `<body><a href="http://x.jp">r</a>` + "\n\nb</body>"},
+		{"> [ref]\n>\n> [ref]: http://x.jp", `<body><blockquote><a href="http://x.jp">ref</a></blockquote></body>`},
 		{"> 3) a\n> 4) b", "<body><blockquote>3) a\n4) b</blockquote></body>"},
 		{"> - **太字** [l](http://x.jp)\n> - ![画像](asana:7) [@A](asana:user:9)",
 			`<body><blockquote>- <strong>太字</strong> <a href="http://x.jp">l</a>` + "\n" + `- <img data-asana-gid="7"/> <a data-asana-gid="9"/></blockquote></body>`},
@@ -103,6 +115,14 @@ func TestFromMarkdownFollowsNestingRules(t *testing.T) {
 		{"- a\n  > q\n  > r", "<body><ul><li>a\n&gt; q\n&gt; r</li></ul></body>"},
 		{"1. a\n   > q\n2. b", "<body><ol><li>a\n&gt; q</li><li>b</li></ol></body>"},
 		{"- # 見出し", "<body><ul><li># 見出し</li></ul></body>"},
+		// headings as typed (#66): a closing "##", and a setext underline under its text
+		{"- ## h ##  ", "<body><ul><li>## h ##</li></ul></body>"},
+		{"- a\n  ---", "<body><ul><li>a\n---</li></ul></body>"},
+		{"- a\n  ---\n- b\n  ===", "<body><ul><li>a\n---</li><li>b\n===</li></ul></body>"},
+		{"- a\n  b\n  ---", "<body><ul><li>a\nb\n---</li></ul></body>"},
+		{"- > a\n  > ---", "<body><ul><li>&gt; a\n&gt; ---</li></ul></body>"},
+		{"- *a*\n  ---", "<body><ul><li><em>a</em>\n---</li></ul></body>"},
+		{"> - a\n>   ---", "<body><blockquote>- a\n---</blockquote></body>"},
 		{"- a\n  ## h\n  - b", "<body><ul><li>a\n## h<ul><li>b</li></ul></li></ul></body>"},
 		{"1. a\n   ```go\n   x := 1 < 2\n\n     y@x.jp [l](http://x.jp)\n   ```\n2. b",
 			"<body><ol><li>a\n<code>x := 1 &lt; 2</code>\n\n<code>  y@x.jp [l](http://x.jp)</code></li><li>b</li></ol></body>"},
@@ -142,12 +162,10 @@ func TestPlainFromMarkdownNestedText(t *testing.T) {
 
 // genUserMarkdown writes Markdown as a user might, mixing quotes, lists, headings, fences
 // and indentation on each line. Each word is unique (w0, w1, ...), to check none is lost.
-// A heading has only plain text: marks and mentions in a heading, and an empty heading, do
-// not survive a trip on main either (they are not about nesting).
 func genUserMarkdown(r *rand.Rand) (string, []string) {
 	// one bullet and one ordered marker outside quotes: adjacent lists with different
 	// markers ("- " then "* ") become one list on the next trip, on main too
-	prefixes := []string{"", "> ", "> > ", "- ", "1. ", "  ", "   ", "    ", "  - ", "   1. ", "> - ", "> * ", "> 1. ", "> 2) ", ">    - ", "- > ", "  > ", "- # ", "  ## ", "# ", "> # ", "- >     "}
+	prefixes := []string{"", "> ", "> > ", "- ", "1. ", "  ", "   ", "    ", "  - ", "   1. ", "> - ", "> * ", "> 1. ", "> 2) ", "> + ", ">    - ", "- > ", "  > ", "- # ", "  ## ", "# ", "> # ", "- >     ", "  > > "}
 	inlines := []string{"", "**b** ", "*e* ", "~~s~~ ", "`c` ", "[l](http://x.jp) ", "a@x.jp ", "![画像](asana:7) ", "[@A](asana:user:9) ", " ", "\t"}
 	var lines, words []string
 	fence := false
@@ -167,11 +185,17 @@ func genUserMarkdown(r *rand.Rand) (string, []string) {
 			lines = append(lines, p+"```")
 			fence = !fence
 			continue
+		case 2:
+			// a setext underline or a rule under what came before (#66)
+			lines = append(lines, []string{"  ---", "  ===", "  > ---", "> - ---", "> 1. ===", "  ***"}[r.Intn(6)])
+			continue
 		}
 		w := fmt.Sprintf("w%d", len(words))
 		words = append(words, w)
 		if heading {
-			lines = append(lines, p+w)
+			// marks, mentions and images in a heading stay (#64); a space or a tab at the end
+			// is not text there
+			lines = append(lines, p+inlines[r.Intn(len(inlines))]+w+strings.TrimRight(inlines[r.Intn(len(inlines))], " \t"))
 			continue
 		}
 		lines = append(lines, p+inlines[r.Intn(len(inlines))]+w+strings.TrimRight(inlines[r.Intn(len(inlines))], " "))
@@ -203,9 +227,8 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 				break
 			}
 		}
-		if textAfterNestedList(h1) {
-			// on main too: text after a nested list in an item is not stable
-			continue
+		if h0, _ := convertMarkdown(md, TaskNotes); unstableOnMain(h0) || unstableOnMain(h1) {
+			continue // (h0: before the second trip FromMarkdown takes for text, see fromMarkdown)
 		}
 		md2 := ToEditableMarkdown(h1)
 		if h2 := FromMarkdown(md2); h2 != h1 {
@@ -214,6 +237,16 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 		}
 	}
 }
+
+// unstableOnMain reports whether rich text has a shape that does not survive a trip on main
+// either, apart from nesting: text after a nested list in an item (#59); a heading with a
+// space at its start (an indented setext heading's, #78); a rule in an item; and lists next
+// to each other (they become one, #61).
+func unstableOnMain(h string) bool {
+	return textAfterNestedList(h) || knownUnstable.MatchString(h)
+}
+
+var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]|<li>(?:[^<]|<[^/l]|</[^l])*<hr/>|</(?:ul|ol)><(?:ul|ol)>`)
 
 // textAfterNestedList reports whether a list item has text after a list inside it.
 func textAfterNestedList(s string) bool {
@@ -259,6 +292,22 @@ func TestEditedRichTextFollowsNestingRules(t *testing.T) {
 		if _, h1, _, _ := roundtrip(in); nestingViolation(h1) != "" {
 			fails++
 			t.Errorf("%s\nin %q\nh1 %q", nestingViolation(h1), in, h1)
+		}
+	}
+}
+
+// Where Markdown was written as text, FromMarkdown sends what an edit gives back (#66): a
+// link in that text is found now, not on the next edit. Not where editable Markdown cannot
+// write the rich text back as it is: there the user's structure is sent as typed.
+func TestFromMarkdownSecondTrip(t *testing.T) {
+	for _, c := range []struct{ md, want string }{
+		{"> - a\n> - &#32;b@x.jp", `<body><blockquote>- a` + "\n" + `-  <a href="mailto:b@x.jp">b@x.jp</a></blockquote></body>`},
+		// text after a nested list (#59), and a rule in an item, stay where they were typed
+		{"- # x\n  - a\n  # y", "<body><ul><li># x<ul><li>a</li></ul>\n# y</li></ul></body>"},
+		{"- # x\n  ***", "<body><ul><li># x<hr/></li></ul></body>"},
+	} {
+		if got := FromMarkdown(c.md); got != c.want {
+			t.Errorf("FromMarkdown(%q)\ngot  %q\nwant %q", c.md, got, c.want)
 		}
 	}
 }
