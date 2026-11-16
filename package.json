@@ -1,0 +1,16 @@
+{
+  "name": "asana-tui-devtools",
+  "private": true,
+  "description": "開発でだけ使う道具 (OpenSpec)。アプリには入らない。docs/design/adr/0002-openspec-tooling.md を参照。",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "spec:validate": "OPENSPEC_TELEMETRY=0 openspec validate --all --strict --no-interactive",
+    "spec:list": "OPENSPEC_TELEMETRY=0 openspec list --specs"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "1.15.0"
+  }
+}

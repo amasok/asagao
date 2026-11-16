@@ -1,0 +1,22 @@
+schema: spec-driven
+
+# asana-tui の仕様 (OpenSpec)。決まりは docs/design/adr/0002-openspec-tooling.md と
+# docs/design/README.md に書いてある。ここには、道具 (と AI) がコードから読み取れない
+# 決まりだけを書く。
+context: |
+  仕様・提案・タスクは日本語で書く。
+  要件の本文には、英語のキーワード (MUST) または (SHALL) を必ず入れる
+  (openspec validate --strict が英語のキーワードを探すため)。例: 「〜する (MUST)。」
+  openspec/specs/ は「今の振る舞い」を書き起こした基準 (baseline)。推測は書かず、
+  根拠のコードとテストを「根拠:」の行に書く。確かめられないことは「未確認」と書く。
+  仕様の分け方は DDD のコンテキストに合わせる (docs/design/context-map.md)。
+  構成を移す PR (Issue #69 の段階 a〜d) は、仕様を変えない。
+  振る舞いを変える PR は、openspec/changes/ に変更の提案 (仕様の差分) を置く。
+  本物の Asana と本物の store.db には触らない。テストは httptest の偽サーバーを使う。
+
+rules:
+  proposal:
+    - 「やらないこと」を必ず書く
+    - 構成だけを移す変更か、振る舞いを変える変更かを最初に書く
+  tasks:
+    - 1 つの PR で go build ./... && go vet ./... && go test -race ./... が通る単位に分ける
