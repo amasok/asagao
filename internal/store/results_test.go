@@ -308,3 +308,41 @@ func TestResolveTaskGIDAfterPrune(t *testing.T) {
 		t.Fatalf("a real gid needs no hint: %v", err)
 	}
 }
+
+// The outbox is read once per prune; a local gid anywhere in a JSON string of the payload
+// (also inside other text, or in a key) keeps its mapping, a shorter one does not.
+func TestPruneResultsFindsLocalGIDsInPayloadText(t *testing.T) {
+	ctx := context.Background()
+	st := resultsStore(t)
+	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	mustSet(t, st, ResultTask+"local:abc", "1", ResultTask+"local:in", "2", ResultTask+"local:key", "3",
+		ResultTask+"local:raw", "4", ResultTask+"local:abcd", "5")
+	for _, payload := range []string{
+		`{"notes":"see local:abcdef and local:in, ok"}`, // longer gid: kept (conservative)
+		`{"list":[{"local:key":true}]}`,
+		`not json local:raw`,
+		`{"x":"local:ab"}`, // shorter than local:abc: refers to neither
+	} {
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO outbox(kind, task_gid, payload, created_at) VALUES ('update_task', 't1', ?, '')`, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prune(t, st, now)
+	prune(t, st, now.Add(ResultGrace))
+	for k, kept := range map[string]bool{"local:abc": true, "local:abcd": true, "local:in": true, "local:key": true, "local:raw": true} {
+		if got := syncStateOf(t, st, ResultTask+k) != ""; got != kept {
+			t.Errorf("%s kept = %v, want %v", k, got, kept)
+		}
+	}
+	if _, err := st.db.ExecContext(ctx, `DELETE FROM outbox WHERE payload LIKE '%abcdef%'`); err != nil {
+		t.Fatal(err)
+	}
+	prune(t, st, now.Add(ResultGrace))
+	prune(t, st, now.Add(3*ResultGrace))
+	if syncStateOf(t, st, ResultTask+"local:abc") != "" || syncStateOf(t, st, ResultTask+"local:in") != "" {
+		t.Error("no longer referred to: should go after the grace")
+	}
+	if syncStateOf(t, st, ResultTask+"local:key") == "" {
+		t.Error("still referred to")
+	}
+}

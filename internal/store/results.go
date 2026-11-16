@@ -3,8 +3,15 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ResultTag is the prefix of the sync_state keys that map a tag created offline to the
@@ -32,14 +39,21 @@ var resultKinds = map[string][]string{
 	ResultTag:        nil,
 }
 
-// resultTables are, per mapping prefix, the rows that would still carry the local gid
-// when the swap to the Asana gid has not happened (or not everywhere).
+// resultTables are, per mapping prefix, the local gids in the rows that would still carry
+// one when the swap to the Asana gid has not happened (or not everywhere).
 var resultTables = map[string][]string{
-	ResultTask:       {"SELECT 1 FROM tasks WHERE gid = ?1 OR parent_gid = ?1", "SELECT 1 FROM task_dependencies WHERE task_gid = ?1 OR dependency_gid = ?1"},
-	ResultStory:      {"SELECT 1 FROM stories WHERE gid = ?1"},
-	ResultAttachment: {"SELECT 1 FROM attachments WHERE gid = ?1"},
-	ResultStatus:     {"SELECT 1 FROM status_updates WHERE gid = ?1"},
-	ResultTag:        {"SELECT 1 FROM tags WHERE gid = ?1", "SELECT 1 FROM task_tags WHERE tag_gid = ?1"},
+	ResultTask: {localIn("tasks", "gid"), localIn("tasks", "parent_gid"),
+		localIn("task_dependencies", "task_gid"), localIn("task_dependencies", "dependency_gid")},
+	ResultStory:      {localIn("stories", "gid")},
+	ResultAttachment: {localIn("attachments", "gid")},
+	ResultStatus:     {localIn("status_updates", "gid")},
+	ResultTag:        {localIn("tags", "gid"), localIn("task_tags", "tag_gid")},
+}
+
+// localIn selects the local gids in a column (substr, not LIKE: "_" and "%" are literal).
+func localIn(table, column string) string {
+	return "SELECT DISTINCT " + column + " FROM " + table + " WHERE substr(" + column + ", 1, " +
+		strconv.Itoa(len(LocalPrefix)) + ") = '" + LocalPrefix + "'"
 }
 
 // PruneResults deletes the mappings from local gids (things created offline) to the
@@ -55,10 +69,41 @@ var resultTables = map[string][]string{
 // Anything it cannot check is kept for the next prune. It returns how many mappings were
 // deleted.
 func (s *Store) PruneResults(ctx context.Context, now time.Time) (int, error) {
+	// It reads, then writes: a write by another process in between (a push) makes it fail
+	// as busy at once. It is short, so try again once; still busy, it is left for the next
+	// sync without an error (nothing was changed).
+	n, err := s.pruneResults(ctx, now)
+	if isBusy(err) {
+		n, err = s.pruneResults(ctx, now)
+	}
+	if isBusy(err) {
+		return 0, nil
+	}
+	return n, err
+}
+
+// isBusy reports whether err is SQLite's "database is locked" (SQLITE_BUSY, including
+// SQLITE_BUSY_SNAPSHOT).
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
+}
+
+func (s *Store) pruneResults(ctx context.Context, now time.Time) (int, error) {
 	deleted := 0
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		deleted = 0
 		state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag)
+		if err != nil {
+			return err
+		}
+		maxLen := 0
+		for key := range state {
+			if _, local := resultPrefix(key); IsLocalGID(local) {
+				maxLen = max(maxLen, len(local))
+			}
+		}
+		refs, err := readLocalRefs(ctx, tx, maxLen)
 		if err != nil {
 			return err
 		}
@@ -95,12 +140,7 @@ func (s *Store) PruneResults(ctx context.Context, now time.Time) (int, error) {
 			if prefix == "" || !IsLocalGID(local) {
 				continue // not a mapping of a local gid: never touched
 			}
-			needed := blocked[prefix]
-			if !needed {
-				if needed, err = localGIDInUse(ctx, tx, prefix, local); err != nil {
-					return err
-				}
-			}
+			needed := blocked[prefix] || refs.inUse(prefix, local)
 			seenKey := keyResultSeen + key
 			if needed {
 				if _, ok := state[seenKey]; ok {
@@ -143,24 +183,110 @@ func resultPrefix(key string) (prefix, local string) {
 	return "", ""
 }
 
-// localGIDInUse reports whether something in the store still refers to local.
-func localGIDInUse(ctx context.Context, tx *sql.Tx, prefix, local string) (bool, error) {
-	queries := append([]string{
-		// Local gids are random and long, so a substring of the JSON is the gid itself (a
-		// false match only keeps the mapping longer).
-		"SELECT 1 FROM outbox WHERE task_gid = ?1 OR instr(payload, ?1) > 0 OR instr(base, ?1) > 0",
-	}, resultTables[prefix]...)
-	for _, q := range queries {
-		var one int
-		err := tx.QueryRowContext(ctx, q+" LIMIT 1", local).Scan(&one)
-		if err == nil {
-			return true, nil
-		}
-		if err != sql.ErrNoRows {
-			return false, err
+// localRefs is what in the store still refers to local gids, read once per prune: the
+// text of the outbox entries (their task, and every JSON string in their payload and base,
+// from each "local:" in it to its end), and the local gids in the rows of resultTables.
+type localRefs struct {
+	outbox []string                   // sorted: a gid is referred to if one starts with it
+	rows   map[string]map[string]bool // per prefix
+}
+
+// Texts are cut at maxLen, the longest local gid of the mappings: whether a text starts
+// with one of them does not change, and a payload full of "local:" stays cheap.
+func readLocalRefs(ctx context.Context, tx *sql.Tx, maxLen int) (*localRefs, error) {
+	refs := &localRefs{rows: map[string]map[string]bool{}}
+	seen := map[string]bool{}
+	add := func(s string) {
+		for i := strings.Index(s, LocalPrefix); i >= 0; {
+			if t := s[i:min(len(s), i+maxLen)]; !seen[t] {
+				seen[t] = true
+				refs.outbox = append(refs.outbox, t)
+			}
+			j := strings.Index(s[i+1:], LocalPrefix)
+			if j < 0 {
+				break
+			}
+			i += 1 + j
 		}
 	}
-	return false, nil
+	rows, err := tx.QueryContext(ctx, "SELECT task_gid, payload, base FROM outbox")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var task, payload, base string
+		if err := rows.Scan(&task, &payload, &base); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		add(task)
+		for _, raw := range []string{payload, base} {
+			if !strings.Contains(raw, LocalPrefix) {
+				continue
+			}
+			var v any
+			if json.Unmarshal([]byte(raw), &v) != nil {
+				add(raw) // not JSON: the raw text, as it is
+				continue
+			}
+			jsonStrings(v, add)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(refs.outbox)
+	for prefix, queries := range resultTables {
+		set := map[string]bool{}
+		for _, q := range queries {
+			rows, err := tx.QueryContext(ctx, q)
+			if err != nil {
+				return nil, err
+			}
+			for rows.Next() {
+				var g string
+				if err := rows.Scan(&g); err != nil {
+					rows.Close()
+					return nil, err
+				}
+				set[g] = true
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+		}
+		refs.rows[prefix] = set
+	}
+	return refs, nil
+}
+
+// jsonStrings calls f with every string in v (keys included).
+func jsonStrings(v any, f func(string)) {
+	switch x := v.(type) {
+	case string:
+		f(x)
+	case []any:
+		for _, e := range x {
+			jsonStrings(e, f)
+		}
+	case map[string]any:
+		for k, e := range x {
+			f(k)
+			jsonStrings(e, f)
+		}
+	}
+}
+
+// inUse reports whether something in the store still refers to local (a mapping of prefix).
+// A text that only starts with local (a longer gid) counts too: that only keeps it longer.
+func (r *localRefs) inUse(prefix, local string) bool {
+	if r.rows[prefix][local] {
+		return true
+	}
+	i := sort.SearchStrings(r.outbox, local)
+	return i < len(r.outbox) && strings.HasPrefix(r.outbox[i], local)
 }
 
 // readSyncStatePrefixes returns the sync_state rows whose key starts with one of prefixes.
