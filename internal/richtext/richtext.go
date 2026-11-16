@@ -109,6 +109,27 @@ func (c *converter) newline() {
 	}
 }
 
+// keepTrailingSpace is called before a line break: Markdown drops spaces and tabs at the end
+// of a line (and reads two spaces as a line break), so the last one of the text written on
+// this line becomes a character reference, which Markdown keeps as text (#45). Lines with
+// no text other than whitespace are left alone.
+func (c *converter) keepTrailingSpace() {
+	if c.pre > 0 {
+		return
+	}
+	b := c.b.Bytes()
+	n := len(b)
+	if n == c.lineStart || (b[n-1] != ' ' && b[n-1] != '\t') {
+		return
+	}
+	if len(bytes.TrimRight(b[c.lineStart:], " \t")) == 0 {
+		return
+	}
+	ch := b[n-1]
+	c.b.Truncate(n - 1)
+	c.write(indentRef[ch])
+}
+
 // block makes sure the next content starts a new paragraph.
 func (c *converter) block() {
 	if c.b.Len() == 0 || c.endsWith("\n\n") {
@@ -170,6 +191,7 @@ func (c *converter) walk(n *html.Node) {
 		c.write("---")
 		c.block()
 	case atom.Br:
+		c.keepTrailingSpace()
 		c.write("  ")
 		c.newline()
 	case atom.Blockquote:
@@ -221,6 +243,7 @@ func (c *converter) text(n *html.Node) {
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
 		if i > 0 {
+			c.keepTrailingSpace()
 			// a line break inside a paragraph needs a hard break ("  "); blank lines don't
 			if strings.TrimSpace(lines[i-1]) != "" && l != "" {
 				c.write("  ")

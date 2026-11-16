@@ -209,9 +209,15 @@ func (w *htmlWriter) inline(n gast.Node) {
 		w.inlines(n)
 		w.tag("</a>")
 	case *gast.AutoLink:
+		// An email address ("a@x.jp", or <a@x.jp>) links to mailto: (as goldmark's renderer
+		// writes it); the text is the address as written (for "www.x.jp", without the
+		// "http://" the link gets).
 		u := string(n.URL(w.src))
+		if n.AutoLinkType == gast.AutoLinkEmail && !strings.HasPrefix(strings.ToLower(u), "mailto:") {
+			u = "mailto:" + u
+		}
 		w.tag(`<a href="` + html.EscapeString(u) + `">`)
-		w.textOut(u)
+		w.textOut(string(n.Label(w.src)))
 		w.tag("</a>")
 	case *gast.Image:
 		dest := string(n.Destination)
