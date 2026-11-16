@@ -156,3 +156,14 @@ func TestTargetNoLayoutSameEverywhere(t *testing.T) {
 		}
 	}
 }
+
+// No Markdown pattern makes a table (or its rows) in any target.
+func TestNoTableEver(t *testing.T) {
+	for _, md := range []string{"|a|b|\n|-|-|\n|1|2|", "a | b\n--|--\n1 | 2", "> |a|b|\n> |-|-|", "- |a|b|\n  |-|-|", "# |a|b|\n|-|-|", "<table><tr><td>x</td></tr></table>"} {
+		for _, target := range []Target{TaskNotes, Comment, StatusUpdate} {
+			if m := regexp.MustCompile(`(?i)<(table|tr|td|th|tbody|thead)\b`).FindString(target.FromMarkdown(md)); m != "" {
+				t.Errorf("%v %q -> %s>", target, md, m)
+			}
+		}
+	}
+}
