@@ -16,15 +16,15 @@
 
 ### Requirement: 移行は末尾に足し、1 回だけ当てる
 スキーマの移行は `migrations` の順に、1 つずつ別のトランザクションで当て、`PRAGMA user_version` に当てた数を記録する (MUST)。版は書き込みのロックを取ってから読み直すので、同時に開いても 1 回だけ当たる。busy のときは 5 秒の中で 20ms ごとに試し直す。今の移行は 15 個。
-根拠: internal/store/schema.go; store.go:67-161; TestConcurrentOpenMigratesOnce, TestRetryBusyStaysWithinBudget, TestMigrateStoreFromBeforeInboxAndFields
+根拠: internal/store/schema.go; store.go:67-161; TestConcurrentOpenMigratesOnce, TestBusyAttackProcessesOpenFreshAndWrite, TestRetryBusyStaysWithinBudget, TestMigrateStoreFromBeforeInboxAndFields
 
-#### Scenario: 2 つのプロセスが同時に新しい版で開く
-- **WHEN** 古いスキーマのファイルを 2 つのプロセスが同時に開く
-- **THEN** 各移行は 1 回だけ当たり、どちらも開ける
+#### Scenario: 同じファイルを同時に開く
+- **WHEN** 新しいファイルを、いくつもの Store が同時に開く
+- **THEN** 各移行は 1 回だけ当たり、どれも開ける (TestConcurrentOpenMigratesOnce は 1 つのプロセスの中の複数の Store で確かめている)
 
 ### Requirement: 送信と初期化は 1 つのプロセスだけ
 outbox の送信 (push)、同期全体 (`Syncer.Run`)、初期化 (`ResetUpTo`) は、`<db>.push.lock` の排他ロック (Unix は flock、Windows は LockFileEx) を待たずに取る (MUST)。取れなければ `ErrPushBusy` (「別のプロセスが未送信の変更を送信中です」) を返す。開くことと移行には、このロックを使わない。
-根拠: internal/store/lock.go:10-28; lock_unix.go; lock_windows.go; internal/sync/push.go:130-137; sync.go:168-175; store/reset.go:54-58; TestBusyAttackPushLockWithWritersInOtherProcesses, TestResetWaitsForNoPush
+根拠: internal/store/lock.go:10-28; lock_unix.go; lock_windows.go; internal/sync/push.go:130-137; sync.go:168-175; store/reset.go:54-58; TestBusyAttackPushLockWithWritersInOtherProcesses, TestResetWaitsForNoPush (同じ Store の中で確かめている)
 
 #### Scenario: 同期中に初期化する
 - **WHEN** 別のプロセスが同期している間に `reset` を実行する
@@ -56,6 +56,10 @@ store から読む文字列の列は、すべて termsafe を通して端末の�
 
 ## 未確認
 
-- キャッシュより新しいスキーマのファイル (`user_version` が移行の数より大きい) を開いたときは、何も言わずに開く (store.go:131-133)。テストはない。古いバイナリでの読み書きが安全かも未確認。
+- キャッシュより新しいスキーマのファイルを、古いバイナリで読み書きして安全か。
 - `-wal` と `-shm` のファイルの権限。
-- DB ファイルの権限 (0600) を確かめるテスト。
+
+## テストで確かめていない振る舞い (コードから読める)
+
+- キャッシュより新しいスキーマのファイル (`user_version` が移行の数以上) を開くと、何も言わずに開く (store.go:131-133)。
+- DB ファイルを 0600 で作ること (store.go:29)。既にあるファイルの権限は変えない。

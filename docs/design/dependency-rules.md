@@ -40,16 +40,29 @@ var external = map[string][]string{
 	// ...
 }
 
-// allowed は、今ある違反。段階ごとに減らす。理由と、直す段階を書く。
+// allowed は、今ある違反 (architecture.md の「今の import と、それぞれの扱い」で「直す」にした行)。
+// 段階ごとに減らす。理由と、直す段階を書く。「許す」にした行は、ここではなく layers と
+// entryAdapters の決まりで通す。
 var allowed = []violation{
-	{"internal/sync", "golang.org/x/oauth2", "段階 d: push.go の RetrieveError"},
-	{"internal/cli", "golang.org/x/oauth2", "段階 d: root.go の NewClient を wire へ"},
-	{"internal/store", "internal/richtext", "段階 c: describe.go"},
-	{"internal/store", "internal/asana", "段階 d: 型を asana/model へ"},
-	{"internal/sync", "internal/config", "段階 d"},
-	{"internal/tui", "internal/store", "段階 c"},
-	// ...
+	{"internal/auth", "internal/asana", "d1: asana.Error を asana/model へ"},
+	{"internal/store", "internal/asana", "d1: 型を asana/model へ"},
+	{"internal/store", "internal/richtext", "c1: describe.go"},
+	{"internal/sync", "internal/store", "b2・d3"},
+	{"internal/sync", "internal/asana", "d1・d3"},
+	{"internal/sync", "internal/auth", "d2"},
+	{"internal/sync", "internal/config", "d3"},
+	{"internal/sync", "golang.org/x/oauth2", "d2: push.go の RetrieveError"},
+	{"internal/tui", "internal/store", "a・c2"},
+	{"internal/mcpserver", "internal/store", "a・c2"},
+	{"internal/cli", "internal/store", "a・c2・d4"},
+	{"internal/cli", "internal/asana", "d4"},
+	{"internal/cli", "internal/config", "d4"},
+	{"internal/cli", "internal/auth/tokenstore", "d4"},
+	{"internal/cli", "golang.org/x/oauth2", "d4: root.go の NewClient を wire へ"},
 }
+
+// entryAdapters は、入り口から import してよい adapter (architecture.md の決まり 4)。
+var entryAdapters = []string{"internal/auth", "internal/richtext", "internal/imageview", "internal/browser"}
 
 func TestDependencyDirection(t *testing.T) {
 	// go list -deps -json ./... を 1 回だけ実行し、ImportPath・Imports・Deps・Module を読む。
@@ -63,6 +76,18 @@ func TestDependencyDirection(t *testing.T) {
 - `go list` は `os/exec` で呼ぶ。`go` が見つからないとき (普通はない) は `t.Skip` する。
 - テストのファイル (`_test.go`) の import は見ない (`Imports` だけを見て、`TestImports` は見ない)。テストは偽サーバーなどで adapter を使ってよい。
 - `go list -deps -json ./...` は、手元 (macOS、ビルドのキャッシュあり) で 0.45 秒だった (2026-11-16 に測った)。
+
+## 関数の決まり (import だけでは分からないもの)
+
+`richtext` は、入り口から「表示の変換」のために import してよいが、Markdown → html の変換は app だけが呼ぶ。こうした決まりは import では見分けられないので、`go/parser` で入り口のファイルを読み、名前で確かめる。型までは調べない (`go/types` を使わない) ので、名前は store と richtext にしかないものに限る。
+
+| 決まり | 調べる名前 | 入れる時期 |
+|---|---|---|
+| 入り口は Markdown → html を呼ばない | `richtext.TaskNotes`・`richtext.Comment`・`richtext.StatusUpdate` の `FromMarkdown`・`PlainFromMarkdown` | a5 のあと (a1 からは、移した入り口のファイルごとに) |
+| 入り口は store の書き込みを呼ばない | `Local` で終わるメソッド (`CreateTaskLocal` など。store にしかない) | a6 のあと |
+| 入り口は期日を解釈しない | `dates.Parse` | a5 のあと |
+
+これも許可リスト (ファイルと名前の組) を持ち、段階ごとに減らす。
 
 ## ドメインの「時刻は引数」を守らせる
 

@@ -68,28 +68,36 @@ Markdown の中の生の HTML (インラインもブロックも) は、エス�
 - **THEN** `&lt;tag&gt;` になる
 
 ### Requirement: メンションと画像の書き方
-エディタ用の Markdown では、メンションを `[名前](asana:user:GID)`、画像を `![画像](asana:GID)` またはキャッシュ済みのローカルのパスで表す (MUST)。Markdown → html では、それぞれ `<a data-asana-gid="GID"/>` と `<img data-asana-gid="GID"/>` に戻す。それ以外の画像の宛先はリンクにする。
-根拠: richtext.go:584-611, :820-841; frommd.go:456-538; richtext_test.go TestEditableImagesAsLocalPaths
+エディタ用の Markdown では、メンションを `[名前](asana:user:GID)`、画像を `![画像](asana:GID)` またはキャッシュ済みのローカルのパスで表す (MUST)。Markdown → html では、メンションを `<a data-asana-gid="GID"/>` に戻す。画像を `<img data-asana-gid="GID"/>` に戻すのは `TaskNotes` だけで、ほかの送り先では文字として残す (前の要件)。asana の gid でない画像の宛先はリンクにする。
+根拠: richtext.go:584-611, :820-841; frommd.go:456-538, :506-528; richtext_test.go TestEditableImagesAsLocalPaths
 
 #### Scenario: Asana の文字がメンションにならない
 - **WHEN** Asana から来た文字に `[x](asana:user:1)` のような文字列がある
 - **THEN** エディタを往復しても、メンションのタグにならない (TestEditableRoundTripCannotInjectMention)
 
-### Requirement: エディタを 1 回往復しても変わらない
-`ToEditableMarkdown` で開いて何も変えずに `FromMarkdown` で戻した rich text は、元と同じである (MUST)。ただし、テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、`<pre>\n`、印の違う隣り合うリスト、見出しの中のメンションや装飾、`h3` が `<h2>` に戻る) は除く。
+### Requirement: エディタの往復は 1 回で落ち着く
+Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、`<pre>\n`、印の違う隣り合うリスト、見出しの中のメンションや装飾) は除く。
 根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go:145-149, :206-210
 
-#### Scenario: 自分の出力を往復する
-- **WHEN** FromMarkdown の出力を ToEditableMarkdown で開き、そのまま FromMarkdown に戻す
-- **THEN** 最初の出力と同じになる
+#### Scenario: 2 回目の往復
+- **WHEN** html を ToEditableMarkdown → FromMarkdown と 2 回続けて往復する
+- **THEN** 1 回目の結果と 2 回目の結果が同じになる
 
-### Requirement: 文字を落とさない
-変換で、見える文字を落とさない (MUST)。#60 で足すリストの印は除く。plain の文字列は、html の文字と同じ空白以外の文字を持つ。
+### Requirement: 文の文字は往復で落とさない
+入れ子の決まりに合う html の、文として見える文字 (空白を除く) は、エディタを 1 回往復しても落とさない (MUST)。plain の文字列は、同じ Markdown から作った html の文字と、同じ空白以外の文字を持つ。空白を埋めるための `\` や `&#32;` は、文字として出さない。
 根拠: nesting_attack_test.go TestNonSpaceCharsPreserved, TestNoLeakedFillers; spec_attack_test.go TestSpecPlainMatchesHTML
 
 #### Scenario: 空白を埋める文字が漏れない
 - **WHEN** 任意の html をエディタで往復する
 - **THEN** 表示に `\` や `&#32;` の文字が残らない
+
+### Requirement: 変換で落ちるもの
+次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中のメンションや装飾 (文字だけ残る)、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
+根拠: richtext.go:237-238, :252-256, :296-305, :826-835; frommd.go:200-203, :516-523; nesting_spec_test.go:145-146
+
+#### Scenario: 下線
+- **WHEN** `<u>下線</u>` をエディタで開く
+- **THEN** `下線` だけになり、戻しても `<u>` はない
 
 ### Requirement: 長い説明でも時間が線形
 長い説明や深い入れ子でも、変換が止まらずに終わる (MUST)。大きさや深さの上限はコードにない。
@@ -103,4 +111,7 @@ Markdown の中の生の HTML (インラインもブロックも) は、エス�
 
 - 本物の Asana が、コメントの `<h1>` などに本当に 400 を返すか (#60 / #63 の Issue も未確認と書いている。テストは偽サーバーだけ)。
 - 本物の Asana が、引用の中の `<h1>` や `<pre>` を受け付けるか (コードとテストは許している)。
-- `ToMarkdown` に `<table>` や `<script>` を渡したときの振る舞い。コードでは子だけを書く経路 (richtext.go:297-305) を通るが、テストはない。
+
+## テストで確かめていない振る舞い (コードから読める)
+
+- `ToMarkdown` に `<table>` や `<script>` などの知らない要素を渡すと、要素は捨てて子だけを書く (richtext.go:296-308)。`<script>` の中身も文字として残る。

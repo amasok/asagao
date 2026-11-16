@@ -18,7 +18,7 @@
 
 | PR | 範囲 | 入り口の変更 | 確かめるテスト (今あるもの) |
 |---|---|---|---|
-| **a1** | `internal/app` を作る。ポート (`TaskStore`、`Sender`、`Clock`、`RichText`) と、ユースケース `Tasks.Create`。CLI と MCP のタスク作成をこれに置き換える | `cli/write.go:166-199`、`mcpserver/server.go:464-513` | TestCreateTaskAssignee、TestCreateTaskInvalidWritesNothing、TestCreateSubtaskAndAssignByName、TestMarkdownTagsAndComments、TestCLIRichTextTagsPerTarget、TestMCPRichTextTagsPerTarget |
+| **a1** | 作成の型 (`NewTask`・`TagEdit`・`TagRef`) を `internal/domain/task` に移す (store には型の別名)。`internal/app` を作る。ポート (`TaskStore`、`Clock`、`RichText`) と、ユースケース `Tasks.Create`。CLI と MCP のタスク作成をこれに置き換える | `cli/write.go:166-199`、`mcpserver/server.go:464-513` | TestCreateTaskAssignee、TestCreateTaskInvalidWritesNothing、TestCreateSubtaskAndAssignByName、TestMarkdownTagsAndComments、TestCLIRichTextTagsPerTarget、TestMCPRichTextTagsPerTarget |
 | a2 | 依存の向きのテスト (`internal/archtest`)。今の違反を許可リストに入れる | なし | 新しいテストだけ |
 | a3 | TUI のタスク作成とサブタスク作成を `Tasks.Create` に | `tui/write.go:334-378`、`tui/subtasks.go:115-127` | TestCreateTaskInProject、TestCreateSubtask、TestParseCreateInput |
 | a4 | コメントと status update (`Comments.Add`、`Status.Create`)。説明文の変換の組 (11 か所のうち 7 か所) がここに集まる | tui/write.go:388、tui/edit.go:334、tui/projects.go:247、cli/write.go:603、cli/project.go:115、mcpserver/server.go:701, :965 | TestTUICommentAndStatusWithoutLayoutTags、TestCLIRichTextTagsPerTarget、TestMCPRichTextTagsPerTarget |
@@ -29,14 +29,18 @@
 
 ### a1 の中身 (最初の PR の提案)
 
+- 先に、作成のメソッドの引数と戻り値の型を、外部依存のないパッケージに移す。`CreateTaskLocal(ctx, store.NewTask, time.Time)` と `ResolveTagEdit(...) (store.TagEdit, error)` が store の型を使っていて (store/outbox.go:67, :260、store/names.go:14-30)、このままでは app のポートが store を import することになるため (依存の決まり 2)。
+  - `internal/domain/task` に `NewTask`・`TagEdit`・`TagRef` を移す (中身はそのまま。`TagEdit.Empty` も)。
+  - store には `type NewTask = task.NewTask` などの**型の別名**を残す。別名なので、store の関数の形も、ほかの呼び出し元も変わらない。別名は、入り口がすべて app を通るようになったら (段階 a の終わり) 消す。
 - 新しいパッケージ `internal/app`:
-  - `type TaskStore interface` — 今の `*store.Store` のうち、作成に要るメソッドだけ (`ResolveProject`・`ResolveSection`・`FirstSection`・`DefaultWorkspace`・`ResolveUser`・`ResolveTagEdit`・`CreateTaskLocal`・`ApplyTagEdit`)。`*store.Store` がそのまま満たす。
-  - `type RichText interface { TaskNotes(md string) (html, plain string) }` — 送り先ごとのメソッドにする (a4 で `Comment`・`StatusUpdate` を足す)。app が `richtext.Target` (adapter の型) を import しないため。実装は `internal/richtext` に足す小さな型 (`richtext.Converter{}`) で、中で今の `richtext.TaskNotes.FromMarkdown` と `PlainFromMarkdown` を呼ぶ。b5 で送り先の型が `domain/rich` にできたら、`Convert(md, rich.Target)` にまとめてよい。
+  - `type TaskStore interface` — 今の `*store.Store` のうち、作成に要るメソッドだけ (`ResolveProject`・`ResolveSection`・`FirstSection`・`DefaultWorkspace`・`ResolveUser`・`ResolveTagEdit`・`CreateTaskLocal`・`ApplyTagEdit`)。引数と戻り値は標準の型と `domain/task` の型だけになるので、app は store を import せず、`*store.Store` がそのまま満たす。
+  - `type RichText interface { TaskNotes(md string) (html, plain string) }` — 送り先ごとのメソッドにする (a4 で `Comment`・`StatusUpdate` を足す)。app が `richtext.Target` (adapter の型) を import しないため。実装は `internal/richtext` に足す小さな型 (`richtext.Converter{}`) で、中で今の `richtext.TaskNotes.FromMarkdown` と `PlainFromMarkdown` を呼ぶ。組み立て (今は cli と mcpserver を作る場所) がこれを app に渡す。b5 で送り先の型が `domain/rich` にできたら、`Convert(md, rich.Target)` にまとめてよい。
   - `type Clock func() time.Time`。
   - `type CreateTaskInput struct { Name, Parent, Project, Section, Due, Assignee, Notes string; Tags []string }`。
   - `func (t *Tasks) Create(ctx, in CreateTaskInput) (gid string, err error)`。
   - エラーの包み方の違い (CLI は `--due:`・`--assignee:`、MCP は `due_on:` だけ) は、ユースケースが**欄の名前を持つエラー型** (`*app.FieldError{Field: "due", Err}`) を返し、入り口が自分の言葉で包み直して、今と同じ文字列にする。
-  - タグは、今の MCP と同じく、作成のあとに別のトランザクションで付ける (`Tags` が空なら何もしない。CLI は空で呼ぶ)。
+  - タグは、今の MCP と同じく、作成の**前に**解決し (解決できなければ何も書かない)、作成の**あとに**別のトランザクションで付ける。CLI はタグを渡さない (空の `Tags`)。空のとき、`ResolveTagEdit` と `ApplyTagEdit` はどちらも何もしない (store/names.go:30-34, :69-80) ので、呼んでも呼ばなくても振る舞いは同じ。
+  - 依存の向き: app → domain/task だけ。a2 の許可リストに app の行は要らない。
 - `Sender` (すぐ送る) は a1 には入れない。CLI の `reportWrite` と MCP の `s.push` は今のまま、入り口で呼ぶ。送り方のポートは a3 (TUI) のときに形を決める。a1 を小さく保つため。
 - テスト: `internal/app` に、偽の `TaskStore` を使った単体テストを足す (担当の既定、プロジェクトとセクションの解決の順番、期日のエラーで何も書かないこと)。入り口のテストは変えない。
 - 差分の見込み: app 約 150 行、テスト約 200 行、cli と mcpserver はそれぞれ 30 行ほど減る。
@@ -61,7 +65,7 @@
 | PR | 範囲 |
 |---|---|
 | c1 | `store/describe.go` の表示用の変換 (`richtext.ToEditableMarkdown`) を、呼ぶ側 (app か入り口) に移す。store から richtext の import がなくなる |
-| c2 | 読み取りのポート (`app.TaskQuery` ほか) を作り、入り口の読み取りを app 経由にする (入り口ごとに 1 PR) |
+| c2 | 表示用の読み取りの型 (`store.TaskSummary`・`TaskDetail`・`CustomFieldView` など約 50 種類)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など) を `internal/readmodel` に移す。store には別名を残す。そのあと読み取りのポート (`app.TaskQuery` ほか) を作り、入り口の読み取りを app 経由にする (型の移動で 1〜2 PR、入り口ごとに 1 PR) |
 | c3 | `PruneTasks` の「消してはいけない」条件を、`domain/task` の文書とテストにする。SQL の WHERE は残す (1 回の DELETE で行うことが、途中で止まっても壊れないことの前提のため) |
 
 - トランザクションの単位 (`Store.tx`、`UpsertTasks` の 500ms ごとの分け方、`PruneResults` の読み取りの計画) は変えない。TestUpsertTasksLetsOtherWritersIn、TestFullSyncFailingWhileWritingTasksKeepsTheCache、TestPruneResultsWithNothingToChangeTakesNoWriteLock が、そのまま通ること。

@@ -46,7 +46,11 @@
    `sending` のまま残った操作は、次の push の初めに `pending` に戻す (再送してよくないものは verify を付ける)。根拠: outbox_send.go:41-162; sync/resolve.go:72-106。
 5. **再送してよくない操作** (作成 5 種と、記録のないローカルのタグへの `add_tag`) は、届いたか分からないまま再送しない。根拠: outbox_send.go:97-115。
 6. **試した回数**: 届いていないと分かったときは数えない。合わせて 5 回で `failed`。根拠: push.go:291-434; TestPushOfflineDoesNotCountAttempts。
-7. **完了は 1 つのトランザクション**: 送った記録・gid の書き換え・キャッシュの反映・操作の削除は同時に行う。根拠: outbox_send.go:13-18, :165-173。
+7. **完了の単位は、作成とそれ以外で違う**:
+   - 作成 (タスク・複製・コメント・添付・status update・タグ) は、`Complete*` の 1 つのトランザクションで、送った記録・ローカル gid の書き換え・キャッシュの反映・操作の削除を同時に行う。ローカル gid と記録が食い違うと、二重に作るおそれがあるため。根拠: outbox_send.go:13-18, :165-210。
+   - それ以外 (更新・カスタムフィールド・移動・セクション名など) は、`CompleteOp` で操作だけを消し、キャッシュの反映はそのあとに別に、失敗してもよい扱いで行う (次の取り込みで直る)。根拠: sync/push.go:656-659, :699-702, :804-809, :826-829。
+   - どちらも、記録 (操作の削除) に失敗したら `sentNotSaved` として自動確認中にする。根拠: push.go:56-68。
+   - 段階 c でこの単位を変えない (まとめるのも分けるのも、振る舞いの変更)。
 
 ## コメント・status update
 
@@ -79,7 +83,7 @@
 | 再送してよいか | `safeToResend` | `domain/outbox` の `SafeToResend(op, tagRecorded bool)` |
 | 片付けてよいか | `PruneTasks` の WHERE | `domain/task` の規則を文書とテストにし、SQL は残す (migration-plan.md の c3) |
 | ローカル gid | `store.LocalPrefix`、`IsLocalGID` (sync 17 か所、tui 3、cli 1、store 17) と SQL の `LIKE 'local:%'` 5 か所 | `domain` の `LocalGID` 型と `IsLocal` |
-| 送り先と許すタグ | `richtext.Target`、`layout()`、`isBlockElement` | `domain/richtext` (名前は段階 b で決める) |
+| 送り先と許すタグ | `richtext.Target`、`layout()`、`isBlockElement` | `domain/rich` (名前は段階 b5 で決め直してよい) |
 | 照合で同じものとみなす条件 | `sameTaskFields`、`sameComment` | `domain/outbox` |
 
 注: Issue #69 の本文は「ローカル gid の判定が sync に 15 か所以上に散らばっている」としていたが、調べると sync は判定を自分で書かず、すべて `store.IsLocalGID` を呼んでいる (17 か所)。散らばっているのは**判定の持ち主** (store) と、SQL の中の `LIKE 'local:%'` (store に 5 か所: write.go:286、attachments.go:50、projects.go:47、outbox.go:561、results.go:56)。

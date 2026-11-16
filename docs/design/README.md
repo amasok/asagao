@@ -19,7 +19,7 @@ DDD の考え方で、ドメイン・アプリケーション層・リポジト�
 | [0002](adr/0002-openspec-tooling.md) | 仕様は OpenSpec 1.15.0 で書き、package.json で版を固定し、CI で --strict で確かめる |
 | [0003](adr/0003-layers-and-dependency-direction.md) | 入り口・アプリ・ドメイン・adapter の 4 層にし、パッケージの名前は今のものを残す |
 | [0004](adr/0004-external-libraries-in-adapters.md) | 外部ライブラリは adapter と入り口にだけ置き、ドメインとアプリは標準ライブラリだけにする |
-| [0005](adr/0005-conform-to-asana-model.md) | 読み取りのモデルは Asana の型に順応し、型だけを asana/model に分ける |
+| [0005](adr/0005-conform-to-asana-model.md) | キャッシュは Asana の型に順応し、型だけを asana/model に、表示用の型を readmodel に分ける |
 | [0006](adr/0006-application-use-cases.md) | ユースケースはローカルへの反映と outbox までを行い、送り方は入り口から Sender で受ける |
 | [0007](adr/0007-migration-order-and-dependency-checks.md) | アプリ層 → ドメイン → リポジトリ → ポートの順に移し、依存の向きは go list のテストで守る |
 

@@ -56,8 +56,8 @@ asana-tui を、言葉と決まりがまとまる単位 (境界づけられた�
 ### Asana → Asana 連携: 腐敗防止層 (Anticorruption Layer)
 
 - Asana の JSON は `internal/asana` の型 (`asana.Task`、`asana.Story` など) に読み替える。再試行・batch・Events の token・Date ヘッダーの時計のずれも、ここに閉じている。
-- ただし、腐敗防止層の型 (`asana.Task` など) が、キャッシュ・同期・表示まで、そのまま使われている。`internal/store` は 9 つのファイルで `internal/asana` を import している (attachments.go、customfields.go、dependencies.go、outbox_send.go、projects.go、notifications.go、outbox.go、tags.go、write.go)。つまり、内側は Asana の型に**順応 (Conformist)** している。
-- 判断: 読み取りのモデルとしては、この順応を受け入れる (ADR 0005)。Asana の型を自前の型に写し替える手間に見合う利点が、今はない。代わりに、型だけを HTTP クライアントから分けて (`internal/asana/model`)、キャッシュが HTTP のパッケージに依存しないようにする (段階 d)。
+- ただし、腐敗防止層の型 (`asana.Task` など) が、キャッシュと同期で、そのまま使われている。`internal/store` は 9 つのファイルで `internal/asana` を import している (attachments.go、customfields.go、dependencies.go、outbox_send.go、projects.go、notifications.go、outbox.go、tags.go、write.go)。つまり、内側は Asana の型に**順応 (Conformist)** している。
+- 判断: キャッシュと同期の型としては、この順応を受け入れる (ADR 0005)。入り口が読む表示用の型は、Asana の型ではなく store が定義した型 (`store.TaskSummary` など) で、段階 c2 で `internal/readmodel` に移す。Asana の型を自前の型に写し替える手間に見合う利点が、今はない。代わりに、型だけを HTTP クライアントから分けて (`internal/asana/model`)、キャッシュが HTTP のパッケージに依存しないようにする (段階 d)。
 
 ### 認証 → Asana 連携
 

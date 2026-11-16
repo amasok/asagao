@@ -68,23 +68,67 @@ outbox の操作の種類は 18 個 (MUST): `update_task`、`create_task`、`add
 
 ### Requirement: 送る順番と排他
 push は `<db>.push.lock` を取り、アカウントが記録と同じことを確かめてから、中断された操作を戻し、操作を積んだ順 (id の順) に 1 件ずつ送る (MUST)。送る前に操作を読み直す。作成がまだのローカル gid に向けた操作は飛ばして `pending` のまま残す。送り終えたら、その間に積まれた操作をもう 1 回だけ送る。Asana の `/batch` は使わない (通知の既読だけは 50 件まで 1 回で送る)。
-根拠: internal/sync/push.go:89-210, :333-349; store/outbox.go:363-383; sync/inbox.go:170-225; TestPushSkipsWhileAnotherProcessPushes, TestPushDoesNotDropWhenAccountChanged, TestPushChildWaitsForFailedParentCreate, TestPushSendsChangesQueuedMeanwhile
+根拠: internal/sync/push.go:89-210, :327-349; store/outbox.go:363-383; sync/inbox.go:170-225; TestPushSkipsWhileAnotherProcessPushes, TestPushDoesNotDropWhenAccountChanged, TestPushChildWaitsForFailedParentCreate, TestPushSendsChangesQueuedMeanwhile
 
 #### Scenario: 親の作成が失敗している
 - **WHEN** 親タスクの作成が `failed` で、子の作成が積まれている
 - **THEN** 子は送らず `pending` のまま残る
 
-### Requirement: 成功と Asana の応答ごとの扱い
-成功したら、記録・キャッシュの反映・操作の削除を 1 つのトランザクションで行う (MUST)。404 なら対象を確かめ、タスクが消えていればそのタスクとサブタスクの操作を捨てて記録する (1 回の push で 5 件まで)。ほかの 4xx は `failed` にして続ける。5xx は自動確認中にして同じ push で照合し、合わせて 5 回で `failed` にする。429 と 401 は `pending` に戻して止める。
-根拠: push.go:291-434, :451-533; store/outbox_send.go:13-18, :165-173; TestPushDropsChangesToDeletedTask, TestPushLimitsDroppedTasksPerPush, TestPushRejectionsAreNotDropped, TestPushGivesUpAfterMaxSendAttempts, TestPushRateLimitedKeepsQueue
+### Requirement: 1 回の push の上限
+1 回の push で、1 つの操作に使う手順は 4 回まで、自動確認中の操作の照合は 1 回までにする (MUST)。残りは次の push で行う。
+根拠: push.go:185-225, :327-328
+
+#### Scenario: 照合のあと再送して、また 5xx
+- **WHEN** 照合で見つからずに再送し、その再送も 5xx になる
+- **THEN** 同じ push ではもう照合せず、自動確認中のまま次の push に残す
+
+### Requirement: 作成が成功したときの記録
+作成 (タスク・複製・コメント・添付・status update・タグ) が成功したら、送った記録・ローカル gid の書き換え・キャッシュの反映・操作の削除を、`Complete*` の 1 つのトランザクションで行う (MUST)。セクション付きのタスクの作成は、同じ行を `pending` の `move_task` に変えて、すぐに送る。送れなければ、そのまま積んでおく。
+根拠: store/outbox_send.go:13-18, :165-210; push.go:756-769; TestPushCreateRetriesFailedSectionMove, TestPushFoundCreateMovesToSectionAtOnce
+
+#### Scenario: セクション付きで作る
+- **WHEN** セクションを指定したタスクの作成を送り、セクションへの移動が失敗する
+- **THEN** タスクは作られ、同じ操作が `move_task` として残る
+
+### Requirement: 作成以外が成功したときの記録
+更新・カスタムフィールド・移動・セクション名などが成功したら、先に `CompleteOp` で操作を消す (MUST)。キャッシュへの反映は、そのあとに別に行い、失敗してもエラーにしない (次の同期で直る)。`CompleteOp` が失敗したときは、送ったが記録できなかったものとして照合に回す。
+根拠: push.go:56-68, :656-659, :699-702, :804-809, :826-829
+
+#### Scenario: 名前の変更が送れた
+- **WHEN** `update_task` が成功する
+- **THEN** 操作が消え、そのあと Asana の応答でキャッシュのタスクを書き直す
+
+### Requirement: 競合の判断
+`update_task` を送る前に Asana のタスクを取り、payload の欄ごとに、Asana の値が base ともローカルの値とも違えば競合にする (MUST)。`html_notes` は比べない (`notes` で比べる)。取れなかった欄 (Partial) は比べない。比べるときは、両方を termsafe に通す。競合なら送らず `conflict` にする。
+根拠: push.go:627-651, :976-978; TestPushConflictThenKeepLocal, TestPushServerAlreadyHasLocalValue, TestPushWithControlCharactersOnServer
+
+#### Scenario: Asana がすでにローカルの値
+- **WHEN** Asana のタスク名が、ローカルで変えた名前と同じになっている
+- **THEN** 競合にせず送る
+
+### Requirement: 404 の扱い
+404 なら、まずアカウントをもう一度確かめ、確かめられないか違えば何も捨てない (MUST)。同じなら対象を確かめ、タスクが消えていれば、そのタスクとサブタスクと、それらの操作を捨てて記録する (1 回の push で 5 件まで)。タスクが残っていれば、その操作だけを捨てる。
+根拠: push.go:451-533; TestPushDropsChangesToDeletedTask, TestPushDropsOnlyChangeWhoseTargetIsGone, TestPushDoesNotDropWhenAccountChanged, TestPushLimitsDroppedTasksPerPush
 
 #### Scenario: 対象のタスクが消えていた
 - **WHEN** 更新を送って 404 になり、確かめるとタスクが Asana から消えている
 - **THEN** そのタスクとサブタスクと、それらの操作を消し、捨てた変更として記録する
 
+#### Scenario: 依存の相手だけが見えない
+- **WHEN** `add_dependency` が 404 になり、タスク自体は Asana にある
+- **THEN** その操作だけを捨てる
+
+### Requirement: 404 以外の応答の扱い
+通知の既読の 403 は、既読と未読の変更をすべて捨て、書き込みが禁じられている印を立てる (MUST)。ほかの 4xx は `failed` にして続ける。5xx は自動確認中にし、合わせて 5 回で `failed` にする。429 と 401 は `pending` に戻して止める。
+根拠: push.go:291-434; sync/inbox.go:193-202; TestMarkReadForbiddenDropsWithoutFailures, TestPushRejectionsAreNotDropped, TestPushGivesUpAfterMaxSendAttempts, TestPushRateLimitedKeepsQueue, TestPushUnauthorizedKeepsEverything
+
+#### Scenario: 429 が返る
+- **WHEN** 送った操作に Asana が 429 を返す
+- **THEN** 操作は `pending` に戻り、push はそこで止まる
+
 ### Requirement: 接続のエラーの扱い
 接続のエラーでは、届いていないと分かれば (接続できない、DNS、ログインしていない、トークンの更新の失敗) `pending` に戻して試した回数を戻す (MUST)。それ以外は、再送してよい操作なら `pending`、再送してはいけない操作なら自動確認中にする。どちらも push はそこで止める。
-根拠: push.go:605-625; TestPushOfflineKeepsQueue, TestPushConnectionDroppedDuringCreate, TestPushOfflineDoesNotCountAttempts
+根拠: push.go:392-405, :419-425, :605-625; TestPushOfflineKeepsQueue, TestPushConnectionDroppedDuringCreate, TestPushOfflineDoesNotCountAttempts
 
 #### Scenario: オフラインで送る
 - **WHEN** 接続できない状態で push する
@@ -103,7 +147,7 @@ push は `<db>.push.lock` を取り、アカウントが記録と同じことを
 - **THEN** その操作は自動確認中になり、送る前に Asana を見て照合する
 
 ### Requirement: 照合は Asana を見て自動で決める
-自動確認中の作成は、Asana の時計で「最初に送った時刻 − 2 分」からあとに作られたものを探す (MUST)。タスクは親・プロジェクト・担当者の順に探し、名前・作った人・期日・担当・説明が同じで、ほかの操作がまだ使っていないものを探す。1 件なら記録して再送しない。0 件なら、最後に送ってから 1 分 (複製は 5 分) たつまで待ち、そのあと再送する。2 件以上か、探す場所がないときは `failed` にして利用者に知らせる。
+自動確認中の作成は、Asana の時計で「最初に送った時刻 − 2 分」からあとのものを探す (MUST)。見つかったものが 1 件なら記録して再送しない。0 件なら、最後に送ってから 1 分 (複製は 5 分) たつまで待ち、そのあと再送する。2 件以上か、探す場所がないときは `failed` にして利用者に知らせる。何を同じとみなすかは、次の要件のとおり操作の種類ごとに違う。
 根拠: internal/sync/reconcile.go:57-311; push.go:224-276; TestPushCreate5xxButCreatedIsNotResent, TestPushCreate5xxNotCreatedWaitsThenResendsOnce, TestPushSameNameCreatesAreNotMerged, TestPushCreateAmbiguousAsksUser, TestPushCreate5xxWithPCClockFarAhead
 
 #### Scenario: 5xx だったが作られていた
@@ -118,17 +162,33 @@ push は `<db>.push.lock` を取り、アカウントが記録と同じことを
 - **WHEN** 照合の問い合わせが接続のエラーになる
 - **THEN** 自動確認中のまま残し、次の push で確かめ直す (TestPushCreateVerifyOfflineRetriesOnNextPush)
 
+### Requirement: 照合で同じとみなす条件
+`create_task` は、親・プロジェクト・担当者の順に探す場所を決め、名前・作った人 (分からなければ問わない)・期日・担当・説明が同じで、ほかの操作がまだ使っていないものを同じとみなす (MUST)。`duplicate_task` は、元のタスクのある場所で、同じ名前で元のタスクでないもの。コメントは、自分のコメントで、文字と数字が同じもの (絵文字だけなら完全に同じもの)。`add_tag` は、ワークスペースに同じ名前のタグがあれば、誰が作ったかを問わずそれを使う。
+根拠: reconcile.go:91-264; TestPushSameNameCreatesAreNotMerged, TestPushCreateIgnoresSameNameWithOtherFields, TestPushRichComment5xxButCreated, TestPushEmojiCommentMatchesExactly, TestPushNewTag5xx
+
+#### Scenario: 同じ名前で期日の違うタスク
+- **WHEN** 照合で、同じ名前だが期日の違うタスクが見つかる
+- **THEN** 同じとみなさない
+
 ### Requirement: 利用者による解決
-TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と `keep_remote` は `conflict` だけ、`retry` は `failed` だけ、`discard` はどの状態でもできる。`sending` の操作は断る。捨てた操作はローカルで元に戻し (作成ならローカルのタスクとサブタスクを消す)、取り直す対象のタスクを返す。自動で捨てた変更は、payload ごと `discarded_changes` に記録し、1 回だけ知らせる。
-根拠: internal/sync/resolve.go:72-120; store/outbox.go:435-595; store/discard.go:135-154; TestResolveStateRules, TestResolveRefusesSending, TestDiscardOpByKind, TestDroppedChangeKeepsPayload
+TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と `keep_remote` は `conflict` だけ、`retry` は `failed` だけ、`discard` はどの状態でもできる。`sending` の操作は断る。`retry` は試した回数を 0 に戻し、Asana を確かめずに `pending` にする。捨てた操作はローカルで元に戻し (作成ならローカルのタスクとサブタスクを消す)、取り直す対象のタスクを返す。
+根拠: internal/sync/resolve.go:72-120; store/outbox.go:435-595; TestResolveStateRules, TestResolveRefusesSending, TestRetryResetsAttempts, TestDiscardOpByKind
 
 #### Scenario: 送信中の操作を捨てようとする
 - **WHEN** `sending` の操作に `discard` を指示する
 - **THEN** `ErrOpSending` で断り、何も変えない
 
+### Requirement: 自動で捨てた変更を残す
+自動で捨てた変更は、要約・理由・payload ごと `discarded_changes` に記録し、利用者に 1 回だけ知らせる (MUST)。一覧では、知らせたかどうかを問わず新しい順に出す。
+根拠: store/discard.go:135-154; store/discard_list.go:12; TestDroppedChangeKeepsPayload, TestRecentDiscards
+
+#### Scenario: 消えたタスクへの変更を捨てた
+- **WHEN** push が、Asana で消えたタスクへの変更を捨てる
+- **THEN** 次に入り口が結果を出すとき、捨てたことを 1 回だけ知らせる
+
 ### Requirement: 送った記録は使われている間残す
-ローカル gid と本物の gid の対応 (`gid:`・`story:`・`att:`・`status:`・`tag:`) は、outbox のどこか (状態を問わず、payload と base の文字列の中も) か、キャッシュの行がそのローカル gid を使っている間と、使われなくなってから 30 日の間は残す (MUST)。消すかどうかは読み取りのトランザクションで決め、変えるものがあるときだけ書き込みのロックを取る。
-根拠: store/results.go:19-298; TestPruneResultsKeepsReferenced, TestPruneResultsAfterGrace, TestPruneResultsWithNothingToChangeTakesNoWriteLock; results_prop_attack_test.go TestPruneResultsNeverDropsAGIDThatSubstringMatches
+ローカル gid と本物の gid の対応 (`gid:`・`story:`・`att:`・`status:`・`tag:`) は、outbox のどこか (状態を問わず、payload と base の文字列の中も) か、キャッシュの行がそのローカル gid を使っている間は残す (MUST)。その接頭辞を使う種類の作成が outbox にある間も残す。要らないと最初に分かったときに印を付け、そこから 30 日たったら消す。消すかどうかは読み取りのトランザクションで決め、変えるものがあるときだけ書き込みのロックを取る。
+根拠: store/results.go:19-298; TestPruneResultsKeepsReferenced, TestPruneResultsKeepsWhileSameKindQueued, TestPruneResultsAfterGrace, TestPruneResultsWithNothingToChangeTakesNoWriteLock
 
 #### Scenario: payload の中にだけローカル gid がある
 - **WHEN** ある操作の payload の `parent` にだけローカル gid が残っている
@@ -136,7 +196,7 @@ TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と 
 
 ### Requirement: 送り先の制限は変換のときにかける
 push は `html_notes` と `html_text` を積んだとおりに送り、タグを絞らない (MUST)。送り先ごとのタグの制限は、Markdown から変換するとき (rich-text の仕様) にかける。カスタムフィールドは、編集できる型 (`text`・`number`・`enum`・`multi_enum`・`date`・`people`) で読み取り専用でないものだけを積み、Asana が 400 を返したら `failed` にする。
-根拠: push.go:680-695, :787-789; store/projects.go:151-157; store/customfields.go:44-188, :685-797; TestPushHeadingsRulesImagesOnlyInTaskNotes, TestPushNastyLayoutInputsNeverRejected, TestCustomFieldAPIValue
+根拠: push.go:680-695, :787-789, :957-971; sync/projects.go:151-158; store/customfields.go:44-188, :685-797; TestPushHeadingsRulesImagesOnlyInTaskNotes, TestPushNastyLayoutInputsNeverRejected, TestPushCustomFieldErrors
 
 #### Scenario: コメントを送る
 - **WHEN** `Comment` で変換したコメントを送る
@@ -147,3 +207,4 @@ push は `html_notes` と `html_text` を積んだとおりに送り、タグを
 - `safeToResend` を直接確かめる単体テストはない (push のテストを通して確かめている)。
 - #54 (DB のエラーを ErrNotFound にしない) を確かめるテストの関数名。
 - 本物の Asana での照合 (検索の反映の遅れが 1 分・5 分で足りるか)。
+- 1 回の push で 1 つの操作に 4 手順まで、照合は 1 回まで、を直接確かめるテスト (コードは push.go:185-225, :327-328)。

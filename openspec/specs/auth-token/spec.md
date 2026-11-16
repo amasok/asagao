@@ -18,17 +18,25 @@ OAuth のログインは、PKCE (S256) の verifier と、24 バイトの乱数�
 - **WHEN** `auth.scopes` が空
 - **THEN** 認可の URL に `scope=default` を付ける
 
+### Requirement: client ID と client secret
+OAuth の client ID は `auth.client_id` から取り、環境変数 `ASANA_CLIENT_ID` があればそちらを使う (MUST)。client secret は、環境変数 `ASANA_CLIENT_SECRET`、保存したログイン、端末での隠した入力の順に探し、端末でなければエラーにする。
+根拠: internal/config/config.go:95, :146-160; internal/cli/auth.go:26, :208-225; TestClientIDFromEnv
+
+#### Scenario: 環境変数の client ID
+- **WHEN** `auth.client_id` と `ASANA_CLIENT_ID` の両方がある
+- **THEN** `ASANA_CLIENT_ID` を使う
+
 ### Requirement: PAT は確かめてから保存する
 `auth login --pat` (または `client_id` が空のとき) は、PAT を引数ではなく、隠した入力か標準入力 (64 KiB まで) から読む (MUST)。空や空白を含むものは拒む。`/users/me` で確かめ (20 秒、再試行 1 回)、受け付けられたときだけ保存する。前の OAuth の client secret は残す。
 根拠: internal/cli/auth.go:56-178; TestAuthLoginPAT, TestAuthLoginPATFailuresKeepEarlierLogin, TestAuthLoginPATAfterOAuth
 
 #### Scenario: Asana が PAT を拒む
-- **WHEN** `/users/me` が 401 を返す
-- **THEN** 「Asana がこのトークンを受け付けませんでした」と知らせ、前のログインを残す
+- **WHEN** `/users/me` が 401 か 403 を返す
+- **THEN** 「Asana がこのトークンを受け付けませんでした」と知らせ、前のログインを残す (TestAuthLoginPATFailuresKeepEarlierLogin は 403 で確かめている)
 
 #### Scenario: Asana が 5xx
 - **WHEN** `/users/me` が 5xx を返す
-- **THEN** トークンを保存せず、そのことを知らせる (応答の本文は出さない)
+- **THEN** トークンを保存せず、そのことを知らせる (応答の本文は出さない) (TestAuthLoginPATServerErrorFailsFast, TestAuthLoginPAT5xxBodyDoesNotLeak)
 
 ### Requirement: トークンの選び方
 環境変数 `ASANA_TOKEN` があれば、保存先より優先し、更新しない PAT として使う (MUST)。保存した PAT も更新しない。OAuth のトークンは、期限が来たら refresh token で更新する。
@@ -55,8 +63,8 @@ OAuth のトークンを更新したら、refresh token が変わったとき (�
 - **THEN** refresh token・PAT・client secret・ユーザー情報だけを保存し、アクセストークンは空にする
 
 ### Requirement: ファイルの保存先は自分だけが読める
-`file` の保存先は、排他で作った一時ファイルを 0600 にして fsync し、rename で置き換える (MUST)。フォルダは 0700 にする。シンボリックリンクはたどらない。
-根拠: internal/auth/tokenstore/file.go:42-107; TestFileSaveDoesNotFollowSymlinks, TestFileSaveMakesExistingFolderPrivate, TestFileConcurrentSaves
+`file` の保存先は、排他で作った一時ファイルを 0600 にして fsync し、rename で置き換える (MUST)。トークンのファイル自体と古い `token.json.tmp` がシンボリックリンクでも、その先には書かない。フォルダは 0700 にするが、フォルダの確かめと、読み込み (`Load`) はシンボリックリンクをたどる。
+根拠: internal/auth/tokenstore/file.go:25-107; TestFileSaveDoesNotFollowSymlinks, TestFileSaveMakesExistingFolderPrivate, TestFileConcurrentSaves
 
 #### Scenario: 既存のフォルダが 0755
 - **WHEN** 保存先のフォルダが 0755 で既にある
@@ -74,11 +82,14 @@ OAuth のトークンを更新したら、refresh token が変わったとき (�
 `auth migrate --to` は、移し先が今と同じなら拒む (MUST)。移し先がアクセストークンを保存しないなら外し、移し先に保存してから元を消す。
 根拠: internal/cli/auth.go:305-346; TestAuthMigrateKeepsPAT
 
-#### Scenario: keychain から 1Password へ移す
-- **WHEN** `auth migrate --to 1password` を実行する
-- **THEN** 1Password に保存してから keychain の項目を消し、PAT は残る
+#### Scenario: ファイルから keychain へ移す
+- **WHEN** 保存先が `file` のときに `auth migrate --to keychain` を実行する
+- **THEN** keychain に保存してからファイルを消し、PAT は残る (TestAuthMigrateKeepsPAT)
 
 ## 未確認
 
-- トークンの保存を、プロセスをまたいで排他する仕組み。プロセスの中の `sync.Mutex` (tokensource.go:132) だけが見つかった。
 - 本物の Asana・本物の keychain・本物の `op` での動き (テストは偽物だけ)。
+
+## テストで確かめていない振る舞い (コードから読める)
+
+- トークンの保存を、プロセスをまたいで排他する仕組みはない。保存の前に保存先を読み直すだけ (tokensource.go:132-176)。

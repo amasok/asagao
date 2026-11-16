@@ -18,8 +18,9 @@
         │  push のロック → アカウントの確認 → 中断された操作を戻す → 積んだ順に 1 件ずつ
         │  → 送る前に操作を読み直す → (更新なら) Asana の今の値と比べて競合を見る → 送る
         ▼
- ⑤ 結果を記録する       store.Complete* / Mark* の 1 つのトランザクション
-        │  成功: gid の書き換え・送った記録・キャッシュの反映・操作の削除を同時に
+ ⑤ 結果を記録する       store.Complete* / CompleteOp / Mark*
+        │  作成の成功: gid の書き換え・送った記録・キャッシュの反映・操作の削除を 1 つのトランザクションで
+        │  それ以外の成功: CompleteOp で操作を消し、キャッシュの反映はあとで別に (失敗してもよい)
         │  分からない: 自動確認中 (verify) にする
         │  届いていない: pending に戻す
         │  断られた: failed にする / 対象が消えていたら捨てた変更として記録する
@@ -61,7 +62,8 @@
 
 ### ⑤ 結果を記録する (store)
 
-- 成功の記録は、`Complete*` の 1 つのトランザクションで、操作の削除と一緒に行う。だから「送ったが記録できなかった」(`sentNotSaved`) ときは、再送ではなく照合に回す。
+- 作成の成功の記録は、`Complete*` の 1 つのトランザクションで、操作の削除と一緒に行う。作成以外は `CompleteOp` で操作を消してから、キャッシュの反映を別に行う (失敗しても次の取り込みで直る)。
+- どちらでも、操作の削除に失敗したとき (`sentNotSaved`) は自動確認中にする。作成は Asana を探して照合し、再送してよい操作はそのまま再送する。
 - 送れたか分からないときに、利用者に聞かない。自動確認中にして、照合する (CLAUDE.md の「ユーザーに判断を押し付けない」)。
 
 ### ⑥ 照合する (sync)
@@ -87,12 +89,11 @@
 ## 段階 a のあとの形
 
 ```
- 入り口 ──▶ app.Tasks.Create(ctx, CreateTaskInput) ──▶ (①の解釈) ──▶ store.CreateTaskLocal ──▶ (②③)
-                     │
-                     └──▶ app の Sender ポート ──▶ 入り口ごとの送り方 (TUI: 同期を頼む / CLI・MCP: Push)
-                     │
-                     ◀── WriteResult{TaskGID, Sent, Push, Discarded}
+ 入り口 ──▶ app.Tasks.Create(ctx, CreateTaskInput) ──▶ (①の解釈) ──▶ store.CreateTaskLocal (②③)
+        ◀── gid / FieldError
+ 入り口 ──▶ Sender.Send(ctx, gid) ──▶ 入り口ごとの送り方 (CLI・MCP: Push を 20 秒 / TUI: 同期を頼む)
+        ◀── WriteResult{TaskGID, Sent, Push, Discarded}
  入り口 ──▶ 結果を自分の形で表示する
 ```
 
-- ④ をいつ・どう行うかは入り口ごとに違うので、ユースケースの中で決めない。ユースケースは ②③ を行ったあと、入り口が組み立てのときに渡した `Sender` を呼ぶ。CLI と MCP の `Sender` は `Push` を 20 秒で呼んで結果を返し、TUI の `Sender` は同期を頼むだけで結果は「未送信」として返す (ADR 0006)。
+- ④ をいつ・どう行うかは入り口ごとに違うので、ユースケースの中で決めない。ユースケースは ②③ までを行って gid を返し、**入り口が**、組み立てのときに受け取った `Sender` を呼ぶ。CLI と MCP の `Sender` は `Push` を 20 秒で呼んで結果を返し、TUI の `Sender` は同期を頼むだけで、結果は「未送信」として返す。`sent` の決め方 (CLI は未送信の数も見る、MCP は見ない) と `task_gid` の返し方 (CLI は送れたら空、MCP は本物の gid) も入り口ごとに違うので、`Sender` の結果から入り口が決める (write-flow の仕様、ADR 0006)。

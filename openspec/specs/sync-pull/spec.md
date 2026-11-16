@@ -48,23 +48,35 @@ Asana が答えたユーザーの gid が、キャッシュに記録した `me_g
 
 ### Requirement: Events の token は全部しまってから進める
 プロジェクトごとの Events の token (`sync_state` の `events:<project gid>`) は、すべてのプロジェクト・受信箱・サブタスクをキャッシュにしまったあとで保存する (MUST)。途中で失敗したら、次の同期は同じ出来事を読み直す。1 回の同期で読むのは、1 プロジェクトあたり 100 件 × 20 ページまで。
-根拠: sync.go:375-381; events.go:46-80; TestEventsSubtaskFailureIsRetriedNextSync, TestEventsOfflineKeepsToken, TestEventsMorePagesThanOneSyncReads
+根拠: sync.go:375-381; events.go:46-80; TestEventsSubtaskFailureIsRetriedNextSync, TestEventsBatchOfflineKeepsToken, TestEventsMorePagesThanOneSyncReads
 
 #### Scenario: サブタスクの取得に失敗する
 - **WHEN** 出来事を読んだあと、サブタスクの取得が失敗する
 - **THEN** token は前のまま残り、次の同期で同じ出来事をもう一度読む
 
 ### Requirement: Events が使えないときは modified_since で取る
-Events が 412 を返したら新しい token を保存し、初めての token なら全件、期限切れなら `modified_since` でそのプロジェクトを取る (MUST)。429・5xx・接続の切断などでは、前の token を残して `modified_since` で取る。失敗したプロジェクトだけがこの扱いになる。
-根拠: events.go:55-68; sync.go:274-276, :325-339; TestEventsFirst412ThenPagedEvents, TestEventsExpiredTokenFallsBack, TestEventsFailuresFallBack, TestEventsFailureFallsBackOnlyThatProject
+Events が 412 を返したら新しい token を保存し、初めての token なら全件、期限切れなら `modified_since` でそのプロジェクトを取る (MUST)。412 以外の失敗 (4xx・429・5xx・接続の切断) では、読めたページまでの token を残し (1 ページも読めなければ前の token)、`modified_since` で取る。失敗したプロジェクトだけがこの扱いになる。
+根拠: events.go:55-74; sync.go:268-277; TestEventsFirst412ThenPagedEvents, TestEventsExpiredTokenFallsBack, TestEventsFailuresFallBack, TestEventsFailureOnSecondPage, TestEventsFailureFallsBackOnlyThatProject
 
 #### Scenario: 1 つのプロジェクトの Events が 5xx
 - **WHEN** プロジェクト A の Events が 5xx を返し、B は正常
 - **THEN** A は `modified_since` で取り、B の token は進む
 
+#### Scenario: 2 ページ目で失敗する
+- **WHEN** Events の 1 ページ目は読め、2 ページ目が失敗する
+- **THEN** 1 ページ目の出来事は使い、token は 1 ページ目のものを保存し、そのプロジェクトを `modified_since` で取る
+
+### Requirement: batch で取れないときも modified_since で取る
+Events に出たタスクを batch で取るのが Asana のエラー (再試行のあとの 5xx・429 や、いつもエラーになるタスク) で失敗したら、そのプロジェクトを `modified_since` で取り、同期を続ける (MUST)。接続のエラーと 401 は同期を止める。
+根拠: sync.go:325-339; TestEventsBatchFailureFallsBack
+
+#### Scenario: batch が 5xx
+- **WHEN** batch の取得が再試行のあとも 5xx になる
+- **THEN** そのプロジェクトを `modified_since` で取り直し、同期は成功する
+
 ### Requirement: 途中で失敗してもキャッシュを壊さない
-タスクは 1 件ずつ丸ごと書くか書かないかで、約 500ms ごとのトランザクションに分けて書き、間を空けてほかの書き手を通す (MUST)。全件の同期が書き込みの途中で失敗したら、prune せず、`last_sync`・`last_full_sync`・`last_poll`・Events の token を変えない。
-根拠: internal/store/write.go:96-145; sync.go:383-403; pull_partial_test.go TestFullSyncFailingWhileWritingTasksKeepsTheCache; chunk_attack_test.go TestChunkAttackNoPruneBeforeAllWritten
+タスクは 1 件ずつ丸ごと書くか書かないかで、約 500ms ごとのトランザクションに分けて書き、間を空けてほかの書き手を通す (MUST)。全件の同期が書き込みの途中で失敗したら、タスクの片付け (`PruneTasks`) をせず、`last_sync`・`last_full_sync`・`last_poll`・Events の token を変えない。ワークスペースとプロジェクトの片付け (`PruneWorkspaces`・`PruneProjects`) は、タスクを書く前に済んでいる。
+根拠: internal/store/write.go:96-145; sync.go:213-217, :253-257, :383-403; pull_partial_test.go TestFullSyncFailingWhileWritingTasksKeepsTheCache; chunk_attack_test.go TestChunkAttackNoPruneBeforeAllWritten
 
 #### Scenario: 全件の同期の途中でディスクのエラー
 - **WHEN** 全件の同期でタスクを書いている途中に失敗する
@@ -89,7 +101,7 @@ Events が 412 を返したら新しい token を保存し、初めての token 
 
 #### Scenario: ワークスペースの一覧が空
 - **WHEN** 全件の同期で Asana がワークスペースを 1 つも返さない
-- **THEN** タスク・プロジェクト・ワークスペースを消さず、次の同期も全件になる
+- **THEN** タスク・プロジェクト・ワークスペースを消さず、`last_full_sync` を進めない
 
 #### Scenario: ローカルで作ったタスク
 - **WHEN** まだ送っていない作成 (ローカル gid) がある
@@ -104,8 +116,8 @@ batch の取得で 404 か 403 になったタスクは、どの同期でもサ�
 - **THEN** そのタスクは消えない
 
 ### Requirement: 受信箱の取り込み
-ワークスペースごとに通知を 100 件まで取り、そのワークスペースの行を置き換える (MUST)。401 と接続のエラーは同期を止める。4xx の拒否は状態を記録して同期を続ける。5xx と 429 はキャッシュを残す。通知の対象のタスクは、受信箱が取れたときだけ、1 回に 50 件まで新しい順に取り、上限を超えた分も prune から守る。
-根拠: internal/sync/inbox.go:23-65, :120-158; TestInboxPerWorkspace, TestInboxUnauthorizedStopsSync, TestInboxRefusedKeepsSyncGoing, TestFullSyncKeepsNotificationTargetsBeyondFetchLimit
+ワークスペースごとに通知を 100 件まで取り、そのワークスペースの行を置き換える (MUST)。401 と接続のエラーは同期を止める。4xx の拒否は状態を記録して同期を続ける。5xx と 429 はキャッシュを残す。通知の対象のタスクは、保存した受信箱の状態が使える (`InboxState().Available()`) ときだけ、1 回に 50 件まで新しい順に取り、上限を超えた分も片付けから守る。
+根拠: internal/sync/inbox.go:23-65, :120-158; sync.go:345-355; TestInboxPerWorkspace, TestInboxUnauthorizedStopsSync, TestInboxRefusedKeepsSyncGoing, TestFullSyncKeepsNotificationTargetsBeyondFetchLimit
 
 #### Scenario: 受信箱が 402
 - **WHEN** 受信箱の取得が 402 を返す
@@ -121,7 +133,10 @@ Asana クライアントは、429 をどのメソッドでも、5xx を POST 以
 
 ## 未確認
 
-- catch-up の push が失敗したとき、Events の token・`last_full_sync`・`last_poll` は保存済みで `last_sync` だけ保存されない (sync.go:375-403 から読める)。テストはない。
-- token のないプロジェクトの Events が 412 以外で失敗したとき、全件ではなく `modified_since` で取る (コードから読める)。テストはない。
-- カスタムフィールドの記録 `custom_fields:<gid>` の時刻は、Asana の時計ではなく PC の時計 (sync.go:438)。意図したものかは未確認。
-- `TestRunUnauthorizedDuringPull` が何を確かめているかの細部。
+- カスタムフィールドの記録 `custom_fields:<gid>` の時刻は、Asana の時計ではなく PC の時計 (sync.go:438)。意図したものか。
+
+## テストで確かめていない振る舞い (コードから読める)
+
+- catch-up の push が失敗したとき、Events の token・`last_full_sync`・`last_poll` は保存済みで、`last_sync` だけ保存されない (sync.go:375-403)。
+- token のないプロジェクトの Events が 412 以外で失敗したとき、全件ではなく `modified_since` で取る (events.go:61-68 で `fresh` にならない; sync.go:270-277)。
+- `TestRunUnauthorizedDuringPull` は、`Me` のあとのどこかの取得で 401 になると、`Run` が 401 のエラーを返すことだけを確かめている。キャッシュが変わらないことは見ていない。
