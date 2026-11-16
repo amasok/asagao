@@ -71,15 +71,19 @@ OAuth のトークンを更新したら、refresh token が変わったとき (�
 - **THEN** 保存のときに 0700 にする
 
 ### Requirement: ファイルの保存先のシンボリックリンクは確かめてから使う
-`file` の保存先のフォルダがシンボリックリンクなら、リンク先の権限は変えず、リンク先が自分の持ち物で、ほかの人が何もできない (0700 相当) フォルダのときだけ使う。そうでなければ保存せず、リンク先のパスと打てばよいコマンド (`chmod 700 <リンク先>`、ファイルは `chmod 600`) をエラーで示す (MUST、#73。リンク先は共有されていることがあるので変えない)。読み込み (`Load`) は、通常のファイルか、自分の持ち物でほかの人が読み書きできない (0600 相当) 通常のファイルへのシンボリックリンクだけを読む (MUST、#73)。FIFO を開いて待たない。リンク先がなければ未ログインと同じ。Windows では確かめない。
-根拠: internal/auth/tokenstore/file_unix.go; TestFileSaveFolderSymlink, TestFileLoadSymlink, TestOwnedPrivateRefusesOtherOwner, TestFileSymlinkErrorSaysWhatToRun
+`file` の保存先のフォルダがシンボリックリンクなら、リンク先の権限は変えない (リンク先は共有されていることがある)。リンク先が自分の持ち物で、ほかの人が書き込めないフォルダ (0755 はよい) のときだけ使い、そうでなければ保存せず、リンク先のパスと打てばよいコマンド (`chmod go-w <リンク先>`) をエラーで示す (MUST、#73)。Windows では確かめない。
+根拠: internal/auth/tokenstore/file_unix.go (privateDir); TestFileSaveFolderSymlink, TestOwnedUnwritableRefusesOtherOwner, TestFileSymlinkErrorSaysWhatToRun
 
 #### Scenario: 保存先のフォルダがシンボリックリンク
-- **WHEN** 保存先のフォルダが、0755 のフォルダへのシンボリックリンク
-- **THEN** リンク先の権限を変えず、保存しない (エラーに `chmod 700 <リンク先>` を示す)
+- **WHEN** 保存先のフォルダが、ほかの人も書き込める (0775) フォルダへのシンボリックリンク
+- **THEN** リンク先の権限を変えず、保存しない (エラーに `chmod go-w <リンク先>` を示す)
+
+### Requirement: トークンのファイルは自分のものだけを読む
+`file` の読み込み (`Load`) は、通常のファイルかそれへのシンボリックリンクで、自分の持ち物でほかの人が書き込めないものだけを読む (MUST、#73。ほかの人が書けるフォルダに置かれたトークンで、ほかの人として書き込まないため)。FIFO などは開いて待たずに拒む。リンク先がなければ未ログインと同じ。Windows では確かめない。
+根拠: internal/auth/tokenstore/file_unix.go (readPrivate); TestFileLoadSymlink, TestOwnedUnwritableRefusesOtherOwner
 
 #### Scenario: トークンのファイルがシンボリックリンク
-- **WHEN** `token.json` が、ほかの人も読める (0644) ファイルへのシンボリックリンク
+- **WHEN** `token.json` が、ほかの人も書き込める (0666) ファイルへのシンボリックリンク
 - **THEN** 読まずにエラーにする
 
 ### Requirement: ログインしていないときの知らせ方
