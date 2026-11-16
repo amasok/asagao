@@ -71,13 +71,13 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **WHEN** `- a\n  ---` を変換する
 - **THEN** `<li>a\n---</li>` になり、`## a` にはならない
 
-### Requirement: 文字にした入れ子は、もう一度変換して送る
-文字にしたブロックがあるときは、結果をエディタ用の Markdown に戻してもう一度変換したものを送る (MUST)。文字の中のリンクなどが、次の編集で初めて見つかって変わらないようにするため。エディタ用の Markdown に書き戻せない形 (項目の中の入れ子のリストのあとの文 #59、項目の中の区切り線) があるときは、もう一度は変換しない (MUST NOT、その形が動いてしまうため) (#66)。
-根拠: frommd.go fromMarkdown, writerFlags; nesting_spec_test.go TestUserMarkdownFollowsNestingRules
+### Requirement: 文字にした入れ子は、もう一度変換しない
+文字にしたブロックの文字は、エディタで読み直したときの形 (リンクなど) に変えずに送る (MUST NOT 変える)。文字の中の生の HTML にある URL は、リンクにしない。エディタで読み直すと #77 の不具合で URL が切れたリンクになることがあり、利用者はリンクを打っていないため (#66)。
+根拠: frommd.go fromMarkdown; nesting_spec_test.go TestFromMarkdownDemotedTextAsTyped
 
-#### Scenario: 引用の中のリストの空の項目のあとのメール
-- **WHEN** 引用の中で文字にしたリストの項目に、字下げのあとのメールがある
-- **THEN** 送る html は、エディタで往復しても変わらない
+#### Scenario: 項目の中の引用の生の HTML の URL
+- **WHEN** `- > <div>see https://x.jp/a_b</div>` を変換する
+- **THEN** `<li>&gt; &lt;div&gt;see https://x.jp/a_b&lt;/div&gt;</li>` になり、`<a>` は出ない
 
 ### Requirement: 生の HTML は文字として扱う
 Markdown の中の生の HTML (インラインもブロックも) は、エスケープした文字として書く (MUST)。タグとして送らない。ブロックの HTML は、最後の行の改行を付けない (MUST、段落と同じく次のブロックとの区切りだけにする。引用やリスト項目の中で往復すると消えるため、#72)。
@@ -140,12 +140,20 @@ Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コ�
 - **THEN** エディタを往復しても、メンションのタグにならない (TestEditableRoundTripCannotInjectMention)
 
 ### Requirement: エディタの往復は 1 回で落ち着く
-Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、印の違う隣り合うリスト) は除く。
-根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go:145-149, :206-210
+Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。次の要件の、既知の例外は除く。
+根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go TestUserMarkdownFollowsNestingRules (除く形は unstableOnMain、除いた件数をログに出す); target_attack_test.go TestTargetRandomAttack (adjacentLists)
 
 #### Scenario: 2 回目の往復
 - **WHEN** html を ToEditableMarkdown → FromMarkdown と 2 回続けて往復する
 - **THEN** 1 回目の結果と 2 回目の結果が同じになる
+
+### Requirement: 往復で安定しない既知の形
+次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): リスト項目の中の入れ子のリストのあとの文 (#59)、隣り合うリスト (印が同じでも違っても 1 つになる、#61)、先頭に空白がある見出し (字下げした setext の見出し、#78)、リスト項目の中の区切り線 (#80)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
+根拠: nesting_spec_test.go unstableOnMain; target_attack_test.go adjacentLists
+
+#### Scenario: 項目の中の区切り線
+- **WHEN** `<ul><li>a<hr/></li></ul>` をエディタで往復する
+- **THEN** `<ul><li>a</li></ul><hr/>` になる (#80 で直す)
 
 ### Requirement: 文の文字は往復で落とさない
 入れ子の決まりに合う html の、文として見える文字 (空白を除く) は、エディタを 1 回往復しても落とさない (MUST)。plain の文字列は、同じ Markdown から作った html の文字と、同じ空白以外の文字を持つ。空白を埋めるための `\` や `&#32;` は、文字として出さない。
@@ -168,7 +176,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `#` になり、戻すと `<h1></h1>` になる
 
 ### Requirement: 変換で落ちるもの
-次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
+次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
 根拠: richtext.go walk (atom.U、知らない要素), headingLine, image; frommd.go block の Heading (h3 以下は h2), inline の Image
 
 #### Scenario: 下線
@@ -187,6 +195,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 
 - 本物の Asana が、コメントの `<h1>` などに本当に 400 を返すか (#60 / #63 の Issue も未確認と書いている。テストは偽サーバーだけ)。
 - 本物の Asana が、引用の中の `<h1>` や `<pre>` を受け付けるか (コードとテストは許している)。
+- 本物の Asana が返す `<pre>\nx` の中身が `\nx` か (rich text は XML なのでそう読んでいる、#65)。Asana が `<pre>` の直後に整形の改行を入れて返すなら、開くたびにコードの先頭に空行が 1 つ増える。
 
 ## テストで確かめていない振る舞い (コードから読める)
 

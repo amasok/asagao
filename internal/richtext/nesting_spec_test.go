@@ -166,7 +166,7 @@ func genUserMarkdown(r *rand.Rand) (string, []string) {
 	// one bullet and one ordered marker outside quotes: adjacent lists with different
 	// markers ("- " then "* ") become one list on the next trip, on main too
 	prefixes := []string{"", "> ", "> > ", "- ", "1. ", "  ", "   ", "    ", "  - ", "   1. ", "> - ", "> * ", "> 1. ", "> 2) ", "> + ", ">    - ", "- > ", "  > ", "- # ", "  ## ", "# ", "> # ", "- >     ", "  > > "}
-	inlines := []string{"", "**b** ", "*e* ", "~~s~~ ", "`c` ", "[l](http://x.jp) ", "a@x.jp ", "![画像](asana:7) ", "[@A](asana:user:9) ", " ", "\t"}
+	inlines := []string{"", "**b** ", "*e* ", "~~s~~ ", "`c` ", "[l](http://x.jp) ", "a@x.jp ", "![画像](asana:7) ", "[@A](asana:user:9) ", "[l][r] ", " ", "\t"}
 	var lines, words []string
 	fence := false
 	for i := r.Intn(8) + 1; i > 0; i-- {
@@ -189,6 +189,11 @@ func genUserMarkdown(r *rand.Rand) (string, []string) {
 			// a setext underline or a rule under what came before (#66)
 			lines = append(lines, []string{"  ---", "  ===", "  > ---", "> - ---", "> 1. ===", "  ***"}[r.Intn(6)])
 			continue
+		case 3:
+			// a reference definition, in a quote, an item or a quote's list (#66); "[l][r]"
+			// below refers to it
+			lines = append(lines, p+"[r]: http://x.jp")
+			continue
 		}
 		w := fmt.Sprintf("w%d", len(words))
 		words = append(words, w)
@@ -210,7 +215,7 @@ func genUserMarkdown(r *rand.Rand) (string, []string) {
 // and is stable through another trip (#60).
 func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 	r := rand.New(rand.NewSource(60))
-	fails := 0
+	fails, skipped := 0, 0
 	for i := 0; i < 30000 && fails < 8; i++ {
 		md, words := genUserMarkdown(r)
 		h1 := FromMarkdown(md)
@@ -227,8 +232,9 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 				break
 			}
 		}
-		if h0, _ := convertMarkdown(md, TaskNotes); unstableOnMain(h0) || unstableOnMain(h1) {
-			continue // (h0: before the second trip FromMarkdown takes for text, see fromMarkdown)
+		if unstableOnMain(h1) {
+			skipped++
+			continue
 		}
 		md2 := ToEditableMarkdown(h1)
 		if h2 := FromMarkdown(md2); h2 != h1 {
@@ -236,6 +242,8 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 			t.Errorf("not stable\nmd  %q\nh1  %q\nmd2 %q\nh2  %q", md, h1, md2, h2)
 		}
 	}
+	// what is skipped, so that a wider exclusion shows
+	t.Logf("skipped %d of 30000 as unstable on main too", skipped)
 }
 
 // unstableOnMain reports whether rich text has a shape that does not survive a trip on main
@@ -296,18 +304,21 @@ func TestEditedRichTextFollowsNestingRules(t *testing.T) {
 	}
 }
 
-// Where Markdown was written as text, FromMarkdown sends what an edit gives back (#66): a
-// link in that text is found now, not on the next edit. Not where editable Markdown cannot
-// write the rich text back as it is: there the user's structure is sent as typed.
-func TestFromMarkdownSecondTrip(t *testing.T) {
+// Markdown written as text (#60) is sent as typed, and not converted again as an edit would
+// read it: a URL in raw HTML there is not made a link, let alone one cut short at an escaped
+// "_" (#77). Text after a nested list and a rule in an item stay where they were typed.
+func TestFromMarkdownDemotedTextAsTyped(t *testing.T) {
 	for _, c := range []struct{ md, want string }{
-		{"> - a\n> - &#32;b@x.jp", `<body><blockquote>- a` + "\n" + `-  <a href="mailto:b@x.jp">b@x.jp</a></blockquote></body>`},
-		// text after a nested list (#59), and a rule in an item, stay where they were typed
+		{"- > <div>see https://x.jp/a_b</div>", "<body><ul><li>&gt; &lt;div&gt;see https://x.jp/a_b&lt;/div&gt;</li></ul></body>"},
+		{"> - a\n> - &#32;b@x.jp", "<body><blockquote>- a\n-  b@x.jp</blockquote></body>"},
 		{"- # x\n  - a\n  # y", "<body><ul><li># x<ul><li>a</li></ul>\n# y</li></ul></body>"},
 		{"- # x\n  ***", "<body><ul><li># x<hr/></li></ul></body>"},
 	} {
 		if got := FromMarkdown(c.md); got != c.want {
 			t.Errorf("FromMarkdown(%q)\ngot  %q\nwant %q", c.md, got, c.want)
 		}
+	}
+	if h := FromMarkdown("- > <div>see https://x.jp/a_b</div>"); strings.Contains(h, `href="https://x.jp/a"`) {
+		t.Errorf("a link cut short: %q", h)
 	}
 }

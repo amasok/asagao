@@ -50,33 +50,14 @@ func (p ruleSource) Open(parent gast.Node, reader text.Reader, pc parser.Context
 // fromMarkdown converts Markdown to Asana rich text for target t (the HTML subset accepted
 // in html_notes / html_text), wrapped in <body>.
 func fromMarkdown(src string, t Target) string {
-	out, f := convertMarkdown(src, t)
-	if f.demoted && !f.unwritable {
-		// Markdown written as text (see asText) is text where it was not read as Markdown:
-		// a link in it, say, would be found only on the next edit. One more trip now sends
-		// what an edit gives back unchanged (#66). Not where there is a shape editable
-		// Markdown cannot write back yet (see writerFlags): the trip would move it.
-		out, _ = convertMarkdown(ToEditableMarkdown(out), t)
-	}
-	return out
-}
-
-// convertMarkdown is fromMarkdown without the second trip.
-func convertMarkdown(src string, t Target) (string, writerFlags) {
+	// (Markdown written as text, see asText, is not converted again as an edit would read
+	// it: a link in it would be found then, but a URL there can be cut short (#77), and the
+	// user did not type a link. Text stays as typed.)
 	b := []byte(keepIndentation(normalizeNewlines(src)))
 	doc := md.Parser().Parse(text.NewReader(b))
-	w := &htmlWriter{src: b, target: t, flags: &writerFlags{}}
+	w := &htmlWriter{src: b, target: t}
 	w.blocks(doc)
-	return "<body>" + strings.TrimRight(w.b.String(), "\n") + "</body>", *w.flags
-}
-
-// writerFlags is shared by a writer and its sub-writers.
-type writerFlags struct {
-	demoted bool // a block was written as text (see asText)
-	// unwritable is set where ToEditableMarkdown cannot write the rich text back as it is:
-	// a list item with text after a list in it (the text would go into the nested item,
-	// #59), or with a rule in it (the rule would go after the list).
-	unwritable bool
+	return "<body>" + strings.TrimRight(w.b.String(), "\n") + "</body>"
 }
 
 // plainFromMarkdown returns the text of Markdown without markup, as fromMarkdown writes it
@@ -107,12 +88,11 @@ type htmlWriter struct {
 	item   int  // open <li>s: a quote, heading or code block here is written as text
 	text   bool // writing Markdown blocks as text (see markdownText)
 	inHead bool // writing the text of a heading element: one line (#64)
-	flags  *writerFlags
 }
 
 // sub returns a writer for a part of the output that is put together afterwards.
 func (w *htmlWriter) sub() *htmlWriter {
-	return &htmlWriter{src: w.src, plain: w.plain, target: w.target, bold: w.bold, quote: w.quote, item: w.item, text: true, flags: w.flags}
+	return &htmlWriter{src: w.src, plain: w.plain, target: w.target, bold: w.bold, quote: w.quote, item: w.item, text: true}
 }
 
 // esc is s as it is written to the output (escaped, unless the output is plain text).
@@ -155,9 +135,6 @@ func (w *htmlWriter) asText(n gast.Node) bool {
 
 // demoted returns block n written as text (see asText and markdownText).
 func (w *htmlWriter) demoted(n gast.Node) string {
-	if w.flags != nil {
-		w.flags.demoted = true
-	}
 	sub := w.sub()
 	sub.markdownText(n)
 	out := sub.b.String()
@@ -251,9 +228,6 @@ func (w *htmlWriter) block(n gast.Node) {
 			w.textOut(w.ruleText(n))
 			return
 		}
-		if w.item > 0 && w.flags != nil {
-			w.flags.unwritable = true
-		}
 		w.tag("<hr/>")
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
 		open := "<pre>"
@@ -292,10 +266,6 @@ func (w *htmlWriter) block(n gast.Node) {
 			for c := li.FirstChild(); c != nil; c = c.NextSibling() {
 				if w.blankText(c) || c.Kind() == gast.KindLinkReferenceDefinition {
 					continue // "- &#32;": an empty item (#52); "[ref]: url" writes nothing (#66)
-				}
-				if p := c.PreviousSibling(); p != nil && p.Kind() == gast.KindList && c.Kind() != gast.KindList &&
-					w.flags != nil {
-					w.flags.unwritable = true
 				}
 				if w.asText(c) {
 					out := w.demoted(c)
