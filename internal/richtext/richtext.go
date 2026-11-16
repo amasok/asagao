@@ -729,7 +729,8 @@ func (c *converter) listItem(n *html.Node) {
 	for ; ch != nil; ch = ch.NextSibling {
 		c.walk(ch)
 	}
-	c.outOfItem = outer
+	// a block in a nested item has ended the outer lists too
+	c.outOfItem = outer || c.outOfItem
 }
 
 // trimLeadingBreaks removes line breaks (and the whitespace before them) at the start of

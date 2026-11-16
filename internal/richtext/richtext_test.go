@@ -565,6 +565,18 @@ func TestLineBreaksInListItems(t *testing.T) {
 	} {
 		roundTrip(t, in, want)
 	}
+	// after a block in a nested item has ended the lists, a blank line in the outer item's
+	// text is not a backslash line (the text is no longer in the item)
+	for _, in := range []string{
+		"<body><ul><li>a<ul><li>b<pre>c</pre></li></ul>\n\nd</li></ul></body>",
+		"<body><blockquote><ul><li>a<ul><li>b<pre>c</pre></li></ul>\n\nd</li></ul></blockquote></body>",
+		"<body><ul><li>a<ul><li>b<h1>c</h1></li></ul>\n\nd</li></ul></body>",
+	} {
+		md, h1, _, h2 := roundtrip(in)
+		if h1 != h2 || strings.Contains(md, "\\\n") {
+			t.Errorf("in %q\nmd %q\nh1 %q\nh2 %q", in, md, h1, h2)
+		}
+	}
 	// a transparent element with nothing but a comment at the start of an item does not hang
 	if got := ToEditableMarkdown("<body><ul><li><b><!-- c --></b><br>a</li></ul></body>"); got != "- a" {
 		t.Errorf("got %q", got)
