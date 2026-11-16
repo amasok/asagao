@@ -57,7 +57,9 @@ func (s *Store) Path() string { return s.path }
 // busyTimeout is the busy_timeout set in Open's DSN.
 const busyTimeout = 5 * time.Second
 
-// migrateRetry migrates, trying again while it fails as busy, for up to busyTimeout. When
+// migrateRetry migrates, trying again while it fails as busy; it starts no new try after
+// busyTimeout, so with the last try's own wait for the lock it gives up within about twice
+// that. Once ctx is done it stops trying and returns the last busy error. When
 // several processes open a new file at the same moment, setting journal_mode=WAL on a
 // connection can fail as busy without waiting for busy_timeout. migrate is safe to run
 // again: it reads the version under the write lock.
