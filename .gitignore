@@ -1,3 +1,4 @@
 /asana-tui
 /dist/
 *.db
+/node_modules/

@@ -1,0 +1,106 @@
+# write-flow (入り口ごとの書き込みの流れ)
+
+## Purpose
+
+TUI・CLI・MCP サーバーの 3 つの入り口が、書き込みを受けてからローカルに反映し、outbox に積み、送り、結果を知らせるまでの流れの基準。入り口ごとの違い (タスク作成の欄、名前の解決、期日の解釈、知らせ方) も、今の振る舞いとして書く。構成を移す段階 a (アプリケーション層) では、この仕様を変えずにユースケースを 1 か所にまとめる。今の実装は `internal/tui` (write.go、edit.go ほか)、`internal/cli` (write.go、project.go)、`internal/mcpserver` (server.go、upload.go)。
+
+## Requirements
+
+### Requirement: 書き込みはローカルが先
+どの入り口の書き込みも、まず store の `*Local` 関数でキャッシュに反映して outbox に積み、そのあとで送る (MUST)。送れなくても、ローカルの変更は残る。タスクの削除は、どの入り口にもない。
+根拠: internal/tui/write.go:353-372; internal/cli/write.go:80-199; internal/mcpserver/server.go:464-513, :720-765; TestWriteCommandsOfflineQueue (完了・担当・移動・コメント・タグ・セクション名), TestWritesOfflineAreQueued
+
+#### Scenario: オフラインで CLI からコメントする
+- **WHEN** オフラインで `comment add t1 本文` を実行する
+- **THEN** コマンドは成功し、`add_comment` の操作が `pending` で 1 件積まれる
+
+### Requirement: 入り口ごとの送り方
+CLI と MCP は、書き込みのあとすぐに `Syncer.Push` を 20 秒の期限で呼ぶ (MUST)。TUI は書き込みのあと同期全体 (`Syncer.Run`) を頼み、同期中なら終わってからもう一度行う。push のロックが取れないときは 5 秒から倍にして 1 分まで待って試し直す。読み取り専用の MCP サーバー (`--read-only`) は書き込みのツールを出さず、送らない。TUI の `--offline` は送らない。
+根拠: cli/write.go:80-89; mcpserver/server.go:720-793; tui/write.go:99-114, :178-190; tui/model.go:393-423, :608-614; TestWriteCommandsOnlineSend, TestWritesOnlineAreSent, TestReadOnlySyncDoesNotSendOutbox
+
+#### Scenario: 別のプロセスが送信中
+- **WHEN** MCP の書き込みのあと、push のロックを別のプロセスが持っている
+- **THEN** 書き込みは成功し、`sent` は false、note で送信中だと知らせる (TestPushBusyIsNotOffline)
+
+### Requirement: CLI の送れたかの知らせ方
+CLI の `sent` は、push がエラーなしで、outbox の未送信・失敗・競合がどれも 0 で、通知の既読が断られておらず、その変更が捨てられていないときだけ真にする (MUST)。`--json` は `task_gid`・`comment_gid`・`sent`・`push`・`discarded`・`error` を返す。送れたときにローカル gid だった `task_gid` は空にする (本物の gid は返さない)。文は、送れたら「（Asana に送信しました）」、push のエラーなら「（オフラインのため未送信。次の sync で送ります: <エラー>）」。
+根拠: cli/write.go:23-32, :91-131; TestWriteCommandJSON, TestWriteCommandJSONOnline, TestWriteCommandOnlineConflict
+
+#### Scenario: 送ったが競合した
+- **WHEN** CLI の書き込みを送り、競合になる
+- **THEN** 「送信できなかった変更があります」と知らせ、`sent` は false
+
+#### Scenario: オフラインで作って送れたあと
+- **WHEN** ローカル gid のタスクを作る `--json` のコマンドで、送信まで成功する
+- **THEN** `task_gid` は空になる
+
+### Requirement: MCP と TUI の送れたかの知らせ方
+MCP の `sent` は、push がエラーなしで、通知の既読が断られておらず、outbox の競合と失敗が 0 のときに真にする (MUST)。未送信の数 (`Remaining`) は見ない。`task_gid` は、送った記録があれば本物の gid にする。捨てた変更があれば、`discarded` と note で知らせる。TUI はしたことだけを表示し、未送信の数と項目ごとの「未送信」で示す。
+根拠: mcpserver/server.go:309-316, :720-765; tui/view.go:214, :700; TestWritesOnlineAreSent, TestPushBusyIsNotOffline
+
+#### Scenario: MCP でオフラインに作ったタスクが送れた
+- **WHEN** MCP の `create_task` のあと、push で作成が送れる
+- **THEN** `task_gid` は Asana の gid になる (TestWritesOnlineAreSent)
+
+### Requirement: タスク作成の入力
+タスク作成の入力は、CLI では名前・親・プロジェクト・セクション・期日 (`--due`)・担当・説明、MCP では CLI と同じ欄と `tags` (タグは作成のあとに別のトランザクションで付ける) (MUST)。名前が空なら store が「タスク名が空です」で断る。
+根拠: cli/write.go:166-199; mcpserver/server.go:227-236, :464-513; store/outbox.go:261-262; TestCreateTaskAssignee, TestCreateSubtaskAndAssignByName
+
+#### Scenario: 名前が空
+- **WHEN** CLI か MCP で、空白だけの名前でタスクを作る
+- **THEN** 「タスク名が空です」のエラーになり、outbox に積まない
+
+### Requirement: TUI のタスク作成の入力
+TUI のタスク作成は、1 行の入力から名前と `due:<期日>` を読む (MUST)。`due:` は最後のものを使い、残りの語を 1 つの空白でつないで名前にする。`due:` がなく、カレンダーを開いているときは、選んでいる日を期日にする。サブタスクの作成も同じ規則で読むが、カレンダーの日は使わない。
+根拠: tui/write.go:334-409; tui/subtasks.go:115-127; TestCreateTaskInProject, TestCreateSubtask, TestParseCreateInput
+
+#### Scenario: TUI で期日付きのタスクを作る
+- **WHEN** TUI の作成で `買い物 due:tomorrow 牛乳` と入力する
+- **THEN** 名前は「買い物 牛乳」、期日は明日になる
+
+### Requirement: 作成先と担当の決め方
+CLI と MCP は、プロジェクトを gid・完全な名前・一意な部分で、セクションを指定があればプロジェクトの中で、なければ最初のセクションで、担当を `me`・`none`・gid・名前で解決する (MUST)。プロジェクトも親もないときは、担当の既定を `me` にし、既定のワークスペースに作る。TUI は今見ているプロジェクトの gid をそのまま使い、セクションは選んでいるタスクのセクションか最初のセクション、担当はプロジェクトの画面では空、それ以外では自分にする。
+根拠: cli/write.go:166-199; mcpserver/server.go:464-505; tui/write.go:343-371; store/read.go:452, :544-564; store/outbox.go:264-277
+
+#### Scenario: プロジェクトなしで CLI から作る
+- **WHEN** `task create 名前` をプロジェクトも親も付けずに実行する
+- **THEN** 担当は自分、ワークスペースは既定のワークスペースになる
+
+### Requirement: 説明とコメントは送り先を決めて変換する
+入り口は、エディタの Markdown を、タスクの説明は `TaskNotes`、コメントは `Comment`、status update は `StatusUpdate` で html と plain の組に変換してから store に渡す (MUST)。今この組を作る場所は 11 か所 (TUI 4、CLI 3、MCP 4) ある。
+根拠: tui/write.go:388; tui/edit.go:286-287, :334; tui/projects.go:247; cli/write.go:169, :603; cli/project.go:115; mcpserver/server.go:469, :527-528, :701, :965; TestTUICommentAndStatusWithoutLayoutTags, TestCLIRichTextTagsPerTarget, TestMCPRichTextTagsPerTarget
+
+#### Scenario: MCP でコメントに見出しを書く
+- **WHEN** MCP の `add_comment` に `# 見出し` を渡す
+- **THEN** store に渡る html_text に `<h1>` はなく、太字の段落になる
+
+### Requirement: 期日の解釈
+期日は `dates.Parse` で解釈する (MUST)。`YYYY-MM-DD`、`today`/`今日`、`tomorrow`/`明日`、`明後日`、`yesterday`/`昨日`、`+Nd`/`-Nd` を受け付け、空なら空にする。解釈できなければ「日付の形式が不正です」のエラーにし、何も積まない。エラーの包み方は入り口ごとに違う: CLI は `--due:`、MCP は `due_on:`、TUI のエディタは `due:`、TUI の作成と期日の選択は包まない。
+根拠: internal/dates/dates.go:16-46; tui/write.go:404; tui/edit.go:269; tui/pickers.go:83; cli/task.go:213; mcpserver/server.go:472, :548; TestParse, TestEditTaskErrorsAndNoChange, TestCreateTaskInvalidWritesNothing, TestFailedWritesChangeNothing
+
+#### Scenario: MCP で不正な期日を渡す
+- **WHEN** MCP の `update_task` に `due_on: "来週のどこか"` を渡す
+- **THEN** `due_on:` で始まるエラーを返し、キャッシュも outbox も変わらない
+
+### Requirement: 添付のアップロードの制限
+添付は、大きさの上限 (`MaxUploadSize`) を超えるものを断る (MUST)。MCP は、さらに `UploadPolicy` で許した場所のファイルだけを受け付ける。CLI にはパスの制限がない。
+根拠: store/relations.go:232, :262; mcpserver/upload.go:12-61; TestUploadAttachmentTool
+
+#### Scenario: MCP で許していない場所のファイル
+- **WHEN** MCP の `upload_attachment` に、許していないフォルダのファイルを渡す
+- **THEN** エラーを返し、outbox に積まない
+
+### Requirement: プロジェクトの作成とアーカイブはオンラインだけ
+プロジェクトの作成・アーカイブ・メンバーの変更は outbox に積まず、その場で Asana に送る (MUST)。
+根拠: cli/project.go:130-230; tui/projects.go:270-280; internal/sync/projects.go; TestProjectCommandsOffline, TestCreateProjectDroppedConnectionPCClockAhead
+
+#### Scenario: オフラインでプロジェクトを作る
+- **WHEN** オフラインで `project create` を実行する
+- **THEN** エラーになる (TestProjectCommandsOffline)。outbox に積む経路はコードにない
+
+## 未確認
+
+- TUI の期日の選択 (tui/pickers.go:83) の不正な入力を確かめるテスト。
+- 名前が空のタスク作成が断られることを、入り口のテストでは確かめていない (コードは store/outbox.go:261-262)。
+- CLI で、ローカル gid の作成が送れたときに `task_gid` が空になることを確かめるテスト (コードは cli/write.go:107-110)。
+- オフラインでのプロジェクト作成で outbox が空のままかを確かめるテスト (TestProjectCommandsOffline はエラーになることだけを見ている)。
