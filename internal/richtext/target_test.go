@@ -30,6 +30,9 @@ func TestFromMarkdownForCommentsAndStatusUpdates(t *testing.T) {
 		// a cached file is referred to by its gid: its path is local to this machine
 		{"見て ![x](/home/u/.cache/asana-tui/attachments/55-a.png)", "<body>見て ![x](asana:55)</body>", "見て ![x](asana:55)"},
 		{"a\n\n#\n\nb", "<body>a\n\nb</body>", "a\n\nb"},
+		// FromMarkdown writes no <table> (Asana takes it only in tasks and briefs): a
+		// Markdown table stays as the text written
+		{"| 品 | 数 |\n|---|---|\n| 椅子 | 2 |", "<body>| 品 | 数 |\n|---|---|\n| 椅子 | 2 |</body>", "| 品 | 数 |\n|---|---|\n| 椅子 | 2 |"},
 		{"- # 項目の見出し", "<body><ul><li># 項目の見出し</li></ul></body>", "# 項目の見出し"},
 	} {
 		for _, target := range []Target{Comment, StatusUpdate} {
@@ -94,7 +97,7 @@ func TestFromMarkdownForTaskNotesKeepsLayout(t *testing.T) {
 // keeps every word of it.
 func TestFromMarkdownForCommentsNoLayoutTags(t *testing.T) {
 	parts := []string{"# 見出し", "## 二", "見出し\n---", "見出し\n===", "---", "***", "___", "- - -",
-		"![画像](asana:9)", "> 引用", "- 項目", "1. 番号", "```\nコード\n```", "本文", "", "    字下げ"}
+		"![画像](asana:9)", "| 表 | 列 |\n|---|---|\n| 値 | 二 |", "> 引用", "- 項目", "1. 番号", "```\nコード\n```", "本文", "", "    字下げ"}
 	words := regexp.MustCompile(`[\p{Han}\p{Hiragana}\p{Katakana}]+`)
 	for i, a := range parts {
 		for j, b := range parts {
