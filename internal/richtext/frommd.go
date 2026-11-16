@@ -87,6 +87,9 @@ type htmlWriter struct {
 	quote  int  // open <blockquote>s: a list here is written as text (see asText)
 	item   int  // open <li>s: a quote, heading or code block here is written as text
 	text   bool // writing Markdown blocks as text (see markdownText)
+	// tail is what comes after a nested list in the item holding it, which goes into the
+	// list's last item (see itemBlocks)
+	tail   []gast.Node
 	inHead bool // writing the text of a heading element: one line (#64)
 }
 
@@ -127,7 +130,10 @@ func (w *htmlWriter) asText(n gast.Node) bool {
 	switch n.Kind() {
 	case gast.KindList:
 		return w.quote > 0
-	case gast.KindBlockquote, gast.KindHeading, gast.KindFencedCodeBlock, gast.KindCodeBlock:
+	case gast.KindBlockquote, gast.KindHeading, gast.KindFencedCodeBlock, gast.KindCodeBlock,
+		gast.KindThematicBreak:
+		// (a rule too: the documentation does not say an item takes <hr/>, and editable
+		// Markdown would write it after the list, #80)
 		return w.item > 0
 	}
 	return false
@@ -258,33 +264,20 @@ func (w *htmlWriter) block(n gast.Node) {
 		if n.IsOrdered() {
 			t = "ol"
 		}
+		tail := w.tail
+		w.tail = nil
 		w.tag("<" + t + ">")
 		w.item++
 		for li := n.FirstChild(); li != nil; li = li.NextSibling() {
 			w.tag("<li>")
-			first := true
+			var cs []gast.Node
 			for c := li.FirstChild(); c != nil; c = c.NextSibling() {
-				if w.blankText(c) || c.Kind() == gast.KindLinkReferenceDefinition {
-					continue // "- &#32;": an empty item (#52); "[ref]: url" writes nothing (#66)
-				}
-				if w.asText(c) {
-					out := w.demoted(c)
-					if out == "" {
-						continue // an empty code block: nothing to keep
-					}
-					if !first {
-						w.b.WriteString("\n")
-					}
-					w.b.WriteString(out)
-					first = false
-					continue
-				}
-				if !first && !w.elementBlock(c) {
-					w.b.WriteString("\n")
-				}
-				w.block(c)
-				first = false
+				cs = append(cs, c)
 			}
+			if li.NextSibling() == nil {
+				cs = append(cs, tail...)
+			}
+			w.itemBlocks(cs)
 			w.tag("</li>")
 			if w.plain {
 				w.b.WriteString("\n")
@@ -304,6 +297,50 @@ func (w *htmlWriter) block(n gast.Node) {
 		w.textOut(strings.TrimSuffix(raw.String(), "\n"))
 	default:
 		w.blocks(n)
+	}
+}
+
+// itemBlocks writes the blocks of a list item. What comes after a nested list in it goes
+// into the list's last item, as a new line (#59): editable Markdown cannot write text after
+// a nested list (Markdown reads it as the last item going on), so that is where an edit
+// puts it, and sending it so makes the edit give back what was sent.
+func (w *htmlWriter) itemBlocks(cs []gast.Node) {
+	first := true
+	for i := 0; i < len(cs); i++ {
+		c := cs[i]
+		if w.blankText(c) || c.Kind() == gast.KindLinkReferenceDefinition {
+			continue // "- &#32;": an empty item (#52); "[ref]: url" writes nothing (#66)
+		}
+		if w.asText(c) {
+			out := w.demoted(c)
+			if out == "" {
+				continue // an empty code block: nothing to keep
+			}
+			if !first {
+				w.b.WriteString("\n")
+			}
+			w.b.WriteString(out)
+			first = false
+			continue
+		}
+		if !first && !w.elementBlock(c) {
+			w.b.WriteString("\n")
+		} else if !first && w.plain && !strings.HasSuffix(w.b.String(), "\n") {
+			w.b.WriteString("\n") // a nested list starts its line: no tag ends the text before it
+		}
+		if c.Kind() == gast.KindList {
+			j := i + 1
+			for j < len(cs) && cs[j].Kind() != gast.KindList {
+				j++
+			}
+			w.tail = cs[i+1 : j]
+			w.block(c)
+			w.tail = nil
+			i = j - 1
+		} else {
+			w.block(c)
+		}
+		first = false
 	}
 }
 

@@ -64,7 +64,14 @@ pr)
 	url=$(gh pr create --base main --head "$1" --title "$2" --body-file "$3")
 	echo "$url"
 	sleep 10
-	gh pr checks "$url" --watch --fail-fast >/dev/null 2>&1 && echo "CI: pass" || { gh pr checks "$url" | grep -v pass; die "CI が失敗しました"; }
+	# 文書だけの PR では CI が回らない (ci.yml の paths)。そのときは待たない。
+	# 作った直後はまだ登録されていないことがあるので、少し待って確かめ直す。
+	if gh pr checks "$url" 2>&1 | grep -q 'no checks reported' && sleep 20 &&
+		gh pr checks "$url" 2>&1 | grep -q 'no checks reported'; then
+		echo "CI: none (文書だけの変更)"
+	else
+		gh pr checks "$url" --watch --fail-fast >/dev/null 2>&1 && echo "CI: pass" || { gh pr checks "$url" | grep -v pass; die "CI が失敗しました"; }
+	fi
 	;;
 *)
 	die "usage: land.sh merge <branch>... | pr <pr-branch> <title> <body-file>"
