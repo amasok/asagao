@@ -7,6 +7,7 @@
 package richtext
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
@@ -68,10 +69,14 @@ func Images(s string) []string {
 type converter struct {
 	editable  bool
 	imageDest func(gid string) string
-	b         strings.Builder
+	b         bytes.Buffer
 	lists     []listState // nesting of ul/ol
 	pre       int         // inside <pre>
 	quote     int         // inside <blockquote>
+	// lineStart is where the text of the current Markdown line starts in b: after the
+	// newline and the structure written at the start of the line (blockquote prefixes, list
+	// item markers). Keeping it as state makes atLineStart constant time (#23).
+	lineStart int
 }
 
 type listState struct {
@@ -79,23 +84,37 @@ type listState struct {
 	n       int
 }
 
-func (c *converter) write(s string) { c.b.WriteString(s) }
+func (c *converter) write(s string) {
+	c.b.WriteString(s)
+	if strings.HasSuffix(s, "\n") {
+		c.markLineStart()
+	}
+}
+
+// markLineStart records that what has been written so far is line structure: the next
+// text starts the line.
+func (c *converter) markLineStart() { c.lineStart = c.b.Len() }
+
+// endsWith reports whether the output ends with suffix.
+func (c *converter) endsWith(suffix string) bool {
+	return bytes.HasSuffix(c.b.Bytes(), []byte(suffix))
+}
 
 // newline starts a new line, keeping blockquote prefixes.
 func (c *converter) newline() {
 	c.write("\n")
 	if c.quote > 0 {
 		c.write(strings.Repeat("> ", c.quote))
+		c.markLineStart()
 	}
 }
 
 // block makes sure the next content starts a new paragraph.
 func (c *converter) block() {
-	s := c.b.String()
-	if s == "" || strings.HasSuffix(s, "\n\n") {
+	if c.b.Len() == 0 || c.endsWith("\n\n") {
 		return
 	}
-	if strings.HasSuffix(s, "\n") {
+	if c.endsWith("\n") {
 		c.write("\n")
 		return
 	}
@@ -157,6 +176,7 @@ func (c *converter) walk(n *html.Node) {
 		c.block()
 		c.quote++
 		c.write(strings.Repeat("> ", c.quote))
+		c.markLineStart()
 		c.children(n)
 		c.quote--
 		c.block()
@@ -211,18 +231,9 @@ func (c *converter) text(n *html.Node) {
 	}
 }
 
-// listMarkerEnd matches a list item marker just written at the end of the output.
-var listMarkerEnd = regexp.MustCompile(`(?:^|\n) *(?:- |[0-9]+\. )$`)
-
 // atLineStart reports whether the next text starts a line of Markdown: at the start of the
-// output, after a newline, a blockquote prefix or a list item marker.
-func (c *converter) atLineStart() bool {
-	s := c.b.String()
-	for c.quote > 0 && strings.HasSuffix(s, "> ") {
-		s = strings.TrimSuffix(s, "> ")
-	}
-	return s == "" || strings.HasSuffix(s, "\n") || listMarkerEnd.MatchString(s)
-}
+// output, after a newline, blockquote prefixes or a list item marker.
+func (c *converter) atLineStart() bool { return c.b.Len() == c.lineStart }
 
 func (c *converter) wrap(n *html.Node, mark string) {
 	if strings.TrimSpace(textOf(n)) == "" && !hasAsanaRef(n) {
@@ -258,9 +269,9 @@ func (c *converter) link(n *html.Node) {
 		c.write(escape(text, false)) // not a link
 	default:
 		// "!" just before the link would make it an image (of an attachment, for a local path)
-		if out := c.b.String(); strings.HasSuffix(out, "!") {
-			c.b.Reset()
-			c.write(out[:len(out)-1] + `\!`)
+		if c.endsWith("!") {
+			c.b.Truncate(c.b.Len() - 1)
+			c.write(`\!`)
 		}
 		c.write("[" + escape(text, false) + "](" + linkDest(href) + ")")
 	}
@@ -348,7 +359,7 @@ func (c *converter) listItem(n *html.Node) {
 	}
 	l := &c.lists[depth-1]
 	l.n++
-	if s := c.b.String(); s != "" && !strings.HasSuffix(s, "\n") {
+	if c.b.Len() > 0 && !c.endsWith("\n") {
 		c.newline()
 	}
 	c.write(strings.Repeat("   ", depth-1))
@@ -357,6 +368,7 @@ func (c *converter) listItem(n *html.Node) {
 	} else {
 		c.write("- ")
 	}
+	c.markLineStart()
 	c.children(n)
 }
 

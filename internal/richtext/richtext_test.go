@@ -4,6 +4,7 @@ import (
 	"html"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestToMarkdown(t *testing.T) {
@@ -344,5 +345,40 @@ func TestIndentationAsWhitespace(t *testing.T) {
 	// the display form keeps the character references (the renderer would drop the spaces)
 	if md := ToMarkdown("<body>  前</body>"); md != "&#32; 前" {
 		t.Errorf("ToMarkdown = %q", md)
+	}
+}
+
+// Converting a long description takes time proportional to its length (#23): checking
+// whether text starts a line used to scan all the output written so far. 8000 lines took
+// about 13 s before; now well under 100 ms, so the limit leaves room for -race and slow CI.
+func TestLongDescriptionIsLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	in := "<body>" + strings.Repeat("<strong>a</strong> # b\n", 8000) + "</body>"
+	start := time.Now()
+	md := ToEditableMarkdown(in)
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("converting %d bytes took %v", len(in), d)
+	}
+	if !strings.HasSuffix(md, "**a** # b") || strings.Count(md, "\n") != 7999 {
+		t.Fatalf("unexpected output %q", md[len(md)-40:])
+	}
+}
+
+// Text right after a list marker or a quote prefix starts the line, so block syntax in it is
+// escaped; text after other inline content on the line is not.
+func TestAtLineStart(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"<body><ul><li># x</li></ul></body>", `- \# x`},
+		{"<body><ol><li>- x</li></ol></body>", `1. \- x`},
+		{"<body><ul><li><strong>a</strong># x</li></ul></body>", `- **a**# x`},
+		{"<body><blockquote># x\n# y</blockquote></body>", "> \\# x  \n> \\# y"},
+		{"<body><strong>a</strong>\n# x</body>", "**a**\n\\# x"},
+		{"<body>a > b\n> c</body>", "a > b  \n\\> c"},
+	} {
+		if got := ToMarkdown(tc.in); got != tc.want {
+			t.Errorf("ToMarkdown(%q)\ngot  %q\nwant %q", tc.in, got, tc.want)
+		}
 	}
 }
