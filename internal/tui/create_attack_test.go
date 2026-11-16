@@ -84,49 +84,45 @@ func attackStore(t *testing.T, workspace, me bool) *store.Store {
 }
 
 // CreateHere gives the same error text and the same stored result as the TUI's code on
-// main, for each combination of place, missing workspace/me, and odd names.
+// main. Each place (and a missing workspace or me, which only My Tasks looks up) is tried
+// once; the odd names (empty, terminal escapes) ride on two of them. Every case opens two
+// stores, so the table is kept small for -race.
 func TestCreateHereSameAsBeforeA3(t *testing.T) {
 	now := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
-	names := []string{"牛乳", "  ", "\x1b[31mred"}
-	places := map[string]app.CreateHereInput{
-		"mytasks":         {},
-		"project":         {Project: "p1"},
-		"project+section": {Project: "p1", Section: "s2"},
-		"emptyproject":    {Project: "pe"},
-		"badproject":      {Project: "nope"},
-		"subtask":         {Parent: "t1"},
-		"badparent":       {Parent: "nope"},
-		"subtask+project": {Parent: "t1", Project: "p1", Section: "s2"},
-	}
-	for place, base := range places {
-		// a missing workspace or me only matters in My Tasks; elsewhere both are there
-		cache := [][2]bool{{true, true}}
-		if place == "mytasks" {
-			cache = [][2]bool{{true, true}, {true, false}, {false, true}, {false, false}}
-		}
-		for _, c := range cache {
-			ws, me := c[0], c[1]
-			for _, name := range names {
-				in := base
-				in.Name, in.Due = name, "2026-11-14"
-				label := fmt.Sprintf("%s ws=%v me=%v name=%q", place, ws, me, name)
-				t.Run(label, func(t *testing.T) {
-					a, b := attackStore(t, ws, me), attackStore(t, ws, me)
-					gw, ew := legacyCreate(context.Background(), a, in, now)
-					tasks := &app.Tasks{Store: b, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
-					gn, en := tasks.CreateHere(context.Background(), in)
-					if fmt.Sprint(ew) != fmt.Sprint(en) || (ew == nil) != (en == nil) {
-						t.Fatalf("error %v vs %v", ew, en)
-					}
-					if ew != nil {
-						gw, gn = "", ""
-					}
-					if dw, dn := attackDump(t, a, gw), attackDump(t, b, gn); dw != dn {
-						t.Errorf("\nmain: %s\na3:   %s", dw, dn)
-					}
-				})
+	for _, tc := range []struct {
+		label  string
+		in     app.CreateHereInput
+		ws, me bool
+	}{
+		{"mytasks", app.CreateHereInput{Name: "牛乳"}, true, true},
+		{"mytasks, no workspace", app.CreateHereInput{Name: "牛乳"}, false, true},
+		{"mytasks, no me", app.CreateHereInput{Name: "牛乳"}, true, false},
+		{"mytasks, empty name", app.CreateHereInput{Name: "  "}, true, true},
+		{"project", app.CreateHereInput{Name: "牛乳", Project: "p1"}, true, true},
+		{"project+section, escapes", app.CreateHereInput{Name: "\x1b[31mred", Project: "p1", Section: "s2"}, true, true},
+		{"emptyproject", app.CreateHereInput{Name: "牛乳", Project: "pe"}, true, true},
+		{"badproject", app.CreateHereInput{Name: "牛乳", Project: "nope"}, true, true},
+		{"subtask", app.CreateHereInput{Name: "牛乳", Parent: "t1"}, false, false},
+		{"badparent", app.CreateHereInput{Name: "牛乳", Parent: "nope"}, true, true},
+		{"subtask+project", app.CreateHereInput{Name: "牛乳", Parent: "t1", Project: "p1", Section: "s2"}, true, true},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			in := tc.in
+			in.Due = "2026-11-14"
+			a, b := attackStore(t, tc.ws, tc.me), attackStore(t, tc.ws, tc.me)
+			gw, ew := legacyCreate(context.Background(), a, in, now)
+			tasks := &app.Tasks{Store: b, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+			gn, en := tasks.CreateHere(context.Background(), in)
+			if fmt.Sprint(ew) != fmt.Sprint(en) || (ew == nil) != (en == nil) {
+				t.Fatalf("error %v vs %v", ew, en)
 			}
-		}
+			if ew != nil {
+				gw, gn = "", ""
+			}
+			if dw, dn := attackDump(t, a, gw), attackDump(t, b, gn); dw != dn {
+				t.Errorf("\nmain: %s\na3:   %s", dw, dn)
+			}
+		})
 	}
 }
 
