@@ -140,3 +140,19 @@ func TestBatch2RandomLists(t *testing.T) {
 		}
 	}
 }
+
+func TestBatch2ExactShapes(t *testing.T) {
+	for in, want := range map[string]string{
+		`<ul><li>a<ul><li>b</li></ul> </li></ul>`:         `<body><ul><li>a<ul><li>b</li></ul></li></ul></body>`,
+		`<ul><li>a<ul><li>b</li></ul><br></li></ul>`:      `<body><ul><li>a<ul><li>b</li></ul></li></ul></body>`,
+		`<ul><li>a<ul><li>b<br></li></ul>after</li></ul>`: `<body><ul><li>a<ul><li>b` + "\n" + `after</li></ul></li></ul></body>`,
+		`<ul><li>a<ul><li>b</li></ul>after</li></ul>`:     `<body><ul><li>a<ul><li>b` + "\n" + `after</li></ul></li></ul></body>`,
+		`a<a href="https://x.jp/"> b </a>d`:               `<body>a <a href="https://x.jp/">b</a> d</body>`,
+		`a<a href="https://x.jp/">b</a>d`:                 `<body>a<a href="https://x.jp/">b</a>d</body>`,
+		`<ul><li>a</li></ul><ul><li>b</li></ul>`:          `<body><ul><li>a</li></ul><ul><li>b</li></ul></body>`,
+	} {
+		if got := FromMarkdown(ToEditableMarkdown("<body>" + in + "</body>")); got != want {
+			t.Errorf("%q\n got  %q\n want %q", in, got, want)
+		}
+	}
+}
