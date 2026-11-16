@@ -262,3 +262,18 @@ func TestBatch1CodeBlockExact(t *testing.T) {
 		}
 	}
 }
+
+// text kept as typed must be sent as typed: no link is made up out of it (#66, #77).
+func TestBatch1DemotedTextAddsNoLink(t *testing.T) {
+	for _, md := range []string{
+		"- a\n  ---\n\n<div>[l](https://x.jp/)</div>",
+		"> 1. a\n> 1. b\n\n<div>https://x.jp/</div>",
+		"- a\n  - b\n  ---\n  [l](https://x.jp/)",
+		"[r]: https://x.jp/\n\n<div>[l][r]</div>",
+	} {
+		h := FromMarkdown(md)
+		if strings.Contains(h, `<a href="https://x.jp/">https://x.jp/</a>)`) || strings.Contains(h, `](<a `) {
+			t.Errorf("link made up: %q -> %q", md, h)
+		}
+	}
+}
