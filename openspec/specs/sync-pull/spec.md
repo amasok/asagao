@@ -120,8 +120,12 @@ batch の取得で 404 か 403 になったタスクは、どの同期でもサ�
 根拠: internal/sync/inbox.go:23-65 (状態は :56-63), :120-158; sync.go:345-355; TestInboxPerWorkspace, TestInboxUnauthorizedStopsSync, TestInboxRefusedKeepsSyncGoing, TestFullSyncKeepsNotificationTargetsBeyondFetchLimit
 
 #### Scenario: 受信箱が 402
-- **WHEN** 受信箱の取得が 402 を返す
+- **WHEN** ワークスペースが 1 つで、受信箱の取得が 402 を返す
 - **THEN** 状態に payment を記録し、同期は続く
+
+#### Scenario: 1 つのワークスペースだけ受信箱が拒否される
+- **WHEN** ワークスペース A の受信箱は 403 で、B の受信箱は取れる
+- **THEN** 状態は OK になり、A の拒否は記録しない (inbox.go:56-63)
 
 ### Requirement: 再試行
 Asana クライアントは、429 をどのメソッドでも、5xx を POST 以外 (ただし POST /batch は含む) で、5 回まで再試行する (MUST)。待ち時間は `Retry-After` (0〜24 時間のとき) か、2 の累乗の秒。401・403・404 は再試行しない。
