@@ -7,7 +7,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
+
+	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
 // privateDir creates dir (0700) if needed and makes sure only the owner can read it: an
@@ -83,17 +87,45 @@ func readPrivate(path string) ([]byte, error) {
 }
 
 // ownedPrivate checks that what the link at path points to (fi) is ours and that nobody
-// else has any access to it.
+// else has any access to it. The error names what the link points to and the command that
+// makes it private (chmod 700 for a folder, 600 for a file): it is not changed here, since
+// it may be shared for something else.
 func ownedPrivate(path string, fi fs.FileInfo, what string) error {
+	target := path
+	if t, err := filepath.EvalSymlinks(path); err == nil {
+		target = t
+	}
+	// paths are shown on the terminal
+	path, target = termsafe.String(path), termsafe.String(target)
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
-		return fmt.Errorf("トークンの保存先 %s の持ち主を確かめられません", path)
+		return fmt.Errorf("トークンの保存先 %s のリンク先 %s の持ち主を確かめられません", path, target)
 	}
 	if int(st.Uid) != os.Geteuid() {
-		return fmt.Errorf("トークンの保存先 %s はシンボリックリンクで、リンク先の%sの持ち主が自分ではありません", path, what)
+		return fmt.Errorf("トークンの保存先 %s はシンボリックリンクで、リンク先の%s %s の持ち主が自分ではありません", path, what, target)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("トークンの保存先 %s はシンボリックリンクで、リンク先の%sをほかの人も使えます (%v)。リンク先を自分だけが使えるようにしてください (chmod go= <リンク先>)", path, what, fi.Mode().Perm())
+		mode := "600"
+		if fi.IsDir() {
+			mode = "700"
+		}
+		return fmt.Errorf("トークンの保存先 %s はシンボリックリンクで、リンク先の%s %s をほかの人も使えます (%v)。自分だけが使えるようにしてください: chmod %s %s",
+			path, what, target, fi.Mode().Perm(), mode, shellQuote(target))
 	}
 	return nil
+}
+
+// shellQuote quotes s for a POSIX shell if it has anything but plain path characters.
+func shellQuote(s string) string {
+	plain := s != ""
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+:@%,", r)) {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -185,5 +186,72 @@ func TestOwnedPrivateRefusesOtherOwner(t *testing.T) {
 	}
 	if err := ownedPrivate("p", fakeInfo{mode: 0o700 | os.ModeDir, uid: me + 1}, "フォルダ"); err == nil {
 		t.Fatal("a folder of someone else accepted")
+	}
+}
+
+// The error for a link to something others can use names what it points to and the command
+// that makes it private (it is not changed for the user: it may be shared for something
+// else). The paths are made safe for the terminal.
+func TestFileSymlinkErrorSaysWhatToRun(t *testing.T) {
+	ctx := context.Background()
+	t.Run("folder", func(t *testing.T) {
+		root := t.TempDir()
+		real := filepath.Join(root, "dot files")
+		if err := os.Mkdir(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(real, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		symlink(t, real, filepath.Join(root, "asana-tui"))
+		err := (&File{Path: filepath.Join(root, "asana-tui", "token.json")}).Save(ctx, &Credentials{RefreshToken: "rt"})
+		target, _ := filepath.EvalSymlinks(real)
+		if err == nil || !strings.Contains(err.Error(), "chmod 700 '"+target+"'") {
+			t.Fatalf("err = %v; want the command for %s", err, target)
+		}
+	})
+	t.Run("file", func(t *testing.T) {
+		dir := t.TempDir()
+		real := filepath.Join(dir, "real.json")
+		if err := os.WriteFile(real, []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(real, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		symlink(t, real, filepath.Join(dir, "token.json"))
+		_, err := (&File{Path: filepath.Join(dir, "token.json")}).Load(ctx)
+		target, _ := filepath.EvalSymlinks(real)
+		if err == nil || !strings.Contains(err.Error(), "chmod 600 "+target) {
+			t.Fatalf("err = %v; want the command for %s", err, target)
+		}
+	})
+	t.Run("control characters", func(t *testing.T) {
+		dir := t.TempDir()
+		real := filepath.Join(dir, "x\x1b]0;owned\x07.json")
+		if err := os.WriteFile(real, []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(real, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		symlink(t, real, filepath.Join(dir, "token.json"))
+		_, err := (&File{Path: filepath.Join(dir, "token.json")}).Load(ctx)
+		if err == nil || strings.ContainsAny(err.Error(), "\x1b\x07") {
+			t.Fatalf("err = %q", err)
+		}
+	})
+}
+
+func TestShellQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"/home/me/.config/asana-tui": "/home/me/.config/asana-tui",
+		"/a b":                       "'/a b'",
+		"/it's":                      `'/it'\''s'`,
+		"/$(rm)":                     "'/$(rm)'",
+	} {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
