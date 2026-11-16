@@ -167,12 +167,10 @@ func TestPruneResultsConcurrentWithPush(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
 			local := fmt.Sprintf("local:new%d", i)
+			// write transactions begin immediate (#50): a concurrent prune makes this wait,
+			// never fail as busy
 			if err := b.ReplaceLocalTaskGID(ctx, local, fmt.Sprint(5000+i)); err != nil {
-				// any concurrent writer can make a deferred write transaction fail as busy
-				// (#50, not the prune's doing); then nothing was recorded for it
-				if !strings.Contains(err.Error(), "database is locked") {
-					t.Errorf("push side: %v", err)
-				}
+				t.Errorf("push side: %v", err)
 				continue
 			}
 			mu.Lock()
@@ -183,9 +181,7 @@ func TestPruneResultsConcurrentWithPush(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
-			// a concurrent writer may make this fail as busy (the sync only reports it and tries
-			// again next time); any other error is a bug
-			if _, err := a.PruneResults(ctx, attackNow.Add(10*ResultGrace)); err != nil && !strings.Contains(err.Error(), "database is locked") {
+			if _, err := a.PruneResults(ctx, attackNow.Add(10*ResultGrace)); err != nil {
 				t.Errorf("prune: %v", err)
 				return
 			}

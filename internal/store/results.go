@@ -69,9 +69,9 @@ func localIn(table, column string) string {
 // Anything it cannot check is kept for the next prune. It returns how many mappings were
 // deleted.
 func (s *Store) PruneResults(ctx context.Context, now time.Time) (int, error) {
-	// It reads, then writes: a write by another process in between (a push) makes it fail
-	// as busy at once. It is short, so try again once; still busy, it is left for the next
-	// sync without an error (nothing was changed).
+	// Its transaction begins immediate, so another process's write (a push) makes it wait
+	// for up to busy_timeout rather than fail at once (#50). Still busy after that, try
+	// once more; then it is left for the next sync without an error (nothing was changed).
 	n, err := s.pruneResults(ctx, now)
 	if isBusy(err) {
 		n, err = s.pruneResults(ctx, now)
