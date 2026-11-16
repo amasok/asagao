@@ -12,6 +12,7 @@
 //   - A new external module: add it to external with the packages that may use it
 //     (ADR 0004). Only adapters and entry points may use one.
 //   - A new import that breaks a rule: move the code instead of adding to allowed.
+//   - An unused external entry: the package no longer uses the module, so delete it.
 //   - A stale allowance: the violation is gone, so delete its line from allowed and mark
 //     the row in architecture.md ("今の import と、それぞれの扱い") as done.
 package archtest
@@ -84,11 +85,12 @@ var entryToEntry = map[string][]string{
 // external lists, for each external module, the packages that may import it directly
 // (rule 7, ADR 0004, and the "使ってよい外部ライブラリ" column of architecture.md). Only
 // adapters and entry points may appear here; domain, app, shared and common packages may
-// not use an external module even indirectly.
+// not use an external module even indirectly. Each entry must be in use: when a package stops
+// using a module, delete it here, so that the permission does not stay behind.
 var external = map[string][]string{
 	"modernc.org/sqlite":              {"internal/store"},
-	"golang.org/x/sys":                {"internal/store", "internal/imageview", "internal/browser"},
-	"golang.org/x/term":               {"internal/imageview", "internal/browser", "internal/cli"},
+	"golang.org/x/sys":                {"internal/store", "internal/imageview"},
+	"golang.org/x/term":               {"internal/imageview", "internal/cli"},
 	"github.com/zalando/go-keyring":   {"internal/auth/tokenstore"},
 	"github.com/pelletier/go-toml/v2": {"internal/config"},
 	"github.com/yuin/goldmark":        {"internal/richtext"},
@@ -100,7 +102,7 @@ var external = map[string][]string{
 	"charm.land/lipgloss/v2":          {"internal/tui"},
 	"charm.land/glamour/v2":           {"internal/tui"},
 	"github.com/charmbracelet/x/ansi": {"internal/tui"},
-	"github.com/mattn/go-runewidth":   {"internal/tui", "internal/cli"},
+	"github.com/mattn/go-runewidth":   {"internal/cli"},
 	"github.com/spf13/cobra":          {"internal/cli"},
 
 	"github.com/modelcontextprotocol/go-sdk": {"internal/mcpserver", "internal/cli"},

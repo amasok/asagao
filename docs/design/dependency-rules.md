@@ -6,7 +6,7 @@
 
 - **`go test ./...` の中で確かめる。** CI に新しい道具を足さない。開発者も手元の `go test` で気づける。Go 以外の道具 (depguard、go-arch-lint など) は使わない。依存を増やさずに、`go list` で足りるため。
 - **今の違反は許可リストに書き、段階ごとに減らす (ラチェット)。** 最初の PR で全部を直すことはしない。許可リストにない新しい違反は、テストが落ちる。許可リストに書いた違反がなくなったら、それもテストが落ちる (「古い許可が残っている」)。これで、直したあとに許可を消し忘れない。
-- **外部ライブラリは、間接の依存まで見る。** ドメイン・アプリ・共有の型・termsafe から import をたどって、外部のモジュールに着いたら落ちる。たとえば sync が `config` を import すると、go-toml が間接に入るので落ちる。ただし、たどるときに許可リストの import は通らない (下の「間接の依存」)。
+- **外部ライブラリは、間接の依存まで見る。** ドメイン・アプリ・共有の型・termsafe から import をたどって、外部のモジュールに着いたら落ちる。たとえば app が `config` を import すると、go-toml が間接に入るので落ちる。ただし、たどるときに許可リストの import は通らない (下の「間接の依存」)。
 
 ## テストの形
 
@@ -21,15 +21,18 @@
 `TestDependencyDirection` は、`go list -deps -json ./...` をモジュールのルートで `GOOS` = linux・darwin・windows の 3 回 (並行して) 実行し、import を合わせてから、次を確かめる。
 
 1. **層** (`layers`): モジュールのパッケージに、層が決まっていないものがない。新しいパッケージを作ったら、表に足す。`internal/domain/...` のように `/...` で終わるものは、その下をまとめて指す。
-2. **import** (`architecture.md` の決まり 1〜7): パッケージ同士の import、外部モジュールの直接の import (`external` にない場所で使っていないか)、ドメインが `os`・`net`・`net/http`・`database/sql`・`syscall`・`crypto/rand`・`math/rand` (とその下) を import していないか。`allowed` にない違反があると落ちる。 共有の型 (`asana/model`・`readmodel`) はドメイン・ほかの共有の型・termsafe だけを、termsafe は標準ライブラリだけを import する (`architecture.md` の層の図の「どこからでも」)。
-3. **古い許可**: `allowed` の行のうち、もう起きていないもの。直したら、その行を消し、`architecture.md` の表も直す。
-4. **間接の依存** (ADR 0004 の 1): ドメイン・アプリ・共有の型・termsafe のパッケージから import をたどり、外部のモジュールに着いたら、いちばん短い import の鎖を出して落ちる。`allowed` にある import は通らない。sync は今、store・auth・config を通して sqlite・oauth2・go-toml などに届くが、それはその import の許可として数えてあり、その許可を消す段階で一緒になくなるため。許可を消すと、その import もたどるようになる。間接のものは許可リストに入れられない。
-5. **ドメインの時計** (下の「ドメインの『時刻は引数』を守らせる」)。
+2. **import** (`architecture.md` の決まり 1〜7): パッケージ同士の import、外部モジュールの直接の import (`external` にない場所で使っていないか)、ドメインが `os`・`net`・`net/http`・`database/sql`・`syscall`・`crypto/rand`・`math/rand` (とその下) を import していないか。`allowed` にない違反があると落ちる。共有の型 (`asana/model`・`readmodel`) はドメイン・ほかの共有の型・termsafe だけを、termsafe は標準ライブラリだけを import する (`architecture.md` の層の図の「どこからでも」)。
+3. **使っていない外部の許可**: `external` の行のうち、そのパッケージがもうそのモジュールを import していないもの。外したら、その行を消し、`architecture.md` の「使ってよい外部ライブラリ」も直す。
+4. **古い許可**: `allowed` の行のうち、もう起きていないもの。直したら、その行を消し、`architecture.md` の表も直す。
+5. **間接の依存** (ADR 0004 の 1): ドメイン・アプリ・共有の型・termsafe のパッケージから import をたどり、外部のモジュールに着いたら、いちばん短い import の鎖を出して落ちる。`allowed` にある import は通らない。sync は今、store・auth・config を通して sqlite・oauth2・go-toml などに届くが、それはその import の許可として数えてあり、その許可を消す段階で一緒になくなるため。許可を消すと、その import もたどるようになる。間接のものは許可リストに入れられない。
+6. **ドメインの時計** (下の「ドメインの『時刻は引数』を守らせる」)。
 
 `TestTablesFollowTheRules` は、表そのものが決まりに反していないことを確かめる (表を書き換えるだけで決まりを緩められないように): `external` に出てくるのは adapter と入り口だけ、`entryAdapters` に store・asana・config・tokenstore がない、`allowed` に、決まりがもう許している import や、同じ行の重複や、段階の書いていない行がない、など。
 
 - `go` が見つからないとき (普通はない) は `t.Skip` する。
 - テストのファイル (`_test.go`) の import は見ない (`go list` の `Imports` だけを見て、`TestImports` は見ない)。テストは偽サーバーなどで adapter を使ってよい。
+- `go list` は `GOWORK=off` で動かす (`go.work` があっても、このモジュールだけを見る)。
+- GOOS 以外のビルドタグ (`//go:build integration` など) の付いたファイルは見えない。今は、そうしたタグはテストのファイル (`race_on_attack_test.go` など) にしかない。プロダクトのコードに足すときは、`go list` に `-tags` を足す。
 - `GOOS` を 3 つ合わせるのは、ビルドの条件で分かれたファイル (`store/lock_windows.go`・`open_windows.go`、`mcpserver/nlink_other.go` など) の import も見るため。どの OS で動かしても結果が同じになる。
 - 手元 (macOS、ビルドのキャッシュあり) で、`go list` 3 回で 0.15 秒ほど (2026-11-17 に測った)。
 - 落ちたときは、1 行に 1 つ、「どのパッケージが、何を import していて、どの決まり (番号) に反しているか」を出す。決まりの番号は `architecture.md` の「依存の決まり」。

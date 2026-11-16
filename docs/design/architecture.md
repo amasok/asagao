@@ -47,9 +47,9 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
 | `internal/richtext` | adapter | 同じ | goldmark、x/net/html | Markdown ⇔ rich text の変換。決まりは `domain/rich` を読む |
 | `internal/config` | adapter | 同じ | go-toml | 設定ファイル |
-| `internal/imageview`, `internal/browser` | adapter | 同じ | x/sys、x/term | 端末と OS |
+| `internal/imageview`, `internal/browser` | adapter | 同じ | x/sys、x/term (imageview だけ。browser は標準ライブラリだけ) | 端末と OS |
 | `internal/termsafe` | 共通 | 同じ | なし | 端末の制御文字の除去 |
-| `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi、go-runewidth | 画面 |
+| `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi | 画面 |
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
 | `internal/cli` | 入り口 | 同じ | cobra、bubbletea、MCP go-sdk、x/term、go-runewidth | コマンド |
 | `internal/wire` | 組み立て | (`internal/cli/root.go` の一部) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |

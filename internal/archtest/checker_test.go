@@ -52,7 +52,7 @@ func sample() map[string][]string {
 		"internal/store":           {"internal/asana", "internal/dates", "internal/domain/task", "internal/richtext", "internal/termsafe", "modernc.org/sqlite", "golang.org/x/sys/unix"},
 		"internal/sync":            {"internal/asana", "internal/auth", "internal/config", "internal/store", "internal/termsafe", "golang.org/x/oauth2"},
 		"internal/termsafe":        {"unicode/utf8"},
-		"internal/tui":             {"internal/auth", "internal/dates", "internal/imageview", "internal/richtext", "internal/store", "internal/sync", "charm.land/bubbletea/v2", "github.com/mattn/go-runewidth"},
+		"internal/tui":             {"internal/auth", "internal/dates", "internal/imageview", "internal/richtext", "internal/store", "internal/sync", "charm.land/bubbletea/v2"},
 		"internal/mcpserver":       {"internal/app", "internal/auth", "internal/dates", "internal/richtext", "internal/store", "internal/sync", "github.com/modelcontextprotocol/go-sdk/mcp"},
 		"internal/cli":             {"internal/app", "internal/asana", "internal/auth", "internal/auth/tokenstore", "internal/browser", "internal/config", "internal/imageview", "internal/mcpserver", "internal/store", "internal/sync", "internal/tui", "github.com/spf13/cobra", "golang.org/x/oauth2", "golang.org/x/term"},
 		"internal/archtest":        nil,
@@ -276,6 +276,28 @@ func TestCheckerAllowsTheRules(t *testing.T) {
 	m["internal/tui"] = append(m["internal/tui"], "internal/app", "internal/readmodel", "internal/browser", "internal/termsafe")
 	if got := failures(fakeGraph(m, sampleMods)); len(got) != 0 {
 		t.Fatalf("allowed imports fail:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestUnusedExternal(t *testing.T) {
+	g := fakeGraph(map[string][]string{
+		"internal/store":     {"modernc.org/sqlite"},
+		"internal/imageview": {"golang.org/x/term"},
+	}, sampleMods)
+	got := unusedExternal(g)
+	for _, w := range []string{
+		`external["golang.org/x/sys"] lists internal/store, which does not import it`,
+		`external["golang.org/x/sys"] lists internal/imageview, which does not import it`,
+		`external["github.com/spf13/cobra"] lists internal/cli, which does not import it`, // no such package in g
+	} {
+		if !slices.Contains(got, w) {
+			t.Errorf("missing %q", w)
+		}
+	}
+	for _, g := range got {
+		if strings.Contains(g, `"modernc.org/sqlite"`) || strings.Contains(g, `"golang.org/x/term"] lists internal/imageview`) {
+			t.Errorf("reported a module in use: %q", g)
+		}
 	}
 }
 

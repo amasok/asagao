@@ -40,6 +40,9 @@ func TestDependencyDirection(t *testing.T) {
 	t.Run("stale", func(t *testing.T) {
 		report(t, lines(staleAllowances(found, allowed)), "allowances that no longer happen (delete them from allowed in rules_test.go, and update the table in architecture.md, 今の import と、それぞれの扱い):")
 	})
+	t.Run("unused external", func(t *testing.T) {
+		report(t, unusedExternal(g), "permissions in external that are not used (delete them from external in rules_test.go, and update architecture.md, 使ってよい外部ライブラリ):")
+	})
 	t.Run("std only", func(t *testing.T) {
 		report(t, indirectExternal(g, allowed), "packages that reach an external module through their imports (ADR 0004: domain, app, shared and common use the standard library only):")
 	})
@@ -256,6 +259,20 @@ func edgeSet(vs []violation) map[[2]string]bool {
 	return set
 }
 
+// unusedExternal are the entries of external whose package does not import the module.
+func unusedExternal(g *graph) []string {
+	var out []string
+	for mod, pkgs := range external {
+		for _, p := range pkgs {
+			info := g.pkgs[p]
+			if info == nil || !slices.ContainsFunc(info.imports, func(imp string) bool { return g.modules[imp] == mod }) {
+				out = append(out, fmt.Sprintf("external[%q] lists %s, which does not import it", mod, p))
+			}
+		}
+	}
+	return out
+}
+
 // newViolations are the found violations that allow does not list.
 func newViolations(found, allow []violation) []violation {
 	ok := edgeSet(allow)
@@ -443,7 +460,9 @@ func loadModule(t *testing.T) *graph {
 	if err != nil {
 		t.Skip("no go command:", err)
 	}
-	out, err := exec.Command(gocmd, "list", "-m", "-json").Output()
+	cmd := exec.Command(gocmd, "list", "-m", "-json")
+	cmd.Env = append(cmd.Environ(), "GOWORK=off") // with a go.work, list -m prints every module of it
+	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("go list -m: %v", errOutput(err))
 	}
@@ -507,7 +526,7 @@ func loadModule(t *testing.T) *graph {
 func goList(gocmd, dir, goos string) ([]listedPackage, error) {
 	cmd := exec.Command(gocmd, "list", "-deps", "-json=ImportPath,Dir,Standard,GoFiles,CgoFiles,Imports,Module,Error", "./...")
 	cmd.Dir = dir
-	cmd.Env = append(cmd.Environ(), "GOOS="+goos)
+	cmd.Env = append(cmd.Environ(), "GOOS="+goos, "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("GOOS=%s go list: %w", goos, errOutput(err))
