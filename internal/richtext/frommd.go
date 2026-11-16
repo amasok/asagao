@@ -50,7 +50,10 @@ func (p ruleSource) Open(parent gast.Node, reader text.Reader, pc parser.Context
 // fromMarkdown converts Markdown to Asana rich text for target t (the HTML subset accepted
 // in html_notes / html_text), wrapped in <body>.
 func fromMarkdown(src string, t Target) string {
-	b := []byte(keepIndentation(src))
+	// (Markdown written as text, see asText, is not converted again as an edit would read
+	// it: a link in it would be found then, but a URL there can be cut short (#77), and the
+	// user did not type a link. Text stays as typed.)
+	b := []byte(keepIndentation(normalizeNewlines(src)))
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b, target: t}
 	w.blocks(doc)
@@ -60,12 +63,19 @@ func fromMarkdown(src string, t Target) string {
 // plainFromMarkdown returns the text of Markdown without markup, as fromMarkdown writes it
 // for target t (for Asana's plain notes).
 func plainFromMarkdown(src string, t Target) string {
-	b := []byte(keepIndentation(src))
+	b := []byte(keepIndentation(normalizeNewlines(src)))
 	doc := md.Parser().Parse(text.NewReader(b))
 	w := &htmlWriter{src: b, plain: true, target: t}
 	w.blocks(doc)
 	// keep the indentation of the first line (see keepIndentation)
 	return strings.TrimLeft(strings.TrimRight(w.b.String(), " \t\n"), "\n")
+}
+
+// normalizeNewlines makes line breaks typed as CRLF or CR (an editor on Windows, a paste)
+// "\n", as Asana keeps them: Markdown reads them as line breaks too, but code and raw HTML
+// would keep the "\r" as text (#72).
+func normalizeNewlines(s string) string {
+	return strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(s)
 }
 
 type htmlWriter struct {
@@ -77,6 +87,7 @@ type htmlWriter struct {
 	quote  int  // open <blockquote>s: a list here is written as text (see asText)
 	item   int  // open <li>s: a quote, heading or code block here is written as text
 	text   bool // writing Markdown blocks as text (see markdownText)
+	inHead bool // writing the text of a heading element: one line (#64)
 }
 
 // sub returns a writer for a part of the output that is put together afterwards.
@@ -165,6 +176,9 @@ func (w *htmlWriter) blocks(n gast.Node) {
 		if w.emptyHeading(c) {
 			continue // "#" where it is a paragraph: nothing to write, no blank lines either
 		}
+		if c.Kind() == gast.KindLinkReferenceDefinition {
+			continue // "[ref]: url" writes nothing, so no line break before it either (#66)
+		}
 		if prev != nil {
 			switch {
 			case w.elementBlock(prev):
@@ -202,7 +216,9 @@ func (w *htmlWriter) block(n gast.Node) {
 			t = "h1"
 		}
 		w.tag("<" + t + ">")
+		w.inHead = true
 		w.inlines(n)
+		w.inHead = false
 		w.tag("</" + t + ">")
 		if w.plain {
 			w.b.WriteString("\n")
@@ -214,7 +230,15 @@ func (w *htmlWriter) block(n gast.Node) {
 		}
 		w.tag("<hr/>")
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
-		w.tag("<pre>")
+		open := "<pre>"
+		if f, ok := n.(*gast.FencedCodeBlock); ok {
+			// the language, as Asana takes it ("You can specify a language with
+			// data-language", https://developers.asana.com/docs/rich-text, #65)
+			if lang := codeLanguage(string(f.Language(w.src))); lang != "" {
+				open = `<pre data-language="` + lang + `">`
+			}
+		}
+		w.tag(open)
 		w.textOut(w.codeText(n))
 		w.tag("</pre>")
 		if w.plain {
@@ -226,6 +250,9 @@ func (w *htmlWriter) block(n gast.Node) {
 		w.blocks(n)
 		w.quote--
 		w.tag("</blockquote>")
+		if w.plain && !strings.HasSuffix(w.b.String(), "\n") {
+			w.b.WriteString("\n") // ends its line, as </blockquote> does (#72)
+		}
 	case *gast.List:
 		t := "ul"
 		if n.IsOrdered() {
@@ -237,8 +264,8 @@ func (w *htmlWriter) block(n gast.Node) {
 			w.tag("<li>")
 			first := true
 			for c := li.FirstChild(); c != nil; c = c.NextSibling() {
-				if w.blankText(c) {
-					continue // "- &#32;": an empty item (#52)
+				if w.blankText(c) || c.Kind() == gast.KindLinkReferenceDefinition {
+					continue // "- &#32;": an empty item (#52); "[ref]: url" writes nothing (#66)
 				}
 				if w.asText(c) {
 					out := w.demoted(c)
@@ -266,24 +293,29 @@ func (w *htmlWriter) block(n gast.Node) {
 		w.item--
 		w.tag("</" + t + ">")
 	case *gast.HTMLBlock:
+		// its lines as text, without the line break of the last one: a block ends where the
+		// next starts (as a paragraph does), and a quote or an item would keep it once (#72)
+		var raw strings.Builder
 		lines := n.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			seg := lines.At(i)
-			w.textOut(string(seg.Value(w.src)))
+			raw.Write(seg.Value(w.src))
 		}
+		w.textOut(strings.TrimSuffix(raw.String(), "\n"))
 	default:
 		w.blocks(n)
 	}
 }
 
 // markdownText writes block n as the Markdown it stands for, as text: list markers ("- ",
-// "1. "), quote markers ("> ") and heading markers ("# ") are text, and the blocks inside
-// are text too (inline markup stays). A code block becomes inline code, line by line.
+// "1. ", with the numbers as typed), quote markers ("> "), headings ("# h", or "h" over
+// "---") and rules are text, as typed, and the blocks inside are text too (inline markup
+// stays). A code block becomes inline code, line by line. Quote markers are written as "> "
+// and nested lists are indented by their parent's marker, whatever the spacing typed.
 func (w *htmlWriter) markdownText(n gast.Node) {
 	switch n := n.(type) {
 	case *gast.Heading:
-		w.textOut(strings.Repeat("#", n.Level) + " ")
-		w.inlines(n)
+		w.headingText(n)
 	case *gast.ThematicBreak:
 		w.textOut(w.ruleText(n))
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
@@ -315,7 +347,12 @@ func (w *htmlWriter) markdownText(n gast.Node) {
 			}
 			marker := string(n.Marker) + " "
 			if n.IsOrdered() {
-				marker = strconv.Itoa(num) + string(n.Marker) + " "
+				// the number as typed ("1." on every item stays so, #66); else as shown
+				if m := orderedMarker.FindStringSubmatch(w.lineAt(li.Pos())); m != nil {
+					marker = m[1] + m[2] + " "
+				} else {
+					marker = strconv.Itoa(num) + string(n.Marker) + " "
+				}
 				num++
 			}
 			sub := w.sub()
@@ -325,6 +362,59 @@ func (w *htmlWriter) markdownText(n gast.Node) {
 	default:
 		w.block(n)
 	}
+}
+
+// headingText writes heading n as text, as it is typed (#66): "## h ##", or "h" over a line
+// of "---" (in a list item, Markdown reads "- a" over "  ---" as a heading, not as an item
+// and a rule). An empty heading is its marker alone, not "# " (#72).
+func (w *htmlWriter) headingText(n *gast.Heading) {
+	lines := n.Lines()
+	if lines.Len() == 0 {
+		w.textOut(strings.Repeat("#", n.Level))
+		return
+	}
+	first, last := lines.At(0), lines.At(lines.Len()-1)
+	before := string(w.src[lineStart(w.src, first.Start):first.Start])
+	if open := atxOpen.FindString(before); open != "" {
+		w.textOut(open)
+		w.inlines(n)
+		w.textOut(strings.TrimRight(w.lineAt(last.Stop), " \t")) // a closing "##"
+		return
+	}
+	w.inlines(n)
+	// the underline is the line after the text
+	next := last.Stop
+	if next == 0 || w.src[next-1] != '\n' {
+		if i := strings.IndexByte(string(w.src[next:]), '\n'); i >= 0 {
+			next += i + 1
+		} else {
+			next = len(w.src)
+		}
+	}
+	_, under := cutQuotePrefix(w.lineAt(next))
+	w.b.WriteString("\n")
+	w.textOut(strings.TrimSpace(under))
+}
+
+// atxOpen matches the opening "#"s of an ATX heading, at the end of what comes before its
+// text on the line.
+var atxOpen = regexp.MustCompile(`#{1,6}[ \t]*$`)
+
+// lineStart returns where the line holding position i starts.
+func lineStart(src []byte, i int) int {
+	return strings.LastIndexByte(string(src[:i]), '\n') + 1
+}
+
+// lineAt returns the source from position i to the end of its line.
+func (w *htmlWriter) lineAt(i int) string {
+	if i < 0 || i > len(w.src) {
+		return ""
+	}
+	rest := string(w.src[i:])
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
 }
 
 // heading writes heading n where Asana accepts no <h1>/<h2> (see Target): as a bold
@@ -366,10 +456,10 @@ func (w *htmlWriter) emptyHeading(n gast.Node) bool {
 }
 
 // ruleText is rule n as text, where it is not an element: the line as written ("***",
-// "- - -"). For a task's notes it is "---", as it always was (only a rule in a quote's
-// list or a list item's quote is written as text there).
+// "- - -"). (For a task's notes, only a rule in a quote's list or a list item's quote is
+// written as text, as typed too since #66.)
 func (w *htmlWriter) ruleText(n gast.Node) string {
-	if v, ok := n.Attribute(ruleAttr); ok && !w.target.layout() {
+	if v, ok := n.Attribute(ruleAttr); ok {
 		if s, ok := v.(string); ok && s != "" {
 			return s
 		}
@@ -385,8 +475,8 @@ func (w *htmlWriter) ruleText(n gast.Node) string {
 func (w *htmlWriter) textBlocks(n gast.Node, indent string) {
 	var prev gast.Node
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
-		if w.blankText(c) {
-			continue // "- &#32;", "> &#32;": empty
+		if w.blankText(c) || c.Kind() == gast.KindLinkReferenceDefinition {
+			continue // "- &#32;", "> &#32;": empty; "[ref]: url" writes nothing (#66)
 		}
 		if prev != nil {
 			if prev.Kind() == gast.KindParagraph && c.Kind() == gast.KindParagraph {
@@ -458,18 +548,45 @@ func (w *htmlWriter) inline(n gast.Node) {
 	case *gast.Text:
 		w.textOut(decodeText(n.Segment.Value(w.src)))
 		if n.SoftLineBreak() || n.HardLineBreak() {
-			w.b.WriteString("\n")
+			w.b.WriteString(w.lineBreak())
 		}
 	case *gast.String:
 		w.textOut(string(n.Value))
 	case *gast.CodeSpan:
-		w.tag("<code>")
+		// Code over a line break is code of each line, with the line break as text between
+		// them, as ToEditableMarkdown writes it (see splitCodeLines, #65). Blank lines at its
+		// start and end go (a line break there would end a block, which an edit drops);
+		// blank lines between are text.
+		var code strings.Builder
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 			if t, ok := c.(*gast.Text); ok {
-				w.textOut(string(t.Segment.Value(w.src)))
+				code.Write(t.Segment.Value(w.src))
 			}
 		}
-		w.tag("</code>")
+		lines := strings.Split(code.String(), "\n")
+		if len(lines) > 1 {
+			for len(lines) > 0 && asciiBlank(lines[0]) {
+				lines = lines[1:]
+			}
+			for len(lines) > 0 && asciiBlank(lines[len(lines)-1]) {
+				lines = lines[:len(lines)-1]
+			}
+			if len(lines) == 0 {
+				lines = []string{" "} // only line breaks: a space, as Markdown reads it
+			}
+		}
+		for i, l := range lines {
+			if i > 0 {
+				w.b.WriteString(w.lineBreak())
+			}
+			if len(lines) > 1 && asciiBlank(l) {
+				w.textOut(l)
+				continue
+			}
+			w.tag("<code>")
+			w.textOut(l)
+			w.tag("</code>")
+		}
 	case *gast.Emphasis:
 		t := "em"
 		if n.Level >= 2 {
@@ -535,6 +652,15 @@ func (w *htmlWriter) inline(n gast.Node) {
 	default:
 		w.inlines(n)
 	}
+}
+
+// lineBreak is a line break in text as it is written: a space in a heading, which is one
+// line (a setext heading's lines are, as ToEditableMarkdown writes it back, #64).
+func (w *htmlWriter) lineBreak() string {
+	if w.inHead {
+		return " "
+	}
+	return "\n"
 }
 
 // blankLine matches a blank line inside text, blankLines a run of them.

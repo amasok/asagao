@@ -15,6 +15,12 @@ func genInlineRT(r *rand.Rand, depth int) string {
 		case 0:
 			sb.WriteString("<br>")
 		case 1:
+			if r.Intn(4) == 0 && depth == 0 {
+				// inline code over line breaks, blank lines among them (#65). A space before it:
+				// an email address right before "`" is linked with the "`" in it (#77)
+				sb.WriteString(" <code>" + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + []string{"\n", "\n\n", "\n \n"}[r.Intn(3)] + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + "</code> ")
+				continue
+			}
 			sb.WriteString("\n")
 		case 2:
 			// emphasis with spaces and line breaks at its ends (#49). Its text starts and ends
@@ -67,7 +73,19 @@ func genBlockRT(r *rand.Rand, depth int) string {
 			return s + "</" + tag + ">"
 		}
 	case 2:
-		return "<pre>" + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + "</pre>"
+		// lines as they are: a line break at the start, blank lines in a row, lines of
+		// spaces, and a language (#65)
+		var lines []string
+		for i := r.Intn(4) + 1; i > 0; i-- {
+			lines = append(lines, []string{"", "", " ", "\t", escHTML(rtTexts2[r.Intn(len(rtTexts2))])}[r.Intn(5)])
+		}
+		lang := []string{"", "", ` data-language="go"`, ` data-language="a b"`}[r.Intn(4)]
+		return "<pre" + lang + ">" + strings.Join(lines, "\n") + "</pre>"
+	case 3:
+		if r.Intn(3) == 0 { // headings with marks, links, mentions, images, line breaks; empty ones (#64)
+			tag := []string{"h1", "h2"}[r.Intn(2)]
+			return "<" + tag + ">" + genInlineRT(r, 0) + "</" + tag + ">"
+		}
 	}
 	return genInlineRT(r, 0)
 }

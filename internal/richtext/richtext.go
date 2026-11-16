@@ -49,15 +49,71 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	// "<a data-asana-gid="1"/>" (a mention as FromMarkdown writes it, kept in the cache until
 	// the next sync) is not self-closing in HTML: the text after it would become its text
 	s = selfClosingA.ReplaceAllString(s, "<a$1></a>")
+	// Asana's rich text is XML, where "<pre>\nx" is the code "\nx"; an HTML reader drops a
+	// line break right after <pre>, so one more is put there for it to drop (#65)
+	s = preStartBreak.ReplaceAllString(s, "$1\n$2")
 	doc, err := html.Parse(strings.NewReader(s))
 	if err != nil {
 		return s
 	}
+	splitCodeLines(doc)
 	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
 	c.keepTrailingSpace(blockEnds)
 	return tidy(c.b.String())
+}
+
+// preStartBreak matches a <pre> tag and the line break right after it.
+var preStartBreak = regexp.MustCompile(`(?i)(<pre(?:\s[^<>]*)?>)(\r\n|\r|\n)`)
+
+// splitCodeLines makes inline code over line breaks (<code>x\ny</code>) code of each line
+// with the line breaks between them as text (<code>x</code>\n<code>y</code>): a code span
+// cannot hold a line break (Markdown reads it as a space, and a blank line would end the
+// paragraph), and text keeps it as text keeps any other (#65). A blank line (or one of only
+// spaces) is text too, not code: it is the blank line between lines of code (code of spaces
+// would be content that is not text, so a list item would end at the blank line before it).
+func splitCodeLines(n *html.Node) {
+	split := false
+	for ch := n.FirstChild; ch != nil; {
+		next := ch.NextSibling
+		switch {
+		case ch.Type == html.ElementNode && ch.DataAtom == atom.Pre:
+			// code in a code block is the block's text
+		case ch.Type == html.ElementNode && ch.DataAtom == atom.Code:
+			if t := textOf(ch); strings.Contains(t, "\n") {
+				for i, l := range strings.Split(t, "\n") {
+					if i > 0 {
+						n.InsertBefore(&html.Node{Type: html.TextNode, Data: "\n"}, ch)
+					}
+					if asciiBlank(l) {
+						if l != "" {
+							n.InsertBefore(&html.Node{Type: html.TextNode, Data: l}, ch)
+						}
+					} else {
+						code := &html.Node{Type: html.ElementNode, Data: "code", DataAtom: atom.Code}
+						code.AppendChild(&html.Node{Type: html.TextNode, Data: l})
+						n.InsertBefore(code, ch)
+					}
+				}
+				n.RemoveChild(ch)
+				split = true
+			}
+		default:
+			splitCodeLines(ch)
+		}
+		ch = next
+	}
+	if split {
+		// one text node with the text around it, so that a line of it is escaped as a whole
+		// ("  " then " ---" would be a setext underline, as two pieces of text)
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			for ch.Type == html.TextNode && ch.NextSibling != nil && ch.NextSibling.Type == html.TextNode {
+				ch.Data += ch.NextSibling.Data
+				n.RemoveChild(ch.NextSibling)
+			}
+		}
+	}
 }
 
 // Images returns the gids of images in the rich text, in order.
@@ -76,6 +132,10 @@ type converter struct {
 	lists     []listState // nesting of ul/ol
 	pre       int         // inside <pre>
 	quote     int         // inside <blockquote>
+	heading   int         // inside <h1>, <h2>, <h3>: one line (see heading)
+	// headingImages are the images of the heading being written for display, which go
+	// after it, each as a block of its own (see image).
+	headingImages []string
 	// outOfItem is set when a block in a list item (a quote, a code block) has started a
 	// new paragraph: Markdown has ended the list there, so what follows is not in the item.
 	outOfItem bool
@@ -245,21 +305,29 @@ func (c *converter) walk(n *html.Node) {
 	case atom.Pre:
 		c.block()
 		c.pre++
-		c.codeBlock(strings.TrimRight(textOf(n), "\n"))
+		c.codeBlock(strings.TrimRight(textOf(n), "\n"), codeLanguage(attr(n, "data-language")))
 		c.pre--
 		c.block()
 	case atom.A:
 		c.link(n)
 	case atom.H1, atom.H2, atom.H3:
 		c.block()
-		c.write(strings.Repeat("#", headingLevel(n.DataAtom)) + " ")
-		c.write(escape(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")), false))
+		c.headingLine(n)
 		c.block()
+		for _, gid := range c.headingImages {
+			c.write(ImageToken(gid))
+			c.block()
+		}
+		c.headingImages = nil
 	case atom.Hr:
 		c.block()
 		c.write("---")
 		c.block()
 	case atom.Br:
+		if c.heading > 0 {
+			c.write(" ") // a heading is one line
+			return
+		}
 		c.keepTrailingSpace(func() bool { return c.contentFollows(n, true) })
 		if !c.keepBlankLineInItem(func() bool { return c.contentFollows(n, false) }) {
 			c.write("  ")
@@ -309,6 +377,12 @@ func (c *converter) text(n *html.Node) {
 	t := n.Data
 	if c.pre > 0 {
 		c.write(t)
+		return
+	}
+	if c.heading > 0 {
+		// a heading is one line: its line breaks are spaces (as Markdown shows a setext
+		// heading's), and no line of it starts a block
+		c.write(escape(headingBreaks.Replace(t), false))
 		return
 	}
 	inList := len(c.lists) > 0
@@ -584,6 +658,9 @@ var selfClosingA = regexp.MustCompile(`<a(\s[^<>]*?)\s*/>`)
 func (c *converter) link(n *html.Node) {
 	href := attr(n, "href")
 	text := strings.TrimSpace(textOf(n))
+	if c.heading > 0 {
+		text = headingBreaks.Replace(text) // a heading is one line
+	}
 	gid, typ := attr(n, "data-asana-gid"), attr(n, "data-asana-type")
 	// A mention as Asana returns it has data-asana-type="user" and the name; as FromMarkdown
 	// writes it, only the gid.
@@ -650,8 +727,9 @@ func linkDest(href string) string {
 }
 
 // codeSpan writes s as an inline code span. The backtick fence is longer than any run of
-// backticks in s, so s cannot close it early; line breaks become spaces (a blank line
-// would end the paragraph and leave the rest of s to be read as Markdown).
+// backticks in s, so s cannot close it early; line breaks (which splitCodeLines takes out
+// of <code> first) become spaces (a blank line would end the paragraph and leave the rest
+// of s to be read as Markdown).
 func codeSpan(s string) string {
 	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
 	fence := strings.Repeat("`", longestRun(s, '`')+1)
@@ -662,18 +740,33 @@ func codeSpan(s string) string {
 	return fence + s + fence
 }
 
-// codeBlock writes s as a fenced code block. The fence is longer than any run of backticks
-// in s, so a line of "```" in s does not close it. Inside a blockquote every line gets the
-// quote prefixes, so the code stays in the quote (#51).
-func (c *converter) codeBlock(s string) {
+// codeBlock writes s as a fenced code block, with lang (see codeLanguage) as its info
+// string. The fence is longer than any run of backticks in s, so a line of "```" in s does
+// not close it. Inside a blockquote every line gets the quote prefixes, so the code stays in
+// the quote (#51).
+func (c *converter) codeBlock(s, lang string) {
 	fence := strings.Repeat("`", max(3, longestRun(s, '`')+1))
-	c.write(fence)
+	c.write(fence + lang)
 	for _, l := range strings.Split(s, "\n") {
 		c.newline()
 		c.write(l)
 	}
 	c.newline()
 	c.write(fence)
+}
+
+// languageRe matches a code block's language that can be written as a fence's info string
+// and read back as it is: a name such as "go", "c++", "objective-c" or "c#" (no spaces,
+// backticks, backslashes or character references).
+var languageRe = regexp.MustCompile(`^[A-Za-z0-9_+#.-]{1,64}$`)
+
+// codeLanguage is a code block's language (data-language, which Asana documents for <pre>,
+// #65), or "" if it is not one languageRe takes.
+func codeLanguage(s string) string {
+	if languageRe.MatchString(s) {
+		return s
+	}
+	return ""
 }
 
 // longestRun is the length of the longest run of ch in s.
@@ -817,6 +910,49 @@ func itemHasText(n *html.Node) bool {
 	return false
 }
 
+// headingLine writes heading n as an ATX heading: "#"s, then its text with marks, links,
+// mentions, code and images, as in a paragraph, on one line (#64). An empty heading is its
+// "#"s alone, which Markdown reads as an empty heading ("# " would be the text "#" once
+// keepTrailingSpace kept its space). "#"s at the end of the text are escaped, or Markdown
+// would read them as a closing sequence and drop them. A heading holding blocks (which
+// Asana does not send) is its text alone, as before.
+func (c *converter) headingLine(n *html.Node) {
+	marker := strings.Repeat("#", headingLevel(n.DataAtom))
+	if hasBlock(n) {
+		c.write(marker + " " + escape(strings.TrimSpace(headingBreaks.Replace(textOf(n))), false))
+		return
+	}
+	start := c.b.Len()
+	c.heading++
+	c.children(n)
+	c.heading--
+	body := strings.Trim(string(c.b.Bytes()[start:]), " \t")
+	c.b.Truncate(start)
+	if body == "" {
+		c.write(marker)
+		return
+	}
+	if run := len(body) - len(strings.TrimRight(body, "#")); run > 0 {
+		if rest := body[:len(body)-run]; rest == "" || strings.HasSuffix(rest, " ") || strings.HasSuffix(rest, "\t") {
+			body = rest + `\` + body[len(rest):]
+		}
+	}
+	c.write(marker + " " + body)
+}
+
+// headingBreaks makes line breaks in a heading spaces.
+var headingBreaks = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
+
+// hasBlock reports whether n holds a block element (see blockAtoms).
+func hasBlock(n *html.Node) bool {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		if ch.Type == html.ElementNode && blockAtoms[ch.DataAtom] || hasBlock(ch) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *converter) image(n *html.Node) {
 	gid := attr(n, "data-asana-gid")
 	if gid == "" {
@@ -833,6 +969,10 @@ func (c *converter) image(n *html.Node) {
 	if c.editable {
 		// in place, as FromMarkdown reads it back (a paragraph break would be added text)
 		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
+		return
+	}
+	if c.heading > 0 {
+		c.headingImages = append(c.headingImages, gid) // after the heading (see walk)
 		return
 	}
 	c.block()
@@ -969,18 +1109,32 @@ func onlyOf(line string, mark rune) bool {
 	return true
 }
 
-var manyBlank = regexp.MustCompile(`\n{3,}`)
-
+// tidy makes blank lines empty and runs of them one, outside fenced code: a code block keeps
+// its lines as they are (#65). (Text never starts a line with a fence: escape writes "\`".)
 func tidy(s string) string {
 	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		if asciiBlank(l) { // a line of "　" (U+3000) is text, not a blank line
-			lines[i] = ""
+	out := lines[:0]
+	var fence string // the fence of the open code block, "" outside one
+	for _, l := range lines {
+		_, rest := cutQuotePrefix(l)
+		switch {
+		case fence != "":
+			if closesFence(rest, fence) {
+				fence = ""
+			}
+		case openingFence(rest) != "":
+			fence = openingFence(rest)
+		case asciiBlank(l): // a line of "　" (U+3000) is text, not a blank line
+			if len(out) > 0 && out[len(out)-1] == "" {
+				continue
+			}
+			l = ""
 		}
+		out = append(out, l)
 	}
 	// blank lines are empty now, so trimming newlines on the left keeps the indentation of
 	// the first line (editable Markdown writes it as it is)
-	s = manyBlank.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+	s = strings.Join(out, "\n")
 	return strings.TrimRight(strings.TrimLeft(s, "\n"), " \t\n")
 }
 

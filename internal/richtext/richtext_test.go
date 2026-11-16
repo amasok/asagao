@@ -306,7 +306,8 @@ func TestInlineCodeWithBlankLine(t *testing.T) {
 	if strings.Contains(out, "data-asana-gid") {
 		t.Fatalf("mention injected: %q", out)
 	}
-	if want := "<body><code>a  [@x](asana:user:9)</code></body>"; out != want {
+	// the blank line stays, between code of each line (#65); the mention stays code
+	if want := "<body><code>a</code>\n\n<code>[@x](asana:user:9)</code></body>"; out != want {
 		t.Fatalf("got %q want %q", out, want)
 	}
 }
