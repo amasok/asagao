@@ -596,6 +596,9 @@ func TestNonASCIISpaceIsText(t *testing.T) {
 			want := strings.ReplaceAll(in, "<br>", "\n")
 			roundTrip(t, in, want)
 		}
+		// a line of only it is a line of text, in a paragraph and in an item
+		roundTrip(t, "<body>a\n"+sp+"\nb</body>", "<body>a\n"+sp+"\nb</body>")
+		roundTrip(t, "<body><ul><li>a\n"+sp+"\nb</li></ul></body>", "<body><ul><li>a\n"+sp+"\nb</li></ul></body>")
 		if got := FromMarkdown("> " + sp); got != "<body><blockquote>"+sp+"</blockquote></body>" {
 			t.Errorf("typed quote of %q: %q", sp, got)
 		}

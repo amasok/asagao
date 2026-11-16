@@ -974,7 +974,7 @@ var manyBlank = regexp.MustCompile(`\n{3,}`)
 func tidy(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
-		if strings.TrimSpace(l) == "" {
+		if asciiBlank(l) { // a line of "　" (U+3000) is text, not a blank line
 			lines[i] = ""
 		}
 	}
