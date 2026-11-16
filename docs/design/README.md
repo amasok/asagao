@@ -9,7 +9,7 @@ DDD の考え方で、ドメイン・アプリケーション層・リポジト�
 3. [書き込みの流れ](write-flow.md) — 入力 → ローカルに反映 → outbox → push → 照合 → 確定
 4. [集約と不変条件](aggregates.md) — 1 つのトランザクションで守る決まり
 5. [目標の構成と依存の向き](architecture.md) — 層、パッケージの置き場所、今との違い
-6. [依存の向きを守らせる方法](dependency-rules.md) — go list を使うテストの提案
+6. [依存の向きを守らせる方法](dependency-rules.md) — go list を使うテスト (`internal/archtest`)
 7. [移行の順番](migration-plan.md) — 段階 a〜d の PR の範囲
 8. [ADR](adr/) — 判断ごとの記録
 
