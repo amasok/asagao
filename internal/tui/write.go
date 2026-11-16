@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
@@ -102,6 +103,13 @@ func (m *Model) requestSync() tea.Cmd {
 		return nil
 	}
 	return m.startSync()
+}
+
+// tasks returns the task use cases on the cache, with the clock stopped at now: the time
+// the key was pressed, which the TUI's writes use. The use cases only write locally and
+// queue in the outbox; sending is afterWrite's sync, as for every other write.
+func (m *Model) tasks(now time.Time) *app.Tasks {
+	return &app.Tasks{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
 }
 
 // afterWrite reloads everything a write can change and asks for a sync.
@@ -350,26 +358,13 @@ func (m *Model) createTask(input string) tea.Cmd {
 			}
 		}
 	}
-	st, now := m.deps.Store, m.deps.Now()
+	in := app.CreateHereInput{Name: name, Due: due}
+	if sc.kind == scopeProject {
+		in.Project, in.Section = sc.project, section
+	}
+	tasks := m.tasks(m.deps.Now())
 	return func() tea.Msg {
-		nt := store.NewTask{Name: name, DueOn: due}
-		var err error
-		if sc.kind == scopeProject {
-			nt.ProjectGID, nt.SectionGID = sc.project, section
-			if nt.SectionGID == "" {
-				if nt.SectionGID, err = st.FirstSection(m.ctx, sc.project); err != nil {
-					return writeDoneMsg{err: err}
-				}
-			}
-		} else {
-			if nt.WorkspaceGID, err = st.DefaultWorkspace(m.ctx); err != nil {
-				return writeDoneMsg{err: err}
-			}
-			if nt.AssigneeGID, err = st.MeGID(m.ctx); err != nil {
-				return writeDoneMsg{err: err}
-			}
-		}
-		gid, err := st.CreateTaskLocal(m.ctx, nt, now)
+		gid, err := tasks.CreateHere(m.ctx, in)
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
