@@ -442,3 +442,34 @@ func TestAtLineStart(t *testing.T) {
 		}
 	}
 }
+
+// roundTrip converts rich text to editable Markdown and back, twice, and checks that the
+// first round gives want and the second changes nothing.
+func roundTrip(t *testing.T, in, want string) {
+	t.Helper()
+	md := ToEditableMarkdown(in)
+	h1 := FromMarkdown(md)
+	md2 := ToEditableMarkdown(h1)
+	h2 := FromMarkdown(md2)
+	if h1 != want || h2 != h1 {
+		t.Errorf("in   %q\nmd   %q\nh1   %q\nmd2  %q\nh2   %q\nwant %q", in, md, h1, md2, h2, want)
+	}
+}
+
+// Whitespace at the edges of emphasis is written outside the marks: "**a **b" would not be
+// emphasis in Markdown, and the marks would become text (#49).
+func TestEmphasisWithSpaceAtItsEdges(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><strong>a </strong>b</body>": "<body><strong>a</strong> b</body>",
+		"<body>a<strong> b</strong></body>": "<body>a <strong>b</strong></body>",
+		"<body>x<em>a \n</em>b</body>":      "<body>x<em>a</em> \nb</body>",
+		"<body>x<em>a<br></em>b</body>":     "<body>x<em>a</em>\nb</body>",
+		"<body>x<s>\ta\t</s>y</body>":       "<body>x\t<s>a</s>\ty</body>",
+		"<body>x<b><i> a </i></b>y</body>":  "<body>x <em><strong>a</strong></em> y</body>",
+		"<body>x<b><u> a</u> </b>y</body>":  "<body>x <strong>a</strong> y</body>",
+		"<body>x<b>a </b>y</body>":          "<body>x<strong>a</strong> y</body>",
+		"<body><b> </b>a</body>":            "<body> a</body>",
+	} {
+		roundTrip(t, in, want)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -52,6 +53,7 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	if err != nil {
 		return s
 	}
+	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
 	return tidy(c.b.String())
@@ -316,6 +318,98 @@ func (c *converter) wrap(n *html.Node, mark string) {
 	c.write(mark)
 	c.children(n)
 	c.write(mark)
+}
+
+// markAtoms are the elements written as emphasis marks ("**", "*", "~~", see walk).
+var markAtoms = map[atom.Atom]bool{
+	atom.Strong: true, atom.B: true, atom.Em: true, atom.I: true,
+	atom.S: true, atom.Strike: true, atom.Del: true,
+}
+
+// moveEdgeSpaceOutOfMarks moves whitespace (and line breaks) at the start and the end of
+// emphasis out of it: "<strong>a </strong>b" becomes "<strong>a</strong> b". Markdown does
+// not close "**" right after a space nor open it right before one, so "**a **b" would be
+// read back as text with the marks in it (#49). Where the space is, before or after the
+// mark, looks the same.
+func moveEdgeSpaceOutOfMarks(n *html.Node) {
+	for ch := n.FirstChild; ch != nil; {
+		next := ch.NextSibling
+		moveEdgeSpaceOutOfMarks(ch) // inner marks first: their spaces then are at our edges
+		if ch.Type == html.ElementNode && markAtoms[ch.DataAtom] && ch.Parent != nil {
+			for _, s := range edgeSpace(ch, true) {
+				ch.Parent.InsertBefore(s, ch)
+			}
+			after := edgeSpace(ch, false)
+			for i := len(after) - 1; i >= 0; i-- {
+				ch.Parent.InsertBefore(after[i], next)
+			}
+		}
+		ch = next
+	}
+}
+
+// edgeSpace removes the whitespace text and line breaks at the start (or the end) of n,
+// looking into elements that are written only as their children (<u>, <span>, marks), and
+// returns them in document order.
+func edgeSpace(n *html.Node, start bool) []*html.Node {
+	var out []*html.Node
+	for {
+		ch := n.FirstChild
+		if !start {
+			ch = n.LastChild
+		}
+		switch {
+		case ch == nil:
+			return out
+		case ch.Type == html.ElementNode && ch.DataAtom == atom.Br:
+			n.RemoveChild(ch)
+			out = appendEdge(out, ch, start)
+			continue
+		case ch.Type == html.ElementNode && transparentAtoms[ch.DataAtom]:
+			inner := edgeSpace(ch, start)
+			if start {
+				out = append(out, inner...)
+			} else {
+				out = append(inner, out...)
+			}
+			if ch.FirstChild != nil {
+				return out
+			}
+			n.RemoveChild(ch) // nothing left in it
+			continue
+		case ch.Type != html.TextNode:
+			return out
+		}
+		var sp string
+		if start {
+			rest := strings.TrimLeftFunc(ch.Data, unicode.IsSpace)
+			sp, ch.Data = ch.Data[:len(ch.Data)-len(rest)], rest
+		} else {
+			rest := strings.TrimRightFunc(ch.Data, unicode.IsSpace)
+			sp, ch.Data = ch.Data[len(rest):], rest
+		}
+		if sp != "" {
+			out = appendEdge(out, &html.Node{Type: html.TextNode, Data: sp}, start)
+		}
+		if ch.Data != "" {
+			return out
+		}
+		n.RemoveChild(ch)
+	}
+}
+
+// appendEdge adds a node taken from the start (appended) or the end (prepended) of an element.
+func appendEdge(out []*html.Node, n *html.Node, start bool) []*html.Node {
+	if start {
+		return append(out, n)
+	}
+	return append([]*html.Node{n}, out...)
+}
+
+// transparentAtoms are inline elements written only as their children.
+var transparentAtoms = map[atom.Atom]bool{
+	atom.Strong: true, atom.B: true, atom.Em: true, atom.I: true,
+	atom.S: true, atom.Strike: true, atom.Del: true, atom.U: true, atom.Span: true, atom.Font: true,
 }
 
 // selfClosingA matches an <a> tag written as self-closing ("<a data-asana-gid="1"/>").
