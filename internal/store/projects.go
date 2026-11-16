@@ -97,7 +97,10 @@ func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, t
 	gid := LocalPrefix + randomID()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var n int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM projects WHERE gid = ?", projectGID).Scan(&n); err != nil || n == 0 {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM projects WHERE gid = ?", projectGID).Scan(&n); err != nil {
+			return fmt.Errorf("project %s: %w", projectGID, err)
+		}
+		if n == 0 {
 			return fmt.Errorf("project %s: %w", projectGID, ErrNotFound)
 		}
 		ts := formatTime(now)
