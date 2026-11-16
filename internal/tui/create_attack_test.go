@@ -99,29 +99,32 @@ func TestCreateHereSameAsBeforeA3(t *testing.T) {
 		"subtask+project": {Parent: "t1", Project: "p1", Section: "s2"},
 	}
 	for place, base := range places {
-		for _, ws := range []bool{true, false} {
-			for _, me := range []bool{true, false} {
-				for _, name := range names {
-					for _, due := range []string{"2026-11-14"} {
-						in := base
-						in.Name, in.Due = name, due
-						label := fmt.Sprintf("%s ws=%v me=%v name=%q due=%q", place, ws, me, name, due)
-						a, b := attackStore(t, ws, me), attackStore(t, ws, me)
-						gw, ew := legacyCreate(context.Background(), a, in, now)
-						tasks := &app.Tasks{Store: b, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
-						gn, en := tasks.CreateHere(context.Background(), in)
-						if fmt.Sprint(ew) != fmt.Sprint(en) || (ew == nil) != (en == nil) {
-							t.Errorf("%s: error %v vs %v", label, ew, en)
-							continue
-						}
-						if ew != nil {
-							gw, gn = "", ""
-						}
-						if dw, dn := attackDump(t, a, gw), attackDump(t, b, gn); dw != dn {
-							t.Errorf("%s:\nmain: %s\na3:   %s", label, dw, dn)
-						}
+		// a missing workspace or me only matters in My Tasks; elsewhere both are there
+		cache := [][2]bool{{true, true}}
+		if place == "mytasks" {
+			cache = [][2]bool{{true, true}, {true, false}, {false, true}, {false, false}}
+		}
+		for _, c := range cache {
+			ws, me := c[0], c[1]
+			for _, name := range names {
+				in := base
+				in.Name, in.Due = name, "2026-11-14"
+				label := fmt.Sprintf("%s ws=%v me=%v name=%q", place, ws, me, name)
+				t.Run(label, func(t *testing.T) {
+					a, b := attackStore(t, ws, me), attackStore(t, ws, me)
+					gw, ew := legacyCreate(context.Background(), a, in, now)
+					tasks := &app.Tasks{Store: b, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+					gn, en := tasks.CreateHere(context.Background(), in)
+					if fmt.Sprint(ew) != fmt.Sprint(en) || (ew == nil) != (en == nil) {
+						t.Fatalf("error %v vs %v", ew, en)
 					}
-				}
+					if ew != nil {
+						gw, gn = "", ""
+					}
+					if dw, dn := attackDump(t, a, gw), attackDump(t, b, gn); dw != dn {
+						t.Errorf("\nmain: %s\na3:   %s", dw, dn)
+					}
+				})
 			}
 		}
 	}
