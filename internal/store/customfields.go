@@ -676,7 +676,7 @@ func (s *Store) SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID strin
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var modifiedAt string
 		if err := tx.QueryRowContext(ctx, "SELECT modified_at FROM tasks WHERE gid = ?", taskGID).Scan(&modifiedAt); err != nil {
-			return fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
+			return notFound(err, "task "+taskGID)
 		}
 		d, err := getFieldDef(ctx, tx, fieldGID)
 		if err != nil {

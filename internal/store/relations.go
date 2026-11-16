@@ -139,7 +139,7 @@ func (s *Store) SetFollowerLocal(ctx context.Context, taskGID, userGID string, f
 func (s *Store) SetProjectLocal(ctx context.Context, taskGID, projectGID, sectionGID string, add bool, now time.Time) error {
 	var name string
 	if err := s.db.QueryRowContext(ctx, "SELECT name FROM projects WHERE gid = ?", projectGID).Scan(&name); err != nil {
-		return fmt.Errorf("project %s: %w", projectGID, ErrNotFound)
+		return notFound(err, "project "+projectGID)
 	}
 	kind := OpAddProject
 	if add {
@@ -186,7 +186,7 @@ func (s *Store) DuplicateTaskLocal(ctx context.Context, gid, name string, now ti
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var orig string
 		if err := tx.QueryRowContext(ctx, "SELECT name FROM tasks WHERE gid = ?", gid).Scan(&orig); err != nil {
-			return fmt.Errorf("task %s: %w", gid, ErrNotFound)
+			return notFound(err, "task "+gid)
 		}
 		if strings.TrimSpace(name) == "" {
 			name = orig + " のコピー"

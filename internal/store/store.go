@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
@@ -57,30 +58,74 @@ func (s *Store) Path() string { return s.path }
 // busyTimeout is the busy_timeout set in Open's DSN.
 const busyTimeout = 5 * time.Second
 
-// migrateRetry migrates, trying again while it fails as busy; it starts no new try after
-// busyTimeout, so with the last try's own wait for the lock it gives up within about twice
-// that. Once ctx is done it stops trying and returns the last busy error. When
-// several processes open a new file at the same moment, setting journal_mode=WAL on a
-// connection can fail as busy without waiting for busy_timeout. migrate is safe to run
+// migrateRetry migrates, trying again while it fails as busy, for at most about
+// busyTimeout in all: each try waits for the write lock only for the time that is left
+// (see migrateWithin), so the last try's wait does not add another busyTimeout to it.
+// When several processes open a new file at the same moment, setting journal_mode=WAL on
+// a connection can fail as busy without waiting for busy_timeout. migrate is safe to run
 // again: it reads the version under the write lock.
 func (s *Store) migrateRetry(ctx context.Context) error {
-	deadline := time.Now().Add(busyTimeout)
+	return retryBusy(ctx, busyTimeout, s.migrateWithin)
+}
+
+// retryBusy calls try until it does not fail as busy, or budget has passed since the
+// first call. try is given how long it may wait for a lock (never past the budget). Once
+// ctx is done it stops, returning ctx's error with the last busy error, so that a
+// cancellation is not reported as busy alone.
+func retryBusy(ctx context.Context, budget time.Duration, try func(ctx context.Context, wait time.Duration) error) error {
+	deadline := time.Now().Add(budget)
 	for {
-		err := s.migrate(ctx)
-		if !isBusy(err) || time.Now().After(deadline) {
+		err := try(ctx, max(time.Until(deadline), 0))
+		if !isBusy(err) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("%w (last try: %w)", ctx.Err(), err)
+		}
+		if !time.Now().Before(deadline) {
 			return err
 		}
 		select {
 		case <-ctx.Done():
-			return err
+			return fmt.Errorf("%w (last try: %w)", ctx.Err(), err)
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
 }
 
-func (s *Store) migrate(ctx context.Context) error {
+// migrateWithin migrates on one connection whose busy_timeout is wait, then sets it back
+// to busyTimeout before the connection goes back to the pool (or discards the connection
+// if that fails, so that no pooled connection keeps the shorter wait).
+func (s *Store) migrateWithin(ctx context.Context, wait time.Duration) (err error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	setWait := func(ctx context.Context, d time.Duration) error {
+		_, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = "+strconv.FormatInt(d.Milliseconds(), 10))
+		return err
+	}
+	if err := setWait(ctx, wait); err != nil {
+		return err
+	}
+	defer func() {
+		if setWait(context.Background(), busyTimeout) != nil {
+			conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	return migrate(ctx, conn)
+}
+
+// migrator is what migrate needs of a *sql.DB or *sql.Conn.
+type migrator interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+func migrate(ctx context.Context, db migrator) error {
 	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
 	if version >= len(migrations) {
@@ -89,7 +134,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	for {
 		// The version is read under the write lock: another process opening the same file
 		// at the same time may have applied the migration while this one waited for it.
-		tx, err := s.db.BeginTx(ctx, nil)
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}

@@ -36,6 +36,9 @@ func TestBlockLookalikesStayText(t *testing.T) {
 			md := ToEditableMarkdown(in)
 			out := FromMarkdown(md)
 			want := strings.Count(in, "<ul>") + strings.Count(in, "<ol>")
+			if wrap.name == "list in quote" {
+				want = 0 // Asana takes no list in a quote: it is written as text (#60)
+			}
 			got := strings.Count(out, "<ul>") + strings.Count(out, "<ol>")
 			bad := got != want ||
 				strings.Count(out, "<blockquote>") != strings.Count(in, "<blockquote>") ||
