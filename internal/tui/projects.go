@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/richtext"
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
 )
@@ -238,13 +238,9 @@ func (m *Model) applyStatus(msg statusEditDoneMsg) tea.Cmd {
 		m.status = "ステータス更新を取り消しました"
 		return nil
 	}
-	st, now := m.deps.Store, m.deps.Now()
+	statuses, in := m.statusUpdates(m.deps.Now()), app.StatusInput{Project: msg.project, Status: status, Title: title, Text: body}
 	return func() tea.Msg {
-		me, err := st.Me(m.ctx)
-		if err != nil {
-			return writeDoneMsg{err: err}
-		}
-		if _, err := st.CreateStatusLocal(m.ctx, msg.project, status, title, richtext.StatusUpdate.PlainFromMarkdown(body), richtext.StatusUpdate.FromMarkdown(body), me, now); err != nil {
+		if _, err := statuses.CreateHere(m.ctx, in); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "ステータスを投稿しました（" + store.StatusLabel(status) + "）"}
