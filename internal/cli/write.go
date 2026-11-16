@@ -166,7 +166,7 @@ type createOpts struct {
 func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Time) (string, error) {
 	nt := store.NewTask{Name: o.name, ParentGID: o.parent}
 	if o.notes != "" { // Markdown -> Asana rich text
-		nt.Notes, nt.HTMLNotes = richtext.PlainFromMarkdown(o.notes), richtext.FromMarkdown(o.notes)
+		nt.Notes, nt.HTMLNotes = richtext.TaskNotes.PlainFromMarkdown(o.notes), richtext.TaskNotes.FromMarkdown(o.notes)
 	}
 	var err error
 	if nt.DueOn, err = parseDate(o.due, now); err != nil {
@@ -600,7 +600,7 @@ func (a *app) commentCmd() *cobra.Command {
 				return err
 			}
 			text := strings.Join(args[1:], " ")
-			gid, err := st.AddRichCommentLocal(ctx, args[0], richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, time.Now())
+			gid, err := st.AddRichCommentLocal(ctx, args[0], richtext.Comment.PlainFromMarkdown(text), richtext.Comment.FromMarkdown(text), me, time.Now())
 			if err != nil {
 				return err
 			}
