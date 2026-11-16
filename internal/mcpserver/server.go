@@ -664,11 +664,8 @@ func (s *Server) renameSection(ctx context.Context, _ *mcp.CallToolRequest, in R
 }
 
 func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddCommentInput) (*mcp.CallToolResult, WriteOutput, error) {
-	me, err := s.Store.Me(ctx)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	if _, err := s.Store.AddRichCommentLocal(ctx, in.GID, richtext.Comment.PlainFromMarkdown(in.Text), richtext.Comment.FromMarkdown(in.Text), me, s.Now()); err != nil {
+	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	if _, err := comments.Add(ctx, in.GID, in.Text); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
@@ -924,15 +921,8 @@ type CreateStatusInput struct {
 }
 
 func (s *Server) createStatus(ctx context.Context, _ *mcp.CallToolRequest, in CreateStatusInput) (*mcp.CallToolResult, WriteOutput, error) {
-	gid, err := s.Store.ResolveProject(ctx, in.Project)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	me, err := s.Store.Me(ctx)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	if _, err := s.Store.CreateStatusLocal(ctx, gid, in.Status, in.Title, richtext.StatusUpdate.PlainFromMarkdown(in.Text), richtext.StatusUpdate.FromMarkdown(in.Text), me, s.Now()); err != nil {
+	statuses := app.Status{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	if _, err := statuses.Create(ctx, app.StatusInput{Project: in.Project, Status: in.Status, Title: in.Title, Text: in.Text}); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	out := s.push(ctx, "")

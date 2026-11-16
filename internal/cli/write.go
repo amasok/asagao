@@ -573,12 +573,8 @@ func (a *app) commentCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			me, err := st.Me(ctx)
-			if err != nil {
-				return err
-			}
-			text := strings.Join(args[1:], " ")
-			gid, err := st.AddRichCommentLocal(ctx, args[0], richtext.Comment.PlainFromMarkdown(text), richtext.Comment.FromMarkdown(text), me, time.Now())
+			comments := usecase.Comments{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			gid, err := comments.Add(ctx, args[0], strings.Join(args[1:], " "))
 			if err != nil {
 				return err
 			}
