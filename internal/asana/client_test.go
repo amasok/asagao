@@ -168,3 +168,50 @@ func TestPostIsRetriedOn429(t *testing.T) {
 		t.Fatalf("task=%+v err=%v calls=%d", task, err, calls)
 	}
 }
+
+// MaxRetryDelay caps each wait (Retry-After included), and OnRetry hears about each retry
+// before the wait.
+func TestMaxRetryDelayAndOnRetry(t *testing.T) {
+	n := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		n++
+		switch n {
+		case 1:
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+		case 2:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			fmt.Fprint(w, `{"data":{"gid":"1","name":"me"}}`)
+		}
+	})
+	var slept []time.Duration
+	c.sleep = func(_ context.Context, d time.Duration) error { slept = append(slept, d); return nil }
+	type retry struct {
+		status int
+		wait   time.Duration
+	}
+	var heard []retry
+	c.OnRetry = func(status int, wait time.Duration) { heard = append(heard, retry{status, wait}) }
+	c.MaxRetryDelay = 3 * time.Second
+	if _, err := c.Me(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// 60 s asked -> 3 s; the backoff of the second retry (2 s) is under the cap
+	if want := []time.Duration{3 * time.Second, 2 * time.Second}; fmt.Sprint(slept) != fmt.Sprint(want) {
+		t.Errorf("slept %v, want %v", slept, want)
+	}
+	if want := []retry{{429, 3 * time.Second}, {503, 2 * time.Second}}; fmt.Sprint(heard) != fmt.Sprint(want) {
+		t.Errorf("OnRetry %v, want %v", heard, want)
+	}
+
+	// without a cap, Retry-After is followed as before
+	n, slept = 0, nil
+	c.MaxRetryDelay, c.OnRetry = 0, nil
+	if _, err := c.Me(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if slept[0] != 60*time.Second {
+		t.Errorf("uncapped wait %v", slept[0])
+	}
+}

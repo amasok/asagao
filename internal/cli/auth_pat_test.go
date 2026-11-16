@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -125,5 +127,86 @@ func TestAuthStatusMethod(t *testing.T) {
 	_ = ts.Save(ctx, &tokenstore.Credentials{PersonalAccessToken: "secret-pat", UserName: "U"})
 	if out := status(); !strings.Contains(out, "方式: Personal Access Token") || strings.Contains(out, "secret-pat") {
 		t.Fatalf("pat: %s", out)
+	}
+}
+
+// When Asana answers the token check with 5xx (or 429), login retries once with a short,
+// announced wait and then fails saying it is Asana's side, instead of the sync backoff of
+// about 30 s (#24). The earlier login is kept.
+func TestAuthLoginPATServerErrorFailsFast(t *testing.T) {
+	ts := authTestEnv(t, "")
+	ctx := context.Background()
+	earlier := &tokenstore.Credentials{PersonalAccessToken: "old-pat", UserGID: "42"}
+	if err := ts.Save(ctx, earlier); err != nil {
+		t.Fatal(err)
+	}
+	old := loginRetryDelay
+	loginRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() { loginRetryDelay = old })
+
+	for _, tc := range []struct {
+		status     int
+		retryAfter string
+	}{
+		{http.StatusServiceUnavailable, ""},
+		{http.StatusInternalServerError, ""},
+		{http.StatusTooManyRequests, "60"}, // Retry-After is capped too
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+			start := time.Now()
+			out, err := runAuthCLI(t, srv.URL, "new-pat\n", "auth", "login", "--pat")
+			if err == nil {
+				t.Fatalf("login should fail\n%s", out)
+			}
+			if d := time.Since(start); d > 5*time.Second {
+				t.Errorf("login took %v", d)
+			}
+			if n := calls.Load(); n != 2 {
+				t.Errorf("asked Asana %d times, want 2 (one retry)", n)
+			}
+			if !strings.Contains(out, "もう一度確かめます") || !strings.Contains(out, fmt.Sprint(tc.status)) {
+				t.Errorf("the wait should be announced:\n%s", out)
+			}
+			if msg := err.Error(); !strings.Contains(msg, "一時的") || !strings.Contains(msg, fmt.Sprint(tc.status)) || strings.Contains(msg, "new-pat") {
+				t.Errorf("error = %q", msg)
+			}
+			if c, err := ts.Load(ctx); err != nil || *c != *earlier {
+				t.Fatalf("the earlier login should be kept: %+v, %v", c, err)
+			}
+		})
+	}
+}
+
+// A single 5xx is retried and the login goes through.
+func TestAuthLoginPATRetriesOnce(t *testing.T) {
+	ts := authTestEnv(t, "")
+	old := loginRetryDelay
+	loginRetryDelay = 10 * time.Millisecond
+	t.Cleanup(func() { loginRetryDelay = old })
+	var calls atomic.Int32
+	me := fakeAsanaMe(t, map[string]string{"good-pat": "42"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		me.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	out, err := runAuthCLI(t, srv.URL, "good-pat\n", "auth", "login", "--pat")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if c, err := ts.Load(context.Background()); err != nil || c.PersonalAccessToken != "good-pat" || c.UserGID != "42" {
+		t.Fatalf("saved %+v, %v", c, err)
 	}
 }

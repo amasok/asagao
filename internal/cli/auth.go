@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
@@ -88,6 +90,9 @@ OAuth で使うなら、Asana に OAuth アプリを登録して config.toml の
 	return cmd
 }
 
+// loginRetryDelay is the longest wait before retrying the token check at login.
+var loginRetryDelay = 2 * time.Second
+
 // loginPAT reads a Personal Access Token, checks it with /users/me and saves it.
 func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	ctx := cmd.Context()
@@ -95,9 +100,20 @@ func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	if err != nil {
 		return err
 	}
-	me, err := a.newClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"})).Me(ctx)
+	c := a.newClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"}))
+	// The user is waiting: retry a busy or failing Asana once, briefly and saying so, not
+	// with the backoff of a sync (about 30 s in all, #24).
+	c.MaxRetries, c.MaxRetryDelay = 1, loginRetryDelay
+	c.OnRetry = func(status int, wait time.Duration) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Asana が応答しません (HTTP %d)。%s後にもう一度確かめます…\n", status, wait.Round(time.Second))
+	}
+	me, err := c.Me(ctx)
 	if asana.IsUnauthorized(err) {
 		return fmt.Errorf("Asana がこのトークンを受け付けませんでした。貼り付け間違いがないか確かめるか、%s で作り直してください", auth.PATConsoleURL)
+	}
+	var ae *asana.Error
+	if errors.As(err, &ae) && (ae.Status >= 500 || ae.Status == http.StatusTooManyRequests) {
+		return fmt.Errorf("Asana が一時的に応答しません (HTTP %d)。トークンは保存していません。少し待ってから、もう一度 asana-tui auth login --pat を実行してください", ae.Status)
 	}
 	if err != nil {
 		return fmt.Errorf("トークンの確認 (/users/me): %w", err)
