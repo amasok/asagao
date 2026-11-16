@@ -326,3 +326,36 @@ func TestRunWithoutOptionalTaskFields(t *testing.T) {
 		srv.Close()
 	}
 }
+
+// A sync prunes the mappings of things created offline that nothing needs any more (#44).
+func TestRunPrunesOldResults(t *testing.T) {
+	fake := &fakeAsana{t: t, projectTasks: `[]`}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	api := asana.NewClient(srv.Client())
+	api.BaseURL = srv.URL
+	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return now }}
+	if err := st.SetSyncState(ctx, store.ResultStory+"local:x", "1900"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SyncState(ctx, store.ResultStory+"local:x"); v != "1900" {
+		t.Fatal("deleted at once")
+	}
+	now = now.Add(store.ResultGrace)
+	if _, err := s.Run(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SyncState(ctx, store.ResultStory+"local:x"); v != "" {
+		t.Fatalf("still there after the grace: %q", v)
+	}
+}
