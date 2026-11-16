@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 	"testing"
 	"time"
 
@@ -130,7 +129,7 @@ func TestCreateTaskSameAsBeforeA1(t *testing.T) {
 			if (ea == nil) == res.IsError {
 				t.Fatalf("legacy err = %v, new IsError = %v (%s)", ea, res.IsError, toolError(res))
 			}
-			if ea != nil && !strings.Contains(toolError(res), ea.Error()) {
+			if ea != nil && toolError(res) != ea.Error() {
 				t.Fatalf("error text differs:\n legacy %q\n new    %q", ea, toolError(res))
 			}
 			if da, db := dumpAll(t, a), dumpAll(t, b); da != db {
