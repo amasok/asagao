@@ -2034,7 +2034,7 @@ func TestPushRichComment5xxButCreated(t *testing.T) {
 	ws, _, s, st := setupPush(t)
 	ctx := context.Background()
 	md := "見て [資料](https://example.com/doc) と [@Partner](asana:user:u2)\n\n- 一つ目\n- 二つ目"
-	_, err := st.AddRichCommentLocal(ctx, "t1", richtext.PlainFromMarkdown(md), richtext.FromMarkdown(md), store.UserRef{GID: "me"}, now)
+	_, err := st.AddRichCommentLocal(ctx, "t1", richtext.Comment.PlainFromMarkdown(md), richtext.Comment.FromMarkdown(md), store.UserRef{GID: "me"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

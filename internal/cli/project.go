@@ -112,7 +112,7 @@ func (a *app) projectStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := st.CreateStatusLocal(ctx, gid, status, title, richtext.PlainFromMarkdown(text), richtext.FromMarkdown(text), me, time.Now()); err != nil {
+			if _, err := st.CreateStatusLocal(ctx, gid, status, title, richtext.StatusUpdate.PlainFromMarkdown(text), richtext.StatusUpdate.FromMarkdown(text), me, time.Now()); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{}, "ステータスを投稿しました")

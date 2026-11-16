@@ -466,7 +466,7 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 	now := s.Now()
 	nt := store.NewTask{Name: in.Name, ParentGID: in.Parent}
 	if in.Notes != "" {
-		nt.Notes, nt.HTMLNotes = richtext.PlainFromMarkdown(in.Notes), richtext.FromMarkdown(in.Notes)
+		nt.Notes, nt.HTMLNotes = richtext.TaskNotes.PlainFromMarkdown(in.Notes), richtext.TaskNotes.FromMarkdown(in.Notes)
 	}
 	var err error
 	if nt.DueOn, err = dates.Parse(in.DueOn, now); err != nil {
@@ -524,8 +524,8 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		changes["name"] = *in.Name
 	}
 	if in.Notes != nil {
-		changes["notes"] = richtext.PlainFromMarkdown(*in.Notes)
-		changes["html_notes"] = richtext.FromMarkdown(*in.Notes)
+		changes["notes"] = richtext.TaskNotes.PlainFromMarkdown(*in.Notes)
+		changes["html_notes"] = richtext.TaskNotes.FromMarkdown(*in.Notes)
 	}
 	if in.Liked != nil {
 		changes["liked"] = *in.Liked
@@ -698,7 +698,7 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if _, err := s.Store.AddRichCommentLocal(ctx, in.GID, richtext.PlainFromMarkdown(in.Text), richtext.FromMarkdown(in.Text), me, s.Now()); err != nil {
+	if _, err := s.Store.AddRichCommentLocal(ctx, in.GID, richtext.Comment.PlainFromMarkdown(in.Text), richtext.Comment.FromMarkdown(in.Text), me, s.Now()); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
@@ -962,7 +962,7 @@ func (s *Server) createStatus(ctx context.Context, _ *mcp.CallToolRequest, in Cr
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if _, err := s.Store.CreateStatusLocal(ctx, gid, in.Status, in.Title, richtext.PlainFromMarkdown(in.Text), richtext.FromMarkdown(in.Text), me, s.Now()); err != nil {
+	if _, err := s.Store.CreateStatusLocal(ctx, gid, in.Status, in.Title, richtext.StatusUpdate.PlainFromMarkdown(in.Text), richtext.StatusUpdate.FromMarkdown(in.Text), me, s.Now()); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	out := s.push(ctx, "")
