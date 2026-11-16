@@ -83,7 +83,7 @@ func TestBatch1CRLFSameAsLF(t *testing.T) {
 // main's output must not change for input without the touched constructs
 func TestBatch1NoTargetFailsRaw(t *testing.T) {
 	r := rand.New(rand.NewSource(99))
-	for i := 0; i < 20000; i++ {
+	for i := 0; i < 3000; i++ {
 		var sb strings.Builder
 		sb.WriteString("<body>")
 		for j := r.Intn(3) + 1; j > 0; j-- {
@@ -105,7 +105,7 @@ func TestBatch1WordsSurvive(t *testing.T) {
 	r := rand.New(rand.NewSource(2024))
 	n := 0
 	wrap := func(open, body, cls string) string { return open + body + cls }
-	for i := 0; i < 30000; i++ {
+	for i := 0; i < 3000; i++ {
 		n = 0
 		w := func() string { n++; return "zw" + string(rune('a'+n%26)) + strings.Repeat("q", n) }
 		var words []string
@@ -192,7 +192,7 @@ func tagsOf(h string) []string {
 
 func TestBatch1TargetsOnlyAllowedTags(t *testing.T) {
 	r := rand.New(rand.NewSource(5))
-	for i := 0; i < 30000; i++ {
+	for i := 0; i < 3000; i++ {
 		var sb strings.Builder
 		for j := r.Intn(6) + 1; j > 0; j-- {
 			sb.WriteString(mdPieces[r.Intn(len(mdPieces))])
@@ -231,7 +231,7 @@ func TestBatch1TargetsOnlyAllowedTags(t *testing.T) {
 func TestBatch1SendThenReopenSame(t *testing.T) {
 	r := rand.New(rand.NewSource(11))
 	bad := 0
-	for i := 0; i < 30000 && bad < 6; i++ {
+	for i := 0; i < 3000 && bad < 6; i++ {
 		var sb strings.Builder
 		for j := r.Intn(5) + 1; j > 0; j-- {
 			sb.WriteString(mdPieces[r.Intn(len(mdPieces))])

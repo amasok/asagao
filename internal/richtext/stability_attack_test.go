@@ -16,9 +16,10 @@ func genInlineRT(r *rand.Rand, depth int) string {
 			sb.WriteString("<br>")
 		case 1:
 			if r.Intn(4) == 0 && depth == 0 {
-				// inline code over line breaks, blank lines among them (#65). A space before it:
-				// an email address right before "`" is linked with the "`" in it (#77)
-				sb.WriteString(" <code>" + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + []string{"\n", "\n\n", "\n \n"}[r.Intn(3)] + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + "</code> ")
+				// inline code over line breaks, blank lines among them (#65), right after a word
+				// too (an email address there was linked with the "`" in it, #77)
+				sp := []string{"", " "}[r.Intn(2)]
+				sb.WriteString(sp + "<code>" + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + []string{"\n", "\n\n", "\n \n"}[r.Intn(3)] + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + "</code>" + sp)
 				continue
 			}
 			sb.WriteString("\n")
@@ -66,6 +67,14 @@ func genBlockRT(r *rand.Rand, depth int) string {
 				s += "<li>" + genInlineRT(r, 0)
 				if r.Intn(4) == 0 && depth < 1 {
 					s += "<ul><li>x" + genInlineRT(r, 0) + "</li></ul>"
+					if r.Intn(2) == 0 {
+						s += genInlineRT(r, 0) // text after the nested list (#59)
+					}
+				}
+				if r.Intn(6) == 0 {
+					// what Asana's rich text does not take in an item (#59, #80)
+					s += []string{"<blockquote>q</blockquote>", "<blockquote>" + genInlineRT(r, 0) + "</blockquote>", "<pre>c\n\n d</pre>", "<hr/>", "<h1>" + genInlineRT(r, 0) + "</h1>",
+						"<blockquote>t<pre>p</pre>u</blockquote>", "<blockquote>t<ul><li>x</li></ul>u</blockquote>"}[r.Intn(7)] + genInlineRT(r, 0)
 				}
 				s += "</li>"
 			}

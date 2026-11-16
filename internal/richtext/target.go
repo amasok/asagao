@@ -40,3 +40,13 @@ type Converter struct{}
 func (Converter) TaskNotes(md string) (html, plain string) {
 	return TaskNotes.FromMarkdown(md), TaskNotes.PlainFromMarkdown(md)
 }
+
+// Comment converts a comment to a story's html_text and its plain text.
+func (Converter) Comment(md string) (html, plain string) {
+	return Comment.FromMarkdown(md), Comment.PlainFromMarkdown(md)
+}
+
+// StatusUpdate converts the body of a status update to its html_text and plain text.
+func (Converter) StatusUpdate(md string) (html, plain string) {
+	return StatusUpdate.FromMarkdown(md), StatusUpdate.PlainFromMarkdown(md)
+}
