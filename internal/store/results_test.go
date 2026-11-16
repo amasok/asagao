@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,5 +224,87 @@ func TestPruneResultsAfterCreate(t *testing.T) {
 	}
 	if g, _ := st.RealGID(ctx, local); g != local {
 		t.Fatalf("RealGID after = %q", g)
+	}
+}
+
+// Each kind of row that can still carry a local gid keeps its mapping (one case per query
+// in resultTables).
+func TestPruneResultsKeepsWhileRowHasLocalGID(t *testing.T) {
+	for _, tc := range []struct {
+		name, key string
+		insert    string // SQL putting the local gid "local:x" in a row
+	}{
+		{"task", ResultTask + "local:x", `INSERT INTO tasks(gid, name) VALUES ('local:x', 'n')`},
+		{"parent", ResultTask + "local:x", `INSERT INTO tasks(gid, name, parent_gid) VALUES ('c1', 'n', 'local:x')`},
+		{"waits for", ResultTask + "local:x", `INSERT INTO task_dependencies(task_gid, dependency_gid) VALUES ('t1', 'local:x')`},
+		{"waited on", ResultTask + "local:x", `INSERT INTO task_dependencies(task_gid, dependency_gid) VALUES ('local:x', 't1')`},
+		{"story", ResultStory + "local:x", `INSERT INTO stories(gid, task_gid) VALUES ('local:x', 't1')`},
+		{"attachment", ResultAttachment + "local:x", `INSERT INTO attachments(gid, parent_gid) VALUES ('local:x', 't1')`},
+		{"status update", ResultStatus + "local:x", `INSERT INTO status_updates(gid, project_gid) VALUES ('local:x', 'p1')`},
+		{"tag", ResultTag + "local:x", `INSERT INTO tags(gid, name) VALUES ('local:x', 'n')`},
+		{"tag on a task", ResultTag + "local:x", `INSERT INTO task_tags(task_gid, tag_gid) VALUES ('t1', 'local:x')`},
+		{"outbox task", ResultStatus + "local:x", `INSERT INTO outbox(kind, task_gid, payload, created_at) VALUES ('update_task', 'local:x', '{}', '')`},
+		{"outbox base", ResultTag + "local:x", `INSERT INTO outbox(kind, task_gid, payload, base, created_at) VALUES ('remove_tag', 't1', '{}', '{"tag":"local:x"}', '')`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := resultsStore(t)
+			now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+			mustSet(t, st, tc.key, "2000")
+			if _, err := st.db.ExecContext(ctx, tc.insert); err != nil {
+				t.Fatal(err)
+			}
+			prune(t, st, now)
+			if n := prune(t, st, now.Add(2*ResultGrace)); n != 0 || syncStateOf(t, st, tc.key) != "2000" {
+				t.Fatalf("deleted (%d) while a row has the local gid", n)
+			}
+		})
+	}
+}
+
+// Each kind verified against the recorded results holds back the mappings of its prefix,
+// and only those (one case per entry in resultKinds).
+func TestPruneResultsKindsHoldTheirPrefix(t *testing.T) {
+	prefixes := []string{ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag}
+	for _, tc := range []struct{ kind, prefix string }{
+		{OpCreateTask, ResultTask},
+		{OpDuplicateTask, ResultTask},
+		{OpAddComment, ResultStory},
+		{OpUploadAttachment, ResultAttachment},
+		{OpCreateStatus, ResultStatus},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			ctx := context.Background()
+			st := resultsStore(t)
+			now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+			for _, p := range prefixes {
+				mustSet(t, st, p+"local:old", "2100")
+			}
+			// queued for another task: it holds back the prefix, not a single mapping
+			if _, err := st.db.ExecContext(ctx, `INSERT INTO outbox(kind, task_gid, payload, created_at) VALUES (?, 't1', '{}', '')`, tc.kind); err != nil {
+				t.Fatal(err)
+			}
+			prune(t, st, now)
+			if n := prune(t, st, now.Add(ResultGrace)); n != len(prefixes)-1 {
+				t.Fatalf("deleted %d, want all but %s", n, tc.prefix)
+			}
+			for _, p := range prefixes {
+				if kept := syncStateOf(t, st, p+"local:old") != ""; kept != (p == tc.prefix) {
+					t.Errorf("%s: kept = %v", p, kept)
+				}
+			}
+		})
+	}
+}
+
+// A local gid whose mapping was pruned is refused with a hint to use the Asana gid.
+func TestResolveTaskGIDAfterPrune(t *testing.T) {
+	st := resultsStore(t)
+	_, err := st.ResolveTaskGID(context.Background(), "local:gone")
+	if !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "Asana の gid") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := st.ResolveTaskGID(context.Background(), "999"); err == nil || strings.Contains(err.Error(), "Asana の gid") {
+		t.Fatalf("a real gid needs no hint: %v", err)
 	}
 }
