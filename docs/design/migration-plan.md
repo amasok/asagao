@@ -20,7 +20,7 @@
 |---|---|---|---|
 | **a1** | 作成の型 (`NewTask`・`TagEdit`・`TagRef`) を `internal/domain/task` に移す (store には型の別名)。`internal/app` を作る。ポート (`TaskStore`、`Clock`、`RichText`) と、ユースケース `Tasks.Create`。CLI と MCP のタスク作成をこれに置き換える | `cli/write.go:166-199`、`mcpserver/server.go:464-513` | TestCreateTaskAssignee、TestCreateTaskInvalidWritesNothing、TestCreateSubtaskAndAssignByName、TestMarkdownTagsAndComments、TestCLIRichTextTagsPerTarget、TestMCPRichTextTagsPerTarget |
 | a2 | 依存の向きのテスト (`internal/archtest`)。今の違反を許可リストに入れる | なし | 新しいテストだけ |
-| a3 | TUI のタスク作成とサブタスク作成を `Tasks.Create` に | `tui/write.go:334-378`、`tui/subtasks.go:115-127` | TestCreateTaskInProject、TestCreateSubtask、TestParseCreateInput |
+| a3 | TUI のタスク作成とサブタスク作成を `Tasks.CreateHere` (解決済みの gid を受ける。ADR 0008) に | `tui/write.go:334-378`、`tui/subtasks.go:115-127` | TestCreateTaskInProject、TestCreateSubtask、TestParseCreateInput |
 | a4 | コメントと status update (`Comments.Add`、`Status.Create`)。説明文の変換の組 (11 か所のうち 7 か所) がここに集まる | tui/write.go:388、tui/edit.go:334、tui/projects.go:247、cli/write.go:603、cli/project.go:115、mcpserver/server.go:701, :965 | TestTUICommentAndStatusWithoutLayoutTags、TestCLIRichTextTagsPerTarget、TestMCPRichTextTagsPerTarget |
 | a5 | タスクの更新 (`Tasks.Update`: 名前・説明・期日・担当・完了・種類・承認)。期日の解釈 (6 か所) が集まる | tui/edit.go:269-301、tui/pickers.go:64-83、tui/write.go:237、tui/subtasks.go:198、cli/write.go:150, :482、mcpserver/server.go:520-629 | TestEditTaskInEditor、TestEditTaskErrorsAndNoChange、TestFailedWritesChangeNothing |
 | a6 | 残りの書き込み (移動、セクション名、タグ、フォロワー、プロジェクト、依存、カスタムフィールド、添付、複製、いいね、通知の既読、解決) を、まとまりごとに 1〜3 PR で | write-flow の仕様の表 | 各入り口の書き込みのテスト |
