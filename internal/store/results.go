@@ -69,8 +69,8 @@ func localIn(table, column string) string {
 // Anything it cannot check is kept for the next prune. It returns how many mappings were
 // deleted.
 func (s *Store) PruneResults(ctx context.Context, now time.Time) (int, error) {
-	// Its transaction begins immediate, so another process's write (a push) makes it wait
-	// for up to busy_timeout rather than fail at once (#50). Still busy after that, try
+	// Its write transaction begins immediate, so another process's write (a push) makes it
+	// wait for up to busy_timeout rather than fail at once (#50). Still busy after that, try
 	// once more; then it is left for the next sync without an error (nothing was changed).
 	n, err := s.pruneResults(ctx, now)
 	if isBusy(err) {
@@ -89,88 +89,123 @@ func isBusy(err error) bool {
 	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
+// pruneResults reads what to change in a read-only transaction, which takes no write lock:
+// most prunes find nothing to change (mappings found unneeded wait for ResultGrace). Only
+// when there is something does it begin a write transaction, and read again in it, as
+// another process may have queued a change in between.
 func (s *Store) pruneResults(ctx context.Context, now time.Time) (int, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return 0, err
+	}
+	changes, _, err := planPruneResults(ctx, tx, now)
+	tx.Rollback()
+	if err != nil || len(changes) == 0 {
+		return 0, err
+	}
+	if pruneResultsPlanned != nil {
+		pruneResultsPlanned()
+	}
 	deleted := 0
-	err := s.tx(ctx, func(tx *sql.Tx) error {
-		deleted = 0
-		state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag)
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		var err error
+		changes, deleted, err = planPruneResults(ctx, tx, now)
 		if err != nil {
 			return err
 		}
-		maxLen := 0
-		for key := range state {
-			if _, local := resultPrefix(key); IsLocalGID(local) {
-				maxLen = max(maxLen, len(local))
+		for _, c := range changes {
+			if c.del {
+				_, err = tx.ExecContext(ctx, "DELETE FROM sync_state WHERE key = ?", c.key)
+			} else {
+				_, err = tx.ExecContext(ctx, "INSERT OR REPLACE INTO sync_state(key, value) VALUES (?, ?)", c.key, c.value)
 			}
-		}
-		refs, err := readLocalRefs(ctx, tx, maxLen)
-		if err != nil {
-			return err
-		}
-		blocked := map[string]bool{}
-		for prefix, kinds := range resultKinds {
-			for _, k := range kinds {
-				var one int
-				err := tx.QueryRowContext(ctx, "SELECT 1 FROM outbox WHERE kind = ? LIMIT 1", k).Scan(&one)
-				if err == nil {
-					blocked[prefix] = true
-				} else if err != sql.ErrNoRows {
-					return err
-				}
-			}
-		}
-		set := func(k, v string) error {
-			_, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO sync_state(key, value) VALUES (?, ?)", k, v)
-			return err
-		}
-		del := func(k string) error {
-			_, err := tx.ExecContext(ctx, "DELETE FROM sync_state WHERE key = ?", k)
-			return err
-		}
-		for key := range state {
-			if seen, ok := strings.CutPrefix(key, keyResultSeen); ok {
-				if _, mapped := state[seen]; !mapped {
-					if err := del(key); err != nil { // its mapping is gone
-						return err
-					}
-				}
-				continue
-			}
-			prefix, local := resultPrefix(key)
-			if prefix == "" || !IsLocalGID(local) {
-				continue // not a mapping of a local gid: never touched
-			}
-			needed := blocked[prefix] || refs.inUse(prefix, local)
-			seenKey := keyResultSeen + key
-			if needed {
-				if _, ok := state[seenKey]; ok {
-					if err := del(seenKey); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			seen, err := time.Parse(time.RFC3339, state[seenKey])
-			if err != nil || seen.After(now) { // first found unneeded (or a stamp that cannot be trusted)
-				if err := set(seenKey, now.UTC().Format(time.RFC3339)); err != nil {
-					return err
-				}
-				continue
-			}
-			if now.Sub(seen) < ResultGrace {
-				continue
-			}
-			if err := del(key); err != nil {
+			if err != nil {
 				return err
 			}
-			if err := del(seenKey); err != nil {
-				return err
-			}
-			deleted++
 		}
 		return nil
 	})
-	return deleted, err
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// pruneResultsPlanned, set by tests, runs between the read-only plan and the write
+// transaction.
+var pruneResultsPlanned func()
+
+// stateChange is a change to a sync_state row: deleted, or set to value.
+type stateChange struct {
+	key, value string
+	del        bool
+}
+
+// planPruneResults reads in tx what PruneResults changes, and how many mappings that
+// deletes. It changes nothing.
+func planPruneResults(ctx context.Context, tx *sql.Tx, now time.Time) ([]stateChange, int, error) {
+	var changes []stateChange
+	deleted := 0
+	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag)
+	if err != nil {
+		return nil, 0, err
+	}
+	maxLen := 0
+	for key := range state {
+		if _, local := resultPrefix(key); IsLocalGID(local) {
+			maxLen = max(maxLen, len(local))
+		}
+	}
+	refs, err := readLocalRefs(ctx, tx, maxLen)
+	if err != nil {
+		return nil, 0, err
+	}
+	blocked := map[string]bool{}
+	for prefix, kinds := range resultKinds {
+		for _, k := range kinds {
+			var one int
+			err := tx.QueryRowContext(ctx, "SELECT 1 FROM outbox WHERE kind = ? LIMIT 1", k).Scan(&one)
+			if err == nil {
+				blocked[prefix] = true
+			} else if err != sql.ErrNoRows {
+				return nil, 0, err
+			}
+		}
+	}
+	set := func(k, v string) { changes = append(changes, stateChange{key: k, value: v}) }
+	del := func(k string) { changes = append(changes, stateChange{key: k, del: true}) }
+	for key := range state {
+		if seen, ok := strings.CutPrefix(key, keyResultSeen); ok {
+			if _, mapped := state[seen]; !mapped {
+				del(key) // its mapping is gone
+			}
+			continue
+		}
+		prefix, local := resultPrefix(key)
+		if prefix == "" || !IsLocalGID(local) {
+			continue // not a mapping of a local gid: never touched
+		}
+		needed := blocked[prefix] || refs.inUse(prefix, local)
+		seenKey := keyResultSeen + key
+		if needed {
+			if _, ok := state[seenKey]; ok {
+				del(seenKey)
+			}
+			continue
+		}
+		seen, err := time.Parse(time.RFC3339, state[seenKey])
+		if err != nil || seen.After(now) { // first found unneeded (or a stamp that cannot be trusted)
+			set(seenKey, now.UTC().Format(time.RFC3339))
+			continue
+		}
+		if now.Sub(seen) < ResultGrace {
+			continue
+		}
+		del(key)
+		del(seenKey)
+		deleted++
+	}
+	return changes, deleted, nil
 }
 
 // resultPrefix splits a mapping key into its prefix and the local gid.
