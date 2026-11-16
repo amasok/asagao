@@ -11,6 +11,9 @@ func TestFitResultIsAcceptedAndStable(t *testing.T) {
 	old := []string{
 		"<body><h1>見出し</h1>本文</body>",
 		"<body><H2>大文字</H2></body>",
+		"<body><h4>四</h4></body>",
+		"<body><h5>五</h5></body>",
+		"<body><h6>六</h6></body>",
 		"<body>a<hr/>b</body>",
 		"<body>a<hr>b</body>",
 		"<body><img data-asana-gid=\"1\" src=\"https://x/y.png\"/></body>",
