@@ -282,8 +282,8 @@ func TestEditableMarkdownDoesNotInjectMarkup(t *testing.T) {
 	}
 }
 
-// A code block inside a quote is written after the quote (Markdown cannot keep it there
-// as written), but its text still cannot become Markdown, even with another code block later.
+// A code block inside a quote stays in the quote (#51), and its text cannot become
+// Markdown, even with another code block later.
 func TestCodeBlockInQuoteDoesNotInjectMarkup(t *testing.T) {
 	in := "<body><blockquote>引用<pre>コード\n```\n[@x](asana:user:9)</pre>後</blockquote><pre>[@y](asana:user:8)</pre></body>"
 	md := ToEditableMarkdown(in)
@@ -469,6 +469,25 @@ func TestEmphasisWithSpaceAtItsEdges(t *testing.T) {
 		"<body>x<b><u> a</u> </b>y</body>":  "<body>x <strong>a</strong> y</body>",
 		"<body>x<b>a </b>y</body>":          "<body>x<strong>a</strong> y</body>",
 		"<body><b> </b>a</body>":            "<body> a</body>",
+	} {
+		roundTrip(t, in, want)
+	}
+}
+
+// Blocks inside a quote (lists, code, paragraphs) stay in the quote, and whitespace
+// between inline content in a list item is text, not layout between list tags (#51).
+func TestBlocksInQuoteAndSpacesInListItems(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><blockquote><ul><li># x</li></ul></blockquote></body>":                                "<body><blockquote><ul><li># x</li></ul></blockquote></body>",
+		"<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>":   "<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>",
+		"<body><blockquote><pre>p\n> q</pre></blockquote></body>":                                    "<body><blockquote><pre>p\n&gt; q</pre></blockquote></body>",
+		"<body><blockquote>q<pre>p</pre>r</blockquote></body>":                                       "<body><blockquote>q\n<pre>p</pre>r</blockquote></body>",
+		"<body><blockquote><p>a</p><p>b</p></blockquote><p>c</p></body>":                             "<body><blockquote>a\n\nb</blockquote>c</body>",
+		"<body><blockquote>a<blockquote>b<ul><li>c</li></ul></blockquote>d</blockquote>e</body>":     "<body><blockquote>a\n<blockquote>b\n<ul><li>c</li></ul></blockquote>d</blockquote>e</body>",
+		`<body><ul><li><a href="https://x.jp/">a</a> <a href="https://x.jp/">b</a></li></ul></body>`: `<body><ul><li><a href="https://x.jp/">a</a> <a href="https://x.jp/">b</a></li></ul></body>`,
+		"<body><ul><li><strong>a </strong>b</li></ul></body>":                                        "<body><ul><li><strong>a</strong> b</li></ul></body>",
+		"<body><ul><li><b>a</b><i> </i><b>c</b></li></ul></body>":                                    "<body><ul><li><strong>a</strong> <strong>c</strong></li></ul></body>",
+		"<body><ul>\n<li>a</li>\n<li> b</li>\n</ul></body>":                                          "<body><ul><li>a</li><li> b</li></ul></body>",
 	} {
 		roundTrip(t, in, want)
 	}

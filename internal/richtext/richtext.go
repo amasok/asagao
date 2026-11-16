@@ -135,17 +135,72 @@ func (c *converter) keepTrailingSpace(follows func() bool) {
 	c.write(indentRef[ch])
 }
 
-// block makes sure the next content starts a new paragraph.
+// block makes sure the next content starts a new paragraph: after a blank line, on a line
+// that starts with the blockquote prefixes of the current depth. Inside a quote the blank
+// line is a quote line too (">"), so the quote goes on; when a quote ends, the blank line
+// is at the depth outside it, which ends the quote (#51).
 func (c *converter) block() {
-	if c.b.Len() == 0 || c.endsWith("\n\n") {
-		return
-	}
-	if c.endsWith("\n") {
+	if !c.lineBlank(c.lineStartOf(c.b.Len())) {
 		c.write("\n")
+	}
+	cur := c.lineStartOf(c.b.Len())
+	if cur == 0 {
+		c.setPrefix()
 		return
 	}
-	c.write("\n\n")
+	prev := c.lineStartOf(cur - 1)
+	if c.lineBlank(prev) {
+		// already after a blank line: make it end the quotes that have ended
+		d := min(quoteDepth(c.b.Bytes()[prev:cur-1]), c.quote)
+		c.b.Truncate(prev)
+		c.write(blankQuoteLine(d) + "\n")
+		c.setPrefix()
+		return
+	}
+	d := min(quoteDepth(c.b.Bytes()[prev:cur-1]), c.quote)
+	c.b.Truncate(cur)
+	c.write(blankQuoteLine(d) + "\n")
+	c.setPrefix()
 }
+
+// lineStartOf is where the line holding position i of the output starts.
+func (c *converter) lineStartOf(i int) int {
+	return bytes.LastIndexByte(c.b.Bytes()[:i], '\n') + 1
+}
+
+// lineBlank reports whether the line starting at i (up to the next newline or the end of
+// the output) holds nothing but blockquote prefixes and whitespace.
+func (c *converter) lineBlank(i int) bool {
+	l := c.b.Bytes()[i:]
+	if j := bytes.IndexByte(l, '\n'); j >= 0 {
+		l = l[:j]
+	}
+	return len(bytes.Trim(l, "> \t")) == 0
+}
+
+// setPrefix starts the current line, which holds only blockquote prefixes and whitespace,
+// again with the prefixes of the current quote depth.
+func (c *converter) setPrefix() {
+	c.b.Truncate(c.lineStartOf(c.b.Len()))
+	c.write(strings.Repeat("> ", c.quote))
+	c.markLineStart()
+}
+
+// quoteDepth counts the blockquote prefixes at the start of a line.
+func quoteDepth(l []byte) int {
+	d := 0
+	for {
+		l = bytes.TrimLeft(l, " ")
+		if len(l) == 0 || l[0] != '>' {
+			return d
+		}
+		d++
+		l = l[1:]
+	}
+}
+
+// blankQuoteLine is a blank line inside d blockquotes.
+func blankQuoteLine(d int) string { return strings.TrimSuffix(strings.Repeat("> ", d), " ") }
 
 func (c *converter) children(n *html.Node) {
 	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
@@ -202,8 +257,7 @@ func (c *converter) walk(n *html.Node) {
 	case atom.Blockquote:
 		c.block()
 		c.quote++
-		c.write(strings.Repeat("> ", c.quote))
-		c.markLineStart()
+		c.setPrefix()
 		c.children(n)
 		c.quote--
 		c.block()
@@ -238,7 +292,7 @@ func (c *converter) text(n *html.Node) {
 		c.write(t)
 		return
 	}
-	if len(c.lists) > 0 && strings.TrimSpace(t) == "" {
+	if len(c.lists) > 0 && strings.TrimSpace(t) == "" && betweenListTags(n) {
 		return // whitespace between list tags
 	}
 	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
@@ -257,6 +311,27 @@ func (c *converter) text(n *html.Node) {
 		}
 		c.write(l)
 	}
+}
+
+// betweenListTags reports whether whitespace-only text n is layout between list tags: a
+// child of <ul>/<ol>, or a child of <li> with no inline content before it or after it (at
+// the start of the item, or next to a nested block). Whitespace between inline content in
+// an item ("<a>a</a> <a>b</a>") is text (#51).
+func betweenListTags(n *html.Node) bool {
+	p := n.Parent
+	if p == nil || p.Type != html.ElementNode {
+		return false
+	}
+	switch p.DataAtom {
+	case atom.Ul, atom.Ol:
+		return true
+	case atom.Li:
+		isBlock := func(s *html.Node) bool {
+			return s == nil || s.Type == html.ElementNode && blockAtoms[s.DataAtom]
+		}
+		return isBlock(n.PrevSibling) || isBlock(n.NextSibling)
+	}
+	return false
 }
 
 // atLineStart reports whether the next text starts a line of Markdown: at the start of the
@@ -497,11 +572,17 @@ func codeSpan(s string) string {
 }
 
 // codeBlock writes s as a fenced code block. The fence is longer than any run of backticks
-// in s, so a line of "```" in s does not close it. (Inside a blockquote the paragraph break
-// before it has already ended the quote, so its lines get no quote prefix.)
+// in s, so a line of "```" in s does not close it. Inside a blockquote every line gets the
+// quote prefixes, so the code stays in the quote (#51).
 func (c *converter) codeBlock(s string) {
 	fence := strings.Repeat("`", max(3, longestRun(s, '`')+1))
-	c.write(fence + "\n" + s + "\n" + fence)
+	c.write(fence)
+	for _, l := range strings.Split(s, "\n") {
+		c.newline()
+		c.write(l)
+	}
+	c.newline()
+	c.write(fence)
 }
 
 // longestRun is the length of the longest run of ch in s.
@@ -526,7 +607,9 @@ func (c *converter) listItem(n *html.Node) {
 	}
 	l := &c.lists[depth-1]
 	l.n++
-	if c.b.Len() > 0 && !c.endsWith("\n") {
+	if c.lineBlank(c.lineStartOf(c.b.Len())) {
+		c.setPrefix()
+	} else {
 		c.newline()
 	}
 	c.write(strings.Repeat("   ", depth-1))
