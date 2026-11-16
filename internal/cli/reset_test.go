@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +19,7 @@ import (
 // run executes the CLI with a private data and config directory.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := NewRoot()
+	cmd := newRoot(&app{baseURL: unreachableAsana(t)})
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -26,11 +28,21 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+// unreachableAsana is the API URL of commands run by tests that should not reach Asana:
+// a closed local server, so a command that finds a token (another test's keychain mock,
+// say) fails as offline instead of talking to the real Asana.
+func unreachableAsana(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	return srv.URL
+}
+
 // runCLISplit is runCLI with the command's output (where --json goes) and its error output
 // kept apart.
 func runCLISplit(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	cmd := NewRoot()
+	cmd := newRoot(&app{baseURL: unreachableAsana(t)})
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
