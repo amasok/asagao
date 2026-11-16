@@ -105,7 +105,7 @@ func safeToResend(ctx context.Context, q queryer, op Op) (bool, error) {
 		}
 		// The tag is created first; once that is recorded only the (harmless) addTag remains.
 		var real string
-		err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", "tag:"+tag).Scan(&real)
+		err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", ResultTag+tag).Scan(&real)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}

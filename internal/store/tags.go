@@ -114,7 +114,7 @@ func (s *Store) RealTagGID(ctx context.Context, gid string) (string, error) {
 	if !IsLocalGID(gid) {
 		return gid, nil
 	}
-	v, err := s.SyncState(ctx, "tag:"+gid)
+	v, err := s.SyncState(ctx, ResultTag+gid)
 	if err != nil || v == "" {
 		return gid, err
 	}
