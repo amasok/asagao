@@ -29,7 +29,7 @@ func assertNoControls(t *testing.T, out string) {
 
 // Whatever a command prints goes through termsafe, even text that never was in the store.
 func TestCLIOutputIsTerminalSafe(t *testing.T) {
-	root := newRoot(&app{})
+	root := newRoot(&app{baseURL: unreachableAsana(t)})
 	root.AddCommand(&cobra.Command{Use: "echo-evil", RunE: func(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "out"+evil)
 		fmt.Fprintln(cmd.ErrOrStderr(), "err"+evil)
