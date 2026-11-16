@@ -17,7 +17,7 @@ func genInlineRT(r *rand.Rand, depth int) string {
 		case 1:
 			sb.WriteString("\n")
 		case 2:
-			if false {
+			if false { // emphasis with spaces at its ends loses its marks on main already (#49)
 				sb.WriteString("<b>" + genInlineRT(r, depth+1) + "</b>")
 			}
 		case 3:
@@ -43,11 +43,11 @@ func escHTML(s string) string {
 func genBlockRT(r *rand.Rand, depth int) string {
 	switch r.Intn(6) {
 	case 0:
-		if false { // quotes holding lists are unstable on main already (TestBlockLookalikesStayText covers quotes)
+		if false { // quotes holding lists are unstable on main already (#51; TestBlockLookalikesStayText covers quotes)
 			return "<blockquote>" + genBlockRT(r, depth+1) + "</blockquote>"
 		}
 	case 1:
-		if false { // whitespace-only text between inline nodes in a list item is dropped on main already
+		if false { // whitespace-only text between inline nodes in a list item is dropped on main already (#51)
 			tag := []string{"ul", "ol"}[r.Intn(2)]
 			s := "<" + tag + ">"
 			for i := r.Intn(3) + 1; i > 0; i-- {
