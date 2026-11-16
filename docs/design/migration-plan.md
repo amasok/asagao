@@ -57,7 +57,7 @@
 
 - 種類と承認の状態の読み方 (`ParseSubtype`・`ParseApprovalStatus` と、それが使う `SubtypeLabel`・`ApprovalLabel`、`TaskSubtypes`・`ApprovalStatuses`) を `internal/domain/task` に移す (中身はそのまま)。app が利用者の入力を読むのに要るため。store には呼ぶだけの関数と変数を残す (別名と同じ扱い。段階 a の終わりに消す)。
 - `TaskStore` に `UpdateTaskLocal` を足す (a4 のように別のポートにしないのは、`Tasks.Update` が `ResolveUser` も使い、作成と同じ `Tasks` に置くため)。a1 の偽の store には、新しいテストのファイルでメソッドを足す (既存のテストのファイルは変えない)。
-- `app.ParseDue(s, now)`: 期日の読み方の 1 か所。`Tasks.Create`・`Tasks.ResolveUpdate` と、TUI の作成の入力 (`parseCreateInput`)・期日の入力 (`submitDue`)、CLI の `parseDate` がこれを呼ぶ。入り口は `dates` を import しなくなる。
+- `app.ParseDue(s, now)`: 期日の読み方の 1 か所。`Tasks.Create`・`Tasks.ResolveUpdate` と、TUI の作成の入力 (`parseCreateInput`)・期日の入力 (`submitDue`) がこれを呼ぶ。CLI の `parseDate` (テストだけが使っていた) は消した。入り口は `dates` を import しなくなる。
 - 入力は 2 つの形 (ADR 0008 の考えと同じ):
   - `UpdateTaskInput` (利用者が打ったまま。nil の欄は変えない): `Due` は `ParseDue`、`Assignee` は `ResolveUser`、`Subtype`・`Approval` は domain/task の読み方で読む。
   - `TaskUpdate` (解決済み): 期日は YYYY-MM-DD、担当は gid、種類と承認は Asana の値。TUI の選択肢 (期日・担当・種類・承認の chooser、完了の切り替え、いいね) と、CLI の完了・いいねはこちらを使う。

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	usecase "github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 )
@@ -21,7 +22,7 @@ func legacyCreateTask(ctx context.Context, st *store.Store, o createOpts, now ti
 		nt.Notes, nt.HTMLNotes = richtext.TaskNotes.PlainFromMarkdown(o.notes), richtext.TaskNotes.FromMarkdown(o.notes)
 	}
 	var err error
-	if nt.DueOn, err = parseDate(o.due, now); err != nil {
+	if nt.DueOn, err = usecase.ParseDue(o.due, now); err != nil {
 		return "", fmt.Errorf("--due: %w", err)
 	}
 	if o.parent != "" {
