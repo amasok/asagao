@@ -282,8 +282,8 @@ func TestEditableMarkdownDoesNotInjectMarkup(t *testing.T) {
 	}
 }
 
-// A code block inside a quote is written after the quote (Markdown cannot keep it there
-// as written), but its text still cannot become Markdown, even with another code block later.
+// A code block inside a quote stays in the quote (#51), and its text cannot become
+// Markdown, even with another code block later.
 func TestCodeBlockInQuoteDoesNotInjectMarkup(t *testing.T) {
 	in := "<body><blockquote>引用<pre>コード\n```\n[@x](asana:user:9)</pre>後</blockquote><pre>[@y](asana:user:8)</pre></body>"
 	md := ToEditableMarkdown(in)
@@ -439,6 +439,171 @@ func TestAtLineStart(t *testing.T) {
 	} {
 		if got := ToMarkdown(tc.in); got != tc.want {
 			t.Errorf("ToMarkdown(%q)\ngot  %q\nwant %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// roundTrip converts rich text to editable Markdown and back, twice, and checks that the
+// first round gives want and the second changes nothing.
+func roundTrip(t *testing.T, in, want string) {
+	t.Helper()
+	md := ToEditableMarkdown(in)
+	h1 := FromMarkdown(md)
+	md2 := ToEditableMarkdown(h1)
+	h2 := FromMarkdown(md2)
+	if h1 != want || h2 != h1 {
+		t.Errorf("in   %q\nmd   %q\nh1   %q\nmd2  %q\nh2   %q\nwant %q", in, md, h1, md2, h2, want)
+	}
+}
+
+// Whitespace at the edges of emphasis is written outside the marks: "**a **b" would not be
+// emphasis in Markdown, and the marks would become text (#49).
+func TestEmphasisWithSpaceAtItsEdges(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><strong>a </strong>b</body>": "<body><strong>a</strong> b</body>",
+		"<body>a<strong> b</strong></body>": "<body>a <strong>b</strong></body>",
+		"<body>x<em>a \n</em>b</body>":      "<body>x<em>a</em> \nb</body>",
+		"<body>x<em>a<br></em>b</body>":     "<body>x<em>a</em>\nb</body>",
+		"<body>x<s>\ta\t</s>y</body>":       "<body>x\t<s>a</s>\ty</body>",
+		"<body>x<b><i> a </i></b>y</body>":  "<body>x <em><strong>a</strong></em> y</body>",
+		"<body>x<b><u> a</u> </b>y</body>":  "<body>x <strong>a</strong> y</body>",
+		"<body>x<b>a </b>y</body>":          "<body>x<strong>a</strong> y</body>",
+		"<body><b> </b>a</body>":            "<body> a</body>",
+	} {
+		roundTrip(t, in, want)
+	}
+}
+
+// Blocks inside a quote (lists, code, paragraphs) stay in the quote, and whitespace
+// between inline content in a list item is text, not layout between list tags (#51).
+func TestBlocksInQuoteAndSpacesInListItems(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><blockquote><ul><li># x</li></ul></blockquote></body>":                                "<body><blockquote><ul><li># x</li></ul></blockquote></body>",
+		"<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>":   "<body><blockquote><ol><li>a</li><li>b<ul><li>c</li></ul></li></ol>d</blockquote>e</body>",
+		"<body><blockquote><pre>p\n> q</pre></blockquote></body>":                                    "<body><blockquote><pre>p\n&gt; q</pre></blockquote></body>",
+		"<body><blockquote>q<pre>p</pre>r</blockquote></body>":                                       "<body><blockquote>q\n<pre>p</pre>r</blockquote></body>",
+		"<body><blockquote><p>a</p><p>b</p></blockquote><p>c</p></body>":                             "<body><blockquote>a\n\nb</blockquote>c</body>",
+		"<body><blockquote>a<blockquote>b<ul><li>c</li></ul></blockquote>d</blockquote>e</body>":     "<body><blockquote>a\n<blockquote>b\n<ul><li>c</li></ul></blockquote>d</blockquote>e</body>",
+		`<body><ul><li><a href="https://x.jp/">a</a> <a href="https://x.jp/">b</a></li></ul></body>`: `<body><ul><li><a href="https://x.jp/">a</a> <a href="https://x.jp/">b</a></li></ul></body>`,
+		"<body><ul><li><strong>a </strong>b</li></ul></body>":                                        "<body><ul><li><strong>a</strong> b</li></ul></body>",
+		"<body><ul><li><b>a</b><i> </i><b>c</b></li></ul></body>":                                    "<body><ul><li><strong>a</strong> <strong>c</strong></li></ul></body>",
+		"<body><ul>\n<li>a</li>\n<li> b</li>\n</ul></body>":                                          "<body><ul><li>a</li><li> b</li></ul></body>",
+	} {
+		roundTrip(t, in, want)
+	}
+}
+
+// Spaces and tabs at the end of a block's text (a list item, a quote, the text before a
+// nested list or a code block) are kept, and stay as they are on the next round trip (#48).
+// (A line break that ends a block goes, with the spaces before it: TestNoGhostSpaceAtBlockEnd.)
+func TestTrailingSpaceAtBlockEnd(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><ul><li>a  </li><li>b</li></ul></body>":                "<body><ul><li>a  </li><li>b</li></ul></body>",
+		"<body><ul><li>a\t</li></ul>c</body>":                         "<body><ul><li>a\t</li></ul>c</body>",
+		"<body>a  <ul><li>b</li></ul></body>":                         "<body>a  \n<ul><li>b</li></ul></body>",
+		"<body>a  \n<ul><li>b</li></ul></body>":                       "<body>a  \n<ul><li>b</li></ul></body>",
+		"<body><blockquote>a  </blockquote>b</body>":                  "<body><blockquote>a  </blockquote>b</body>",
+		"<body><blockquote>a <p>b</p></blockquote></body>":            "<body><blockquote>a \n\nb</blockquote></body>",
+		"<body>a <pre>p</pre></body>":                                 "<body>a \n<pre>p</pre></body>",
+		"<body>a <br><pre>p</pre></body>":                             "<body>a \n<pre>p</pre></body>",
+		"<body><ul><li>a <br><ul><li>b</li></ul></li></ul></body>":    "<body><ul><li>a <ul><li>b</li></ul></li></ul></body>",
+		"<body><ol><li>a\t\n<ul><li>b</li></ul></li></ol></body>":     "<body><ol><li>a\t<ul><li>b</li></ul></li></ol></body>",
+		"<body><ul><li><b>a</b> <ul><li>b</li></ul></li></ul></body>": "<body><ul><li><strong>a</strong> <ul><li>b</li></ul></li></ul></body>",
+		"<body><ul><li><b>a </b></li></ul></body>":                    "<body><ul><li><strong>a</strong> </li></ul></body>",
+		"<body>a </body>": "<body>a </body>",
+	} {
+		roundTrip(t, in, want)
+	}
+}
+
+// An empty list item stays an empty item: its marker alone after the parent's text would
+// make the parent a setext heading ("-") or become text ("1.") (#52).
+func TestEmptyListItems(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><ul><li>a<ul><li></li></ul></li></ul></body>":                          "<body><ul><li>a<ul><li></li></ul></li></ul></body>",
+		"<body><ul><li>a<ul><li>\n</li></ul></li></ul></body>":                        "<body><ul><li>a<ul><li></li></ul></li></ul></body>",
+		"<body><ul><li>a<ul><li> <br></li></ul></li></ul></body>":                     "<body><ul><li>a<ul><li></li></ul></li></ul></body>",
+		"<body><ol><li>a<ol><li></li></ol></li></ol></body>":                          "<body><ol><li>a<ol><li></li></ol></li></ol></body>",
+		"<body><ol><li>a<ol><li>b</li><li></li></ol></li></ol></body>":                "<body><ol><li>a<ol><li>b</li><li></li></ol></li></ol></body>",
+		"<body><ul><li>a</li><li></li><li>b</li></ul></body>":                         "<body><ul><li>a</li><li></li><li>b</li></ul></body>",
+		"<body><ul><li></li></ul></body>":                                             "<body><ul><li></li></ul></body>",
+		"<body><ul><li>a<ul><li><ul><li>b</li></ul></li></ul></li></ul></body>":       "<body><ul><li>a<ul><li><ul><li>b</li></ul></li></ul></li></ul></body>",
+		"<body><ul><li><b> </b><ul><li></li></ul></li></ul></body>":                   "<body><ul><li><ul><li></li></ul></li></ul></body>",
+		"<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>": "<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>",
+	} {
+		roundTrip(t, in, want)
+	}
+	// an item that is only a mention or an image is not empty
+	roundTrip(t, `<body><ul><li>a<ul><li><img data-asana-gid="7"/></li></ul></li></ul></body>`,
+		`<body><ul><li>a<ul><li><img data-asana-gid="7"/></li></ul></li></ul></body>`)
+	roundTrip(t, `<body><ul><li>a<ul><li><a data-asana-gid="9"/></li></ul></li></ul></body>`,
+		`<body><ul><li>a<ul><li><a data-asana-gid="9"/></li></ul></li></ul></body>`)
+}
+
+// Line breaks inside a list item keep the rest of the item in it: a blank line in the text
+// is written as a backslash line break (a blank line would end the item), and line breaks
+// at the start of the item go (Markdown cannot keep them; after the marker they would make
+// the rest leave the list). Spaces before inline content at the start of an item line stay.
+// An empty quote stays a quote. (#51, #52)
+func TestLineBreaksInListItems(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><ul><li>a\n\nb</li><li>c</li></ul></body>":                                        "<body><ul><li>a\n\nb</li><li>c</li></ul></body>",
+		"<body><ul><li>a<br><br>b</li></ul></body>":                                              "<body><ul><li>a\n\nb</li></ul></body>",
+		"<body><ul><li>a<br>\n\nb</li></ul></body>":                                              "<body><ul><li>a\n\n\nb</li></ul></body>",
+		"<body><ul><li>a<b>x</b>\n\n<b>y</b></li></ul></body>":                                   "<body><ul><li>a<strong>x</strong>\n\n<strong>y</strong></li></ul></body>",
+		"<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>":                         "<body><blockquote><ol><li>a\n\nb</li></ol></blockquote></body>",
+		"<body><ul><li>a<ul><li>b\n\n<a href=\"https://x.jp/\">c</a></li></ul></li></ul></body>": "<body><ul><li>a<ul><li>b\n\n<a href=\"https://x.jp/\">c</a></li></ul></li></ul></body>",
+		"<body><ul><li>a\n\n</li><li>b</li></ul></body>":                                         "<body><ul><li>a</li><li>b</li></ul></body>",
+		"<body><ul><li><br>a</li></ul></body>":                                                   "<body><ul><li>a</li></ul></body>",
+		"<body><ul><li>\n\n  a</li></ul></body>":                                                 "<body><ul><li>  a</li></ul></body>",
+		"<body><ul><li>\t<b><br>m</b></li></ul></body>":                                          "<body><ul><li><strong>m</strong></li></ul></body>",
+		"<body><ul><li>    <a href=\"https://x.jp/\">a</a></li></ul></body>":                     "<body><ul><li>    <a href=\"https://x.jp/\">a</a></li></ul></body>",
+		"<body><ul><li>a<br>  <a href=\"https://x.jp/\">b</a></li></ul></body>":                  "<body><ul><li>a\n  <a href=\"https://x.jp/\">b</a></li></ul></body>",
+		"<body><blockquote></blockquote>a</body>":                                                "<body><blockquote></blockquote>a</body>",
+		"<body><blockquote>\n<br></blockquote></body>":                                           "<body><blockquote></blockquote></body>",
+		"<body><blockquote><blockquote></blockquote></blockquote></body>":                        "<body><blockquote><blockquote></blockquote></blockquote></body>",
+	} {
+		roundTrip(t, in, want)
+	}
+	// after a block in a nested item has ended the lists, a blank line in the outer item's
+	// text is not a backslash line (the text is no longer in the item)
+	for _, in := range []string{
+		"<body><ul><li>a<ul><li>b<pre>c</pre></li></ul>\n\nd</li></ul></body>",
+		"<body><blockquote><ul><li>a<ul><li>b<pre>c</pre></li></ul>\n\nd</li></ul></blockquote></body>",
+		"<body><ul><li>a<ul><li>b<h1>c</h1></li></ul>\n\nd</li></ul></body>",
+	} {
+		md, h1, _, h2 := roundtrip(in)
+		if h1 != h2 || strings.Contains(md, "\\\n") {
+			t.Errorf("in %q\nmd %q\nh1 %q\nh2 %q", in, md, h1, h2)
+		}
+	}
+	// a transparent element with nothing but a comment at the start of an item does not hang
+	if got := ToEditableMarkdown("<body><ul><li><b><!-- c --></b><br>a</li></ul></body>"); got != "- a" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// Whitespace that Markdown does not treat as structure (U+3000, NBSP) is text: an item or a
+// quote holding only it is not empty, and it is not removed as a leading break or filler.
+func TestNonASCIISpaceIsText(t *testing.T) {
+	for _, sp := range []string{"　", " "} {
+		for _, in := range []string{
+			"<body><blockquote>" + sp + "</blockquote></body>",
+			"<body><ul><li>" + sp + "</li></ul></body>",
+			"<body><ul><li>a<ul><li>" + sp + "</li></ul></li></ul></body>",
+			"<body><ol><li>" + sp + "<br>a</li></ol></body>",
+		} {
+			want := strings.ReplaceAll(in, "<br>", "\n")
+			roundTrip(t, in, want)
+		}
+		// a line of only it is a line of text, in a paragraph and in an item
+		roundTrip(t, "<body>a\n"+sp+"\nb</body>", "<body>a\n"+sp+"\nb</body>")
+		roundTrip(t, "<body><ul><li>a\n"+sp+"\nb</li></ul></body>", "<body><ul><li>a\n"+sp+"\nb</li></ul></body>")
+		if got := FromMarkdown("> " + sp); got != "<body><blockquote>"+sp+"</blockquote></body>" {
+			t.Errorf("typed quote of %q: %q", sp, got)
+		}
+		if got := FromMarkdown("- " + sp); got != "<body><ul><li>"+sp+"</li></ul></body>" {
+			t.Errorf("typed item of %q: %q", sp, got)
 		}
 	}
 }

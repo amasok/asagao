@@ -77,6 +77,9 @@ func isBlockElement(n gast.Node) bool {
 func (w *htmlWriter) blocks(n gast.Node) {
 	var prev gast.Node
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if n.Kind() == gast.KindBlockquote && w.blankText(c) {
+			continue // "> &#32;": an empty quote
+		}
 		if prev != nil {
 			switch {
 			case isBlockElement(prev):
@@ -136,6 +139,9 @@ func (w *htmlWriter) block(n gast.Node) {
 			w.tag("<li>")
 			first := true
 			for c := li.FirstChild(); c != nil; c = c.NextSibling() {
+				if w.blankText(c) {
+					continue // "- &#32;": an empty item (#52)
+				}
 				if !first && !isBlockElement(c) {
 					w.b.WriteString("\n")
 				}
@@ -157,6 +163,19 @@ func (w *htmlWriter) block(n gast.Node) {
 	default:
 		w.blocks(n)
 	}
+}
+
+// blankText reports whether n is a paragraph of nothing but whitespace (as ToEditableMarkdown
+// writes an empty list item or quote: "- &#32;", "> &#32;").
+func (w *htmlWriter) blankText(n gast.Node) bool {
+	switch n.(type) {
+	case *gast.Paragraph, *gast.TextBlock:
+	default:
+		return false
+	}
+	sub := &htmlWriter{src: w.src, plain: w.plain}
+	sub.inlines(n)
+	return asciiBlank(sub.b.String()) // "　" (U+3000) or NBSP alone is text, not a filler
 }
 
 func (w *htmlWriter) inlines(n gast.Node) {

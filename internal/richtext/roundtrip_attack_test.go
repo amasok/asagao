@@ -59,8 +59,7 @@ func TestNoGhostSpaceAtBlockEnd(t *testing.T) {
 		"<body>a\t<br><br></body>",
 		"<body><blockquote>a <br></blockquote></body>",
 		"<body><ul><li>a \n</li><li>b</li></ul></body>",
-		"<body><ul><li>a <br><ul><li>b</li></ul></li></ul></body>",
-		"<body><ol><li>a\t\n<ul><li>b</li></ul></li></ol></body>",
+		// (spaces before a nested list are the end of the item's text: TestTrailingSpaceAtBlockEnd, #48)
 	} {
 		md := ToEditableMarkdown(in)
 		if strings.HasSuffix(strings.TrimRight(md, "\n> "), "&#32;") || strings.Contains(md, "&#32;\n- b") {
