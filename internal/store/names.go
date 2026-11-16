@@ -5,25 +5,19 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/amasok/asana-tui/internal/domain/task"
 )
 
 // Name resolution shared by the CLI and the MCP server. Resolving is separate from
 // writing so that a command can check all of its input before changing anything.
 
-// TagRef is a tag to put on a task: an existing tag (GID) or a new one to create (Name).
-type TagRef struct {
-	GID  string
-	Name string
-}
-
-// TagEdit is a resolved set of tag changes for one task.
-type TagEdit struct {
-	Add    []TagRef
-	Remove []string // tag gids
-}
-
-// Empty reports whether the edit changes nothing.
-func (e TagEdit) Empty() bool { return len(e.Add) == 0 && len(e.Remove) == 0 }
+// TagRef and TagEdit moved to internal/domain/task; these aliases keep the store's
+// signatures and callers unchanged until every entry point goes through internal/app.
+type (
+	TagRef  = task.TagRef
+	TagEdit = task.TagEdit
+)
 
 // ResolveTagEdit resolves tag names or gids ("#" prefix allowed). Unknown names to add
 // become new tags; unknown tags to remove are an error.

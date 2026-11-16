@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asana-tui/internal/domain/task"
 	"github.com/amasok/asana-tui/internal/termsafe"
 )
 
@@ -63,18 +64,8 @@ type Op struct {
 	Verify     bool   `json:"verify,omitempty"`
 }
 
-// NewTask is the input for CreateTaskLocal.
-type NewTask struct {
-	ParentGID    string // create as a subtask of this task
-	WorkspaceGID string
-	ProjectGID   string
-	SectionGID   string
-	Name         string
-	Notes        string
-	HTMLNotes    string // Asana rich text; sent instead of Notes when set
-	DueOn        string
-	AssigneeGID  string
-}
+// NewTask is the input for CreateTaskLocal (an alias of task.NewTask; see TagEdit).
+type NewTask = task.NewTask
 
 // --- local writes ---
 
