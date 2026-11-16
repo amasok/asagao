@@ -492,3 +492,26 @@ func TestBlocksInQuoteAndSpacesInListItems(t *testing.T) {
 		roundTrip(t, in, want)
 	}
 }
+
+// Spaces and tabs at the end of a block's text (a list item, a quote, the text before a
+// nested list or a code block) are kept, and stay as they are on the next round trip (#48).
+// (A line break that ends a block goes, with the spaces before it: TestNoGhostSpaceAtBlockEnd.)
+func TestTrailingSpaceAtBlockEnd(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><ul><li>a  </li><li>b</li></ul></body>":                "<body><ul><li>a  </li><li>b</li></ul></body>",
+		"<body><ul><li>a\t</li></ul>c</body>":                         "<body><ul><li>a\t</li></ul>c</body>",
+		"<body>a  <ul><li>b</li></ul></body>":                         "<body>a  \n<ul><li>b</li></ul></body>",
+		"<body>a  \n<ul><li>b</li></ul></body>":                       "<body>a  \n<ul><li>b</li></ul></body>",
+		"<body><blockquote>a  </blockquote>b</body>":                  "<body><blockquote>a  </blockquote>b</body>",
+		"<body><blockquote>a <p>b</p></blockquote></body>":            "<body><blockquote>a \n\nb</blockquote></body>",
+		"<body>a <pre>p</pre></body>":                                 "<body>a \n<pre>p</pre></body>",
+		"<body>a <br><pre>p</pre></body>":                             "<body>a \n<pre>p</pre></body>",
+		"<body><ul><li>a <br><ul><li>b</li></ul></li></ul></body>":    "<body><ul><li>a <ul><li>b</li></ul></li></ul></body>",
+		"<body><ol><li>a\t\n<ul><li>b</li></ul></li></ol></body>":     "<body><ol><li>a\t<ul><li>b</li></ul></li></ol></body>",
+		"<body><ul><li><b>a</b> <ul><li>b</li></ul></li></ul></body>": "<body><ul><li><strong>a</strong> <ul><li>b</li></ul></li></ul></body>",
+		"<body><ul><li><b>a </b></li></ul></body>":                    "<body><ul><li><strong>a</strong> </li></ul></body>",
+		"<body>a </body>": "<body>a </body>",
+	} {
+		roundTrip(t, in, want)
+	}
+}

@@ -56,6 +56,7 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
+	c.keepTrailingSpace(blockEnds)
 	return tidy(c.b.String())
 }
 
@@ -114,10 +115,11 @@ func (c *converter) newline() {
 // keepTrailingSpace is called before a line break: Markdown drops spaces and tabs at the end
 // of a line (and reads two spaces as a line break), so the last one of the text written on
 // this line becomes a character reference, which Markdown keeps as text (#45). Lines with
-// no text other than whitespace are left alone, and so is the last line of a block (when
-// follows reports that no text comes after the break): there the break and the spaces both
-// go, as Asana trims them, and keeping only the spaces would change the text once and then
-// again on the next round trip.
+// no text other than whitespace are left alone, and so is a line break in the text that
+// ends a block (when follows reports that no text comes after it): there the break and the
+// spaces both go, as Asana trims them, and keeping only the spaces would change the text
+// once and then again on the next round trip. Where the block itself ends (blockEnds), the
+// spaces are the end of its text and are kept (#48).
 func (c *converter) keepTrailingSpace(follows func() bool) {
 	if c.pre > 0 {
 		return
@@ -135,12 +137,16 @@ func (c *converter) keepTrailingSpace(follows func() bool) {
 	c.write(indentRef[ch])
 }
 
+// blockEnds is keepTrailingSpace's follows where a block ends right after the text.
+func blockEnds() bool { return true }
+
 // block makes sure the next content starts a new paragraph: after a blank line, on a line
 // that starts with the blockquote prefixes of the current depth. Inside a quote the blank
 // line is a quote line too (">"), so the quote goes on; when a quote ends, the blank line
 // is at the depth outside it, which ends the quote (#51).
 func (c *converter) block() {
 	if !c.lineBlank(c.lineStartOf(c.b.Len())) {
+		c.keepTrailingSpace(blockEnds)
 		c.write("\n")
 	}
 	cur := c.lineStartOf(c.b.Len())
@@ -251,7 +257,7 @@ func (c *converter) walk(n *html.Node) {
 		c.write("---")
 		c.block()
 	case atom.Br:
-		c.keepTrailingSpace(func() bool { return c.textFollows(n) })
+		c.keepTrailingSpace(func() bool { return c.contentFollows(n) })
 		c.write("  ")
 		c.newline()
 	case atom.Blockquote:
@@ -302,7 +308,7 @@ func (c *converter) text(n *html.Node) {
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
 		if i > 0 {
-			c.keepTrailingSpace(func() bool { return nonBlank(lines[i:]) || c.textFollows(n) })
+			c.keepTrailingSpace(func() bool { return nonBlank(lines[i:]) || c.contentFollows(n) })
 			// a line break inside a paragraph needs a hard break ("  "); blank lines don't
 			if strings.TrimSpace(lines[i-1]) != "" && l != "" {
 				c.write("  ")
@@ -314,9 +320,9 @@ func (c *converter) text(n *html.Node) {
 }
 
 // betweenListTags reports whether whitespace-only text n is layout between list tags: a
-// child of <ul>/<ol>, or a child of <li> with no inline content before it or after it (at
-// the start of the item, or next to a nested block). Whitespace between inline content in
-// an item ("<a>a</a> <a>b</a>") is text (#51).
+// child of <ul>/<ol>, or a child of <li> with no inline content before it (at the start of
+// the item, or after a nested block). Whitespace after inline content in an item is text:
+// between inline elements ("<a>a</a> <a>b</a>", #51) or at the end of the item's text (#48).
 func betweenListTags(n *html.Node) bool {
 	p := n.Parent
 	if p == nil || p.Type != html.ElementNode {
@@ -329,7 +335,7 @@ func betweenListTags(n *html.Node) bool {
 		isBlock := func(s *html.Node) bool {
 			return s == nil || s.Type == html.ElementNode && blockAtoms[s.DataAtom]
 		}
-		return isBlock(n.PrevSibling) || isBlock(n.NextSibling)
+		return isBlock(n.PrevSibling)
 	}
 	return false
 }
@@ -338,10 +344,13 @@ func betweenListTags(n *html.Node) bool {
 // output, after a newline, blockquote prefixes or a list item marker.
 func (c *converter) atLineStart() bool { return c.b.Len() == c.lineStart }
 
-// textFollows reports whether text comes after n in the same block: in a following sibling
-// (of n, or of the inline elements around it) before a block element starts or the block
-// ends. Line breaks are skipped; images and mentions count as text where they are inline.
-func (c *converter) textFollows(n *html.Node) bool {
+// contentFollows reports whether something comes after n in the same block: text in a
+// following sibling (of n, or of the inline elements around it), or a block element, before
+// the block ends. Line breaks are skipped; images and mentions count as text. Only when the
+// block ends after n are the spaces before a line break at n dropped (see keepTrailingSpace);
+// a line break before a nested block is where FromMarkdown separates the text from the block,
+// so the spaces there are the end of the text and are kept (#48).
+func (c *converter) contentFollows(n *html.Node) bool {
 	for ; n != nil; n = n.Parent {
 		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
 			switch {
@@ -350,13 +359,8 @@ func (c *converter) textFollows(n *html.Node) bool {
 					return true
 				}
 			case sib.Type != html.ElementNode, sib.DataAtom == atom.Br:
-			case sib.DataAtom == atom.Img:
-				if c.editable {
-					return true
-				}
-				return false // displayed as a block of its own
-			case blockAtoms[sib.DataAtom]:
-				return false
+			case sib.DataAtom == atom.Img, blockAtoms[sib.DataAtom]:
+				return true
 			case strings.TrimSpace(textOf(sib)) != "" || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
 				return true
 			}
@@ -610,6 +614,7 @@ func (c *converter) listItem(n *html.Node) {
 	if c.lineBlank(c.lineStartOf(c.b.Len())) {
 		c.setPrefix()
 	} else {
+		c.keepTrailingSpace(blockEnds)
 		c.newline()
 	}
 	c.write(strings.Repeat("   ", depth-1))
