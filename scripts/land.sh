@@ -49,7 +49,10 @@ merge)
 	check
 	for b in "$@"; do
 		[ -d ".worktrees/$b" ] && git worktree remove ".worktrees/$b"
-		git branch -d -q "$b"
+		# -d は upstream (origin/main) に入っているかで判定し、push 前は失敗する。
+		# main に取り込めたことを確かめてから -D で消す。
+		git merge-base --is-ancestor "$b" HEAD || die "$b が main に入っていません"
+		git branch -D -q "$b"
 	done
 	git worktree prune
 	echo "== main は origin より $(git rev-list --count origin/main..main) コミット先。push はしていません"
