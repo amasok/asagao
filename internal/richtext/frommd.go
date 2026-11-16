@@ -1,6 +1,7 @@
 package richtext
 
 import (
+	"bytes"
 	"html"
 	"regexp"
 	"strconv"
@@ -29,7 +30,8 @@ var md = goldmark.New(
 	goldmark.WithParserOptions(parser.WithBlockParsers(
 		// ahead of the default thematic break parser (200), which it wraps
 		util.Prioritized(ruleSource{parser.NewThematicBreakParser()}, 199)),
-		parser.WithInlineParsers(util.Prioritized(escapedSpaceParser{}, 100))),
+		parser.WithInlineParsers(util.Prioritized(escapedSpaceParser{}, 100),
+			util.Prioritized(spaceRefParser{}, 100))),
 )
 
 // escapedSpaceParser reads "\ " (an escaped space) as nothing, as goldmark's CJK extension
@@ -49,6 +51,27 @@ func (escapedSpaceParser) Parse(_ gast.Node, block text.Reader, _ parser.Context
 	block.Advance(2)
 	return gast.NewString(nil)
 }
+
+// spaceRefParser reads "&#32;" and "&#9;" (indentation and spaces at the end of a line,
+// as ToEditableMarkdown and keepIndentation write them) as an inline node of their own, so
+// that what follows them is read as what follows a space is: Linkify starts a link there
+// (#77; "&#32;www.x.jp" was text, " www.x.jp" a link).
+type spaceRefParser struct{}
+
+func (spaceRefParser) Trigger() []byte { return []byte{'&'} }
+
+func (spaceRefParser) Parse(_ gast.Node, block text.Reader, _ parser.Context) gast.Node {
+	line, _ := block.PeekLine()
+	for _, r := range spaceRefs {
+		if bytes.HasPrefix(line, r.ref) {
+			block.Advance(len(r.ref))
+			return gast.NewString(r.text)
+		}
+	}
+	return nil
+}
+
+var spaceRefs = []struct{ ref, text []byte }{{[]byte("&#32;"), []byte(" ")}, {[]byte("&#9;"), []byte("\t")}}
 
 // ruleAttr is the attribute a rule (thematic break) keeps its line in, as written ("***").
 var ruleAttr = []byte("asana-tui-rule")

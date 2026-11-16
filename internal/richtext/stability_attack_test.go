@@ -23,14 +23,13 @@ func genInlineRT(r *rand.Rand, depth int) string {
 			}
 			sb.WriteString("\n")
 		case 2:
-			// emphasis with spaces and line breaks at its ends (#49). Its text starts and ends
-			// with a letter (apart from the spaces), it is not nested, and a space follows it:
-			// "**" next to punctuation (a link) or to another "**" is not emphasis in Markdown,
-			// and an email address right after "**" is linked with the "**" in it (on main
-			// already, not about spaces).
-			if depth == 0 {
-				ws := []string{"", " ", "\n", "<br>", "\t", " \n"}
-				sb.WriteString("<b>" + ws[r.Intn(len(ws))] + "m " + genInlineRT(r, depth+1) + " m" + ws[r.Intn(len(ws))] + "</b> ")
+			// emphasis with spaces and line breaks at its ends (#49), nested, next to other
+			// emphasis, punctuation, links, code and email addresses, and over blank lines
+			// (#58)
+			if depth < 2 {
+				ws := []string{"", "", " ", "\n", "<br>", "\t", " \n", "\n\n"}
+				tag := []string{"b", "strong", "em", "i", "s", "del"}[r.Intn(6)]
+				sb.WriteString("<" + tag + ">" + ws[r.Intn(len(ws))] + genInlineRT(r, depth+1) + ws[r.Intn(len(ws))] + "</" + tag + ">")
 				continue
 			}
 		case 3:

@@ -203,7 +203,7 @@ func TestEmphasisBoundariesInHeading(t *testing.T) {
 	}
 }
 
-var markTexts = []string{"a", "b c", "日本", "(", ")", "「", "」", "!", ".", "-", "_", "*", "~", "`", "@", "a@x.jp", "x.jp", " ", "\n", "\n\n", "\n \n", "\t", "&", "<", "#"}
+var markTexts = []string{"a", "b c", "日本", "(", ")", "「", "」", "!", ".", "-", "_", "*", "~", "`", "@", "a@x.jp", "x.jp", "www.x.jp", "https://x.jp/a", " ", "\n", "\n\n", "\n \n", "\t", "&", "<", "#"}
 
 func genMarkInline(r *rand.Rand, depth int) string {
 	var sb strings.Builder
@@ -214,7 +214,7 @@ func genMarkInline(r *rand.Rand, depth int) string {
 			inner := genMarkInline(r, depth+1)
 			if tag == "u" {
 				// (whitespace before an element starting with a line break, in a list item,
-				// is not stable on main either: not about emphasis)
+				// is not stable on main either: not about emphasis, #83)
 				inner = "x" + inner
 			}
 			sb.WriteString("<" + tag + ">" + inner + "</" + tag + ">")
@@ -265,5 +265,51 @@ func TestEmphasisBoundariesLinear(t *testing.T) {
 	}
 	if want := `x\ **(a)**\ y *a*\ *b* https://x.jp/a\ ~~b~~`; !strings.HasPrefix(md, want) || strings.Count(md, `\ `) != 4*4000 {
 		t.Fatalf("unexpected output %q", md[:80])
+	}
+}
+
+// #77: Linkify reads the editable Markdown as it reads Markdown without escapes: a URL
+// holding characters that are escaped stays text (it was linked cut short at the first
+// backslash), a URL without them is linked as Linkify reads it, and an address or URL after indentation written as "&#32;" is linked, as one
+// after a space is (it was text, and became a link once the indentation was gone).
+func TestLinkifyAsWithoutEscapes(t *testing.T) {
+	for _, c := range []struct{ in, md, h1 string }{
+		{"<body>see https://x.jp/a_b</body>", `see https\://x.jp/a\_b`, "<body>see https://x.jp/a_b</body>"},
+		{"<body>www.x.jp/a~b</body>", `www\.x.jp/a\~b`, "<body>www.x.jp/a~b</body>"},
+		// Linkify leaves out of the URL what it would leave out without escapes
+		{"<body>www.x.jp/*a*</body>", `www.x.jp/\*a\*`, `<body><a href="http://www.x.jp/">www.x.jp/</a>*a*</body>`},
+		{"<body>see https://x.jp/a_.</body>", `see https://x.jp/a\_.`, `<body>see <a href="https://x.jp/a">https://x.jp/a</a>_.</body>`},
+		{"<body>see https://x.jp/?a=1&amp;copy;</body>", `see https://x.jp/?a=1\&copy;`, `<body>see <a href="https://x.jp/?a=1">https://x.jp/?a=1</a>&amp;copy;</body>`},
+		// where Linkify starts a URL: after "(" too, and not in the domain of an address
+		{"<body>x(https://x.jp/a_b</body>", `x(https\://x.jp/a\_b`, "<body>x(https://x.jp/a_b</body>"},
+		{"<body>a@x.jpwww.x.jp/_</body>", `a@x.jpwww.x.jp/\_`, `<body><a href="mailto:a@x.jpwww.x.jp">a@x.jpwww.x.jp</a>/_</body>`},
+		// after emphasis, where Linkify starts too
+		{"<body><b>a</b>www.x.jp/a_b</body>", `**a**www\.x.jp/a\_b`, "<body><strong>a</strong>www.x.jp/a_b</body>"},
+		// without escapes, linked as before
+		{"<body>see https://x.jp/ab</body>", "see https://x.jp/ab", `<body>see <a href="https://x.jp/ab">https://x.jp/ab</a></body>`},
+		// after indentation in a list item, and after a space at the end of a line
+		{"<body><ul><li> www.x.jp</li></ul></body>", "- &#32;www.x.jp", `<body><ul><li> <a href="http://www.x.jp">www.x.jp</a></li></ul></body>`},
+		{"<body><ul><li>a\n\tb@x.jp</li></ul></body>", "- a  \n&#9;b@x.jp", `<body><ul><li>a` + "\n\t" + `<a href="mailto:b@x.jp">b@x.jp</a></li></ul></body>`},
+		{"<body>https://x.jp/a <br>b</body>", "https://x.jp/a\\ &#32;  \nb", `<body><a href="https://x.jp/a">https://x.jp/a</a> ` + "\n" + `b</body>`},
+	} {
+		md1, h1, _, h2 := rt2(c.in)
+		if md1 != c.md || h1 != c.h1 || h1 != h2 {
+			t.Errorf("%q\nmd1 %q want %q\nh1  %q want %q\nh2  %q", c.in, md1, c.md, h1, c.h1, h2)
+		}
+	}
+}
+
+// Text after indentation written by text before it (in another element) still starts the
+// line as Markdown reads it: "\t" then "#" was a heading, or an indented code block.
+func TestBlockSyntaxAfterIndentInAnotherElement(t *testing.T) {
+	for _, in := range []string{
+		"<body>\t<u>#</u>x</body>",
+		"<body>a\n <u># b</u></body>",
+		"<body> <u>- b</u></body>",
+	} {
+		md1, h1, _, h2 := rt2(in)
+		if want := strings.NewReplacer("<u>", "", "</u>", "").Replace(in); h1 != want || h1 != h2 {
+			t.Errorf("%q -> %q -> %q -> %q", in, md1, h1, h2)
+		}
 	}
 }

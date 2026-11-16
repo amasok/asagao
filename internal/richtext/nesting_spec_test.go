@@ -310,7 +310,8 @@ func TestEditedRichTextFollowsNestingRules(t *testing.T) {
 func TestFromMarkdownDemotedTextAsTyped(t *testing.T) {
 	for _, c := range []struct{ md, want string }{
 		{"- > <div>see https://x.jp/a_b</div>", "<body><ul><li>&gt; &lt;div&gt;see https://x.jp/a_b&lt;/div&gt;</li></ul></body>"},
-		{"> - a\n> - &#32;b@x.jp", "<body><blockquote>- a\n-  b@x.jp</blockquote></body>"},
+		// the address after the indentation is a link, as one after a space is (#77)
+		{"> - a\n> - &#32;b@x.jp", "<body><blockquote>- a\n-  <a href=\"mailto:b@x.jp\">b@x.jp</a></blockquote></body>"},
 		{"- # x\n  - a\n  # y", "<body><ul><li># x<ul><li>a</li></ul>\n# y</li></ul></body>"},
 		{"- # x\n  ***", "<body><ul><li># x<hr/></li></ul></body>"},
 	} {

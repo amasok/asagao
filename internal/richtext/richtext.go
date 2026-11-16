@@ -207,8 +207,16 @@ func (c *converter) keepTrailingSpace(follows func() bool) {
 	}
 	ch := b[n-1]
 	c.b.Truncate(n - 1)
+	if c.editable && n-1 > c.lineStart && urlBefore(lastWord(b[c.lineStart:n-1])) {
+		// Linkify would read the reference on as part of the URL (#77): an escaped space,
+		// which FromMarkdown reads as nothing, ends the URL
+		c.write(`\ `)
+	}
 	c.write(indentRef[ch])
 }
+
+// lastWord is the text after the last whitespace in b.
+func lastWord(b []byte) string { return string(b[bytes.LastIndexFunc(b, unicode.IsSpace)+1:]) }
 
 // blockEnds is keepTrailingSpace's follows where a block ends right after the text.
 func blockEnds() bool { return true }
@@ -402,7 +410,10 @@ func (c *converter) text(n *html.Node) {
 	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
 	// it stays a character reference, as indentation there is list structure.
 	rawIndent := c.editable && !inList
-	t = escapeText(t, c.atLineStart(), rawIndent)
+	// after indentation written by text before (in another element), the line still starts
+	// here as Markdown reads it: "\t" then "#" would be a heading, or code
+	lineStart := c.atLineStart() || len(bytes.Trim(c.b.Bytes()[c.lineStart:], " \t")) == 0
+	t = escapeText(t, lineStart, rawIndent, c.prevByte())
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	last := len(lines) - 1
@@ -425,6 +436,19 @@ func (c *converter) text(n *html.Node) {
 		}
 		c.write(l)
 	}
+}
+
+// prevByte is the output byte before the next text, as Linkify sees it (see escapeInline):
+// a line break at the start of a line, and a space right after a delimiter or a link
+// (Linkify starts a link right after an inline element).
+func (c *converter) prevByte() byte {
+	switch {
+	case c.atLineStart():
+		return '\n'
+	case len(c.tokens) > 0 && c.tokens[len(c.tokens)-1].end() == c.b.Len():
+		return ' '
+	}
+	return c.b.Bytes()[c.b.Len()-1]
 }
 
 // betweenListTags reports whether whitespace-only text n is layout between list tags: a
@@ -1086,14 +1110,13 @@ var orderedMarker = regexp.MustCompile(`^([0-9]{1,9})([.)])(?:[ \t]|$)`)
 // escape escapes Markdown syntax in text so that it reads back as the same text. lineStart
 // tells whether the text begins at the start of a line (otherwise only the lines after its
 // first newline are checked for block syntax and indentation).
-func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false) }
+func escape(s string, lineStart bool) string { return escapeText(s, lineStart, false, ' ') }
 
 // escapeText is escape. With rawIndent, indentation is written as it is (for editable
 // Markdown, where FromMarkdown keeps it, see keepIndentation); otherwise its first
 // character is a character reference, so any Markdown reader keeps it.
-func escapeText(s string, lineStart, rawIndent bool) string {
-	s = mdSpecial.Replace(s)
-	s = entityLike.ReplaceAllString(s, `\$0`) // "&copy;" in the text stays as written
+func escapeText(s string, lineStart, rawIndent bool, prev byte) string {
+	s = escapeInline(s, prev)
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		if i == 0 && !lineStart {
@@ -1133,6 +1156,90 @@ func escapeBlock(line string) string {
 		return line[:m[4]] + `\` + line[m[4]:]
 	}
 	return line
+}
+
+// escapeInline escapes inline Markdown syntax in text that follows the output byte prev. A
+// URL that Linkify would read holding such syntax is kept as text: the ":" after its scheme
+// (or the "." after "www") is escaped too. Linkify would otherwise end the link at the first
+// backslash, and link a URL cut short (#77). (A URL right after a character that can be in
+// an email address is not one Linkify starts there; the "." could be in an address.)
+func escapeInline(s string, prev byte) string {
+	esc := func(s string) string {
+		return entityLike.ReplaceAllString(mdSpecial.Replace(s), `\$0`) // "&copy;" stays as written
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range urlStart.FindAllStringIndex(s, -1) {
+		before := prev
+		if m[0] > 0 {
+			before = s[m[0]-1]
+		}
+		if emailLocal(before) {
+			continue
+		}
+		u := s[m[0] : m[0]+linkifyURL(s[m[0]:])]
+		if esc(u) == u {
+			continue // linked as it is
+		}
+		p := m[1] - 1 // the ":" of "https://", the "." of "www."
+		if s[p] == '/' {
+			p -= 2
+		}
+		b.WriteString(esc(s[last:p]) + `\`)
+		last = p
+	}
+	b.WriteString(esc(s[last:]))
+	return b.String()
+}
+
+// urlStart matches where Linkify may read a URL.
+var urlStart = regexp.MustCompile(`https?://|ftp://|www\.`)
+
+// linkifyWWW and linkifyURLRe are the URLs goldmark's Linkify (v1.8.7) reads.
+var (
+	linkifyWWW   = regexp.MustCompile(`^www\.[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-z]+(?:[/#?][-a-zA-Z0-9@:%_\+.~#!?&/=\(\);,'">\^{}\[\]` + "`" + `]*)?`)
+	linkifyURLRe = regexp.MustCompile(`^(?:http|https|ftp)://[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-z]+(?::\d+)?(?:[/#?][-a-zA-Z0-9@:%_+.~#$!?&/=\(\);,'">\^{}\[\]` + "`" + `]*)?`)
+)
+
+// linkifyURL is the length of the URL at the start of s as Linkify reads it, 0 if none:
+// the match, without the punctuation it leaves at the end (as goldmark's linkifyParser).
+func linkifyURL(s string) int {
+	m := linkifyURLRe.FindStringIndex(s)
+	if m == nil {
+		m = linkifyWWW.FindStringIndex(s)
+	}
+	if m == nil {
+		return 0
+	}
+	line := s[:m[1]]
+	opening, closing := strings.Count(line, "("), strings.Count(line, ")")
+	i := m[1]
+	for i > 1 {
+		switch line[i-1] {
+		case '?', '!', '.', ',', ':', '*', '_', '~':
+			i--
+			continue
+		case ')':
+			if closing <= opening {
+				return i
+			}
+			closing--
+			i--
+			continue
+		case ';':
+			j := i - 2
+			for j > 0 && (line[j] >= '0' && line[j] <= '9' || line[j] >= 'a' && line[j] <= 'z' || line[j] >= 'A' && line[j] <= 'Z') {
+				j--
+			}
+			if j == i-2 || line[j] != '&' {
+				return i
+			}
+			i = j
+			continue
+		}
+		return i
+	}
+	return i
 }
 
 // entityLike matches what Markdown would read as a character reference ("&amp;", "&#32;").

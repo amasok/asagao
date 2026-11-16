@@ -148,7 +148,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** 1 回目の結果と 2 回目の結果が同じになる
 
 ### Requirement: 往復で安定しない既知の形
-次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): リスト項目の中の入れ子のリストのあとの文 (#59)、隣り合うリスト (印が同じでも違っても 1 つになる、#61)、先頭に空白がある見出し (字下げした setext の見出し、#78)、リスト項目の中の区切り線 (#80)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
+次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): リスト項目の中の入れ子のリストのあとの文 (#59)、隣り合うリスト (印が同じでも違っても 1 つになる、#61)、先頭に空白がある見出し (字下げした setext の見出し、#78)、リスト項目の中の区切り線 (#80)。
 根拠: nesting_spec_test.go unstableOnMain; target_attack_test.go adjacentLists
 
 #### Scenario: 項目の中の区切り線
@@ -157,7 +157,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 
 ### Requirement: 強調は隣の文字によらず残す (#58)
 html の太字・斜体・取り消し線は、句読点・リンク・画像・コード・ほかの強調・メールアドレス・URL と隣り合っても、エディタを往復したあと同じ文字に同じ装飾が付いている (MUST)。Markdown の区切り (`**`・`*`・`~~`、コードの `` ` ``) がそのままでは開かない・閉じない所、隣の区切りとつながる所、Linkify にメールアドレスや URL の一部として読まれる所では、区切りの外側に `\ ` (エスケープした空白) を書く。Markdown → rich text では `\ ` を何も書かないものとして読む (goldmark の CJK 拡張と同じ)。
-根拠: marks.go separateTokens; frommd.go escapedSpaceParser; marks_test.go
+根拠: marks.go separateTokens; frommd.go escapedSpaceParser; marks_test.go; stability_attack_test.go genInlineRT
 
 #### Scenario: 表示用の Markdown
 - **WHEN** `これは<strong>「重要」</strong>です` を表示用に変換する
@@ -178,6 +178,26 @@ html → Markdown の前に、強調を Markdown で書ける形にする (MUST)
 #### Scenario: 空行をまたぐ太字
 - **WHEN** `<strong>a\n\nb</strong>` をエディタで往復する
 - **THEN** `<strong>a</strong>\n\n<strong>b</strong>` になる
+
+### Requirement: 空白のあとと同じ所で Linkify がリンクにする (#77)
+字下げや行末の空白を書いた文字参照 (`&#32;`・`&#9;`) のすぐあとのメールアドレスや URL は、空白のあとと同じくリンクにする (MUST)。インラインのコードの直前が語の文字でも、コードの中のメールアドレスはリンクにしない。URL のすぐあとの文字参照・取り消し線・コード・リンクは、URL に含めない (`\ ` で区切る)。
+根拠: frommd.go spaceRefParser; richtext.go keepTrailingSpace; marks.go separateTokens; marks_test.go TestLinkifyAsWithoutEscapes, TestEmphasisNextToEmailNotLinked; nesting_spec_test.go TestFromMarkdownDemotedTextAsTyped
+
+#### Scenario: 字下げのあとのメールアドレス
+- **WHEN** `> - a\n> - &#32;b@x.jp` を変換する
+- **THEN** `b@x.jp` は `mailto:` のリンクになる
+
+#### Scenario: 文字のすぐあとのコードのメールアドレス
+- **WHEN** `z<code>a@x.jp</code>` をエディタで往復する
+- **THEN** `z<code>a@x.jp</code>` のままになる
+
+### Requirement: エスケープを含む URL は文字のまま残す (#77)
+Linkify が読む URL (エスケープしない文字で読んだときの範囲) がエスケープする文字を含むときは、リンクにせず文字のまま残す (MUST)。スキームの `:` か `www` の `.` もエスケープする (`\` の手前で切れたリンクになっていた)。含まないときは、Linkify が読むとおりのリンクになる。
+根拠: richtext.go escapeInline, linkifyURL; marks_test.go TestLinkifyAsWithoutEscapes
+
+#### Scenario: エスケープを含む URL
+- **WHEN** `see https://x.jp/a_b` をエディタで往復する
+- **THEN** `see https\://x.jp/a\_b` になり、戻すと `see https://x.jp/a_b` の文字のままになる
 
 ### Requirement: 文の文字は往復で落とさない
 入れ子の決まりに合う html の、文として見える文字 (空白を除く) は、エディタを 1 回往復しても落とさない (MUST)。plain の文字列は、同じ Markdown から作った html の文字と、同じ空白以外の文字を持つ。空白を埋めるための `\` や `&#32;` は、文字として出さない。
