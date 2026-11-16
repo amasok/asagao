@@ -325,13 +325,9 @@ func (m *Model) applyComment(msg commentDoneMsg) tea.Cmd {
 		m.status = "コメントを取り消しました"
 		return nil
 	}
-	st, now, gid := m.deps.Store, m.deps.Now(), msg.gid
+	comments, gid := m.comments(m.deps.Now()), msg.gid
 	return func() tea.Msg {
-		me, err := st.Me(m.ctx)
-		if err != nil {
-			return writeDoneMsg{err: err}
-		}
-		if _, err := st.AddRichCommentLocal(m.ctx, gid, richtext.Comment.PlainFromMarkdown(text), richtext.Comment.FromMarkdown(text), me, now); err != nil {
+		if _, err := comments.Add(m.ctx, gid, text); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "コメントしました"}

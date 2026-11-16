@@ -46,6 +46,13 @@
 - テスト: `internal/app` に、偽の `TaskStore` を使った単体テストを足す (担当の既定、プロジェクトとセクションの解決の順番、期日のエラーで何も書かないこと)。入り口のテストは変えない。
 - 差分の見込み: app 約 150 行、テスト約 200 行、cli と mcpserver はそれぞれ 30 行ほど減る。
 
+### a4 の中身
+
+- コメントの作成者 (`store.Me` の戻り値、`AddRichCommentLocal`・`CreateStatusLocal` の引数) の型 `UserRef` を `internal/readmodel` に移す (ADR 0006 の 4。store には型の別名)。ほかの読み取りの型は c2 のまま。
+- ポートは書き込みごとに小さく分ける: `CommentStore` (`Me`・`AddRichCommentLocal`) と `StatusStore` (`ResolveProject`・`Me`・`CreateStatusLocal`)。`TaskStore` には足さない (a1 の偽の store を直さないため。ADR 0008 と同じ考え)。`RichText` に `Comment`・`StatusUpdate` を足す。
+- `Comments.Add(ctx, taskGID, md)`: タスクはどの入り口も gid で渡すので、形は 1 つ。`Status.Create` (プロジェクトを名前か gid で受ける。CLI・MCP) と `Status.CreateHere` (gid をそのまま。TUI。ADR 0008 の 2 と同じ形)。
+- 呼ぶ順番は今と同じ (`ResolveProject` → `Me` → 変換 → 時計 → `*Local`)。エラーは store のものをそのまま返す (どの入り口も包んでいないため)。TUI はキーを押したときの時刻を返す `Clock` を渡す。
+
 ## 段階 b: ドメイン層 (`internal/domain/...`)
 
 ねらい: Asana と outbox の決まりを、SQL と外部ライブラリから離して、単体でテストできる関数にする。

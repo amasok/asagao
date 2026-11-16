@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/amasok/asana-tui/internal/readmodel"
 )
 
 // ErrNotFound is returned when a task or project is not in the local store.
@@ -29,10 +31,9 @@ const KeyMeGID = "me_gid"
 
 // --- views (the JSON shapes returned by the CLI and MCP; keep them stable) ---
 
-type UserRef struct {
-	GID  string `json:"gid"`
-	Name string `json:"name"`
-}
+// UserRef is readmodel.UserRef (an alias, so that internal/app can use it without
+// importing the store).
+type UserRef = readmodel.UserRef
 
 type MembershipView struct {
 	ProjectGID  string `json:"project_gid"`
