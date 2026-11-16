@@ -91,7 +91,15 @@ type chunkEnv struct {
 	path string
 }
 
+// newChunkEnv: tasks are written one per transaction (yield 1ms), so that every boundary
+// between two transactions is crossed; the latency tests use newChunkEnvTimed instead.
 func newChunkEnv(t *testing.T, n int) *chunkEnv {
+	t.Helper()
+	t.Cleanup(store.SetTaskWriteSlicesForTest(0, time.Millisecond))
+	return newChunkEnvTimed(t, n)
+}
+
+func newChunkEnvTimed(t *testing.T, n int) *chunkEnv {
 	t.Helper()
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -359,7 +367,7 @@ func TestChunkAttackOtherWriterNotBlocked(t *testing.T) {
 	}
 	const n = 20000
 	// baseline: how long one big transaction holds the lock (the old behaviour)
-	base := newChunkEnv(t, 0)
+	base := newChunkEnvTimed(t, 0)
 	var tasks []asana.Task
 	for i := 0; i < n; i++ {
 		tasks = append(tasks, asana.Task{GID: fmt.Sprintf("b%d", i), Name: "x"})
@@ -370,7 +378,7 @@ func TestChunkAttackOtherWriterNotBlocked(t *testing.T) {
 	}
 	whole := time.Since(t0)
 
-	e := newChunkEnv(t, n)
+	e := newChunkEnvTimed(t, n)
 	other, err := store.Open(ctx, e.path)
 	if err != nil {
 		t.Fatal(err)
@@ -484,7 +492,7 @@ func TestChunkAttackTwoOtherWritersNotStarved(t *testing.T) {
 	if raceEnabled {
 		t.Skip("too slow under -race")
 	}
-	e := newChunkEnv(t, 12000)
+	e := newChunkEnvTimed(t, 12000)
 	done := make(chan struct{})
 	errc := make(chan error, 2)
 	maxc := make(chan time.Duration, 2)
