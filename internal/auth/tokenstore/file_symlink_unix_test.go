@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -251,7 +252,7 @@ func TestFileSymlinkErrorSaysWhatToRun(t *testing.T) {
 	})
 	t.Run("control characters", func(t *testing.T) {
 		dir := t.TempDir()
-		real := filepath.Join(dir, "x\x1b]0;owned\x07.json")
+		real := filepath.Join(dir, "x\nchmod 777 ~\x1b]0;owned\x07.json")
 		if err := os.WriteFile(real, []byte(`{}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +261,11 @@ func TestFileSymlinkErrorSaysWhatToRun(t *testing.T) {
 		}
 		symlink(t, real, filepath.Join(dir, "token.json"))
 		_, err := (&File{Path: filepath.Join(dir, "token.json")}).Load(ctx)
-		if err == nil || strings.ContainsAny(err.Error(), "\x1b\x07") {
+		target, _ := filepath.EvalSymlinks(real)
+		// no line made up, nothing for the terminal; the path is shown quoted, and no command
+		// is given with a path that is not the real one
+		if err == nil || strings.ContainsAny(err.Error(), "\n\r\x1b\x07") ||
+			!strings.Contains(err.Error(), strconv.Quote(target)) || strings.Contains(err.Error(), "chmod go-w /") || strings.Contains(err.Error(), "chmod go-w '") {
 			t.Fatalf("err = %q", err)
 		}
 	})
@@ -275,6 +280,21 @@ func TestShellQuote(t *testing.T) {
 	} {
 		if got := shellQuote(in); got != want {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestShowPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"/home/me/.config/asana-tui": "/home/me/.config/asana-tui",
+		"/a b/日本語":                   "/a b/日本語",
+		"/x\ny":                      `"/x\ny"`,
+		"/x\ty":                      `"/x\ty"`,
+		"/x\x1b[2Jy":                 `"/x\x1b[2Jy"`,
+		"/x\u202ey":                  `"/x\u202ey"`,
+	} {
+		if got := showPath(in); got != want {
+			t.Errorf("showPath(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

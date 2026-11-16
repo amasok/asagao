@@ -9,10 +9,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
-
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"unicode"
 )
 
 // privateDir creates dir (0700) if needed and makes sure only the owner can read it: an
@@ -36,12 +36,12 @@ func privateDir(dir string) error {
 			return err
 		}
 		if !target.IsDir() {
-			return fmt.Errorf("トークンの保存先 %s のリンク先がフォルダではありません", termsafe.String(dir))
+			return fmt.Errorf("トークンの保存先 %s のリンク先がフォルダではありません", showPath(dir))
 		}
 		return ownedUnwritable(dir, target, true)
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("トークンの保存先 %s がフォルダではありません", termsafe.String(dir))
+		return fmt.Errorf("トークンの保存先 %s がフォルダではありません", showPath(dir))
 	}
 	if fi.Mode().Perm() == 0o700 {
 		return nil
@@ -70,7 +70,7 @@ func readPrivate(path string) ([]byte, error) {
 	}
 	link := fi.Mode()&fs.ModeSymlink != 0
 	if !link && !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("トークンのファイル %s が通常のファイルではありません (%v)", termsafe.String(path), fi.Mode().Type())
+		return nil, fmt.Errorf("トークンのファイル %s が通常のファイルではありません (%v)", showPath(path), fi.Mode().Type())
 	}
 	// O_NONBLOCK: opening a FIFO a link points to does not wait for a writer
 	flags := os.O_RDONLY | syscall.O_NONBLOCK
@@ -87,7 +87,7 @@ func readPrivate(path string) ([]byte, error) {
 		return nil, err
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("トークンのファイル %s のリンク先が通常のファイルではありません (%v)", termsafe.String(path), st.Mode().Type())
+		return nil, fmt.Errorf("トークンのファイル %s のリンク先が通常のファイルではありません (%v)", showPath(path), st.Mode().Type())
 	}
 	if err := ownedUnwritable(path, st, link); err != nil {
 		return nil, err
@@ -110,10 +110,10 @@ func ownedUnwritable(path string, fi fs.FileInfo, link bool) error {
 			target = t
 		}
 	}
-	// paths are shown on the terminal
-	subject := "トークンの" + what + " " + termsafe.String(path)
+	// paths are shown on the terminal (showPath)
+	subject := "トークンの" + what + " " + showPath(path)
 	if link {
-		subject = "トークンの保存先 " + termsafe.String(path) + " はシンボリックリンクで、リンク先の" + what + " " + termsafe.String(target)
+		subject = "トークンの保存先 " + showPath(path) + " はシンボリックリンクで、リンク先の" + what + " " + showPath(target)
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -123,10 +123,35 @@ func ownedUnwritable(path string, fi fs.FileInfo, link bool) error {
 		return fmt.Errorf("%s の持ち主が自分ではありません", subject)
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("%s にほかの人も書き込めます (%v)。ほかの人が書き込めないようにしてください: chmod go-w %s",
-			subject, fi.Mode().Perm(), termsafe.String(shellQuote(target)))
+		fix := "chmod go-w " + shellQuote(target)
+		if !printable(target) { // no command to paste: the path shown is not the path itself
+			fix = "chmod go-w で、グループとほかの人の書き込みを外す"
+		}
+		return fmt.Errorf("%s にほかの人も書き込めます (%v)。ほかの人が書き込めないようにしてください: %s",
+			subject, fi.Mode().Perm(), fix)
 	}
 	return nil
+}
+
+// showPath is path as an error shows it on the terminal: as it is, or quoted (with escapes,
+// as Go writes strings) if it has anything that does not print, such as a line break, which
+// could make up a line of the message, or an escape sequence.
+func showPath(path string) string {
+	if printable(path) {
+		return path
+	}
+	return strconv.Quote(path)
+}
+
+// printable reports whether every character of s prints (a space does; a tab, a line break,
+// a control or format character does not).
+func printable(s string) bool {
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // shellQuote quotes s for a POSIX shell if it has anything but plain path characters.
