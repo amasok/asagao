@@ -2,7 +2,6 @@ package richtext
 
 import (
 	"math/rand"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -17,21 +16,21 @@ func genInlineRT(r *rand.Rand, depth int) string {
 			sb.WriteString("<br>")
 		case 1:
 			if r.Intn(4) == 0 && depth == 0 {
-				// inline code over line breaks, blank lines among them (#65). A space before it:
-				// an email address right before "`" is linked with the "`" in it (#77)
-				sb.WriteString(" <code>" + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + []string{"\n", "\n\n", "\n \n"}[r.Intn(3)] + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + "</code> ")
+				// inline code over line breaks, blank lines among them (#65), right after a word
+				// too (an email address there was linked with the "`" in it, #77)
+				sp := []string{"", " "}[r.Intn(2)]
+				sb.WriteString(sp + "<code>" + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + []string{"\n", "\n\n", "\n \n"}[r.Intn(3)] + escHTML(rtTexts2[r.Intn(len(rtTexts2))]) + "</code>" + sp)
 				continue
 			}
 			sb.WriteString("\n")
 		case 2:
-			// emphasis with spaces and line breaks at its ends (#49). Its text starts and ends
-			// with a letter (apart from the spaces), it is not nested, and a space follows it:
-			// "**" next to punctuation (a link) or to another "**" is not emphasis in Markdown,
-			// and an email address right after "**" is linked with the "**" in it (on main
-			// already, not about spaces).
-			if depth == 0 {
-				ws := []string{"", " ", "\n", "<br>", "\t", " \n"}
-				sb.WriteString("<b>" + ws[r.Intn(len(ws))] + "m " + genInlineRT(r, depth+1) + " m" + ws[r.Intn(len(ws))] + "</b> ")
+			// emphasis with spaces and line breaks at its ends (#49), nested, next to other
+			// emphasis, punctuation, links, code and email addresses, and over blank lines
+			// (#58)
+			if depth < 2 {
+				ws := []string{"", "", " ", "\n", "<br>", "\t", " \n", "\n\n"}
+				tag := []string{"b", "strong", "em", "i", "s", "del"}[r.Intn(6)]
+				sb.WriteString("<" + tag + ">" + ws[r.Intn(len(ws))] + genInlineRT(r, depth+1) + ws[r.Intn(len(ws))] + "</" + tag + ">")
 				continue
 			}
 		case 3:
@@ -99,20 +98,11 @@ func genBlockRT(r *rand.Rand, depth int) string {
 	return genInlineRT(r, 0)
 }
 
-// onlyLinksAdded reports whether h2 is h1 with links added around some of its text (#77).
-func onlyLinksAdded(h1, h2 string) bool {
-	strip := func(s string) string { return linkTag.ReplaceAllString(s, "") }
-	return strings.Count(h2, "<a href") > strings.Count(h1, "<a href") && strip(h1) == strip(h2)
-}
-
-var linkTag = regexp.MustCompile(`<a href="[^"]*">|</a>`)
-
 // ToEditableMarkdown -> FromMarkdown must be stable: converting the result again changes
 // nothing (so trailing whitespace, line starts and mailto: links neither grow nor vanish).
 func TestEditableRoundTripIsStable(t *testing.T) {
 	r := rand.New(rand.NewSource(45))
-	fails, linked := 0, 0
-	defer func() { t.Logf("skipped %d as #77 (links added on the next trip)", linked) }()
+	fails := 0
 	for i := 0; i < 30000 && fails < 8; i++ {
 		var sb strings.Builder
 		sb.WriteString("<body>")
@@ -128,10 +118,6 @@ func TestEditableRoundTripIsStable(t *testing.T) {
 		md2 := ToEditableMarkdown(h1)
 		h2 := FromMarkdown(md2)
 		// whitespace at the very end of a block is covered by TestNoGhostSpaceAtBlockEnd
-		if h1 != h2 && onlyLinksAdded(h1, h2) {
-			linked++ // #77: an address after "&#32;" is linked once it is written another way
-			continue
-		}
 		if h1 != h2 {
 			fails++
 			t.Errorf("not stable\nin  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)

@@ -40,7 +40,7 @@ b</a></body>`,
 	}
 	for _, in := range cases {
 		md1, h1, md2, h2 := rt2(in)
-		if h1 != h2 && !onlyLinksAdded(h1, h2) {
+		if h1 != h2 {
 			t.Errorf("unstable\nin  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
 		}
 	}
@@ -130,7 +130,7 @@ func TestBatch2RandomLists(t *testing.T) {
 		}
 		md2 := ToEditableMarkdown(h1)
 		h2 := FromMarkdown(md2)
-		if h1 != h2 && !onlyLinksAdded(h1, h2) {
+		if h1 != h2 {
 			fails++
 			t.Errorf("unstable\nin  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
 		}
@@ -196,7 +196,7 @@ func TestBatch2QuoteListsInItems(t *testing.T) {
 	}
 	for _, in := range cases {
 		md1, h1, md2, h2 := rt2(in)
-		if h1 != h2 && !onlyLinksAdded(h1, h2) {
+		if h1 != h2 {
 			t.Errorf("unstable\nin  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
 		}
 		for _, w := range []string{"x", "y", "c", "d", "z", "p1", "p2"} {
