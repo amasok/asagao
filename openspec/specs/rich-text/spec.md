@@ -148,7 +148,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** 1 回目の結果と 2 回目の結果が同じになる
 
 ### Requirement: 隣り合うリストは分けたまま
-同じ種類のリストが隣り合っていても、1 つにまとめない (MUST)。Asana の rich text の文書は隣り合うリストについて何も書いておらず、まとめると書かれたものが変わるため。エディタ用の Markdown では、直前が同じ種類のリストなら印を替える (`-` のあとは `*`、`1.` のあとは `1)`)。Markdown は印の違うリストを別のリストとして読む (#61)。
+同じ種類のリストが隣り合っていても、1 つにまとめない (MUST)。Asana の rich text の文書は隣り合うリストについて何も書いておらず、まとめると書かれたものが変わるため。エディタ用の Markdown では、直前が同じ種類のリストなら印を替える (`-` のあとは `*`、`1.` のあとは `1)`)。Markdown は印の違うリストを別のリストとして読む。あいだの空白・コメント・`<br>` は落とす (#61)。
 根拠: richtext.go altMarker, listItem; lists_test.go TestAdjacentListsStayApart
 
 #### Scenario: 隣り合う箇条書き
@@ -172,7 +172,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `<h2>   a</h2>` が `<h2>a</h2>` になる (#78 で直す)
 
 ### Requirement: 入れ子のリストのあとの文は、そのリストの最後の項目に入れる
-リスト項目の中で入れ子のリストのあとに続く文は、そのリストの最後の項目の新しい行にする (MUST)。Markdown はその行を最後の項目の続きと読むので、エディタはそこにしか書き戻せないため。`FromMarkdown` も送るときにそうし、html にあるときも読むときにそうする (間の改行は落とし、語はくっつけない)。そのあとに続くリストは、隣り合うリストになる (#59)。
+リスト項目の中で入れ子のリストのあとに続く文は、そのリストの最後の項目の新しい行にする (MUST)。Markdown はその行を最後の項目の続きと読むので、エディタはそこにしか書き戻せないため。`FromMarkdown` も送るときにそうし、html にあるときも読むときにそうする (間の改行は落とし、語はくっつけない)。そのあとに続くリストは、隣り合うリストになる (#59)。空行と字下げで打った外側の項目の続き (`- a\n  - b\n\n  c`) は、まだリストの外に出る (#82)。
 根拠: frommd.go itemBlocks; richtext.go moveTextAfterNestedLists; lists_test.go TestTextAfterNestedList
 
 #### Scenario: 入れ子のリストのあとの文
@@ -180,8 +180,8 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `<ul><li>a<ul><li>b\nc</li></ul></li></ul>` になる
 
 ### Requirement: リスト項目の中のブロックは、読むときに文字にする
-Asana が受け付けないリスト項目の中の引用・コード片・見出し・区切り線が html にあるとき (Asana は送ってこないが、キャッシュやほかの道具が持つことがある) は、読むときに、`FromMarkdown` が送るのと同じ文字にする (MUST): `> ` の行、行ごとのコード、`# h`、`---`。ブロックとして書くとリストが終わり、あとの項目が文字になるため。リストや段落を含む引用は、これまでどおりリストのあとに出す (#59)。
-根拠: richtext.go demoteBlocksInItems; lists_test.go TestTextAfterNestedList, TestRuleInItemIsText
+Asana が受け付けないリスト項目の中の引用・コード片・見出し・区切り線が html にあるとき (Asana は送ってこないが、キャッシュやほかの道具が持つことがある) は、読むときに、`FromMarkdown` が送るのと同じ文字にする (MUST): `> ` の行 (中のリストは `- ` の行)、行ごとのコード、`# h`、`---`。ブロックとして書くとリストが終わり、あとの項目が文字になるため。引用を文字にできるか (段落などを含まないか) は書き換える前に確かめ、できないものは何も変えずにリストのあとに出す (#59)。
+根拠: richtext.go demoteBlocksInItems, demotedBlock, asText, listText; lists_test.go TestTextAfterNestedList, TestRuleInItemIsText, TestQuoteInItemLeftAsIs
 
 #### Scenario: 項目の中の区切り線
 - **WHEN** `<ol><li>a<hr/></li><li>b</li></ol>` をエディタで往復する

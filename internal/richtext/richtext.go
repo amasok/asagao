@@ -843,7 +843,8 @@ func (c *converter) listItem(n *html.Node) {
 // against lists next to each other, and they are kept apart as they were written.
 func (c *converter) altMarker(n *html.Node) bool {
 	prev := n.PrevSibling
-	for prev != nil && (prev.Type == html.TextNode && asciiBlank(prev.Data) || prev.Type == html.CommentNode) {
+	for prev != nil && (prev.Type == html.TextNode && asciiBlank(prev.Data) || prev.Type == html.CommentNode ||
+		prev.Type == html.ElementNode && prev.DataAtom == atom.Br) { // (a <br> between lists goes)
 		prev = prev.PrevSibling
 	}
 	alt := prev != nil && prev.Type == html.ElementNode && prev.DataAtom == n.DataAtom && !c.altLists[prev]
@@ -858,9 +859,9 @@ func (c *converter) altMarker(n *html.Node) bool {
 
 // demoteBlocksInItems makes a quote, code, a heading or a rule in a list item (which Asana's
 // rich text does not take there, and so does not send) the text FromMarkdown sends for them
-// there (#60): "> " lines, code of each line, "# h", "---" (#59). The list stays as it is;
-// written as blocks they would end it, and the items after them would be text. A quote that
-// holds more than text and code (a list, say) is left as it is.
+// there (#60): "> " lines (a list in the quote as "- " lines), code of each line, "# h",
+// "---" (#59). The list stays as it is; written as blocks they would end it, and the items
+// after them would be text. A quote holding more (a paragraph, say) is left as it is.
 func demoteBlocksInItems(n *html.Node) {
 	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
 		demoteBlocksInItems(ch)
@@ -870,6 +871,10 @@ func demoteBlocksInItems(n *html.Node) {
 	}
 	for ch := n.FirstChild; ch != nil; {
 		next := ch.NextSibling
+		if isList(ch) {
+			ch = next // a nested list is what an item takes (a list in a quote in it is text)
+			continue
+		}
 		if inline, ok := demotedBlock(ch); ok {
 			if hasContentBefore(ch) && len(inline) > 0 {
 				n.InsertBefore(&html.Node{Type: html.TextNode, Data: "\n"}, ch)
@@ -920,7 +925,15 @@ func demotedBlock(n *html.Node) ([]*html.Node, bool) {
 			out = append(out, ch)
 		}
 		return out, true
+	case atom.Ul, atom.Ol:
+		if !asText(n) {
+			return nil, false
+		}
+		return listText(n), true
 	case atom.Blockquote:
+		if !asText(n) {
+			return nil, false // a quote holding a paragraph, say, stays a block
+		}
 		var out []*html.Node
 		for ch := n.FirstChild; ch != nil; ch = n.FirstChild {
 			n.RemoveChild(ch)
@@ -929,24 +942,17 @@ func demotedBlock(n *html.Node) ([]*html.Node, bool) {
 					out = append(out, text("\n"))
 				}
 				out = append(out, inner...)
-				continue
-			}
-			if ch.Type == html.ElementNode && blockAtoms[ch.DataAtom] || hasBlock(ch) {
-				// put it back: a quote holding a list or a paragraph stays a block
-				n.AppendChild(ch)
-				for _, s := range out {
-					if s.Parent == nil {
-						n.InsertBefore(s, ch)
-					}
+				if n.FirstChild != nil {
+					out = append(out, text("\n")) // what follows it starts a line
 				}
-				return nil, false
+				continue
 			}
 			out = append(out, ch)
 		}
 		// "> " at the start of each line
 		lines := []*html.Node{text("> ")}
 		for _, s := range out {
-			quoteLines(s)
+			prefixLines(s, "> ")
 			lines = append(lines, s)
 			if s.Type == html.ElementNode && s.DataAtom == atom.Br {
 				lines = append(lines, text("> "))
@@ -957,16 +963,84 @@ func demotedBlock(n *html.Node) ([]*html.Node, bool) {
 	return nil, false
 }
 
-// quoteLines puts "> " after each line break in the text of n (see demotedBlock).
-func quoteLines(n *html.Node) {
+// listText is list n (in a quote in an item) as the text FromMarkdown sends for a list in a
+// quote (#60): "- " or "1. " before each item, nested lists indented by the marker.
+func listText(n *html.Node) []*html.Node {
+	text := func(s string) *html.Node { return &html.Node{Type: html.TextNode, Data: s} }
+	var out []*html.Node
+	num := 0
+	for li := n.FirstChild; li != nil; li = n.FirstChild {
+		n.RemoveChild(li)
+		if li.Type != html.ElementNode || li.DataAtom != atom.Li {
+			continue // whitespace between the items
+		}
+		num++
+		marker := "- "
+		if n.DataAtom == atom.Ol {
+			marker = fmt.Sprintf("%d. ", num)
+		}
+		if len(out) > 0 {
+			out = append(out, text("\n"))
+		}
+		out = append(out, text(marker))
+		for ch := li.FirstChild; ch != nil; ch = li.FirstChild {
+			li.RemoveChild(ch)
+			inner, ok := demotedBlock(ch)
+			if !ok {
+				out = append(out, ch)
+				continue
+			}
+			if isList(ch) {
+				for _, s := range inner {
+					prefixLines(s, strings.Repeat(" ", len(marker)))
+				}
+				inner = append([]*html.Node{text(strings.Repeat(" ", len(marker)))}, inner...)
+			}
+			out = append(out, text("\n"))
+			out = append(out, inner...)
+		}
+	}
+	return out
+}
+
+// asText reports whether n, a quote or a list in an item, can be written as text (see
+// demotedBlock): it holds only text, inline elements, and blocks that are written as text
+// (code, headings, rules, quotes and lists like it). It is checked before anything is
+// changed, so what cannot is left as it was.
+func asText(n *html.Node) bool {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		switch {
+		case ch.Type != html.ElementNode:
+		case ch.DataAtom == atom.Blockquote, ch.DataAtom == atom.Ul, ch.DataAtom == atom.Ol:
+			if !asText(ch) {
+				return false
+			}
+		case ch.DataAtom == atom.Li && (n.DataAtom == atom.Ul || n.DataAtom == atom.Ol):
+			if !asText(ch) {
+				return false
+			}
+		case ch.DataAtom == atom.Pre:
+		case ch.DataAtom == atom.Hr, ch.DataAtom == atom.H1, ch.DataAtom == atom.H2, ch.DataAtom == atom.H3:
+			if hasBlock(ch) {
+				return false
+			}
+		case blockAtoms[ch.DataAtom] || hasBlock(ch):
+			return false
+		}
+	}
+	return true
+}
+
+// prefixLines puts p after each line break in the text of n (see demotedBlock).
+func prefixLines(n *html.Node, p string) {
 	if n.Type == html.TextNode {
-		n.Data = strings.ReplaceAll(n.Data, "\n", "\n> ")
+		n.Data = strings.ReplaceAll(n.Data, "\n", "\n"+p)
 		return
 	}
 	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
-		quoteLines(ch)
+		prefixLines(ch, p)
 		if ch.Type == html.ElementNode && ch.DataAtom == atom.Br {
-			n.InsertBefore(&html.Node{Type: html.TextNode, Data: "> "}, ch.NextSibling)
+			n.InsertBefore(&html.Node{Type: html.TextNode, Data: p}, ch.NextSibling)
 		}
 	}
 }

@@ -1,6 +1,10 @@
 package richtext
 
-import "testing"
+import (
+	"regexp"
+	"strings"
+	"testing"
+)
 
 // #61: spaces at the ends of a link's text go outside the link, so the words around it stay
 // apart (Markdown would drop them inside "[ b ]"... as the link's text is trimmed).
@@ -83,7 +87,7 @@ func TestTextAfterNestedList(t *testing.T) {
 		{"<body><ul><li>a<pre>x</pre>b</li></ul></body>", "<body><ul><li>a\n<code>x</code>\nb</li></ul></body>"},
 		{"<body><ol><li>a<pre>x\n\ny</pre></li><li>b</li></ol></body>", "<body><ol><li>a\n<code>x</code>\n\n<code>y</code></li><li>b</li></ol></body>"},
 		{"<body><ol><li>a<h1><em>h</em></h1>b</li><li>c</li></ol></body>", "<body><ol><li>a\n# <em>h</em>\nb</li><li>c</li></ol></body>"},
-		{"<body><ul><li>a<blockquote><ul><li>q</li></ul></blockquote></li></ul></body>", "<body><ul><li>a</li></ul><blockquote>- q</blockquote></body>"},
+		{"<body><ul><li>a<blockquote><ul><li>q</li></ul></blockquote></li></ul></body>", "<body><ul><li>a\n&gt; - q</li></ul></body>"},
 	} {
 		md1, h1, md2, h2 := roundtrip(c.in)
 		if h1 != c.want || h2 != h1 {
@@ -111,3 +115,41 @@ func TestRuleInItemIsText(t *testing.T) {
 		t.Errorf("h1 %q h2 %q", h1, h2)
 	}
 }
+
+// A quote in an item that holds a paragraph (or anything else not written as text) stays a
+// block, untouched: its words in their order (review M1). A block written as text in a quote ends
+// its line (review L3). A line break between lists does not make them one (review L2).
+func TestQuoteInItemLeftAsIs(t *testing.T) {
+	for _, c := range []struct{ in, md string }{
+		{"<body><ul><li>a<blockquote>t1<ul><li>x</li></ul>t2</blockquote>z</li></ul></body>", ""},
+		{"<body><ul><li>a<blockquote>t1<p>x</p>t2</blockquote>z</li></ul></body>", ""},
+		{"<body><ul><li>a<blockquote>x<h1>h</h1>y<ol><li>z</li></ol>w</blockquote></li></ul></body>", ""},
+	} {
+		md := ToEditableMarkdown(c.in)
+		if c.md != "" && md != c.md {
+			t.Errorf("ToEditableMarkdown(%q)\ngot  %q\nwant %q", c.in, md, c.md)
+		}
+		if got, want := wordOrder(md), wordOrder(nodeTextOf(c.in)); got != want {
+			t.Errorf("words of %q: %q, want %q (md %q)", c.in, got, want, md)
+		}
+	}
+	for _, c := range []struct{ in, want string }{
+		{"<body><ul><li>a<blockquote><strong>x</strong><pre>p</pre>y</blockquote></li></ul></body>", "<body><ul><li>a\n&gt; <strong>x</strong>\n&gt; <code>p</code>\n&gt; y</li></ul></body>"},
+		{"<body><ul><li>a</li></ul><br><ul><li>b</li></ul></body>", "<body><ul><li>a</li></ul><ul><li>b</li></ul></body>"},
+		// a list in a quote in an item is text too, as FromMarkdown sends it
+		{"<body><ul><li>a<blockquote>t1<ul><li>x<ol><li>y</li></ol></li></ul>t2</blockquote>z</li><li>b</li></ul></body>",
+			"<body><ul><li>a\n&gt; t1\n&gt; - x\n&gt;   1. y\n&gt; t2\nz</li><li>b</li></ul></body>"},
+	} {
+		md1, h1, md2, h2 := roundtrip(c.in)
+		if h1 != c.want || h2 != h1 {
+			t.Errorf("in %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q\nwant %q", c.in, md1, h1, md2, h2, c.want)
+		}
+	}
+}
+
+// wordOrder is the letters and digits of s in order.
+func wordOrder(s string) string {
+	return strings.Join(itemWordRe.FindAllString(s, -1), "")
+}
+
+var itemWordRe = regexp.MustCompile(`[a-z]+[0-9]*`)

@@ -74,7 +74,8 @@ func genBlockRT(r *rand.Rand, depth int) string {
 				}
 				if r.Intn(6) == 0 {
 					// what Asana's rich text does not take in an item (#59, #80)
-					s += []string{"<blockquote>q</blockquote>", "<blockquote>" + genInlineRT(r, 0) + "</blockquote>", "<pre>c\n\n d</pre>", "<hr/>", "<h1>" + genInlineRT(r, 0) + "</h1>"}[r.Intn(5)] + genInlineRT(r, 0)
+					s += []string{"<blockquote>q</blockquote>", "<blockquote>" + genInlineRT(r, 0) + "</blockquote>", "<pre>c\n\n d</pre>", "<hr/>", "<h1>" + genInlineRT(r, 0) + "</h1>",
+						"<blockquote>t<pre>p</pre>u</blockquote>", "<blockquote>t<ul><li>x</li></ul>u</blockquote>"}[r.Intn(7)] + genInlineRT(r, 0)
 				}
 				s += "</li>"
 			}
