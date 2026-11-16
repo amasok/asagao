@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var markTexts58 = []string{"a", "b", "日本", "。", "、", "（", "）", "「", "」", "(", ")", "[", "]", "!", "?", ".", ",", ":", ";", "-", "_", "*", "**", "***", "~", "~~", "`", "@", "a@x.jp", "x.jp", "www.x.jp", "https://x.jp/a_b", "http://x.jp/a*b*", "mailto:a@x.jp", "\\", "\\*", "&", "<", "#", "-", ">", "😀", "é"}
+var markTexts58 = []string{"a", "b", "日本", "。", "、", "（", "）", "「", "」", "(", ")", "[", "]", "!", "?", ".", ",", ":", ";", "-", "_", "*", "**", "***", "~", "~~", "`", "@", "a@x.jp", "x.jp", "www.x.jp", "https://x.jp/a_b", "http://x.jp/a*b*", "mailto:a@x.jp", "\\", "\\*", "&", "<", "#", "1.", " ", "　", "-", ">", "😀", "é"}
 
 func gen58(r *rand.Rand, depth int, heading bool) string {
 	var sb strings.Builder
