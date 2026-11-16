@@ -32,7 +32,8 @@ func TestToMarkdown(t *testing.T) {
 			"買うもの\n\n- 牛乳\n- 卵\n   1. 赤\n   2. 白\n\n以上"},
 		{"link text starting with @ is a mention",
 			`<body><a href="https://app.asana.com/0/1">@Hanako</a> と <a href="https://example.com"> @Taro </a></body>`,
-			"**@Hanako** と **@Taro**"},
+			// the link's spaces are text outside it (#61); a space at the end of a block is kept (#48)
+			"**@Hanako** と  **@Taro**&#32;"},
 		{"@ in the middle of link text is not a mention",
 			`<body><a href="mailto:a@example.com">a@example.com</a></body>`,
 			"[a@example.com](mailto:a@example.com)"},
