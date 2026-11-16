@@ -203,7 +203,7 @@ TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と 
 - **THEN** 偽の Asana (レイアウトのタグで 400 を返す) が受け付ける
 
 ### Requirement: 古い形のコメントと status update は送る前に直す
-コメントと status update の `html_text` に、送り先が受け付けないタグ (見出し・区切り線・画像・表) があれば、push は送る前に今の変換の決まりで直して積み直す (MUST。#63 より前に積まれたもの、#71)。エディタ用の Markdown に戻してから送り先の変換をかけ、`text` も合わせる。直したものが `failed` なら、利用者に聞かずに `pending` に戻し、試した回数と照合の印を消す (`failed` のコメントと status update は 4xx で拒まれ、作られていない)。送信中のものは触らない。直したあとはタグが残らないので、ほかの理由で失敗したものは 1 回しか戻らない。
+コメントと status update の `html_text` に、送り先が受け付けないタグ (見出し・区切り線・画像・表) があれば、push は送る前に今の変換の決まりで直して積み直す (MUST。#63 より前に積まれたもの、#71)。エディタ用の Markdown に戻してから送り先の変換をかけ、`text` も合わせる。直したものが `failed` なら、利用者に聞かずに `pending` に戻し、試した回数と照合の印を消す (何で失敗したものでも、そのタグがある限り Asana は作らないので、送り直しても二重にならない)。送信中のものは触らない。直したあとはタグが残らないので、ほかの理由で失敗したものは 1 回しか戻らない。
 根拠: sync/push.go (pushPass), store/outbox_richtext.go, richtext/target.go (`Fit`); TestPushFitsRichTextQueuedBefore63, TestFitQueuedRichText, TestFitLayoutTags
 
 #### Scenario: #63 より前に積まれたコメントが失敗のまま残っている
