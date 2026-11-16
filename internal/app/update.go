@@ -111,11 +111,15 @@ func (t *Tasks) UpdateHere(ctx context.Context, gid string, u TaskUpdate) error 
 
 // Update resolves the input and applies it (ResolveUpdate, then UpdateHere). Nothing is
 // written when the input is invalid. It returns the resolved update, so that the entry
-// point can say what was set.
+// point can say what was set. The clock is read once, so that a relative due date and the
+// time of the write are on the same day.
 func (t *Tasks) Update(ctx context.Context, gid string, in UpdateTaskInput) (TaskUpdate, error) {
-	u, err := t.ResolveUpdate(ctx, in)
+	now := t.Clock()
+	once := *t
+	once.Clock = func() time.Time { return now }
+	u, err := once.ResolveUpdate(ctx, in)
 	if err != nil {
 		return TaskUpdate{}, err
 	}
-	return u, t.UpdateHere(ctx, gid, u)
+	return u, once.UpdateHere(ctx, gid, u)
 }

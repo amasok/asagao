@@ -182,3 +182,23 @@ func TestUpdateHereTakesResolvedValuesAsTheyAre(t *testing.T) {
 		t.Errorf("calls = %s", got)
 	}
 }
+
+func TestUpdateReadsTheClockOnce(t *testing.T) {
+	st := &updateStore{fakeStore: newFake()}
+	// Each read is a day later: a clock that crosses midnight between two reads.
+	reads := 0
+	start := time.Date(2026, 11, 16, 23, 59, 59, 0, time.UTC)
+	tasks := &Tasks{Store: st, Text: &fakeText{}, Clock: func() time.Time {
+		reads++
+		return start.AddDate(0, 0, reads-1)
+	}}
+	if _, err := tasks.Update(context.Background(), "1", UpdateTaskInput{Due: ptr("today")}); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 {
+		t.Errorf("the clock was read %d times, want 1", reads)
+	}
+	if got := st.changes[0]["due_on"]; got != "2026-11-16" || !st.at[0].Equal(start) {
+		t.Errorf("due_on = %v at %v, want 2026-11-16 at %v", got, st.at[0], start)
+	}
+}
