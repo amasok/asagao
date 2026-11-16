@@ -123,3 +123,17 @@ func TestFromMarkdownForCommentsNoLayoutTags(t *testing.T) {
 		}
 	}
 }
+
+func TestConverterTaskNotes(t *testing.T) {
+	src := "# 見出し\n\n本文 **太字**\n\n---\n"
+	html, plain := Converter{}.TaskNotes(src)
+	if want := TaskNotes.FromMarkdown(src); html != want {
+		t.Errorf("html = %q, want %q", html, want)
+	}
+	if want := TaskNotes.PlainFromMarkdown(src); plain != want {
+		t.Errorf("plain = %q, want %q", plain, want)
+	}
+	if html == plain {
+		t.Errorf("html and plain are the same: %q", html)
+	}
+}
