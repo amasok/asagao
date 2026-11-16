@@ -34,11 +34,13 @@ var md = goldmark.New(
 			util.Prioritized(spaceRefParser{}, 100))),
 )
 
-// escapedSpaceParser reads "\ " (an escaped space) as nothing, as goldmark's CJK extension
-// renders it. ToEditableMarkdown writes it where emphasis would not open or close without
-// a space (#58). It is an inline node of its own, so what follows it is read as what
-// follows the emphasis it sets apart is (Linkify starts a link there, as it does after
-// "**"), whether or not the space is there.
+// escapedSpaceParser reads "\ " (an escaped space) right next to a delimiter as nothing,
+// as goldmark's CJK extension renders it: ToEditableMarkdown writes it there where emphasis
+// would not open or close without a space (#58), after closing delimiters ("*", "~", "`",
+// a link's ")") or before opening ones ("*", "~", "`", "[", "![", and "&" of a reference
+// after a URL). It is an inline node of its own, so what follows it is read as what
+// follows the delimiter is (Linkify starts a link there, as it does after "**"), whether or
+// not the space is there. Elsewhere "\ " is text as typed ("cd My\ Documents").
 type escapedSpaceParser struct{}
 
 func (escapedSpaceParser) Trigger() []byte { return []byte{'\\'} }
@@ -46,6 +48,10 @@ func (escapedSpaceParser) Trigger() []byte { return []byte{'\\'} }
 func (escapedSpaceParser) Parse(_ gast.Node, block text.Reader, _ parser.Context) gast.Node {
 	line, _ := block.PeekLine()
 	if len(line) < 2 || line[1] != ' ' {
+		return nil
+	}
+	if b := block.PrecendingCharacter(); !strings.ContainsRune("*~`)", b) &&
+		(len(line) < 3 || strings.IndexByte("*~`[!&", line[2]) < 0) {
 		return nil
 	}
 	block.Advance(2)
