@@ -49,15 +49,53 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	// "<a data-asana-gid="1"/>" (a mention as FromMarkdown writes it, kept in the cache until
 	// the next sync) is not self-closing in HTML: the text after it would become its text
 	s = selfClosingA.ReplaceAllString(s, "<a$1></a>")
+	// Asana's rich text is XML, where "<pre>\nx" is the code "\nx"; an HTML reader drops a
+	// line break right after <pre>, so one more is put there for it to drop (#65)
+	s = preStartBreak.ReplaceAllString(s, "$1\n$2")
 	doc, err := html.Parse(strings.NewReader(s))
 	if err != nil {
 		return s
 	}
+	splitCodeLines(doc)
 	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
 	c.keepTrailingSpace(blockEnds)
 	return tidy(c.b.String())
+}
+
+// preStartBreak matches a <pre> tag and the line break right after it.
+var preStartBreak = regexp.MustCompile(`(?i)(<pre(?:\s[^<>]*)?>)(\r\n|\r|\n)`)
+
+// splitCodeLines makes inline code over line breaks (<code>x\ny</code>) code of each line
+// with the line breaks between them as text (<code>x</code>\n<code>y</code>): a code span
+// cannot hold a line break (Markdown reads it as a space, and a blank line would end the
+// paragraph), and text keeps it as text keeps any other (#65). Empty lines get no code.
+func splitCodeLines(n *html.Node) {
+	for ch := n.FirstChild; ch != nil; {
+		next := ch.NextSibling
+		switch {
+		case ch.Type == html.ElementNode && ch.DataAtom == atom.Pre:
+			// code in a code block is the block's text
+		case ch.Type == html.ElementNode && ch.DataAtom == atom.Code:
+			if t := textOf(ch); strings.Contains(t, "\n") {
+				for i, l := range strings.Split(t, "\n") {
+					if i > 0 {
+						n.InsertBefore(&html.Node{Type: html.TextNode, Data: "\n"}, ch)
+					}
+					if l != "" {
+						code := &html.Node{Type: html.ElementNode, Data: "code", DataAtom: atom.Code}
+						code.AppendChild(&html.Node{Type: html.TextNode, Data: l})
+						n.InsertBefore(code, ch)
+					}
+				}
+				n.RemoveChild(ch)
+			}
+		default:
+			splitCodeLines(ch)
+		}
+		ch = next
+	}
 }
 
 // Images returns the gids of images in the rich text, in order.
@@ -245,7 +283,7 @@ func (c *converter) walk(n *html.Node) {
 	case atom.Pre:
 		c.block()
 		c.pre++
-		c.codeBlock(strings.TrimRight(textOf(n), "\n"))
+		c.codeBlock(strings.TrimRight(textOf(n), "\n"), codeLanguage(attr(n, "data-language")))
 		c.pre--
 		c.block()
 	case atom.A:
@@ -650,8 +688,9 @@ func linkDest(href string) string {
 }
 
 // codeSpan writes s as an inline code span. The backtick fence is longer than any run of
-// backticks in s, so s cannot close it early; line breaks become spaces (a blank line
-// would end the paragraph and leave the rest of s to be read as Markdown).
+// backticks in s, so s cannot close it early; line breaks (which splitCodeLines takes out
+// of <code> first) become spaces (a blank line would end the paragraph and leave the rest
+// of s to be read as Markdown).
 func codeSpan(s string) string {
 	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
 	fence := strings.Repeat("`", longestRun(s, '`')+1)
@@ -662,18 +701,33 @@ func codeSpan(s string) string {
 	return fence + s + fence
 }
 
-// codeBlock writes s as a fenced code block. The fence is longer than any run of backticks
-// in s, so a line of "```" in s does not close it. Inside a blockquote every line gets the
-// quote prefixes, so the code stays in the quote (#51).
-func (c *converter) codeBlock(s string) {
+// codeBlock writes s as a fenced code block, with lang (see codeLanguage) as its info
+// string. The fence is longer than any run of backticks in s, so a line of "```" in s does
+// not close it. Inside a blockquote every line gets the quote prefixes, so the code stays in
+// the quote (#51).
+func (c *converter) codeBlock(s, lang string) {
 	fence := strings.Repeat("`", max(3, longestRun(s, '`')+1))
-	c.write(fence)
+	c.write(fence + lang)
 	for _, l := range strings.Split(s, "\n") {
 		c.newline()
 		c.write(l)
 	}
 	c.newline()
 	c.write(fence)
+}
+
+// languageRe matches a code block's language that can be written as a fence's info string
+// and read back as it is: a name such as "go", "c++", "objective-c" or "c#" (no spaces,
+// backticks, backslashes or character references).
+var languageRe = regexp.MustCompile(`^[A-Za-z0-9_+#.-]{1,64}$`)
+
+// codeLanguage is a code block's language (data-language, which Asana documents for <pre>,
+// #65), or "" if it is not one languageRe takes.
+func codeLanguage(s string) string {
+	if languageRe.MatchString(s) {
+		return s
+	}
+	return ""
 }
 
 // longestRun is the length of the longest run of ch in s.
@@ -969,18 +1023,32 @@ func onlyOf(line string, mark rune) bool {
 	return true
 }
 
-var manyBlank = regexp.MustCompile(`\n{3,}`)
-
+// tidy makes blank lines empty and runs of them one, outside fenced code: a code block keeps
+// its lines as they are (#65). (Text never starts a line with a fence: escape writes "\`".)
 func tidy(s string) string {
 	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		if asciiBlank(l) { // a line of "　" (U+3000) is text, not a blank line
-			lines[i] = ""
+	out := lines[:0]
+	var fence string // the fence of the open code block, "" outside one
+	for _, l := range lines {
+		_, rest := cutQuotePrefix(l)
+		switch {
+		case fence != "":
+			if closesFence(rest, fence) {
+				fence = ""
+			}
+		case openingFence(rest) != "":
+			fence = openingFence(rest)
+		case asciiBlank(l): // a line of "　" (U+3000) is text, not a blank line
+			if len(out) > 0 && out[len(out)-1] == "" {
+				continue
+			}
+			l = ""
 		}
+		out = append(out, l)
 	}
 	// blank lines are empty now, so trimming newlines on the left keeps the indentation of
 	// the first line (editable Markdown writes it as it is)
-	s = manyBlank.ReplaceAllString(strings.Join(lines, "\n"), "\n\n")
+	s = strings.Join(out, "\n")
 	return strings.TrimRight(strings.TrimLeft(s, "\n"), " \t\n")
 }
 

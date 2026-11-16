@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72。#65 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -71,6 +71,30 @@ Markdown の中の生の HTML (インラインもブロックも) は、エス�
 - **WHEN** `> <div>x</div>` を変換する
 - **THEN** `<blockquote>&lt;div&gt;x&lt;/div&gt;</blockquote>` になり、`</blockquote>` の前に改行はない
 
+### Requirement: コードのブロックは行をそのまま残す
+コードのブロック (`<pre>`) の行は、エディタの往復でまとめたり落としたりしない (MUST): 続く空行、空白だけの行、先頭の改行も残す。Asana の rich text は XML なので `<pre>\nx` の中身は `\nx` であり、HTML として読むと落ちる先頭の改行を補って読む (#65)。
+根拠: richtext.go preStartBreak, codeBlock, tidy; frommd.go codeText; blocks_test.go TestCodeBlockKeepsLines
+
+#### Scenario: コードの空行と先頭の改行
+- **WHEN** `<pre>\na\n\n\nb</pre>` をエディタで往復する
+- **THEN** `<pre>\na\n\n\nb</pre>` のまま変わらない
+
+### Requirement: コードのブロックの言語名を送る
+フェンスの情報文字列の最初の語 (```` ```go ```` の `go`) を `<pre data-language="go">` で送り、エディタで開くとフェンスに戻す (MUST)。Asana の rich text の文書に "You can specify a language with data-language" とある。言語名は英数字と `+#.-_` だけのときに使い、それ以外は捨てる (フェンスに書き戻せないため)。リスト項目の中のコード (#60 で文字にする) には付けない (#65)。
+根拠: richtext.go codeLanguage; frommd.go block の FencedCodeBlock; blocks_test.go TestCodeBlockLanguage
+
+#### Scenario: 言語名
+- **WHEN** ```` ```go\nx\n``` ```` を変換する
+- **THEN** `<pre data-language="go">x</pre>` になり、エディタで開くと ```` ```go ```` に戻る
+
+### Requirement: 改行をまたぐインラインのコード
+改行をまたぐインラインのコードは、行ごとのコードと、そのあいだの改行の文字にする (MUST)。コードの中の改行は Markdown では空白になり、空行は段落を終えるため (#65)。
+根拠: richtext.go splitCodeLines; frommd.go inline の CodeSpan; blocks_test.go TestInlineCodeOverLineBreak
+
+#### Scenario: 改行をまたぐインラインのコード
+- **WHEN** `` `x\ny` `` を変換する
+- **THEN** `<code>x</code>\n<code>y</code>` になり、往復しても変わらない
+
 ### Requirement: 改行は LF にそろえる
 Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コードのブロックや生の HTML にも `\r` を残さない (#72)。
 根拠: frommd.go normalizeNewlines; blocks_test.go TestFromMarkdownCRLF
@@ -96,7 +120,7 @@ Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コ�
 - **THEN** エディタを往復しても、メンションのタグにならない (TestEditableRoundTripCannotInjectMention)
 
 ### Requirement: エディタの往復は 1 回で落ち着く
-Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、`<pre>\n`、印の違う隣り合うリスト、見出しの中のメンションや装飾) は除く。
+Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、印の違う隣り合うリスト、見出しの中のメンションや装飾) は除く。
 根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go:145-149, :206-210
 
 #### Scenario: 2 回目の往復

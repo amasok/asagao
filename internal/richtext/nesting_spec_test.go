@@ -203,9 +203,8 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 				break
 			}
 		}
-		if textAfterNestedList(h1) || strings.Contains(h1, "<pre>\n") {
-			// on main too: text after a nested list in an item is not stable, and an HTML
-			// reader drops a line break at the start of <pre>
+		if textAfterNestedList(h1) {
+			// on main too: text after a nested list in an item is not stable
 			continue
 		}
 		md2 := ToEditableMarkdown(h1)

@@ -75,3 +75,97 @@ func TestPlainFromMarkdownQuoteEndsLine(t *testing.T) {
 		}
 	}
 }
+
+// #65: inline code over a line break keeps the line break: each line is code of its own,
+// and the line break is text between them (a code span cannot hold one: Markdown reads it
+// as a space, and a blank line would end the paragraph).
+func TestInlineCodeOverLineBreak(t *testing.T) {
+	checkStable(t, []stableCase{
+		{"`x\ny`", "<body><code>x</code>\n<code>y</code></body>"},
+		{"a `x\ny` b", "<body>a <code>x</code>\n<code>y</code> b</body>"},
+		{"- `x\n  y`", "<body><ul><li><code>x</code>\n<code>y</code></li></ul></body>"},
+		{"> `x\n> y`", "<body><blockquote><code>x</code>\n<code>y</code></blockquote></body>"},
+	})
+	for _, c := range []struct{ in, want string }{
+		{"<body><code>x\ny</code></body>", "<body><code>x</code>\n<code>y</code></body>"},
+		{"<body>a <code>x\n\ny</code> b</body>", "<body>a <code>x</code>\n\n<code>y</code> b</body>"},
+		{"<body><code>\nx\n</code></body>", "<body><code>x</code></body>"},
+		{"<body><ul><li><code>x\n\n# y</code></li></ul></body>", "<body><ul><li><code>x</code>\n\n<code># y</code></li></ul></body>"},
+		{"<body><blockquote><code>x\n- y</code></blockquote></body>", "<body><blockquote><code>x</code>\n<code>- y</code></blockquote></body>"},
+		{"<body><strong><code>x\ny</code></strong></body>", "<body><strong><code>x</code>\n<code>y</code></strong></body>"},
+	} {
+		md1, h1, md2, h2 := roundtrip(c.in)
+		if h1 != c.want || h2 != h1 {
+			t.Errorf("in %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q\nwant %q", c.in, md1, h1, md2, h2, c.want)
+		}
+	}
+	if p := PlainFromMarkdown("`x\ny`"); p != "x\ny" {
+		t.Errorf("plain = %q", p)
+	}
+}
+
+// #65: a code block keeps its lines as they are: blank lines in a row, lines of only spaces,
+// and a line break at its start. Asana's rich text is XML, where "<pre>\nx" holds the line
+// break; an HTML reader drops it, so ToEditableMarkdown puts it back before reading.
+func TestCodeBlockKeepsLines(t *testing.T) {
+	for _, h := range []string{
+		"<body><pre>a\n\n\nb</pre></body>",
+		"<body><pre>a\n  \n\t\nb</pre></body>",
+		"<body><pre>\nx</pre></body>",
+		"<body><pre>\n\n x</pre></body>",
+		"<body><blockquote><pre>a\n\n\n  \nb</pre></blockquote></body>",
+		"<body><blockquote><pre>\nx</pre></blockquote></body>",
+		"<body>p\n<pre>a\n\n\nb</pre>q\n\nr</body>",
+	} {
+		md1, h1, md2, h2 := roundtrip(h)
+		if h1 != h || h2 != h1 {
+			t.Errorf("in %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", h, md1, h1, md2, h2)
+		}
+	}
+	checkStable(t, []stableCase{
+		{"```\n\nx\n```", "<body><pre>\nx</pre></body>"},
+		{"```\na\n\n\n\nb\n```", "<body><pre>a\n\n\n\nb</pre></body>"},
+		{"> ```\n> a\n>\n>\n> b\n> ```", "<body><blockquote><pre>a\n\n\nb</pre></blockquote></body>"},
+	})
+	// blank lines outside code are still one blank line, as before
+	if md := ToEditableMarkdown("<body>a\n\n\n\nb<pre>c</pre></body>"); md != "a\n\nb\n\n```\nc\n```" {
+		t.Errorf("md = %q", md)
+	}
+}
+
+// #65: a code block's language is sent as <pre data-language="...">, which Asana documents
+// for code blocks (https://developers.asana.com/docs/rich-text: "You can specify a language
+// with data-language"), and comes back as the fence's info string. Only a plain name is
+// kept (letters, digits and "+#.-_"): anything else could not be written back as a fence.
+func TestCodeBlockLanguage(t *testing.T) {
+	checkStable(t, []stableCase{
+		{"```go\nx\n```", `<body><pre data-language="go">x</pre></body>`},
+		{"``` js\nx\n```", `<body><pre data-language="js">x</pre></body>`},
+		{"```c++ linenums\nx\n```", `<body><pre data-language="c++">x</pre></body>`},
+		{"~~~python\nx\n~~~", `<body><pre data-language="python">x</pre></body>`},
+		{"> ```go\n> x\n> ```", `<body><blockquote><pre data-language="go">x</pre></blockquote></body>`},
+		{"```a&b\nx\n```", "<body><pre>x</pre></body>"},
+		{"```{go}\nx\n```", "<body><pre>x</pre></body>"},
+		// in a list item code is text (#60): no <pre>, no language
+		{"- a\n  ```go\n  x\n  ```", "<body><ul><li>a\n<code>x</code></li></ul></body>"},
+	})
+	for _, c := range []struct{ in, md string }{
+		{`<body><pre data-language="go">x</pre></body>`, "```go\nx\n```"},
+		{`<body><pre data-language="objective-c">x</pre></body>`, "```objective-c\nx\n```"},
+		{"<body><pre data-language=\"a`b\">x</pre></body>", "```\nx\n```"},
+		{`<body><pre data-language="a b">x</pre></body>`, "```\nx\n```"},
+		{`<body><pre data-language="go&#10;# h">x</pre></body>`, "```\nx\n```"},
+	} {
+		if md := ToEditableMarkdown(c.in); md != c.md {
+			t.Errorf("ToEditableMarkdown(%q) = %q, want %q", c.in, md, c.md)
+		}
+	}
+	for _, tg := range []Target{Comment, StatusUpdate} {
+		if h := tg.FromMarkdown("```go\nx\n```"); h != `<body><pre data-language="go">x</pre></body>` {
+			t.Errorf("%v: %q", tg, h)
+		}
+	}
+	if p := PlainFromMarkdown("```go\nx\n```"); p != "x" {
+		t.Errorf("plain = %q", p)
+	}
+}

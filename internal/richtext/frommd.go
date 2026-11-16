@@ -221,7 +221,15 @@ func (w *htmlWriter) block(n gast.Node) {
 		}
 		w.tag("<hr/>")
 	case *gast.FencedCodeBlock, *gast.CodeBlock:
-		w.tag("<pre>")
+		open := "<pre>"
+		if f, ok := n.(*gast.FencedCodeBlock); ok {
+			// the language, as Asana takes it ("You can specify a language with
+			// data-language", https://developers.asana.com/docs/rich-text, #65)
+			if lang := codeLanguage(string(f.Language(w.src))); lang != "" {
+				open = `<pre data-language="` + lang + `">`
+			}
+		}
+		w.tag(open)
 		w.textOut(w.codeText(n))
 		w.tag("</pre>")
 		if w.plain {
@@ -480,13 +488,24 @@ func (w *htmlWriter) inline(n gast.Node) {
 	case *gast.String:
 		w.textOut(string(n.Value))
 	case *gast.CodeSpan:
-		w.tag("<code>")
+		// Code over a line break is code of each line, with the line break as text between
+		// them, as ToEditableMarkdown writes it (see splitCodeLines, #65).
+		var code strings.Builder
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 			if t, ok := c.(*gast.Text); ok {
-				w.textOut(string(t.Segment.Value(w.src)))
+				code.Write(t.Segment.Value(w.src))
 			}
 		}
-		w.tag("</code>")
+		for i, l := range strings.Split(code.String(), "\n") {
+			if i > 0 {
+				w.b.WriteString("\n")
+			}
+			if l != "" {
+				w.tag("<code>")
+				w.textOut(l)
+				w.tag("</code>")
+			}
+		}
 	case *gast.Emphasis:
 		t := "em"
 		if n.Level >= 2 {
