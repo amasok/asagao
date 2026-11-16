@@ -174,3 +174,38 @@ func TestBatch58MarksInListItems(t *testing.T) {
 		}
 	}
 }
+
+// only strong and emphasis, a few characters: runs of "*" of length 1 to 3 meet each other
+// in every way (the rule of 3).
+func TestBatch58StrongEmphasisOnly(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	var gen func(d int) string
+	gen = func(d int) string {
+		var sb strings.Builder
+		for i := r.Intn(4) + 1; i > 0; i-- {
+			switch k := r.Intn(8); {
+			case k < 4 && d < 4:
+				tag := []string{"strong", "em"}[r.Intn(2)]
+				sb.WriteString("<" + tag + ">" + gen(d+1) + "</" + tag + ">")
+			case k == 4:
+				sb.WriteString("(")
+			case k == 5:
+				sb.WriteString(")")
+			case k == 6:
+				sb.WriteString(" ")
+			default:
+				sb.WriteString("a")
+			}
+		}
+		return sb.String()
+	}
+	fails := 0
+	for i := 0; i < 20000 && fails < 5; i++ {
+		in := "<body>" + gen(0) + "x</body>"
+		md, h1, md2, h2 := rt2(in)
+		if !sameStyle(styledText(in), styledText(h1)) || h1 != h2 {
+			fails++
+			t.Errorf("in %q\nmd1 %q\nh1 %q\nmd2 %q\nh2 %q", in, md, h1, md2, h2)
+		}
+	}
+}
