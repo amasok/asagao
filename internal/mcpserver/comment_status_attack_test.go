@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/amasok/asana-tui/internal/asana"
 	"testing"
 	"time"
 
@@ -134,5 +136,49 @@ func TestAddCommentAndStatusReadTheClockOnce(t *testing.T) {
 		if calls != 1 {
 			t.Errorf("%s: Now read %d times, want 1", tool.name, calls)
 		}
+	}
+}
+
+// A cancelled context and an ambiguous project name end the same way as on main.
+func TestAddCommentAndStatusOddStatesSameAsBeforeA4(t *testing.T) {
+	two := func(t *testing.T) *store.Store {
+		st := seed(t)
+		if err := st.UpsertProjects(context.Background(), "w1", []asana.Project{
+			{GID: "p2", Name: "新居の片付け", Members: []asana.Ref{{GID: "me"}}},
+			{GID: "p3", Name: "新居の掃除", Members: []asana.Ref{{GID: "me"}}},
+		}, "me"); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, c := range []struct {
+		name    string
+		ctx     context.Context
+		project string
+	}{
+		{"ambiguous", context.Background(), "新居の"},
+		{"cancelled", cancelled, "p1"},
+		{"cancelled, ambiguous", cancelled, "新居の"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, b := two(t), two(t)
+			sa := legacyCreateStatus(c.ctx, a, testNow, CreateStatusInput{Project: c.project, Status: "on_track", Text: "x"})
+			_, _, sb := (&Server{Store: b, Now: func() time.Time { return testNow }}).createStatus(c.ctx, nil, CreateStatusInput{Project: c.project, Status: "on_track", Text: "x"})
+			ca := legacyAddComment(c.ctx, a, testNow, AddCommentInput{GID: "t1", Text: "x"})
+			_, _, cb := (&Server{Store: b, Now: func() time.Time { return testNow }}).addComment(c.ctx, nil, AddCommentInput{GID: "t1", Text: "x"})
+			for _, p := range [][2]error{{sa, sb}, {ca, cb}} {
+				if (p[0] == nil) != (p[1] == nil) || (p[0] != nil && p[0].Error() != p[1].Error()) {
+					t.Fatalf("legacy %v, new %v", p[0], p[1])
+				}
+				if p[0] != nil && errors.Is(p[0], store.ErrAmbiguous) != errors.Is(p[1], store.ErrAmbiguous) {
+					t.Fatalf("errors.Is(ErrAmbiguous) differs")
+				}
+			}
+			if da, db := dumpCommentStatus(t, a, "t1", "p1"), dumpCommentStatus(t, b, "t1", "p1"); da != db {
+				t.Fatalf("stored result differs:\n legacy %s\n new    %s", da, db)
+			}
+		})
 	}
 }
