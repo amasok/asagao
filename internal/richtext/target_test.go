@@ -87,7 +87,7 @@ func TestFromMarkdownForTaskNotesKeepsLayout(t *testing.T) {
 		"## 小見出し":           "<body><h2>小見出し</h2></body>",
 		"a\n***\nb":         "<body>a\n<hr/>b</body>",
 		"![画像](asana:12)":   `<body><img data-asana-gid="12"/></body>`,
-		"> - a\n>\n>   ***": "<body><blockquote>- a\n---</blockquote></body>",
+		"> - a\n>\n>   ***": "<body><blockquote>- a\n***</blockquote></body>", // a rule as text: as typed (#66)
 	} {
 		if got := TaskNotes.FromMarkdown(md); got != want {
 			t.Errorf("TaskNotes.FromMarkdown(%q) = %q, want %q", md, got, want)
