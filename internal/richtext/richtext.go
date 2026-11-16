@@ -624,7 +624,40 @@ func (c *converter) listItem(n *html.Node) {
 		c.write("- ")
 	}
 	c.markLineStart()
-	c.children(n)
+	ch := n.FirstChild
+	if !itemHasText(n) {
+		// An empty marker ("-", "1.") after a line of text would be read as a setext heading
+		// underline, or as text: write a space as a character reference after it, which
+		// FromMarkdown reads back as an empty item (#52). What comes before a nested list
+		// here is whitespace, line breaks or empty elements, which Markdown cannot keep anyway.
+		c.write("&#32;")
+		for ch != nil && !(ch.Type == html.ElementNode && (ch.DataAtom == atom.Ul || ch.DataAtom == atom.Ol)) {
+			ch = ch.NextSibling
+		}
+	}
+	for ; ch != nil; ch = ch.NextSibling {
+		c.walk(ch)
+	}
+}
+
+// itemHasText reports whether list item n has something to write on its first line: text,
+// an image or a mention before its first nested list.
+func itemHasText(n *html.Node) bool {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		switch {
+		case ch.Type == html.TextNode:
+			if strings.TrimSpace(ch.Data) != "" {
+				return true
+			}
+		case ch.Type != html.ElementNode:
+		case ch.DataAtom == atom.Ul || ch.DataAtom == atom.Ol:
+			return false
+		case ch.DataAtom == atom.Img || attr(ch, "data-asana-gid") != "" ||
+			strings.TrimSpace(textOf(ch)) != "" || hasAsanaRef(ch):
+			return true
+		}
+	}
+	return false
 }
 
 func (c *converter) image(n *html.Node) {

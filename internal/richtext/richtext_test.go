@@ -515,3 +515,27 @@ func TestTrailingSpaceAtBlockEnd(t *testing.T) {
 		roundTrip(t, in, want)
 	}
 }
+
+// An empty list item stays an empty item: its marker alone after the parent's text would
+// make the parent a setext heading ("-") or become text ("1.") (#52).
+func TestEmptyListItems(t *testing.T) {
+	for in, want := range map[string]string{
+		"<body><ul><li>a<ul><li></li></ul></li></ul></body>":                          "<body><ul><li>a<ul><li></li></ul></li></ul></body>",
+		"<body><ul><li>a<ul><li>\n</li></ul></li></ul></body>":                        "<body><ul><li>a<ul><li></li></ul></li></ul></body>",
+		"<body><ul><li>a<ul><li> <br></li></ul></li></ul></body>":                     "<body><ul><li>a<ul><li></li></ul></li></ul></body>",
+		"<body><ol><li>a<ol><li></li></ol></li></ol></body>":                          "<body><ol><li>a<ol><li></li></ol></li></ol></body>",
+		"<body><ol><li>a<ol><li>b</li><li></li></ol></li></ol></body>":                "<body><ol><li>a<ol><li>b</li><li></li></ol></li></ol></body>",
+		"<body><ul><li>a</li><li></li><li>b</li></ul></body>":                         "<body><ul><li>a</li><li></li><li>b</li></ul></body>",
+		"<body><ul><li></li></ul></body>":                                             "<body><ul><li></li></ul></body>",
+		"<body><ul><li>a<ul><li><ul><li>b</li></ul></li></ul></li></ul></body>":       "<body><ul><li>a<ul><li><ul><li>b</li></ul></li></ul></li></ul></body>",
+		"<body><ul><li><b> </b><ul><li></li></ul></li></ul></body>":                   "<body><ul><li><ul><li></li></ul></li></ul></body>",
+		"<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>": "<body><blockquote><ul><li>a<ul><li></li></ul></li></ul></blockquote></body>",
+	} {
+		roundTrip(t, in, want)
+	}
+	// an item that is only a mention or an image is not empty
+	roundTrip(t, `<body><ul><li>a<ul><li><img data-asana-gid="7"/></li></ul></li></ul></body>`,
+		`<body><ul><li>a<ul><li><img data-asana-gid="7"/></li></ul></li></ul></body>`)
+	roundTrip(t, `<body><ul><li>a<ul><li><a data-asana-gid="9"/></li></ul></li></ul></body>`,
+		`<body><ul><li>a<ul><li><a data-asana-gid="9"/></li></ul></li></ul></body>`)
+}

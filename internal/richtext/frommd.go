@@ -136,6 +136,9 @@ func (w *htmlWriter) block(n gast.Node) {
 			w.tag("<li>")
 			first := true
 			for c := li.FirstChild(); c != nil; c = c.NextSibling() {
+				if w.blankText(c) {
+					continue // "- &#32;": an empty item (#52)
+				}
 				if !first && !isBlockElement(c) {
 					w.b.WriteString("\n")
 				}
@@ -157,6 +160,19 @@ func (w *htmlWriter) block(n gast.Node) {
 	default:
 		w.blocks(n)
 	}
+}
+
+// blankText reports whether n is a paragraph of nothing but whitespace (as ToEditableMarkdown
+// writes an empty list item: "- &#32;").
+func (w *htmlWriter) blankText(n gast.Node) bool {
+	switch n.(type) {
+	case *gast.Paragraph, *gast.TextBlock:
+	default:
+		return false
+	}
+	sub := &htmlWriter{src: w.src, plain: w.plain}
+	sub.inlines(n)
+	return strings.TrimSpace(sub.b.String()) == ""
 }
 
 func (w *htmlWriter) inlines(n gast.Node) {
