@@ -381,3 +381,18 @@ func TestLineStructureNextToEmphasis(t *testing.T) {
 		}
 	}
 }
+
+// Text that an unwrapped emphasis split is one text (mergeText): a URL in it is escaped as
+// a whole, and the line start is escaped as Markdown reads the whole line (nextOnLine looks
+// past an element too: "1." before bold is not a list marker, and is not escaped).
+func TestSplitTextReadAsOne(t *testing.T) {
+	for _, c := range []struct{ in, md, h1 string }{
+		{"<body><em>see <i>https://x.jp/a</i>_b</em></body>", `*see https\://x.jp/a\_b*`, "<body><em>see https://x.jp/a_b</em></body>"},
+		{"<body>x<br>1.<strong>a</strong></body>", "x  \n1.**a**", "<body>x\n1.<strong>a</strong></body>"},
+	} {
+		md1, h1, _, h2 := rt2(c.in)
+		if md1 != c.md || h1 != c.h1 || h1 != h2 {
+			t.Errorf("%q\nmd1 %q want %q\nh1  %q want %q\nh2  %q", c.in, md1, c.md, h1, c.h1, h2)
+		}
+	}
+}
