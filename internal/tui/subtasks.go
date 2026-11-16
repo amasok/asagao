@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -122,9 +123,9 @@ func (m *Model) createSubtask(parent, input string) tea.Cmd {
 	}
 	m.expanded[parent] = true // show the new subtask under its parent
 	selectIt := !m.inDetail() // in the detail view, stay on the parent
-	st, now := m.deps.Store, m.deps.Now()
+	tasks := m.tasks(m.deps.Now())
 	return func() tea.Msg {
-		gid, err := st.CreateTaskLocal(m.ctx, store.NewTask{ParentGID: parent, Name: name, DueOn: due}, now)
+		gid, err := tasks.CreateHere(m.ctx, app.CreateHereInput{Parent: parent, Name: name, Due: due})
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
