@@ -162,6 +162,11 @@ func TestNonSpaceCharsPreserved(t *testing.T) {
 		if strings.Contains(in, "&#32;") {
 			continue
 		}
+		if v := nestingViolation(in); v != "" {
+			// Asana sends no such html_text; FromMarkdown writes the list markers of a list
+			// in a quote as text (#60), so they are added
+			continue
+		}
 		// markdown-looking lines ("# h", "- x", "1. y", "> q") are escaped, so they stay text
 		_, h1, _, _ := roundtrip(in)
 		if strip(in) != strip(h1) {
