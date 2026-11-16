@@ -155,6 +155,30 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **WHEN** `<ul><li>a<hr/></li></ul>` をエディタで往復する
 - **THEN** `<ul><li>a</li></ul><hr/>` になる (#80 で直す)
 
+### Requirement: 強調は隣の文字によらず残す (#58)
+html の太字・斜体・取り消し線は、句読点・リンク・画像・コード・ほかの強調・メールアドレス・URL と隣り合っても、エディタを往復したあと同じ文字に同じ装飾が付いている (MUST)。Markdown の区切り (`**`・`*`・`~~`、コードの `` ` ``) がそのままでは開かない・閉じない所、隣の区切りとつながる所、Linkify にメールアドレスや URL の一部として読まれる所では、区切りの外側に `\ ` (エスケープした空白) を書く。Markdown → rich text では `\ ` を何も書かないものとして読む (goldmark の CJK 拡張と同じ)。
+根拠: marks.go separateTokens; frommd.go escapedSpaceParser; marks_test.go
+
+#### Scenario: 表示用の Markdown
+- **WHEN** `これは<strong>「重要」</strong>です` を表示用に変換する
+- **THEN** `\ ` の代わりに空白を書き、`これは **「重要」** です` になる
+
+#### Scenario: かぎかっこを太字にする
+- **WHEN** `これは<strong>「重要」</strong>です` をエディタで開く
+- **THEN** `これは\ **「重要」**\ です` になり、戻すと `これは<strong>「重要」</strong>です` になる
+
+#### Scenario: 太字のあとのメールアドレス
+- **WHEN** `z<strong>a</strong>b@x.jp` をエディタで往復する
+- **THEN** `**` はリンクに入らず、`z<strong>a</strong><a href="mailto:b@x.jp">b@x.jp</a>` になる (`**` のすぐあとのアドレスと同じ)
+
+### Requirement: 強調を Markdown で書ける形にする (#58)
+html → Markdown の前に、強調を Markdown で書ける形にする (MUST)。見た目は変えない。同じ強調の中の同じ強調は外の 1 つにする (`<em><em>a</em></em>` が太字にならない)。空行をまたぐ強調は、段落ごとの強調に分ける (空行で段落が終わり、強調も終わるため)。`~` の直後の `~~` は開かない・閉じないので、その `~` を `&#126;` と書く。表示用にメンションを太字にするとき、太字の中では重ねない。
+根拠: marks.go normalizeMarks, separateTokens; richtext.go link; marks_test.go TestEmphasisBoundaries, TestEmphasisBoundariesForDisplay
+
+#### Scenario: 空行をまたぐ太字
+- **WHEN** `<strong>a\n\nb</strong>` をエディタで往復する
+- **THEN** `<strong>a</strong>\n\n<strong>b</strong>` になる
+
 ### Requirement: 文の文字は往復で落とさない
 入れ子の決まりに合う html の、文として見える文字 (空白を除く) は、エディタを 1 回往復しても落とさない (MUST)。plain の文字列は、同じ Markdown から作った html の文字と、同じ空白以外の文字を持つ。空白を埋めるための `\` や `&#32;` は、文字として出さない。
 根拠: nesting_attack_test.go TestNonSpaceCharsPreserved, TestNoLeakedFillers; spec_attack_test.go TestSpecPlainMatchesHTML
@@ -176,7 +200,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `#` になり、戻すと `<h1></h1>` になる
 
 ### Requirement: 変換で落ちるもの
-次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
+次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、`<pre>` の `data-language` のうち英数字と `+#.-_` 以外を含む値や 65 文字以上の値、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)、`\ ` (エスケープした空白、#58)。
 根拠: richtext.go walk (atom.U、知らない要素), headingLine, image; frommd.go block の Heading (h3 以下は h2), inline の Image
 
 #### Scenario: 下線

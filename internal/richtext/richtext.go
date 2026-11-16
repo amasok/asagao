@@ -57,11 +57,17 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 		return s
 	}
 	splitCodeLines(doc)
+	normalizeMarks(doc)
 	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
 	c.keepTrailingSpace(blockEnds)
-	return tidy(c.b.String())
+	// For display a space sets delimiters apart: the renderer would show "\ " as it is.
+	sep := " "
+	if editable {
+		sep = `\ `
+	}
+	return tidy(separateTokens(c.b.String(), c.tokens, sep))
 }
 
 // preStartBreak matches a <pre> tag and the line break right after it.
@@ -143,6 +149,10 @@ type converter struct {
 	// newline and the structure written at the start of the line (blockquote prefixes, list
 	// item markers). Keeping it as state makes atLineStart constant time (#23).
 	lineStart int
+	// tokens are the emphasis delimiters and code fences written to b, in order, for
+	// separateTokens (#58).
+	tokens []inlineToken
+	strong int // inside <strong>: a mention shown as bold is not bold again
 }
 
 type listState struct {
@@ -300,7 +310,7 @@ func (c *converter) walk(n *html.Node) {
 		if c.pre > 0 {
 			c.children(n)
 		} else {
-			c.write(codeSpan(textOf(n)))
+			c.codeSpan(textOf(n))
 		}
 	case atom.Pre:
 		c.block()
@@ -555,9 +565,28 @@ func (c *converter) wrap(n *html.Node, mark string) {
 		c.children(n)
 		return
 	}
-	c.write(mark)
+	if mark == "**" {
+		c.strong++
+		defer func() { c.strong-- }()
+	}
+	c.token(mark, true, true)
 	c.children(n)
-	c.write(mark)
+	c.token(mark, false, true)
+}
+
+// token writes delimiter s and records it (see separateTokens).
+func (c *converter) token(s string, open, mark bool) {
+	c.tokens = append(c.tokens, inlineToken{pos: c.b.Len(), s: s, open: open, mark: mark})
+	c.write(s)
+}
+
+// codeSpan writes s as an inline code span (see codeSpan), recording its fences.
+func (c *converter) codeSpan(s string) {
+	span := codeSpan(s)
+	fence := span[:strings.IndexFunc(span, func(r rune) bool { return r != '`' })]
+	c.token(fence, true, false)
+	c.write(span[len(fence) : len(span)-len(fence)])
+	c.token(fence, false, false)
 }
 
 // markAtoms are the elements written as emphasis marks ("**", "*", "~~", see walk).
@@ -670,9 +699,18 @@ func (c *converter) link(n *html.Node) {
 	}
 	switch {
 	case c.editable && mention:
-		c.write("[" + escape(text, false) + "](" + mentionScheme + gid + ")")
+		c.token("[", true, false) // (a URL right before it would be read on into it)
+		c.write(escape(text, false) + "](" + mentionScheme + gid)
+		c.token(")", false, false)
 	case mention || typ == "user" || strings.HasPrefix(text, "@"):
-		c.write("**" + escape(text, false) + "**") // mention
+		// a mention, bold (unless it is in bold already: "****" is not bold)
+		if c.strong > 0 {
+			c.write(escape(text, false))
+			return
+		}
+		c.token("**", true, true)
+		c.write(escape(text, false))
+		c.token("**", false, true)
 	case (href == "" || text == href) && autolinkSafe(text):
 		c.write("<" + text + ">")
 	case href == "":
@@ -683,7 +721,9 @@ func (c *converter) link(n *html.Node) {
 			c.b.Truncate(c.b.Len() - 1)
 			c.write(`\!`)
 		}
-		c.write("[" + escape(text, false) + "](" + linkDest(href) + ")")
+		c.token("[", true, false)
+		c.write(escape(text, false) + "](" + linkDest(href))
+		c.token(")", false, false)
 	}
 }
 
@@ -923,14 +963,22 @@ func (c *converter) headingLine(n *html.Node) {
 		return
 	}
 	start := c.b.Len()
+	tokens := len(c.tokens)
 	c.heading++
 	c.children(n)
 	c.heading--
-	body := strings.Trim(string(c.b.Bytes()[start:]), " \t")
+	raw := string(c.b.Bytes()[start:])
+	body := strings.Trim(raw, " \t")
 	c.b.Truncate(start)
 	if body == "" {
+		c.tokens = c.tokens[:tokens]
 		c.write(marker)
 		return
+	}
+	// the body moves: after the marker, without the spaces it started with
+	shift := len(marker) + 1 - (len(raw) - len(strings.TrimLeft(raw, " \t")))
+	for i := tokens; i < len(c.tokens); i++ {
+		c.tokens[i].pos += shift
 	}
 	if run := len(body) - len(strings.TrimRight(body, "#")); run > 0 {
 		if rest := body[:len(body)-run]; rest == "" || strings.HasSuffix(rest, " ") || strings.HasSuffix(rest, "\t") {
@@ -968,7 +1016,9 @@ func (c *converter) image(n *html.Node) {
 	}
 	if c.editable {
 		// in place, as FromMarkdown reads it back (a paragraph break would be added text)
-		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
+		c.token("![", true, false)
+		c.write("画像](" + EditableImageDest(gid, c.imageDest))
+		c.token(")", false, false)
 		return
 	}
 	if c.heading > 0 {

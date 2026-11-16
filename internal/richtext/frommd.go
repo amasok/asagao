@@ -28,8 +28,27 @@ var md = goldmark.New(
 	goldmark.WithExtensions(extension.Strikethrough, extension.Linkify),
 	goldmark.WithParserOptions(parser.WithBlockParsers(
 		// ahead of the default thematic break parser (200), which it wraps
-		util.Prioritized(ruleSource{parser.NewThematicBreakParser()}, 199))),
+		util.Prioritized(ruleSource{parser.NewThematicBreakParser()}, 199)),
+		parser.WithInlineParsers(util.Prioritized(escapedSpaceParser{}, 100))),
 )
+
+// escapedSpaceParser reads "\ " (an escaped space) as nothing, as goldmark's CJK extension
+// renders it. ToEditableMarkdown writes it where emphasis would not open or close without
+// a space (#58). It is an inline node of its own, so what follows it is read as what
+// follows the emphasis it sets apart is (Linkify starts a link there, as it does after
+// "**"), whether or not the space is there.
+type escapedSpaceParser struct{}
+
+func (escapedSpaceParser) Trigger() []byte { return []byte{'\\'} }
+
+func (escapedSpaceParser) Parse(_ gast.Node, block text.Reader, _ parser.Context) gast.Node {
+	line, _ := block.PeekLine()
+	if len(line) < 2 || line[1] != ' ' {
+		return nil
+	}
+	block.Advance(2)
+	return gast.NewString(nil)
+}
 
 // ruleAttr is the attribute a rule (thematic break) keeps its line in, as written ("***").
 var ruleAttr = []byte("asana-tui-rule")
@@ -702,7 +721,8 @@ var textEscape = regexp.MustCompile(`\\[!-/:-@\[-` + "`" + `{-~]|&(?:#[0-9]{1,7}
 
 // decodeText turns the raw source of a text segment into its text: backslash escapes and
 // character references are resolved in one pass (as goldmark's renderer does), so "\&amp;"
-// is the text "&amp;". Unknown references ("&foo;") stay as written.
+// is the text "&amp;". Unknown references ("&foo;") stay as written. (An escaped space is
+// not text, see escapedSpaceParser.)
 func decodeText(src []byte) string {
 	return textEscape.ReplaceAllStringFunc(string(src), func(m string) string {
 		if m[0] == '\\' {
