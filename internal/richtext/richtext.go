@@ -114,6 +114,10 @@ type converter struct {
 	lists     []listState // nesting of ul/ol
 	pre       int         // inside <pre>
 	quote     int         // inside <blockquote>
+	heading   int         // inside <h1>, <h2>, <h3>: one line (see heading)
+	// headingImages are the images of the heading being written for display, which go
+	// after it, each as a block of its own (see image).
+	headingImages []string
 	// outOfItem is set when a block in a list item (a quote, a code block) has started a
 	// new paragraph: Markdown has ended the list there, so what follows is not in the item.
 	outOfItem bool
@@ -290,14 +294,22 @@ func (c *converter) walk(n *html.Node) {
 		c.link(n)
 	case atom.H1, atom.H2, atom.H3:
 		c.block()
-		c.write(strings.Repeat("#", headingLevel(n.DataAtom)) + " ")
-		c.write(escape(strings.TrimSpace(strings.ReplaceAll(textOf(n), "\n", " ")), false))
+		c.headingLine(n)
 		c.block()
+		for _, gid := range c.headingImages {
+			c.write(ImageToken(gid))
+			c.block()
+		}
+		c.headingImages = nil
 	case atom.Hr:
 		c.block()
 		c.write("---")
 		c.block()
 	case atom.Br:
+		if c.heading > 0 {
+			c.write(" ") // a heading is one line
+			return
+		}
 		c.keepTrailingSpace(func() bool { return c.contentFollows(n, true) })
 		if !c.keepBlankLineInItem(func() bool { return c.contentFollows(n, false) }) {
 			c.write("  ")
@@ -347,6 +359,12 @@ func (c *converter) text(n *html.Node) {
 	t := n.Data
 	if c.pre > 0 {
 		c.write(t)
+		return
+	}
+	if c.heading > 0 {
+		// a heading is one line: its line breaks are spaces (as Markdown shows a setext
+		// heading's), and no line of it starts a block
+		c.write(escape(headingBreaks.Replace(t), false))
 		return
 	}
 	inList := len(c.lists) > 0
@@ -622,6 +640,9 @@ var selfClosingA = regexp.MustCompile(`<a(\s[^<>]*?)\s*/>`)
 func (c *converter) link(n *html.Node) {
 	href := attr(n, "href")
 	text := strings.TrimSpace(textOf(n))
+	if c.heading > 0 {
+		text = headingBreaks.Replace(text) // a heading is one line
+	}
 	gid, typ := attr(n, "data-asana-gid"), attr(n, "data-asana-type")
 	// A mention as Asana returns it has data-asana-type="user" and the name; as FromMarkdown
 	// writes it, only the gid.
@@ -871,6 +892,49 @@ func itemHasText(n *html.Node) bool {
 	return false
 }
 
+// headingLine writes heading n as an ATX heading: "#"s, then its text with marks, links,
+// mentions, code and images, as in a paragraph, on one line (#64). An empty heading is its
+// "#"s alone, which Markdown reads as an empty heading ("# " would be the text "#" once
+// keepTrailingSpace kept its space). "#"s at the end of the text are escaped, or Markdown
+// would read them as a closing sequence and drop them. A heading holding blocks (which
+// Asana does not send) is its text alone, as before.
+func (c *converter) headingLine(n *html.Node) {
+	marker := strings.Repeat("#", headingLevel(n.DataAtom))
+	if hasBlock(n) {
+		c.write(marker + " " + escape(strings.TrimSpace(headingBreaks.Replace(textOf(n))), false))
+		return
+	}
+	start := c.b.Len()
+	c.heading++
+	c.children(n)
+	c.heading--
+	body := strings.Trim(string(c.b.Bytes()[start:]), " \t")
+	c.b.Truncate(start)
+	if body == "" {
+		c.write(marker)
+		return
+	}
+	if run := len(body) - len(strings.TrimRight(body, "#")); run > 0 {
+		if rest := body[:len(body)-run]; rest == "" || strings.HasSuffix(rest, " ") || strings.HasSuffix(rest, "\t") {
+			body = rest + `\` + body[len(rest):]
+		}
+	}
+	c.write(marker + " " + body)
+}
+
+// headingBreaks makes line breaks in a heading spaces.
+var headingBreaks = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
+
+// hasBlock reports whether n holds a block element (see blockAtoms).
+func hasBlock(n *html.Node) bool {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		if ch.Type == html.ElementNode && blockAtoms[ch.DataAtom] || hasBlock(ch) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *converter) image(n *html.Node) {
 	gid := attr(n, "data-asana-gid")
 	if gid == "" {
@@ -887,6 +951,10 @@ func (c *converter) image(n *html.Node) {
 	if c.editable {
 		// in place, as FromMarkdown reads it back (a paragraph break would be added text)
 		c.write("![画像](" + EditableImageDest(gid, c.imageDest) + ")")
+		return
+	}
+	if c.heading > 0 {
+		c.headingImages = append(c.headingImages, gid) // after the heading (see walk)
 		return
 	}
 	c.block()

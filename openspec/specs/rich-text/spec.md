@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72。#65 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64。#65 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -120,7 +120,7 @@ Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コ�
 - **THEN** エディタを往復しても、メンションのタグにならない (TestEditableRoundTripCannotInjectMention)
 
 ### Requirement: エディタの往復は 1 回で落ち着く
-Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、印の違う隣り合うリスト、見出しの中のメンションや装飾) は除く。
+Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。テストが除いている既知の例外 (リスト項目の中の入れ子のリストのあとの文、印の違う隣り合うリスト) は除く。
 根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go:145-149, :206-210
 
 #### Scenario: 2 回目の往復
@@ -135,9 +135,21 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **WHEN** 任意の html をエディタで往復する
 - **THEN** 表示に `\` や `&#32;` の文字が残らない
 
+### Requirement: 見出しの中の装飾とメンションを残す
+見出しの中の太字・斜体・取り消し線・コード・リンク・メンション・画像は、エディタの往復で残す (MUST)。見出しは 1 行なので、中の改行 (setext の見出しの行の切れ目も) は空白にする。空の見出しは `#` だけの行にし、空の見出しのまま戻す (MUST、`# ` と書くと文字の `#` になっていた)。見出しの末尾の `#` は文字として残す (閉じの `#` と読まれないようにエスケープする) (#64)。
+根拠: richtext.go headingLine; frommd.go lineBreak; blocks_test.go TestHeadingKeepsInlines
+
+#### Scenario: 見出しの中の太字とメンション
+- **WHEN** `<h2><strong>b</strong> <a data-asana-gid="9" data-asana-type="user">@A</a></h2>` をエディタで往復する
+- **THEN** `<h2><strong>b</strong> <a data-asana-gid="9"/></h2>` になる
+
+#### Scenario: 空の見出し
+- **WHEN** `<h1></h1>` をエディタで開く
+- **THEN** `#` になり、戻すと `<h1></h1>` になる
+
 ### Requirement: 変換で落ちるもの
-次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中のメンションや装飾 (文字だけ残る)、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
-根拠: richtext.go:237-238, :252-256, :296-305, :826-835; frommd.go:200-203, :516-523; nesting_spec_test.go:145-146
+次のものは変換で落ちる (MUST、今の振る舞いとして): html → Markdown で `<u>` の下線 (中の文字は残る)、`h4`〜`h6` の見出し (文として残る)、見出しの中の改行 (空白になる)、gid も alt もない `<img>`、`h3` は `###` になり、戻すと `<h2>` になる。Markdown → `TaskNotes` で、画像の alt (html) と画像そのもの (plain)。
+根拠: richtext.go walk (atom.U、知らない要素), headingLine, image; frommd.go block の Heading (h3 以下は h2), inline の Image
 
 #### Scenario: 下線
 - **WHEN** `<u>下線</u>` をエディタで開く

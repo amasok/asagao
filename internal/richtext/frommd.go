@@ -84,6 +84,7 @@ type htmlWriter struct {
 	quote  int  // open <blockquote>s: a list here is written as text (see asText)
 	item   int  // open <li>s: a quote, heading or code block here is written as text
 	text   bool // writing Markdown blocks as text (see markdownText)
+	inHead bool // writing the text of a heading element: one line (#64)
 }
 
 // sub returns a writer for a part of the output that is put together afterwards.
@@ -209,7 +210,9 @@ func (w *htmlWriter) block(n gast.Node) {
 			t = "h1"
 		}
 		w.tag("<" + t + ">")
+		w.inHead = true
 		w.inlines(n)
+		w.inHead = false
 		w.tag("</" + t + ">")
 		if w.plain {
 			w.b.WriteString("\n")
@@ -483,7 +486,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 	case *gast.Text:
 		w.textOut(decodeText(n.Segment.Value(w.src)))
 		if n.SoftLineBreak() || n.HardLineBreak() {
-			w.b.WriteString("\n")
+			w.b.WriteString(w.lineBreak())
 		}
 	case *gast.String:
 		w.textOut(string(n.Value))
@@ -498,7 +501,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 		}
 		for i, l := range strings.Split(code.String(), "\n") {
 			if i > 0 {
-				w.b.WriteString("\n")
+				w.b.WriteString(w.lineBreak())
 			}
 			if l != "" {
 				w.tag("<code>")
@@ -571,6 +574,15 @@ func (w *htmlWriter) inline(n gast.Node) {
 	default:
 		w.inlines(n)
 	}
+}
+
+// lineBreak is a line break in text as it is written: a space in a heading, which is one
+// line (a setext heading's lines are, as ToEditableMarkdown writes it back, #64).
+func (w *htmlWriter) lineBreak() string {
+	if w.inHead {
+		return " "
+	}
+	return "\n"
 }
 
 // blankLine matches a blank line inside text, blankLines a run of them.

@@ -169,3 +169,58 @@ func TestCodeBlockLanguage(t *testing.T) {
 		t.Errorf("plain = %q", p)
 	}
 }
+
+// #64: a heading keeps its marks, links, mentions, code and images through an edit, and an
+// empty heading stays an empty heading (it was the text "# "). Line breaks in a heading are
+// spaces: a heading is one line in Markdown.
+func TestHeadingKeepsInlines(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"<body><h1><strong>b</strong> x</h1></body>", ""},
+		{`<body><h2>a <a data-asana-gid="9" data-asana-type="user">@A</a> <em>e</em> <s>s</s> <code>c</code> <a href="http://x.jp">l</a></h2></body>`,
+			`<body><h2>a <a data-asana-gid="9"/> <em>e</em> <s>s</s> <code>c</code> <a href="http://x.jp">l</a></h2></body>`},
+		{`<body><h1><img data-asana-gid="5"/> w</h1></body>`, ""},
+		{"<body><blockquote><h1><strong>b</strong> <em>e</em></h1></blockquote></body>", ""},
+		{"<body><h1></h1></body>", ""},
+		{"<body><h2></h2></body>", ""},
+		{"<body><h1> </h1></body>", "<body><h1></h1></body>"},
+		{"<body><h1><br></h1></body>", "<body><h1></h1></body>"},
+		{"<body><h1><strong> </strong></h1></body>", "<body><h1></h1></body>"},
+		{"<body>a<h1></h1>b</body>", "<body>a\n<h1></h1>b</body>"},
+		{"<body><blockquote><h1></h1></blockquote></body>", ""},
+		// "#"s at the end are text, not a closing sequence
+		{"<body><h1>a #</h1></body>", ""},
+		{"<body><h1>a ##</h1></body>", ""},
+		{"<body><h1>#</h1></body>", ""},
+		{"<body><h1>a#</h1></body>", ""},
+		{"<body><h1><strong>a</strong> #</h1></body>", ""},
+		{"<body><h1>a\nb</h1></body>", "<body><h1>a b</h1></body>"},
+		{"<body><h1>a<br>b</h1></body>", "<body><h1>a b</h1></body>"},
+		{"<body><h1><code>x\ny</code></h1></body>", "<body><h1><code>x</code> <code>y</code></h1></body>"},
+		{"<body><h1>  a  </h1></body>", "<body><h1>a</h1></body>"},
+		{"<body><h1>*a* [b] &lt;c&gt;</h1></body>", ""},
+	} {
+		want := c.want
+		if want == "" {
+			want = c.in
+		}
+		md1, h1, md2, h2 := roundtrip(c.in)
+		if h1 != want || h2 != h1 {
+			t.Errorf("in %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q\nwant %q", c.in, md1, h1, md2, h2, want)
+		}
+	}
+	// for display: marks stay, a mention is bold, an image is a block of its own after it
+	if md := ToMarkdown(`<body><h1><strong>b</strong> <a data-asana-gid="9" data-asana-type="user">@A</a><img data-asana-gid="5"/></h1>x</body>`); md != "# **b** **@A**\n\n"+ImageToken("5")+"\n\nx" {
+		t.Errorf("ToMarkdown = %q", md)
+	}
+	// a heading over lines (setext) is one line, so an edit gives it back unchanged
+	checkStable(t, []stableCase{
+		{"a\nb\n---", "<body><h2>a b</h2></body>"},
+		{"**a**\n*b*\n===", "<body><h1><strong>a</strong> <em>b</em></h1></body>"},
+		{"#", "<body><h1></h1></body>"},
+		{"## ##", "<body><h2></h2></body>"},
+		{"# a \\#", "<body><h1>a #</h1></body>"},
+	})
+	if p := PlainFromMarkdown("a\nb\n---\nc"); p != "a b\nc" {
+		t.Errorf("plain = %q", p)
+	}
+}
