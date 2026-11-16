@@ -149,6 +149,11 @@ func (w *htmlWriter) isBlockElement(n gast.Node) bool {
 	return false
 }
 
+// layoutBlock reports whether n is a heading or a rule.
+func layoutBlock(n gast.Node) bool {
+	return n.Kind() == gast.KindHeading || n.Kind() == gast.KindThematicBreak
+}
+
 // blocks writes the block children of n. Paragraphs are separated by a blank line, as
 // Asana stores them; block elements start on their own line.
 func (w *htmlWriter) blocks(n gast.Node) {
@@ -165,6 +170,10 @@ func (w *htmlWriter) blocks(n gast.Node) {
 			case w.elementBlock(prev):
 				// a block element already ends its line
 			case w.isBlockElement(prev), w.isBlockElement(c):
+				w.b.WriteString("\n")
+			case (layoutBlock(prev) || layoutBlock(c)) && !c.HasBlankPreviousLines():
+				// a heading or a rule written as a paragraph (see Target) is apart from
+				// the text around it as written: a blank line only where there was one
 				w.b.WriteString("\n")
 			default:
 				w.b.WriteString("\n\n")
@@ -502,7 +511,11 @@ func (w *htmlWriter) inline(n gast.Node) {
 				// to it, by gid (a cached file's path is local to this machine).
 				w.textOut("![")
 				w.inlines(n)
-				w.textOut("](" + assetScheme + gid + ")")
+				w.textOut("](" + assetScheme + gid)
+				if len(n.Title) > 0 {
+					w.textOut(` "` + string(n.Title) + `"`)
+				}
+				w.textOut(")")
 				return
 			}
 			if !w.plain {

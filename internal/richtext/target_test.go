@@ -16,17 +16,19 @@ var layoutTag = regexp.MustCompile(`(?i)<(h[1-6]|hr|img|table|tr|td|object)\b`)
 func TestFromMarkdownForCommentsAndStatusUpdates(t *testing.T) {
 	for _, tc := range []struct{ md, want, plain string }{
 		{"# 見出し\n\n本文", "<body><strong>見出し</strong>\n\n本文</body>", "見出し\n\n本文"},
-		{"## 小見出し\n本文", "<body><strong>小見出し</strong>\n\n本文</body>", "小見出し\n\n本文"},
+		{"## 小見出し\n本文", "<body><strong>小見出し</strong>\n本文</body>", "小見出し\n本文"},
 		{"###### 六", "<body><strong>六</strong></body>", "六"},
-		{"見出し\n===\n本文", "<body><strong>見出し</strong>\n\n本文</body>", "見出し\n\n本文"},
+		{"見出し\n===\n本文", "<body><strong>見出し</strong>\n本文</body>", "見出し\n本文"},
+		{"# 一\n# 二\n\n# 三", "<body><strong>一</strong>\n<strong>二</strong>\n\n<strong>三</strong></body>", "一\n二\n\n三"},
 		{"# **太字** と *斜体*", "<body><strong>太字 と <em>斜体</em></strong></body>", "太字 と 斜体"},
 		{"a\n\n---\n\nb", "<body>a\n\n---\n\nb</body>", "a\n\n---\n\nb"},
-		{"a\n***\nb", "<body>a\n\n***\n\nb</body>", "a\n\n***\n\nb"},
+		{"a\n***\nb", "<body>a\n***\nb</body>", "a\n***\nb"},
 		{"* * *", "<body>* * *</body>", "* * *"},
-		{"> 引用\n> ___\n> 続き", "<body><blockquote>引用\n\n___\n\n続き</blockquote></body>", "引用\n\n___\n\n続き"},
+		{"> 引用\n> ___\n> 続き", "<body><blockquote>引用\n___\n続き</blockquote></body>", "引用\n___\n続き"},
 		{"- a\n\n  ***\n- b", "<body><ul><li>a\n***</li><li>b</li></ul></body>", "a\n***\nb"},
 		{"> - a\n>\n>   * * *", "<body><blockquote>- a\n* * *</blockquote></body>", "- a\n* * *"},
 		{"![画像](asana:12)", "<body>![画像](asana:12)</body>", "![画像](asana:12)"},
+		{`![画像](asana:12 "題")`, `<body>![画像](asana:12 &#34;題&#34;)</body>`, `![画像](asana:12 "題")`},
 		// a cached file is referred to by its gid: its path is local to this machine
 		{"見て ![x](/home/u/.cache/asana-tui/attachments/55-a.png)", "<body>見て ![x](asana:55)</body>", "見て ![x](asana:55)"},
 		{"a\n\n#\n\nb", "<body>a\n\nb</body>", "a\n\nb"},
