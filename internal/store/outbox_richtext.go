@@ -25,11 +25,11 @@ func richTextTarget(kind string) (richtext.Target, bool) {
 // rejects there with 400, so they could never be sent (#71). sync.Push calls it before
 // sending, so such an entry is sent as it would be written now, whenever it was queued.
 //
-// An entry left failed by that rejection is put back in the queue, to be sent again
-// without the user having to: a failed comment or status update was rejected (4xx; see
-// sync.handleError), so it was not created. If it failed for another reason it fails once
-// more, and is not put back again, since its html_text no longer changes. An entry being
-// sent is left alone.
+// An entry left failed is put back in the queue, to be sent again without the user having
+// to, whatever made it fail (a 400, or a check in Asana that could not decide): as long as
+// its html_text held those tags, Asana could not have created it, so sending it again
+// cannot duplicate it. If it fails again for another reason it stays failed, and is not put
+// back again, since its html_text no longer changes. An entry being sent is left alone.
 func (s *Store) FitQueuedRichText(ctx context.Context) (int, error) {
 	fixed := 0
 	err := s.tx(ctx, func(tx *sql.Tx) error {
