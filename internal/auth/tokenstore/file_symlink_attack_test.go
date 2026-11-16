@@ -50,9 +50,9 @@ func TestLoadSymlinkAttacks(t *testing.T) {
 			t.Fatalf("%+v %v", c, err)
 		}
 	})
-	t.Run("chain ending at a shared file is refused", func(t *testing.T) {
+	t.Run("chain ending at a file others can write is refused", func(t *testing.T) {
 		d := t.TempDir()
-		writeMode(t, filepath.Join(d, "real"), tok, 0o644)
+		writeMode(t, filepath.Join(d, "real"), tok, 0o666)
 		symlink(t, filepath.Join(d, "real"), filepath.Join(d, "l1"))
 		symlink(t, filepath.Join(d, "l1"), filepath.Join(d, "token.json"))
 		if c, err := loadWithTimeout(t, filepath.Join(d, "token.json")); err == nil || errors.Is(err, ErrNotFound) {
@@ -107,7 +107,25 @@ func TestLoadSymlinkAttacks(t *testing.T) {
 			t.Fatal("want error")
 		}
 	})
-	t.Run("link to a group-writable private-looking file", func(t *testing.T) {
+	t.Run("link to a file only readable by others is read", func(t *testing.T) {
+		d := t.TempDir()
+		writeMode(t, filepath.Join(d, "real"), tok, 0o644)
+		symlink(t, filepath.Join(d, "real"), filepath.Join(d, "token.json"))
+		if c, err := loadWithTimeout(t, filepath.Join(d, "token.json")); err != nil || c.RefreshToken != "rt" {
+			t.Fatalf("%+v %v", c, err)
+		}
+	})
+	t.Run("regular token file others can write is refused, readable is read", func(t *testing.T) {
+		for mode, ok := range map[os.FileMode]bool{0o600: true, 0o644: true, 0o640: true, 0o620: false, 0o602: false, 0o666: false} {
+			d := t.TempDir()
+			writeMode(t, filepath.Join(d, "token.json"), tok, mode)
+			_, err := loadWithTimeout(t, filepath.Join(d, "token.json"))
+			if (err == nil) != ok {
+				t.Fatalf("mode %v: err = %v, want ok=%v", mode, err, ok)
+			}
+		}
+	})
+	t.Run("link to a group-writable file", func(t *testing.T) {
 		d := t.TempDir()
 		writeMode(t, filepath.Join(d, "real"), tok, 0o660)
 		symlink(t, filepath.Join(d, "real"), filepath.Join(d, "token.json"))
@@ -120,8 +138,30 @@ func TestLoadSymlinkAttacks(t *testing.T) {
 func TestSaveFolderSymlinkAttacks(t *testing.T) {
 	ctx := context.Background()
 	cred := &Credentials{RefreshToken: "rt"}
-	t.Run("link to a shared folder is refused and left unchanged", func(t *testing.T) {
-		for _, mode := range []os.FileMode{0o755, 0o750, 0o701, 0o770, 0o777, 0o500 | 0o070} {
+	t.Run("link to a readable folder is used and left unchanged", func(t *testing.T) {
+		for _, mode := range []os.FileMode{0o755, 0o750, 0o701, 0o705} {
+			base := t.TempDir()
+			real := filepath.Join(base, "real")
+			if err := os.Mkdir(real, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			os.Chmod(real, mode)
+			symlink(t, real, filepath.Join(base, "cfg"))
+			err := (&File{Path: filepath.Join(base, "cfg", "token.json")}).Save(ctx, cred)
+			if got := modeOf(t, real); got != mode {
+				t.Fatalf("mode %v changed to %v", mode, got)
+			}
+			os.Chmod(real, 0o700)
+			if err != nil {
+				t.Fatalf("mode %v: %v", mode, err)
+			}
+			if got := modeOf(t, filepath.Join(real, "token.json")); got != 0o600 {
+				t.Fatalf("token file mode %v", got)
+			}
+		}
+	})
+	t.Run("link to a folder others can write to is refused and left unchanged", func(t *testing.T) {
+		for _, mode := range []os.FileMode{0o770, 0o777, 0o775, 0o757, 0o722, 0o702} {
 			base := t.TempDir()
 			real := filepath.Join(base, "real")
 			if err := os.Mkdir(real, 0o700); err != nil {
@@ -132,7 +172,7 @@ func TestSaveFolderSymlinkAttacks(t *testing.T) {
 			err := (&File{Path: filepath.Join(base, "cfg", "token.json")}).Save(ctx, cred)
 			os.Chmod(real, 0o700)
 			if err == nil {
-				t.Fatalf("mode %v: saved into a shared folder", mode)
+				t.Fatalf("mode %v: saved into a folder others can write to", mode)
 			}
 			os.Chmod(real, mode)
 			if got := modeOf(t, real); got != mode {

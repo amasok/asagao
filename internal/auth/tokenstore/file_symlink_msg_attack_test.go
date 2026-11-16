@@ -17,7 +17,8 @@ func TestSymlinkRefusalMessage(t *testing.T) {
 	t.Run("chain: the real target, not the first link", func(t *testing.T) {
 		base := t.TempDir()
 		real := filepath.Join(base, "real")
-		os.Mkdir(real, 0o755)
+		os.Mkdir(real, 0o700)
+		os.Chmod(real, 0o777)
 		symlink(t, real, filepath.Join(base, "l1"))
 		symlink(t, filepath.Join(base, "l1"), filepath.Join(base, "cfg"))
 		err := (&File{Path: filepath.Join(base, "cfg", "token.json")}).Save(ctx, &Credentials{RefreshToken: "x"})
@@ -25,16 +26,16 @@ func TestSymlinkRefusalMessage(t *testing.T) {
 			t.Fatal("want error")
 		}
 		real, _ = filepath.EvalSymlinks(real)
-		if !strings.Contains(err.Error(), "chmod 700 "+real) {
+		if !strings.Contains(err.Error(), "chmod go-w "+real) {
 			t.Fatalf("no chmod for %s in %q", real, err)
 		}
 	})
-	t.Run("file link: chmod 600", func(t *testing.T) {
+	t.Run("file link: chmod go-w", func(t *testing.T) {
 		base := t.TempDir()
-		writeMode(t, filepath.Join(base, "real"), `{"refresh_token":"x"}`, 0o644)
+		writeMode(t, filepath.Join(base, "real"), `{"refresh_token":"x"}`, 0o666)
 		symlink(t, filepath.Join(base, "real"), filepath.Join(base, "token.json"))
 		_, err := (&File{Path: filepath.Join(base, "token.json")}).Load(ctx)
-		if err == nil || !strings.Contains(err.Error(), "chmod 600 ") {
+		if err == nil || !strings.Contains(err.Error(), "chmod go-w ") {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -42,9 +43,10 @@ func TestSymlinkRefusalMessage(t *testing.T) {
 		t.Run(strings.NewReplacer("\n", "NL", "\x1b", "ESC", "\r", "CR", "\x00", "NUL").Replace(name), func(t *testing.T) {
 			base := t.TempDir()
 			real := filepath.Join(base, name)
-			if err := os.Mkdir(real, 0o755); err != nil {
+			if err := os.Mkdir(real, 0o700); err != nil {
 				t.Skip("this file system refuses the name:", err)
 			}
+			os.Chmod(real, 0o777)
 			symlink(t, real, filepath.Join(base, "cfg"))
 			err := (&File{Path: filepath.Join(base, "cfg", "token.json")}).Save(ctx, &Credentials{RefreshToken: "x"})
 			if err == nil {
@@ -58,14 +60,17 @@ func TestSymlinkRefusalMessage(t *testing.T) {
 			}
 			// whatever is shown after "chmod 700 " is one shell word that is the real path,
 			// or the message does not pretend to give a command for it
-			i := strings.Index(msg, "chmod 700 ")
+			i := strings.Index(msg, "chmod go-w ")
+			if strings.ContainsAny(name, "\n\r\x00\x1b") {
+				if i >= 0 && !strings.HasPrefix(msg[i:], "chmod go-w で") { // the shown path would not be the real one: no command to paste
+					t.Fatalf("a command for an unprintable path: %q", msg)
+				}
+				return
+			}
 			if i < 0 {
 				t.Fatalf("no command in %q", msg)
 			}
-			cmd := msg[i+len("chmod 700 "):]
-			if strings.ContainsAny(name, "\n\r\x00\x1b") {
-				return // the shown path cannot be the real one; see below
-			}
+			cmd := msg[i+len("chmod go-w "):]
 			word := cmd
 			if strings.HasPrefix(word, "'") {
 				// unquote: '...'\''...'
