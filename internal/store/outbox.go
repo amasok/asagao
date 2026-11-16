@@ -698,8 +698,8 @@ var updatableFields = map[string]bool{"completed": true, "name": true, "notes": 
 
 // Task types (resource_subtype) and approval statuses that can be set.
 var (
-	TaskSubtypes     = []string{"default_task", "milestone", "approval"}
-	ApprovalStatuses = []string{"pending", "approved", "rejected", "changes_requested"}
+	TaskSubtypes     = task.Subtypes
+	ApprovalStatuses = task.ApprovalStatuses
 )
 
 func validateFields(changes map[string]any) error {
