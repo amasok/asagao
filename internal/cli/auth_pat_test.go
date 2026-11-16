@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zalando/go-keyring"
-
 	"github.com/amasok/asana-tui/internal/auth"
 	"github.com/amasok/asana-tui/internal/auth/tokenstore"
 )
@@ -19,8 +17,7 @@ import (
 // `auth migrate` moves a PAT login between stores without losing it or turning it into
 // an OAuth login.
 func TestAuthMigrateKeepsPAT(t *testing.T) {
-	keyring.MockInit()
-	file := authTestEnv(t, "")
+	file := authTestEnv(t, "") // the keychain is the mock (TestMain)
 	ctx := context.Background()
 	in := &tokenstore.Credentials{PersonalAccessToken: "pat-1", ClientSecret: "cs", UserGID: "42", UserName: "U", UserEmail: "u@example.com"}
 	if err := file.Save(ctx, in); err != nil {
@@ -30,6 +27,7 @@ func TestAuthMigrateKeepsPAT(t *testing.T) {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
 	kc := &tokenstore.Keychain{Service: "asana-tui", User: "default"}
+	t.Cleanup(func() { _ = kc.Delete(ctx) }) // not left for other tests
 	got, err := kc.Load(ctx)
 	if err != nil || *got != *in || got.Method() != tokenstore.MethodPAT {
 		t.Fatalf("keychain after migrate = %+v, %v; want %+v", got, err, in)

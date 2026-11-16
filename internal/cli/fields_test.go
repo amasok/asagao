@@ -23,6 +23,13 @@ func fieldsCLIEnv(t *testing.T) string {
 	if err := os.MkdirAll(config.DataDir(), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// no token: the file store is empty (the keychain may hold another test's mock token)
+	if err := os.MkdirAll(config.ConfigDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.FilePath(), []byte("[auth]\ntoken_store = \"file\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(config.DataDir(), "store.db")
 	st := createStoreAt(t, path)
 	ctx := context.Background()
