@@ -88,32 +88,72 @@ func (s *Store) ReplaceSections(ctx context.Context, projectGID string, secs []a
 	})
 }
 
+// Writing many tasks (a pull of a large project) holds the write lock for a while, and
+// another process's write (TUI, MCP server) waits for it for at most busy_timeout, then
+// fails as busy (#55). UpsertTasks writes them in transactions of about writeSlice at most
+// and, between two of them, leaves the lock free for writeYield: longer than SQLite's busy
+// handler sleeps between two tries (100ms at most), so a writer that waits gets it.
+var (
+	writeSlice = busyTimeout / 10
+	writeYield = 150 * time.Millisecond
+)
+
 // UpsertTasks stores tasks with their memberships, tags and assignee.
+//
+// Many tasks are written in several transactions (see writeSlice): if it fails or ctx is
+// cancelled, the tasks before the failure are stored and the rest are not. Each task is
+// stored whole or not at all, and storing the same tasks again gives the same result, so a
+// pull that failed is simply done again; what a sync records of its progress (events
+// tokens, the last sync, pruning by what it fetched) waits until all tasks are written.
 func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		for _, t := range tasks {
-			if err := upsertTask(ctx, tx, t); err != nil {
-				return err
+	for len(tasks) > 0 {
+		err := s.tx(ctx, func(tx *sql.Tx) error {
+			start := time.Now()
+			for i, t := range tasks {
+				if i > 0 && time.Since(start) >= writeSlice {
+					tasks = tasks[i:]
+					return nil
+				}
+				if err := upsertTaskTx(ctx, tx, t); err != nil {
+					return err
+				}
 			}
-			// Unsent local edits win over what the server returned until they are pushed.
-			if err := reapplyUpdates(ctx, tx, t.GID); err != nil {
-				return err
-			}
-			if err := reapplyTagOps(ctx, tx, t.GID); err != nil {
-				return err
-			}
-			if err := reapplyRelationOps(ctx, tx, t.GID); err != nil {
-				return err
-			}
-			if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
-				return err
-			}
-			if err := reapplyDependencyOps(ctx, tx, t.GID); err != nil {
-				return err
+			tasks = nil
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if len(tasks) > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(writeYield):
 			}
 		}
-		return nil
-	})
+	}
+	return nil
+}
+
+// upsertTaskTx stores one task and reapplies its unsent local edits, which win over what
+// the server returned until they are pushed.
+func upsertTaskTx(ctx context.Context, tx *sql.Tx, t asana.Task) error {
+	if err := upsertTask(ctx, tx, t); err != nil {
+		return err
+	}
+	if err := reapplyUpdates(ctx, tx, t.GID); err != nil {
+		return err
+	}
+	if err := reapplyTagOps(ctx, tx, t.GID); err != nil {
+		return err
+	}
+	if err := reapplyRelationOps(ctx, tx, t.GID); err != nil {
+		return err
+	}
+	if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
+		return err
+	}
+	return reapplyDependencyOps(ctx, tx, t.GID)
 }
 
 func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
