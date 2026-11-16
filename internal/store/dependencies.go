@@ -258,6 +258,11 @@ func (s *Store) ResolveTaskGID(ctx context.Context, gid string) (string, error) 
 			return "", err
 		}
 		if n == 0 {
+			if IsLocalGID(gid) {
+				// sent long ago: its mapping was pruned (see PruneResults)
+				return "", fmt.Errorf("task %s: %w（オフラインで作ったタスクの一時的な gid は、送信から %d 日ほどで使えなくなります。Asana の gid を使ってください）",
+					gid, ErrNotFound, int(ResultGrace.Hours()/24))
+			}
 			return "", fmt.Errorf("task %s: %w", gid, ErrNotFound)
 		}
 	}

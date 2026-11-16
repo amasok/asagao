@@ -4,6 +4,7 @@ import (
 	"html"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestToMarkdown(t *testing.T) {
@@ -52,7 +53,7 @@ func TestToMarkdown(t *testing.T) {
 			`1\. 番号  ` + "\n" + `12\) 括弧  ` + "\n" + `3\.  ` + "\n" + `\-- -  ` + "\n" + `\+ プラス  ` + "\n" + `\> 引用  ` + "\n" + `&#32; # 字下げ  ` + "\n" + `\-  ` + "\n" + `\---  ` + "\n" + `\===  ` + "\n" + `\~\~消し\~\~ と 10時\~12時`},
 		{"indentation is kept with a character reference",
 			"<body>前\n\t# 井桁\n\t- ハイフン\n \t+ プラス\n\t1. 番号\n\t> 引用\n    コード風\n-\t-\t-\n--\t-\n見出し風\n===\t\n後</body>",
-			"前  \n&#9;# 井桁  \n&#9;- ハイフン  \n&#32;\t+ プラス  \n&#9;1. 番号  \n&#9;> 引用  \n&#32;   コード風  \n\\-\t-\t-  \n\\--\t-  \n見出し風  \n\\===\t  \n後"},
+			"前  \n&#9;# 井桁  \n&#9;- ハイフン  \n&#32;\t+ プラス  \n&#9;1. 番号  \n&#9;> 引用  \n&#32;   コード風  \n\\-\t-\t-  \n\\--\t-  \n見出し風  \n\\===&#9;  \n後"},
 		{"indentation only at real line starts",
 			"<body><strong>太字</strong>  後ろ\n<ul><li>  字下げ項目</li></ul><ol><li>\t番号項目</li></ol><blockquote>引用\n  字下げ</blockquote><blockquote>  先頭から字下げ</blockquote></body>",
 			"**太字**  後ろ\n\n- &#32; 字下げ項目\n\n1. &#9;番号項目\n\n> 引用  \n> &#32; 字下げ\n\n> &#32; 先頭から字下げ"},
@@ -194,10 +195,10 @@ func TestTabsDoNotCreateBlocks(t *testing.T) {
 	if out := FromMarkdown(md); out != want {
 		t.Fatalf("markdown %q\nhtml %q\nwant %q", md, out, want)
 	}
-	// "===" followed by a tab would make the line above a heading. (Trailing whitespace
-	// before a line break is dropped by Markdown.)
+	// "===" followed by a tab would make the line above a heading. The trailing tab is kept
+	// (as a character reference: Markdown drops whitespace before a line break).
 	in = "<body>見出し風\n===\t\n後</body>"
-	want = "<body>見出し風\n===\n後</body>"
+	want = in
 	md = ToEditableMarkdown(in)
 	if out := FromMarkdown(md); out != want {
 		t.Fatalf("markdown %q\nhtml %q\nwant %q", md, out, want)
@@ -344,5 +345,100 @@ func TestIndentationAsWhitespace(t *testing.T) {
 	// the display form keeps the character references (the renderer would drop the spaces)
 	if md := ToMarkdown("<body>  前</body>"); md != "&#32; 前" {
 		t.Errorf("ToMarkdown = %q", md)
+	}
+}
+
+// An email address written in the editor links to mailto: (#45). Without it Asana gets a
+// relative link ("a@x.jp"). The text of a linkified "www." address stays as written.
+func TestFromMarkdownAutolinks(t *testing.T) {
+	for _, tc := range []struct{ md, want string }{
+		{"mail a@x.jp now", `<body>mail <a href="mailto:a@x.jp">a@x.jp</a> now</body>`},
+		{"<a@x.jp>", `<body><a href="mailto:a@x.jp">a@x.jp</a></body>`},
+		{"<mailto:a@x.jp>", `<body><a href="mailto:a@x.jp">mailto:a@x.jp</a></body>`},
+		{"see www.x.jp", `<body>see <a href="http://www.x.jp">www.x.jp</a></body>`},
+		{"see https://x.jp/a", `<body>see <a href="https://x.jp/a">https://x.jp/a</a></body>`},
+	} {
+		if got := FromMarkdown(tc.md); got != tc.want {
+			t.Errorf("FromMarkdown(%q)\ngot  %q\nwant %q", tc.md, got, tc.want)
+		}
+	}
+	// A mailto link from Asana goes back as it came.
+	in := `<body>連絡先 <a href="mailto:a@x.jp">a@x.jp</a></body>`
+	if got := FromMarkdown(ToEditableMarkdown(in)); got != in {
+		t.Errorf("round trip of %q\ngot %q", in, got)
+	}
+}
+
+// Spaces and tabs at the end of a line are text in Asana: they survive editing instead of
+// being dropped or read as a Markdown line break (#45).
+func TestTrailingWhitespaceRoundTrip(t *testing.T) {
+	for _, in := range []string{
+		"<body>a  \nb</body>",
+		"<body>a\t\nb</body>",
+		"<body>a \t\n\nb</body>",
+		"<body>end  \n\nnext</body>",
+		"<body>一  \n二 \n三</body>",
+		"<body><strong>太</strong>  \n次</body>",
+		"<body><blockquote>a  \nb</blockquote></body>",
+		"<body><ul><li>a  \nb</li></ul></body>",
+		"<body>a  \n<strong>b</strong></body>",       // text after the break is in an element
+		"<body>a \n<a data-asana-gid=\"9\"/></body>", // or a mention
+	} {
+		md := ToEditableMarkdown(in)
+		if out := FromMarkdown(md); out != in {
+			t.Errorf("html %q\nmarkdown %q\ngot %q", in, md, out)
+		}
+	}
+	// plain text keeps them too
+	text := "a  \nb\t\n\nc"
+	if got := PlainFromMarkdown(ToEditableMarkdown("<body>" + text + "</body>")); got != text {
+		t.Errorf("plain %q, want %q", got, text)
+	}
+	// a line of only spaces is not made text (it stays a blank line, as before)
+	if got, want := ToEditableMarkdown("<body>a\n  \nb</body>"), "a  \n\nb"; got != want {
+		t.Errorf("blank line: got %q, want %q", got, want)
+	}
+	// a <br> after trailing spaces
+	if got, want := ToMarkdown("<body>a  <br>b</body>"), "a &#32;  \nb"; got != want {
+		t.Errorf("br: got %q, want %q", got, want)
+	}
+	// structure at the start of a line (list markers, quote prefixes) is not text
+	if got, want := ToMarkdown("<body><blockquote>a\n\nb</blockquote></body>"), "> a\n> \n> b"; got != want {
+		t.Errorf("quote: got %q, want %q", got, want)
+	}
+}
+
+// Converting a long description takes time proportional to its length (#23): checking
+// whether text starts a line used to scan all the output written so far. 8000 lines took
+// about 13 s before; now well under 100 ms, so the limit leaves room for -race and slow CI.
+func TestLongDescriptionIsLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	in := "<body>" + strings.Repeat("<strong>a</strong> # b\n", 8000) + "</body>"
+	start := time.Now()
+	md := ToEditableMarkdown(in)
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("converting %d bytes took %v", len(in), d)
+	}
+	if !strings.HasSuffix(md, "**a** # b") || strings.Count(md, "\n") != 7999 {
+		t.Fatalf("unexpected output %q", md[len(md)-40:])
+	}
+}
+
+// Text right after a list marker or a quote prefix starts the line, so block syntax in it is
+// escaped; text after other inline content on the line is not.
+func TestAtLineStart(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"<body><ul><li># x</li></ul></body>", `- \# x`},
+		{"<body><ol><li>- x</li></ol></body>", `1. \- x`},
+		{"<body><ul><li><strong>a</strong># x</li></ul></body>", `- **a**# x`},
+		{"<body><blockquote># x\n# y</blockquote></body>", "> \\# x  \n> \\# y"},
+		{"<body><strong>a</strong>\n# x</body>", "**a**\n\\# x"},
+		{"<body>a > b\n> c</body>", "a > b  \n\\> c"},
+	} {
+		if got := ToMarkdown(tc.in); got != tc.want {
+			t.Errorf("ToMarkdown(%q)\ngot  %q\nwant %q", tc.in, got, tc.want)
+		}
 	}
 }

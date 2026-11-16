@@ -403,6 +403,11 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, stamp.UTC().Format(time.RFC3339)); err != nil {
 		return res, err
 	}
+	// Mappings of things created offline to their Asana gids that nothing needs any more
+	// (#44). Not an error for the sync: what is not pruned now is pruned next time.
+	if _, err := s.Store.PruneResults(ctx, s.clock()); err != nil {
+		s.progress("オフラインで作った項目の対応表の整理: %v", err)
+	}
 	res.Duration = s.clock().Sub(started)
 	return res, nil
 }

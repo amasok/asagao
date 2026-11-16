@@ -93,11 +93,7 @@ func TestCLIAttackTextIsTerminalSafe(t *testing.T) {
 func TestCLIJSONOutputIsTerminalSafe(t *testing.T) {
 	attackStore(t)
 	for _, args := range attackCommands {
-		var cmdOut string
-		var cmdErr error
-		out := captureStdout(t, func() {
-			cmdOut, cmdErr = runCLI(t, append(args, "--json")...)
-		})
+		out, cmdOut, cmdErr := runCLISplit(t, append(args, "--json")...)
 		if cmdErr != nil {
 			t.Errorf("%v --json: %v\n%s", args, cmdErr, cmdOut)
 			continue

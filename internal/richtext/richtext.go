@@ -7,6 +7,7 @@
 package richtext
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
@@ -68,10 +69,14 @@ func Images(s string) []string {
 type converter struct {
 	editable  bool
 	imageDest func(gid string) string
-	b         strings.Builder
+	b         bytes.Buffer
 	lists     []listState // nesting of ul/ol
 	pre       int         // inside <pre>
 	quote     int         // inside <blockquote>
+	// lineStart is where the text of the current Markdown line starts in b: after the
+	// newline and the structure written at the start of the line (blockquote prefixes, list
+	// item markers). Keeping it as state makes atLineStart constant time (#23).
+	lineStart int
 }
 
 type listState struct {
@@ -79,23 +84,61 @@ type listState struct {
 	n       int
 }
 
-func (c *converter) write(s string) { c.b.WriteString(s) }
+func (c *converter) write(s string) {
+	c.b.WriteString(s)
+	if strings.HasSuffix(s, "\n") {
+		c.markLineStart()
+	}
+}
+
+// markLineStart records that what has been written so far is line structure: the next
+// text starts the line.
+func (c *converter) markLineStart() { c.lineStart = c.b.Len() }
+
+// endsWith reports whether the output ends with suffix.
+func (c *converter) endsWith(suffix string) bool {
+	return bytes.HasSuffix(c.b.Bytes(), []byte(suffix))
+}
 
 // newline starts a new line, keeping blockquote prefixes.
 func (c *converter) newline() {
 	c.write("\n")
 	if c.quote > 0 {
 		c.write(strings.Repeat("> ", c.quote))
+		c.markLineStart()
 	}
+}
+
+// keepTrailingSpace is called before a line break: Markdown drops spaces and tabs at the end
+// of a line (and reads two spaces as a line break), so the last one of the text written on
+// this line becomes a character reference, which Markdown keeps as text (#45). Lines with
+// no text other than whitespace are left alone, and so is the last line of a block (when
+// follows reports that no text comes after the break): there the break and the spaces both
+// go, as Asana trims them, and keeping only the spaces would change the text once and then
+// again on the next round trip.
+func (c *converter) keepTrailingSpace(follows func() bool) {
+	if c.pre > 0 {
+		return
+	}
+	b := c.b.Bytes()
+	n := len(b)
+	if n == c.lineStart || (b[n-1] != ' ' && b[n-1] != '\t') {
+		return
+	}
+	if len(bytes.TrimRight(b[c.lineStart:], " \t")) == 0 || !follows() {
+		return
+	}
+	ch := b[n-1]
+	c.b.Truncate(n - 1)
+	c.write(indentRef[ch])
 }
 
 // block makes sure the next content starts a new paragraph.
 func (c *converter) block() {
-	s := c.b.String()
-	if s == "" || strings.HasSuffix(s, "\n\n") {
+	if c.b.Len() == 0 || c.endsWith("\n\n") {
 		return
 	}
-	if strings.HasSuffix(s, "\n") {
+	if c.endsWith("\n") {
 		c.write("\n")
 		return
 	}
@@ -151,12 +194,14 @@ func (c *converter) walk(n *html.Node) {
 		c.write("---")
 		c.block()
 	case atom.Br:
+		c.keepTrailingSpace(func() bool { return c.textFollows(n) })
 		c.write("  ")
 		c.newline()
 	case atom.Blockquote:
 		c.block()
 		c.quote++
 		c.write(strings.Repeat("> ", c.quote))
+		c.markLineStart()
 		c.children(n)
 		c.quote--
 		c.block()
@@ -201,6 +246,7 @@ func (c *converter) text(n *html.Node) {
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
 		if i > 0 {
+			c.keepTrailingSpace(func() bool { return nonBlank(lines[i:]) || c.textFollows(n) })
 			// a line break inside a paragraph needs a hard break ("  "); blank lines don't
 			if strings.TrimSpace(lines[i-1]) != "" && l != "" {
 				c.write("  ")
@@ -211,17 +257,55 @@ func (c *converter) text(n *html.Node) {
 	}
 }
 
-// listMarkerEnd matches a list item marker just written at the end of the output.
-var listMarkerEnd = regexp.MustCompile(`(?:^|\n) *(?:- |[0-9]+\. )$`)
-
 // atLineStart reports whether the next text starts a line of Markdown: at the start of the
-// output, after a newline, a blockquote prefix or a list item marker.
-func (c *converter) atLineStart() bool {
-	s := c.b.String()
-	for c.quote > 0 && strings.HasSuffix(s, "> ") {
-		s = strings.TrimSuffix(s, "> ")
+// output, after a newline, blockquote prefixes or a list item marker.
+func (c *converter) atLineStart() bool { return c.b.Len() == c.lineStart }
+
+// textFollows reports whether text comes after n in the same block: in a following sibling
+// (of n, or of the inline elements around it) before a block element starts or the block
+// ends. Line breaks are skipped; images and mentions count as text where they are inline.
+func (c *converter) textFollows(n *html.Node) bool {
+	for ; n != nil; n = n.Parent {
+		for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
+			switch {
+			case sib.Type == html.TextNode:
+				if strings.TrimSpace(sib.Data) != "" {
+					return true
+				}
+			case sib.Type != html.ElementNode, sib.DataAtom == atom.Br:
+			case sib.DataAtom == atom.Img:
+				if c.editable {
+					return true
+				}
+				return false // displayed as a block of its own
+			case blockAtoms[sib.DataAtom]:
+				return false
+			case strings.TrimSpace(textOf(sib)) != "" || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
+				return true
+			}
+		}
+		if p := n.Parent; p == nil || p.Type != html.ElementNode || blockAtoms[p.DataAtom] {
+			return false
+		}
 	}
-	return s == "" || strings.HasSuffix(s, "\n") || listMarkerEnd.MatchString(s)
+	return false
+}
+
+// blockAtoms are the elements that start a block of their own (see walk).
+var blockAtoms = map[atom.Atom]bool{
+	atom.Html: true, atom.Body: true, atom.P: true, atom.Div: true, atom.Pre: true,
+	atom.H1: true, atom.H2: true, atom.H3: true, atom.Hr: true, atom.Blockquote: true,
+	atom.Ul: true, atom.Ol: true, atom.Li: true,
+}
+
+// nonBlank reports whether one of lines has something other than spaces and tabs.
+func nonBlank(lines []string) bool {
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *converter) wrap(n *html.Node, mark string) {
@@ -258,9 +342,9 @@ func (c *converter) link(n *html.Node) {
 		c.write(escape(text, false)) // not a link
 	default:
 		// "!" just before the link would make it an image (of an attachment, for a local path)
-		if out := c.b.String(); strings.HasSuffix(out, "!") {
-			c.b.Reset()
-			c.write(out[:len(out)-1] + `\!`)
+		if c.endsWith("!") {
+			c.b.Truncate(c.b.Len() - 1)
+			c.write(`\!`)
 		}
 		c.write("[" + escape(text, false) + "](" + linkDest(href) + ")")
 	}
@@ -348,7 +432,7 @@ func (c *converter) listItem(n *html.Node) {
 	}
 	l := &c.lists[depth-1]
 	l.n++
-	if s := c.b.String(); s != "" && !strings.HasSuffix(s, "\n") {
+	if c.b.Len() > 0 && !c.endsWith("\n") {
 		c.newline()
 	}
 	c.write(strings.Repeat("   ", depth-1))
@@ -357,6 +441,7 @@ func (c *converter) listItem(n *html.Node) {
 	} else {
 		c.write("- ")
 	}
+	c.markLineStart()
 	c.children(n)
 }
 
