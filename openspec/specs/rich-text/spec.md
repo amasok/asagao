@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66。#65 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -48,7 +48,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** html と plain が testdata/tasknotes_golden.json と一致する
 
 ### Requirement: 入れ子の決まりを守る (#60)
-引用の中のリスト、リスト項目の中の引用・見出し・コード片は、タグにせず Markdown の文字として書く (MUST)。引用の中の見出しとコード片は許す。リスト項目の中の空の見出しは、印だけ (`#`) を書き、あとに空白を付けない (#72)。
+引用の中のリスト、リスト項目の中の引用・見出し・コード片・区切り線は、タグにせず Markdown の文字として書く (MUST。区切り線は #80: 文書に項目の中の `<hr/>` の記載がなく、エディタはリストの外に書き戻すため)。引用の中の見出しとコード片は許す。リスト項目の中の空の見出しは、印だけ (`#`) を書き、あとに空白を付けない (#72)。
 根拠: frommd.go:115-135, :282-328; nesting_spec_test.go TestFromMarkdownFollowsNestingRules, TestUserMarkdownFollowsNestingRules; spec_attack_test.go TestSpecNoListInQuoteOrHeading
 
 #### Scenario: 引用の中のリスト
@@ -164,12 +164,28 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `a <a href="http://x.jp">b c</a> d` になる
 
 ### Requirement: 往復で安定しない既知の形
-次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): リスト項目の中の入れ子のリストのあとの文 (#59)、先頭に空白がある見出し (字下げした setext の見出し、#78)、リスト項目の中の区切り線 (#80)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
-根拠: nesting_spec_test.go unstableOnMain
+次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): 先頭に空白がある見出し (字下げした setext の見出し、#78)。字下げのあとのメールや URL がリンクにならず、形が変わるとリンクになるもの (#77) も安定しないことがある。
+根拠: nesting_spec_test.go unstableOnMain; stability_attack_test.go onlyLinksAdded
+
+#### Scenario: 字下げした setext の見出し
+- **WHEN** `   a\n  ---` を変換して、エディタで往復する
+- **THEN** `<h2>   a</h2>` が `<h2>a</h2>` になる (#78 で直す)
+
+### Requirement: 入れ子のリストのあとの文は、そのリストの最後の項目に入れる
+リスト項目の中で入れ子のリストのあとに続く文は、そのリストの最後の項目の新しい行にする (MUST)。Markdown はその行を最後の項目の続きと読むので、エディタはそこにしか書き戻せないため。`FromMarkdown` も送るときにそうし、html にあるときも読むときにそうする (間の改行は落とし、語はくっつけない)。そのあとに続くリストは、隣り合うリストになる (#59)。
+根拠: frommd.go itemBlocks; richtext.go moveTextAfterNestedLists; lists_test.go TestTextAfterNestedList
+
+#### Scenario: 入れ子のリストのあとの文
+- **WHEN** `<ul><li>a<ul><li>b</li></ul>c</li></ul>` をエディタで往復する
+- **THEN** `<ul><li>a<ul><li>b\nc</li></ul></li></ul>` になる
+
+### Requirement: リスト項目の中のブロックは、読むときに文字にする
+Asana が受け付けないリスト項目の中の引用・コード片・見出し・区切り線が html にあるとき (Asana は送ってこないが、キャッシュやほかの道具が持つことがある) は、読むときに、`FromMarkdown` が送るのと同じ文字にする (MUST): `> ` の行、行ごとのコード、`# h`、`---`。ブロックとして書くとリストが終わり、あとの項目が文字になるため。リストや段落を含む引用は、これまでどおりリストのあとに出す (#59)。
+根拠: richtext.go demoteBlocksInItems; lists_test.go TestTextAfterNestedList, TestRuleInItemIsText
 
 #### Scenario: 項目の中の区切り線
-- **WHEN** `<ul><li>a<hr/></li></ul>` をエディタで往復する
-- **THEN** `<ul><li>a</li></ul><hr/>` になる (#80 で直す)
+- **WHEN** `<ol><li>a<hr/></li><li>b</li></ol>` をエディタで往復する
+- **THEN** `<ol><li>a\n---</li><li>b</li></ol>` になる
 
 ### Requirement: 文の文字は往復で落とさない
 入れ子の決まりに合う html の、文として見える文字 (空白を除く) は、エディタを 1 回往復しても落とさない (MUST)。plain の文字列は、同じ Markdown から作った html の文字と、同じ空白以外の文字を持つ。空白を埋めるための `\` や `&#32;` は、文字として出さない。

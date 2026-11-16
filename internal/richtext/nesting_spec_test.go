@@ -223,6 +223,10 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 			t.Errorf("md %q: %s\nh1 %q", md, v, h1)
 			continue
 		}
+		if textAfterNestedList(h1) || strings.Contains(h1, "<li>") && liRule.MatchString(h1) {
+			fails++ // it goes into the list's last item (#59); a rule in an item is text (#80)
+			t.Errorf("md %q: text after a nested list, or a rule in an item\nh1 %q", md, h1)
+		}
 		txt := nodeTextOf(h1)
 		for _, w := range words {
 			if !strings.Contains(txt, w) {
@@ -246,13 +250,14 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 }
 
 // unstableOnMain reports whether rich text has a shape that does not survive a trip on main
-// either, apart from nesting: text after a nested list in an item (#59); a heading with a
-// space at its start (an indented setext heading's, #78); and a rule in an item.
-func unstableOnMain(h string) bool {
-	return textAfterNestedList(h) || knownUnstable.MatchString(h)
-}
+// either, apart from nesting: a heading with a space at its start (an indented setext
+// heading's, #78).
+func unstableOnMain(h string) bool { return knownUnstable.MatchString(h) }
 
-var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]|<li>(?:[^<]|<[^/l]|</[^l])*<hr/>`)
+var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]`)
+
+// liRule matches a rule in a list item.
+var liRule = regexp.MustCompile(`<li>(?:[^<]|<[^/l]|</[^l])*<hr/>`)
 
 // textAfterNestedList reports whether a list item has text after a list inside it.
 func textAfterNestedList(s string) bool {
@@ -304,13 +309,14 @@ func TestEditedRichTextFollowsNestingRules(t *testing.T) {
 
 // Markdown written as text (#60) is sent as typed, and not converted again as an edit would
 // read it: a URL in raw HTML there is not made a link, let alone one cut short at an escaped
-// "_" (#77). Text after a nested list and a rule in an item stay where they were typed.
+// "_" (#77). Text after a nested list goes into its last item (#59), a rule in an item is
+// text (#80).
 func TestFromMarkdownDemotedTextAsTyped(t *testing.T) {
 	for _, c := range []struct{ md, want string }{
 		{"- > <div>see https://x.jp/a_b</div>", "<body><ul><li>&gt; &lt;div&gt;see https://x.jp/a_b&lt;/div&gt;</li></ul></body>"},
 		{"> - a\n> - &#32;b@x.jp", "<body><blockquote>- a\n-  b@x.jp</blockquote></body>"},
-		{"- # x\n  - a\n  # y", "<body><ul><li># x<ul><li>a</li></ul>\n# y</li></ul></body>"},
-		{"- # x\n  ***", "<body><ul><li># x<hr/></li></ul></body>"},
+		{"- # x\n  - a\n  # y", "<body><ul><li># x<ul><li>a\n# y</li></ul></li></ul></body>"},
+		{"- # x\n  ***", "<body><ul><li># x\n***</li></ul></body>"},
 	} {
 		if got := FromMarkdown(c.md); got != c.want {
 			t.Errorf("FromMarkdown(%q)\ngot  %q\nwant %q", c.md, got, c.want)

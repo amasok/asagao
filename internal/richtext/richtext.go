@@ -57,6 +57,8 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 		return s
 	}
 	splitCodeLines(doc)
+	demoteBlocksInItems(doc)
+	moveTextAfterNestedLists(doc)
 	moveEdgeSpaceOutOfMarks(doc)
 	c := &converter{editable: editable, imageDest: imageDest}
 	c.walk(doc)
@@ -852,6 +854,224 @@ func (c *converter) altMarker(n *html.Node) bool {
 		c.altLists[n] = true
 	}
 	return alt
+}
+
+// demoteBlocksInItems makes a quote, code, a heading or a rule in a list item (which Asana's
+// rich text does not take there, and so does not send) the text FromMarkdown sends for them
+// there (#60): "> " lines, code of each line, "# h", "---" (#59). The list stays as it is;
+// written as blocks they would end it, and the items after them would be text. A quote that
+// holds more than text and code (a list, say) is left as it is.
+func demoteBlocksInItems(n *html.Node) {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		demoteBlocksInItems(ch)
+	}
+	if n.Type != html.ElementNode || n.DataAtom != atom.Li {
+		return
+	}
+	for ch := n.FirstChild; ch != nil; {
+		next := ch.NextSibling
+		if inline, ok := demotedBlock(ch); ok {
+			if hasContentBefore(ch) && len(inline) > 0 {
+				n.InsertBefore(&html.Node{Type: html.TextNode, Data: "\n"}, ch)
+			}
+			for _, s := range inline {
+				n.InsertBefore(s, ch)
+			}
+			if hasContentAfter(ch) && len(inline) > 0 {
+				n.InsertBefore(&html.Node{Type: html.TextNode, Data: "\n"}, ch)
+			}
+			n.RemoveChild(ch)
+		}
+		ch = next
+	}
+}
+
+// demotedBlock returns block n as inline nodes (see demoteBlocksInItems), or false if n is
+// not such a block.
+func demotedBlock(n *html.Node) ([]*html.Node, bool) {
+	if n.Type != html.ElementNode {
+		return nil, false
+	}
+	text := func(s string) *html.Node { return &html.Node{Type: html.TextNode, Data: s} }
+	switch n.DataAtom {
+	case atom.Hr:
+		return []*html.Node{text("---")}, true
+	case atom.Pre:
+		var out []*html.Node
+		for i, l := range strings.Split(strings.Trim(textOf(n), "\n"), "\n") {
+			if i > 0 {
+				out = append(out, text("\n"))
+			}
+			if l != "" {
+				code := &html.Node{Type: html.ElementNode, Data: "code", DataAtom: atom.Code}
+				code.AppendChild(text(l))
+				out = append(out, code)
+			}
+		}
+		return out, true
+	case atom.H1, atom.H2, atom.H3:
+		out := []*html.Node{text(strings.Repeat("#", headingLevel(n.DataAtom)))}
+		if asciiBlank(textOf(n)) && !hasAsanaRef(n) {
+			return out, true
+		}
+		out[0].Data += " "
+		for ch := n.FirstChild; ch != nil; ch = n.FirstChild {
+			n.RemoveChild(ch)
+			out = append(out, ch)
+		}
+		return out, true
+	case atom.Blockquote:
+		var out []*html.Node
+		for ch := n.FirstChild; ch != nil; ch = n.FirstChild {
+			n.RemoveChild(ch)
+			if inner, ok := demotedBlock(ch); ok {
+				if len(out) > 0 {
+					out = append(out, text("\n"))
+				}
+				out = append(out, inner...)
+				continue
+			}
+			if ch.Type == html.ElementNode && blockAtoms[ch.DataAtom] || hasBlock(ch) {
+				// put it back: a quote holding a list or a paragraph stays a block
+				n.AppendChild(ch)
+				for _, s := range out {
+					if s.Parent == nil {
+						n.InsertBefore(s, ch)
+					}
+				}
+				return nil, false
+			}
+			out = append(out, ch)
+		}
+		// "> " at the start of each line
+		lines := []*html.Node{text("> ")}
+		for _, s := range out {
+			quoteLines(s)
+			lines = append(lines, s)
+			if s.Type == html.ElementNode && s.DataAtom == atom.Br {
+				lines = append(lines, text("> "))
+			}
+		}
+		return lines, true
+	}
+	return nil, false
+}
+
+// quoteLines puts "> " after each line break in the text of n (see demotedBlock).
+func quoteLines(n *html.Node) {
+	if n.Type == html.TextNode {
+		n.Data = strings.ReplaceAll(n.Data, "\n", "\n> ")
+		return
+	}
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		quoteLines(ch)
+		if ch.Type == html.ElementNode && ch.DataAtom == atom.Br {
+			n.InsertBefore(&html.Node{Type: html.TextNode, Data: "> "}, ch.NextSibling)
+		}
+	}
+}
+
+// hasContentBefore and hasContentAfter report whether a sibling before (after) n has
+// something to write.
+func hasContentBefore(n *html.Node) bool {
+	for s := n.PrevSibling; s != nil; s = s.PrevSibling {
+		if inlineContent(s) || s.Type == html.ElementNode && blockAtoms[s.DataAtom] {
+			return true
+		}
+	}
+	return false
+}
+
+func hasContentAfter(n *html.Node) bool {
+	for s := n.NextSibling; s != nil; s = s.NextSibling {
+		if inlineContent(s) || s.Type == html.ElementNode && blockAtoms[s.DataAtom] {
+			return true
+		}
+	}
+	return false
+}
+
+// moveTextAfterNestedLists moves text that comes after a nested list in an item into the
+// list's last item, as a new line of it (#59): editable Markdown cannot write it where it is
+// (Markdown reads a line after a nested list as its last item going on), and FromMarkdown
+// sends it there too (see itemBlocks). Line breaks where the two meet go: a blank line there
+// would end the list. What Asana's rich text does not take in an item (a quote, code, a
+// rule) is left where it is, and goes after the list as it always did.
+func moveTextAfterNestedLists(n *html.Node) {
+	if n.Type == html.ElementNode && n.DataAtom == atom.Li {
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			if !isList(ch) {
+				continue
+			}
+			var tail []*html.Node
+			content := false
+			for s := ch.NextSibling; s != nil && !isList(s) && !(s.Type == html.ElementNode && blockAtoms[s.DataAtom]); s = s.NextSibling {
+				tail = append(tail, s)
+				content = content || inlineContent(s)
+			}
+			last := ch.LastChild
+			for last != nil && !(last.Type == html.ElementNode && last.DataAtom == atom.Li) {
+				last = last.PrevSibling
+			}
+			if !content || last == nil {
+				continue
+			}
+			trimTrailingBreaks(last)
+			moved := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span}
+			for _, s := range tail {
+				n.RemoveChild(s)
+				moved.AppendChild(s)
+			}
+			trimLeadingBreaks(moved)
+			last.AppendChild(&html.Node{Type: html.TextNode, Data: "\n"})
+			for s := moved.FirstChild; s != nil; s = moved.FirstChild {
+				moved.RemoveChild(s)
+				last.AppendChild(s)
+			}
+		}
+	}
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		moveTextAfterNestedLists(ch)
+	}
+}
+
+func isList(n *html.Node) bool {
+	return n.Type == html.ElementNode && (n.DataAtom == atom.Ul || n.DataAtom == atom.Ol)
+}
+
+// trimTrailingBreaks removes line breaks (and whitespace after them) at the end of n's own
+// children: <br>s, whitespace alone, and the line breaks ending its last text. Spaces before
+// the first of those breaks are text and stay.
+func trimTrailingBreaks(n *html.Node) {
+	for ch := n.LastChild; ch != nil; ch = n.LastChild {
+		switch {
+		case ch.Type == html.ElementNode && ch.DataAtom == atom.Br,
+			ch.Type == html.TextNode && strings.Trim(ch.Data, " \t\r\n") == "" && strings.ContainsAny(ch.Data, "\r\n"):
+			n.RemoveChild(ch)
+			continue
+		case ch.Type == html.TextNode:
+			rest := strings.TrimRight(ch.Data, " \t\r\n")
+			cut := ch.Data[len(rest):]
+			if i := strings.IndexAny(cut, "\r\n"); i >= 0 {
+				ch.Data = rest + cut[:i]
+			}
+		}
+		return
+	}
+}
+
+// inlineContent reports whether n is inline content (not a block, not whitespace alone):
+// text, or an inline element with text, an image or a mention.
+func inlineContent(n *html.Node) bool {
+	switch {
+	case n.Type == html.TextNode:
+		return !asciiBlank(n.Data)
+	case n.Type != html.ElementNode || blockAtoms[n.DataAtom] || n.DataAtom == atom.Br:
+		return false
+	case n.DataAtom == atom.Img:
+		return true
+	}
+	return !asciiBlank(textOf(n)) || attr(n, "data-asana-gid") != "" || hasAsanaRef(n)
 }
 
 // trimLeadingBreaks removes line breaks (and the whitespace before them) at the start of
