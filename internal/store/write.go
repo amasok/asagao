@@ -385,11 +385,11 @@ func (s *Store) DeleteGoneTasks(ctx context.Context, gids []string) (int64, erro
 // deleted with the project (see PruneProjects), so they do not pile up.
 const (
 	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
-	KeyCustomFields = "custom_fields:"
+	KeyCustomFields = readmodel.KeyCustomFields
 	// KeyCollapsed + scope: the TUI's collapsed groups of a list ("my", "inbox", or a project gid).
 	KeyCollapsed = readmodel.KeyCollapsed
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
-	KeyEvents = "events:"
+	KeyEvents = readmodel.KeyEvents
 )
 
 // projectKeys lists, for each per-project key prefix, the SQL condition that tells a

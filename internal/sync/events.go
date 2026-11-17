@@ -4,12 +4,13 @@ import (
 	"context"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/store"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Incremental sync from Asana's events (#27).
 //
-// Each member project has a sync token (store.KeyEvents + gid). GET /events with it returns
+// Each member project has a sync token (readmodel.KeyEvents + gid). GET /events with it returns
 // what changed in the project since (its tasks and subtasks, sections, ...), 100 at a time.
 // Only the tasks named there are fetched (POST /batch, 10 per request), so a sync with
 // nothing changed costs one request per project. Asana answers 412 with a new token the
@@ -45,7 +46,7 @@ type projectEvents struct {
 // turn if Asana cannot be reached.
 func (s *Syncer) readEvents(ctx context.Context, projectGID string) (projectEvents, error) {
 	ev := projectEvents{tasks: map[string]bool{}}
-	token, err := s.Store.SyncState(ctx, store.KeyEvents+projectGID)
+	token, err := s.Store.SyncState(ctx, readmodel.KeyEvents+projectGID)
 	if err != nil {
 		return ev, err
 	}
@@ -112,7 +113,7 @@ func (s *Syncer) applyEvents(ctx context.Context, ev projectEvents, keep map[str
 	upsert func([]model.Task) error, withSubtasks *[]string) error {
 	var gids []string
 	for _, gid := range ev.order {
-		if !keep[gid] && !store.IsLocalGID(gid) {
+		if !keep[gid] && !localgid.IsLocal(gid) {
 			gids = append(gids, gid)
 		}
 	}

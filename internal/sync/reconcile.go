@@ -5,8 +5,9 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
@@ -42,7 +43,7 @@ const clockSkew = 2 * time.Minute
 // settleTime is how long after sending an entry its result may still be missing from
 // Asana's lists. A duplicate is copied by a background job, so it takes longer.
 func settleTime(kind string) time.Duration {
-	if kind == store.OpDuplicateTask {
+	if kind == outbox.KindDuplicateTask {
 		return 5 * time.Minute
 	}
 	return time.Minute
@@ -51,7 +52,7 @@ func settleTime(kind string) time.Duration {
 // reconcile checks Asana for the result of op (already marked "sending"). On a match it
 // records the result like the matching push function would. An error means Asana could
 // not be checked.
-func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, error) {
+func (s *Syncer) reconcile(ctx context.Context, op outbox.Op) (outcome, match, error) {
 	safe, err := s.Store.SafeToResend(ctx, op)
 	if err != nil || safe {
 		return sent, notFound, err // harmless to send again: no need to look
@@ -85,8 +86,8 @@ func (s *Syncer) reconcile(ctx context.Context, op store.Op) (outcome, match, er
 	return out, tooEarly, nil
 }
 
-func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcome, match, error) {
-	me, err := s.Store.SyncState(ctx, store.KeyMeGID) // "" before the first sync: not filtered
+func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outcome, match, error) {
+	me, err := s.Store.SyncState(ctx, readmodel.KeyMeGID) // "" before the first sync: not filtered
 	if err != nil {
 		return sent, notFound, err
 	}
@@ -96,12 +97,12 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 	taken := func(prefix string) (map[string]bool, error) { return s.Store.RecordedResults(ctx, prefix) }
 
 	switch op.Kind {
-	case store.OpCreateTask:
+	case outbox.KindCreateTask:
 		tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), since)
 		if err != nil || !ok {
 			return sent, ambiguousUnless(ok), err
 		}
-		used, err := taken(store.ResultTask)
+		used, err := taken(readmodel.ResultTask)
 		if err != nil {
 			return sent, notFound, err
 		}
@@ -111,9 +112,9 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if m != matched {
 			return sent, m, nil
 		}
-		var move *store.MoveTarget
+		var move *outbox.MoveTarget
 		if section := str("section"); section != "" {
-			move = &store.MoveTarget{Project: str("project"), Section: section, From: sectionIn(&t, str("project"))}
+			move = &outbox.MoveTarget{Project: str("project"), Section: section, From: sectionIn(&t, str("project"))}
 		}
 		if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, move); err != nil {
 			return sent, notFound, err
@@ -124,7 +125,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		}
 		return sent, matched, nil
 
-	case store.OpDuplicateTask:
+	case outbox.KindDuplicateTask:
 		// The copy goes where the source is (same parent, or the source's first project).
 		src, err := s.API.Task(ctx, str("source"))
 		if err != nil {
@@ -147,7 +148,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil || !ok {
 			return sent, ambiguousUnless(ok), err
 		}
-		used, err := taken(store.ResultTask)
+		used, err := taken(readmodel.ResultTask)
 		if err != nil {
 			return sent, notFound, err
 		}
@@ -163,12 +164,12 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		s.refresh(ctx, t)
 		return sent, matched, nil
 
-	case store.OpAddComment:
+	case outbox.KindAddComment:
 		stories, err := s.API.Stories(ctx, op.TaskGID)
 		if err != nil {
 			return sent, notFound, err
 		}
-		used, err := taken(store.ResultStory)
+		used, err := taken(readmodel.ResultStory)
 		if err != nil {
 			return sent, notFound, err
 		}
@@ -181,12 +182,12 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		}
 		return sent, matched, s.Store.CompleteComment(ctx, op.ID, str("story_gid"), op.TaskGID, st)
 
-	case store.OpUploadAttachment:
+	case outbox.KindUploadAttachment:
 		atts, err := s.API.Attachments(ctx, op.TaskGID)
 		if err != nil {
 			return sent, notFound, err
 		}
-		used, err := taken(store.ResultAttachment)
+		used, err := taken(readmodel.ResultAttachment)
 		if err != nil {
 			return sent, notFound, err
 		}
@@ -196,12 +197,12 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		}
 		return sent, matched, s.Store.CompleteUpload(ctx, op.ID, str("attachment"), a.GID, a.ViewURL)
 
-	case store.OpCreateStatus:
+	case outbox.KindCreateStatus:
 		ups, err := s.API.StatusUpdates(ctx, op.TaskGID)
 		if err != nil {
 			return sent, notFound, err
 		}
-		used, err := taken(store.ResultStatus)
+		used, err := taken(readmodel.ResultStatus)
 		if err != nil {
 			return sent, notFound, err
 		}
@@ -213,12 +214,12 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		}
 		return sent, matched, s.Store.CompleteStatus(ctx, op.ID, str("status"), u)
 
-	case store.OpAddTag:
+	case outbox.KindAddTag:
 		// A tag created offline is created before it is added. If a tag with that name
 		// exists (whoever made it), use it; the add itself is harmless to repeat, so it is
 		// sent either way.
 		tag, err := s.Store.RealTagGID(ctx, str("tag"))
-		if err != nil || !store.IsLocalGID(tag) {
+		if err != nil || !localgid.IsLocal(tag) {
 			return sent, notFound, err
 		}
 		tags, err := s.API.Tags(ctx, str("workspace"))

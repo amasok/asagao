@@ -10,13 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amasok/asagao/internal/readmodel"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // ResultTag is the prefix of the sync_state keys that map a tag created offline to the
 // tag Asana created (see ReplaceLocalTagGID).
-const ResultTag = "tag:"
+const ResultTag = readmodel.ResultTag
 
 // keyResultSeen + a mapping key records when PruneResults first found the mapping no
 // longer needed; the mapping is deleted once that is ResultGrace old.

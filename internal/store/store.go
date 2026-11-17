@@ -217,4 +217,5 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	return st, nil
 }
 
-const KeyLastSync = "last_sync"
+// KeyLastSync is when the last sync finished (readmodel's).
+const KeyLastSync = readmodel.KeyLastSync

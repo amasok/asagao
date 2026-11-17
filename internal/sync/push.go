@@ -12,8 +12,10 @@ import (
 	"slices"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/rich"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
@@ -27,7 +29,7 @@ type PushResult struct {
 	Busy bool `json:"busy,omitempty"`
 	// Discarded lists changes dropped because what they change was deleted in Asana. They
 	// are also kept for the front ends to show once (store.PendingDiscards).
-	Discarded []store.Discard `json:"discarded,omitempty"`
+	Discarded []readmodel.Discard `json:"discarded,omitempty"`
 	// InboxReadOnly is set when Asana refused to mark notifications read / unread (no
 	// notifications:write scope): those changes were dropped (see pushMarkNotification).
 	InboxReadOnly bool `json:"inbox_read_only,omitempty"`
@@ -35,7 +37,7 @@ type PushResult struct {
 
 // ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
 // the outbox. The entries stay queued; they are sent by that process or the next push.
-var ErrPushBusy = store.ErrPushBusy
+var ErrPushBusy = readmodel.ErrPushBusy
 
 // ErrPullOnly is returned by Push on a Syncer with PullOnly set (the read-only MCP server).
 var ErrPullOnly = errors.New("read-only: queued changes are not sent")
@@ -110,7 +112,7 @@ func (s *Syncer) checkPushAccount(ctx context.Context) error {
 	if s.accountOK.Load() {
 		return nil
 	}
-	want, err := s.Store.SyncState(ctx, store.KeyMeGID)
+	want, err := s.Store.SyncState(ctx, readmodel.KeyMeGID)
 	if err != nil || want == "" {
 		return err
 	}
@@ -128,7 +130,7 @@ func (s *Syncer) checkPushAccount(ctx context.Context) error {
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
 func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
 	unlock, err := s.Store.TryLockPush()
-	if errors.Is(err, store.ErrPushBusy) {
+	if errors.Is(err, readmodel.ErrPushBusy) {
 		res.Busy = true
 		res.Remaining, _, _, _ = s.Store.OutboxCounts(ctx)
 	}
@@ -178,7 +180,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 	if err != nil {
 		return res, last, err
 	}
-	var ops []store.Op
+	var ops []outbox.Op
 	for _, op := range all {
 		if op.ID > after {
 			ops = append(ops, op)
@@ -205,13 +207,13 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 			// Re-read: sending an earlier entry may have rewritten this one (a create replaces
 			// the local gid that later comments/updates refer to).
 			op, err := s.Store.GetOp(ctx, snapshot.ID)
-			if errors.Is(err, store.ErrNotFound) {
+			if errors.Is(err, readmodel.ErrNotFound) {
 				break
 			}
 			if err != nil {
 				return res, last, err
 			}
-			if op.State != store.OpPending || (op.Verify && verified[op.ID]) {
+			if op.State != outbox.StatePending || (op.Verify && verified[op.ID]) {
 				break // sent again during this push already: verify on the next one
 			}
 			if wait, err := s.waitsForCreate(ctx, *op); err != nil {
@@ -263,7 +265,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 					}
 					sendIt = false
 				case m == ambiguous:
-					if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(store.AmbiguousMessage)); err != nil {
+					if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(readmodel.AmbiguousMessage)); err != nil {
 						return res, last, err
 					}
 					res.Failed++
@@ -287,7 +289,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 				return res, last, err
 			}
 			op.Attempts++
-			if op.Kind == store.OpMarkNotification {
+			if op.Kind == outbox.KindMarkNotification {
 				var batched int // entries sent along with this one, whatever happened to it
 				out, batched, err = s.pushMarkNotification(ctx, *op)
 				res.Sent += batched
@@ -336,53 +338,53 @@ const maxStepsPerEntry = 4
 // waitsForCreate reports whether op belongs to a task (or, for a subtask's create, a
 // parent) created offline whose create is still queued or failed. It waits instead of
 // failing, and goes out once the create is sent (or is discarded with it).
-func (s *Syncer) waitsForCreate(ctx context.Context, op store.Op) (bool, error) {
+func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
 	gid := op.TaskGID
 	switch op.Kind {
-	case store.OpCreateTask:
+	case outbox.KindCreateTask:
 		gid, _ = op.Payload["parent"].(string)
-	case store.OpDuplicateTask, store.OpCreateStatus, store.OpRenameSection, store.OpMarkNotification:
+	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification:
 		return false, nil
 	}
-	if !store.IsLocalGID(gid) {
+	if !localgid.IsLocal(gid) {
 		return false, nil
 	}
 	real, err := s.Store.RealGID(ctx, gid)
-	if err != nil || !store.IsLocalGID(real) {
+	if err != nil || !localgid.IsLocal(real) {
 		return false, err
 	}
 	return s.Store.CreateQueued(ctx, real)
 }
 
 // send sends one entry (already marked "sending").
-func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
+func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	var err error
 	switch op.Kind {
-	case store.OpUpdateTask:
+	case outbox.KindUpdateTask:
 		return s.pushUpdate(ctx, op)
-	case store.OpSetCustomField:
+	case outbox.KindSetCustomField:
 		return s.pushCustomField(ctx, op)
-	case store.OpRenameSection:
+	case outbox.KindRenameSection:
 		return s.pushRenameSection(ctx, op)
-	case store.OpCreateTask:
+	case outbox.KindCreateTask:
 		return s.pushCreate(ctx, op)
-	case store.OpAddComment:
+	case outbox.KindAddComment:
 		err = s.pushComment(ctx, op)
-	case store.OpMoveTask:
+	case outbox.KindMoveTask:
 		err = s.pushMove(ctx, op)
-	case store.OpAddTag, store.OpRemoveTag:
+	case outbox.KindAddTag, outbox.KindRemoveTag:
 		err = s.pushTag(ctx, op)
-	case store.OpAddFollower, store.OpRemoveFollower, store.OpAddProject, store.OpRemoveProject:
+	case outbox.KindAddFollower, outbox.KindRemoveFollower, outbox.KindAddProject, outbox.KindRemoveProject:
 		err = s.pushRelation(ctx, op)
-	case store.OpAddDependency, store.OpRemoveDependency:
+	case outbox.KindAddDependency, outbox.KindRemoveDependency:
 		err = s.pushDependency(ctx, op)
-	case store.OpDuplicateTask:
+	case outbox.KindDuplicateTask:
 		err = s.pushDuplicate(ctx, op)
-	case store.OpUploadAttachment:
+	case outbox.KindUploadAttachment:
 		err = s.pushUpload(ctx, op)
-	case store.OpCreateStatus:
+	case outbox.KindCreateStatus:
 		err = s.pushStatus(ctx, op)
-	case store.OpMarkNotification:
+	case outbox.KindMarkNotification:
 		out, _, err := s.pushMarkNotification(ctx, op)
 		return out, err
 	default:
@@ -395,7 +397,7 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 // verified first if Asana may have received it and sending it twice would duplicate it.
 // A 429 or a 401 (the token is rejected, e.g. an expired PAT) was not processed: the entry
 // waits, unchanged, for the next push (after the user logs in again).
-func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
+func (s *Syncer) holdBack(ctx context.Context, op outbox.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
 	if requestNotSent(cause) || isRateLimited(cause) || model.IsUnauthorized(cause) {
 		return s.Store.ReleaseNotSent(ctx, op.ID)
@@ -414,7 +416,7 @@ func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 // change) or a broken response to a harmless entry marks it failed. A 5xx or a broken
 // response to a create, or a change Asana accepted but we could not save, may have been
 // applied: the entry is verified (verify = true).
-func (s *Syncer) handleError(ctx context.Context, op store.Op, cause error) (verify bool, err error) {
+func (s *Syncer) handleError(ctx context.Context, op outbox.Op, cause error) (verify bool, err error) {
 	var apiErr *model.Error
 	var notSaved *sentNotSavedError
 	switch {
@@ -454,7 +456,7 @@ func isNotFound(err error) bool {
 // otherwise only this change is (its section, project, tag, ... is gone). A create is
 // dropped with its local task (its parent or project is gone). Dropped changes are
 // recorded for the user and listed in res.Discarded.
-func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dropState) error {
+func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dropState) error {
 	res := st.res
 	// Asana also answers 404 when the logged-in account cannot see the object (another
 	// account or organization than the one the store was synced with). Make sure it is
@@ -474,7 +476,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 	}
 	reason := "Asana で削除されています (" + cause.Error() + ")"
 	now := s.clock()
-	var discards []store.Discard
+	var discards []readmodel.Discard
 	var err error
 	deleteTask := func(gid string) error {
 		if st.tasks >= maxDroppedTasks { // a second safeguard against dropping too much at once
@@ -487,20 +489,20 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 		return nil
 	}
 	switch op.Kind {
-	case store.OpCreateTask, store.OpDuplicateTask:
+	case outbox.KindCreateTask, outbox.KindDuplicateTask:
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case store.OpRenameSection, store.OpCreateStatus, store.OpMarkNotification:
-		var d store.Discard
+	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification:
+		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
-		discards = []store.Discard{d}
+		discards = []readmodel.Discard{d}
 	default:
 		task, rerr := s.Store.RealGID(ctx, op.TaskGID)
 		if rerr != nil {
 			return rerr
 		}
-		gone := store.IsLocalGID(task) // its create is not queued any more
+		gone := localgid.IsLocal(task) // its create is not queued any more
 		if !gone {
 			_, perr := s.API.Task(ctx, task)
 			switch {
@@ -522,13 +524,13 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 				return ferr
 			}
 		} else {
-			if op.Kind == store.OpAddDependency || op.Kind == store.OpRemoveDependency {
+			if op.Kind == outbox.KindAddDependency || op.Kind == outbox.KindRemoveDependency {
 				// the other task is missing, or private to someone else
 				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
 			}
-			var d store.Discard
+			var d readmodel.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
-			discards = []store.Discard{d}
+			discards = []readmodel.Discard{d}
 		}
 	}
 	if err != nil {
@@ -575,7 +577,7 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
 		return st.account
 	}
-	want, err := s.Store.SyncState(ctx, store.KeyMeGID)
+	want, err := s.Store.SyncState(ctx, readmodel.KeyMeGID)
 	if err != nil {
 		return err
 	}
@@ -631,15 +633,15 @@ func requestNotSent(err error) bool {
 	return errors.As(err, &dnsErr)
 }
 
-func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
-	if store.IsLocalGID(op.TaskGID) {
+func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) {
+	if localgid.IsLocal(op.TaskGID) {
 		return sent, &model.Error{Status: 404} // its create failed
 	}
 	server, err := s.API.Task(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
 	}
-	current := store.TaskFieldValues(server)
+	current := readmodel.TaskFieldValues(server)
 	conflicts := map[string]any{}
 	for k, local := range op.Payload {
 		if k == "html_notes" {
@@ -670,12 +672,12 @@ func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 // pushCustomField sets one custom field, after checking that nobody changed it in Asana
 // since it was edited here. A field the task no longer has is treated like a 404 (the
 // change is dropped and the user told).
-func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, error) {
+func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, error) {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
 	}
-	if store.IsLocalGID(task) {
+	if localgid.IsLocal(task) {
 		return sent, &model.Error{Status: 404} // its create failed
 	}
 	field, _ := op.Payload["field"].(string)
@@ -685,7 +687,7 @@ func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, err
 	}
 	local := op.Payload["value"]
 	if !server.Partial { // else Asana gave no custom fields to compare with: just send
-		sv, display, found := store.ServerCustomField(server, field)
+		sv, display, found := readmodel.ServerCustomField(server, field)
 		if !found {
 			return sent, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
 		}
@@ -694,7 +696,7 @@ func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, err
 		}
 	}
 	fieldType, _ := op.Payload["type"].(string)
-	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: store.CustomFieldAPIValue(fieldType, local)}})
+	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: readmodel.CustomFieldAPIValue(fieldType, local)}})
 	var apiErr *model.Error
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
 		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
@@ -731,7 +733,7 @@ func (s *Syncer) refresh(ctx context.Context, t model.Task) {
 	_ = s.Store.UpsertTasks(ctx, []model.Task{t})
 }
 
-func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
+func (s *Syncer) pushCreate(ctx context.Context, op outbox.Op) (outcome, error) {
 	fields := apiFields(op.Payload)
 	section, _ := fields["section"].(string)
 	project, _ := fields["project"].(string)
@@ -749,7 +751,7 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
 		if parent, err = s.Store.RealGID(ctx, parent); err != nil {
 			return sent, err
 		}
-		if store.IsLocalGID(parent) {
+		if localgid.IsLocal(parent) {
 			return sent, &model.Error{Status: 404} // the parent's create failed
 		}
 		delete(fields, "workspace")
@@ -762,9 +764,9 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
 	}
 	// Moving the task into its section is a separate request: the entry becomes a move,
 	// sent right after (and retried later if it fails), so the create is never repeated.
-	var move *store.MoveTarget
+	var move *outbox.MoveTarget
 	if section != "" {
-		move = &store.MoveTarget{Project: project, Section: section, From: sectionIn(t, project)}
+		move = &outbox.MoveTarget{Project: project, Section: section, From: sectionIn(t, project)}
 	}
 	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, move); err != nil {
 		return sent, sentNotSaved(err)
@@ -786,8 +788,8 @@ func sectionIn(t *model.Task, project string) string {
 	return ""
 }
 
-func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
-	if store.IsLocalGID(op.TaskGID) {
+func (s *Syncer) pushComment(ctx context.Context, op outbox.Op) error {
+	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
 	text, _ := op.Payload["text"].(string)
@@ -800,8 +802,8 @@ func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
 	return sentNotSaved(s.Store.CompleteComment(ctx, op.ID, localGID, op.TaskGID, *st))
 }
 
-func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
-	if store.IsLocalGID(op.TaskGID) {
+func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
+	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
 	section, _ := op.Payload["section"].(string)
@@ -817,7 +819,7 @@ func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
 	return nil
 }
 
-func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (outcome, error) {
+func (s *Syncer) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
 	server, err := s.API.Section(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -837,8 +839,8 @@ func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (outcome, e
 	return sent, nil
 }
 
-func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
-	if store.IsLocalGID(op.TaskGID) {
+func (s *Syncer) pushTag(ctx context.Context, op outbox.Op) error {
+	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
 	tag, _ := op.Payload["tag"].(string)
@@ -846,13 +848,13 @@ func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
 	if err != nil {
 		return err
 	}
-	if op.Kind == store.OpRemoveTag {
+	if op.Kind == outbox.KindRemoveTag {
 		if err := s.API.RemoveTag(ctx, op.TaskGID, tag); err != nil {
 			return err
 		}
 		return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 	}
-	if store.IsLocalGID(tag) { // created offline: create it in Asana first
+	if localgid.IsLocal(tag) { // created offline: create it in Asana first
 		name, _ := op.Payload["tag_name"].(string)
 		workspace, _ := op.Payload["workspace"].(string)
 		created, err := s.API.CreateTag(ctx, workspace, name)
@@ -870,25 +872,25 @@ func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
 	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
-func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
+func (s *Syncer) pushRelation(ctx context.Context, op outbox.Op) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
 	}
-	if store.IsLocalGID(task) {
+	if localgid.IsLocal(task) {
 		return &model.Error{Status: 404} // its create failed
 	}
 	user, _ := op.Payload["user"].(string)
 	project, _ := op.Payload["project"].(string)
 	section, _ := op.Payload["section"].(string)
 	switch op.Kind {
-	case store.OpAddFollower:
+	case outbox.KindAddFollower:
 		err = s.API.AddFollowers(ctx, task, []string{user})
-	case store.OpRemoveFollower:
+	case outbox.KindRemoveFollower:
 		err = s.API.RemoveFollowers(ctx, task, []string{user})
-	case store.OpAddProject:
+	case outbox.KindAddProject:
 		err = s.API.AddProject(ctx, task, project, section)
-	case store.OpRemoveProject:
+	case outbox.KindRemoveProject:
 		err = s.API.RemoveProject(ctx, task, project)
 	}
 	if err != nil {
@@ -899,7 +901,7 @@ func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
 
 // pushDependency adds or removes a dependency. Both are harmless to repeat: Asana adds only
 // tasks that are not dependencies yet.
-func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
+func (s *Syncer) pushDependency(ctx context.Context, op outbox.Op) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -908,10 +910,10 @@ func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
 	if dep, err = s.Store.RealGID(ctx, dep); err != nil {
 		return err
 	}
-	if store.IsLocalGID(task) || store.IsLocalGID(dep) {
+	if localgid.IsLocal(task) || localgid.IsLocal(dep) {
 		return &model.Error{Status: 404} // its create failed
 	}
-	if op.Kind == store.OpAddDependency {
+	if op.Kind == outbox.KindAddDependency {
 		err = s.API.AddDependencies(ctx, task, []string{dep})
 	} else {
 		err = s.API.RemoveDependencies(ctx, task, []string{dep})
@@ -922,7 +924,7 @@ func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
 	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
-func (s *Syncer) pushDuplicate(ctx context.Context, op store.Op) error {
+func (s *Syncer) pushDuplicate(ctx context.Context, op outbox.Op) error {
 	source, _ := op.Payload["source"].(string)
 	name, _ := op.Payload["name"].(string)
 	created, err := s.API.DuplicateTask(ctx, source, name)
@@ -938,12 +940,12 @@ func (s *Syncer) pushDuplicate(ctx context.Context, op store.Op) error {
 	return nil
 }
 
-func (s *Syncer) pushUpload(ctx context.Context, op store.Op) error {
+func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
 	}
-	if store.IsLocalGID(task) {
+	if localgid.IsLocal(task) {
 		return &model.Error{Status: 404} // its create failed
 	}
 	local, _ := op.Payload["attachment"].(string)
