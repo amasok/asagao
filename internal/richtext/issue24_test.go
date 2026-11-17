@@ -48,3 +48,23 @@ func TestHeadingEdgeSpacesGo(t *testing.T) {
 		}
 	}
 }
+
+// A line break written as text after content of another element on the line (an image, a
+// mention, emphasis), or before content in the next one, is a hard break as a <br> there
+// is: the Markdown of the first and the second round trip is the same (#24, 5).
+func TestLineBreakAfterElementSameMarkdown(t *testing.T) {
+	for _, in := range []string{
+		"<body><ul><li>a\n\n\t<u><img data-asana-gid=\"7\" src=\"x\"><br>x</u></li></ul></body>",
+		"<body><ul><li>a\n\n\t<span><a data-asana-gid=\"1\"></a><br>x</span></li></ul></body>",
+		"<body>x<br><em>y</em></body>",
+		"<body><em>x</em><br>y</body>",
+		"<body><strong>a</strong><br><strong>b</strong></body>",
+		"<body><blockquote><em>x</em><br>y</blockquote></body>",
+		"<body><ul><li><code>a</code><br><code>b</code></li></ul></body>",
+	} {
+		md1, h1, md2, h2 := rt2(in)
+		if md1 != md2 || h1 != h2 {
+			t.Errorf("in  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
+		}
+	}
+}

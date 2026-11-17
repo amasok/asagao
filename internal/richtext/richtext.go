@@ -437,8 +437,10 @@ func (c *converter) text(n *html.Node) {
 			c.keepTrailingSpace(func() bool { return nonBlank(lines[i:]) || c.contentFollows(n, true) })
 			switch {
 			case c.keepBlankLineInItem(func() bool { return nonBlank(lines[i:]) || c.contentFollows(n, false) }):
-			case strings.TrimSpace(lines[i-1]) != "" && l != "":
-				// a line break inside a paragraph needs a hard break ("  "); blank lines don't
+			case len(bytes.TrimSpace(c.b.Bytes()[c.lineStart:])) > 0 && (l != "" || i == last && c.lineContentFollows(n)):
+				// a line break inside a paragraph needs a hard break ("  "); blank lines don't.
+				// The line is the output's (text before n on it too), and what follows may be
+				// in the next element: as a <br> there is written (#24)
 				c.write("  ")
 			}
 			c.newline()
