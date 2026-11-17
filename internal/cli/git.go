@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,8 +49,10 @@ type gitScanCommit struct {
 
 // gitScanResult is the JSON output of `git scan`.
 type gitScanResult struct {
-	DryRun  bool             `json:"dry_run,omitempty"`
-	Commits []gitScanCommit  `json:"commits"`
+	DryRun  bool            `json:"dry_run,omitempty"`
+	Commits []gitScanCommit `json:"commits"`
+	// Planned is what --dry-run would queue (as the other write commands' dry run says).
+	Planned []plannedChange  `json:"planned,omitempty"`
 	Sent    bool             `json:"sent"`
 	Push    *sync.PushResult `json:"push,omitempty"`
 	// Discarded lists queued changes dropped because what they changed was deleted in Asana.
@@ -62,7 +65,7 @@ type gitScanResult struct {
 
 func (a *app) gitScanCmd() *cobra.Command {
 	var dir string
-	var offline, dryRun, hook bool
+	var offline, hook bool
 	cmd := &cobra.Command{
 		Use:   "scan [<コミット>|<範囲>...]",
 		Short: "コミットのメッセージを読んで、参照しているタスクにコメント・完了する",
@@ -74,7 +77,7 @@ func (a *app) gitScanCmd() *cobra.Command {
 			if len(args) == 0 {
 				args = []string{"HEAD"}
 			}
-			err := a.gitScan(cmd, dir, args, offline, dryRun, hook)
+			err := a.gitScan(cmd, dir, args, offline, hook)
 			if err != nil && hook {
 				// A hook does not fail the commit (it is made already): say what went wrong.
 				fmt.Fprintln(cmd.ErrOrStderr(), "asagao:", termsafe.String(err.Error()))
@@ -85,14 +88,15 @@ func (a *app) gitScanCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&dir, "repo", "C", ".", "git リポジトリのフォルダ")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Asana に問い合わせず、ローカルストアだけで判断して outbox に積む（送るのは次の sync）")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "何をするかを表示するだけで、何も変更しない")
+	a.addDryRunFlag(cmd) // #3: the commits are handled on a throwaway copy of the store
 	cmd.Flags().BoolVar(&hook, "hook", false, "post-commit hook から呼ぶ（rebase などで作られたコミットは飛ばす。Asana から取り直さず、送信は短く 1 回だけ試す。失敗しても 0 で終わる）")
 	_ = cmd.Flags().MarkHidden("hook")
 	return cmd
 }
 
-func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dryRun, hook bool) error {
+func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, hook bool) error {
 	ctx := cmd.Context()
+	dryRun := a.dryRun
 	out := cmd.OutOrStdout()
 	var commits []usecase.GitCommit
 	var err error
@@ -122,6 +126,9 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 			}
 			return a.printJSON(res)
 		}
+		if dryRun {
+			_ = a.printDryRun(cmd, dryRunResult{})
+		}
 		if !hook {
 			fmt.Fprintln(out, "タスクの参照はありませんでした")
 		}
@@ -135,7 +142,7 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 	defer st.Close()
 	// The cache may not have the comment that marks a commit as handled (made on another
 	// computer, say): refresh the tasks first, and judge by the cache when that fails. The
-	// hook does not wait for Asana: it judges by the cache.
+	// hook does not wait for Asana: it judges by the cache. (A dry run refreshes its copy.)
 	if !offline && !hook {
 		if warn := a.refreshTasks(ctx, st, gids); warn != "" {
 			res.Warnings = append(res.Warnings, warn)
@@ -144,19 +151,27 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 	link := usecase.GitLink{Store: st, Text: richtext.Converter{}, Clock: time.Now}
 	wrote := false
 	for _, c := range commits {
-		acts, err := link.Apply(ctx, c, dryRun)
+		acts, err := link.Apply(ctx, c, false) // a dry run writes to its copy
 		if err != nil {
 			return fmt.Errorf("%s: %w", shortRev(c.SHA), err)
 		}
 		if acts == nil {
 			acts = []usecase.GitLinkAction{}
 		}
-		for _, act := range acts {
+		for i, act := range acts {
 			wrote = wrote || act.Result == usecase.GitLinkCommented
+			if dryRun {
+				acts[i].CommentGID = "" // a local gid of the copy means nothing
+			}
 		}
 		res.Commits = append(res.Commits, gitScanCommit{SHA: c.SHA, Subject: c.Subject(), Actions: acts})
 	}
 
+	if d, ok := st.(*dryRunStore); ok {
+		if res.Planned, _, err = d.queuedChanges(ctx); err != nil {
+			return err
+		}
+	}
 	var pushErr error
 	if wrote && !dryRun && !offline {
 		pctx := ctx
@@ -185,16 +200,14 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 	for _, w := range res.Warnings {
 		fmt.Fprintln(errOut, "注意:", w)
 	}
-	if dryRun { // the words of the other commands' --dry-run (#3)
-		if wrote {
-			fmt.Fprintln(out, "--dry-run: 次の変更をするところでした（何も変えていません）:")
-		} else {
-			fmt.Fprintln(out, "--dry-run: 変更はありません")
-		}
+	if dryRun { // as the other write commands' dry run, and the tasks left alone
+		_ = a.printDryRun(cmd, dryRunResult{Planned: res.Planned})
+		printGitScan(out, res, hook, true)
+		return nil
 	}
-	printGitScan(out, res, hook)
+	printGitScan(out, res, hook, false)
 	switch {
-	case !wrote || dryRun:
+	case !wrote:
 	case offline:
 		fmt.Fprintln(out, "（outbox に積みました。次の sync で送ります）")
 	case errors.Is(pushErr, sync.ErrAccountChanged):
@@ -240,8 +253,18 @@ func (a *app) refreshTasks(ctx context.Context, st Store, gids []string) string 
 	return fmt.Sprintf("Asana から取り直せなかったタスクがあります。ローカルストアの内容で判断します: %s（%v）", strings.Join(failed, ", "), last)
 }
 
-func printGitScan(w io.Writer, res gitScanResult, hook bool) {
+// printGitScan prints what was done for each commit; with skipped, only the tasks left
+// alone (handled already, not found), after a dry run's list of changes.
+func printGitScan(w io.Writer, res gitScanResult, hook, skipped bool) {
 	for _, c := range res.Commits {
+		if skipped {
+			c.Actions = slices.DeleteFunc(slices.Clone(c.Actions), func(act usecase.GitLinkAction) bool {
+				return act.Result == usecase.GitLinkCommented
+			})
+			if len(c.Actions) == 0 {
+				continue
+			}
+		}
 		if len(c.Actions) == 0 && hook {
 			continue
 		}

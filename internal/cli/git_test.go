@@ -202,7 +202,7 @@ func TestGitScanNoRefsAndDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "--dry-run: 次の変更をするところでした（何も変えていません）:\n") || !strings.Contains(out, "完了にしてコメント: ソファを買う") {
+	if !strings.Contains(out, "--dry-run: 次の変更をするところでした（何も変えていません）:\n  - ソファを買う: 完了にする\n  - ソファを買う: コメント「コミット ") {
 		t.Errorf("output:\n%s", out)
 	}
 	if done, comm := gitTask(t, path, gitA); done || len(comm) != 0 || len(cliOps(t, path)) != 0 {
@@ -721,5 +721,53 @@ func TestGitScanQuotedMarker(t *testing.T) {
 				t.Errorf("again: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+// --dry-run is the other write commands' (#3): the commits are handled on a throwaway copy
+// of the store, the real one (its cache included) is not touched, nothing is sent, and
+// the output lists what would be queued, then the tasks left alone.
+func TestGitScanDryRunOnCopy(t *testing.T) {
+	path, fake, run := onlineGitEnv(t)
+	repo := gitRepo(t)
+	first := gitCommit(t, repo, "first #"+gitA)
+	if _, _, err := run("git", "scan", "-C", repo, "--offline"); err != nil {
+		t.Fatal(err)
+	}
+	ops := len(cliOps(t, path))
+	gitCommit(t, repo, "fixes #"+gitB)
+	out, errOut, err := run("git", "scan", "-C", repo, "--dry-run", first, "HEAD")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	want := "--dry-run: 次の変更をするところでした（何も変えていません）:\n  - カーテンを買う: 完了にする\n  - カーテンを買う: コメント「"
+	if !strings.HasPrefix(out, want) || !strings.Contains(out, "処理済み: ソファを買う") || strings.Contains(out, "コメント: ") {
+		t.Errorf("output:\n%s%s", out, errOut)
+	}
+	if calls := fake.took(); len(calls) != 0 {
+		t.Errorf("dry run sent %q", calls)
+	}
+	if n := len(cliOps(t, path)); n != ops {
+		t.Errorf("dry run queued: %d ops, was %d", n, ops)
+	}
+	if done, comm := gitTask(t, path, gitB); done || len(comm) != 0 {
+		t.Errorf("dry run changed B: %v %q", done, comm)
+	}
+	// --json: dry_run, planned, and no local gid of the copy
+	stdout, _, err := run("--json", "git", "scan", "-C", repo, "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r gitScanResult
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("%q: %v", stdout, err)
+	}
+	if !r.DryRun || len(r.Planned) != 2 || r.Sent || len(r.Commits) != 1 || r.Commits[0].Actions[0].CommentGID != "" {
+		t.Errorf("%+v", r)
+	}
+	// nothing to do
+	gitCommit(t, repo, "no refs")
+	if out, _, err := run("git", "scan", "-C", repo, "--dry-run"); err != nil || out != "--dry-run: 変更はありません\nタスクの参照はありませんでした\n" {
+		t.Errorf("%v %q", err, out)
 	}
 }
