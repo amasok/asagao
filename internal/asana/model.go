@@ -27,4 +27,6 @@ type (
 	WorkRef            = model.WorkRef
 	TaskRef            = model.TaskRef
 	Error              = model.Error
+	BatchWrite         = model.BatchWrite
+	BatchWriteResult   = model.BatchWriteResult
 )
