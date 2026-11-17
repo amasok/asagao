@@ -21,6 +21,21 @@ func TestIndentedSetextHeading(t *testing.T) {
 		// an item that cannot start a list after a paragraph line goes on with it
 		"  a\n2)\n  ---": "<body><h2>a 2)</h2></body>",
 		"  a\n2. x\n---": "<body><h2>a 2. x</h2></body>",
+		// lines that do not end a paragraph in CommonMark go on with it: no ATX heading
+		// ("#tag", 7 "#"), no rule (fewer than 3), and nothing indented 4 columns or more
+		"  a\n#tag\n---":       "<body><h2>a #tag</h2></body>",
+		"  a\n####### b\n---":  "<body><h2>a ####### b</h2></body>",
+		"  a\n**\n---":         "<body><h2>a **</h2></body>",
+		"  a\n__\n===":         "<body><h1>a __</h1></body>",
+		"  a\n    # b\n---":    "<body><h2>a # b</h2></body>",
+		"  a\n    - b\n---":    "<body><h2>a - b</h2></body>",
+		"  a\n    > b\n---":    "<body><h2>a &gt; b</h2></body>",
+		"  a\n    ```\nb\n---": "<body><h2>a ``` b</h2></body>",
+		"  a\n\t1. b\n---":     "<body><h2>a 1. b</h2></body>",
+		// these do end it
+		"  a\n# b\n---":    "<body>  a\n<h1>b</h1><hr/></body>",
+		"  a\n```\nb\n```": "<body>  a\n<pre>b</pre></body>",
+		"  a\n***\nb":      "<body>  a\n<hr/>b</body>",
 		// no underline of this paragraph: the indentation is text
 		"  a\nb":          "<body>  a\nb</body>",
 		"  a\n1. x\n---":  "<body>  a\n<ol><li>x</li></ol><hr/></body>",
