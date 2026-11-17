@@ -316,3 +316,25 @@ func TestBulkMarksDroppedWhenListFails(t *testing.T) {
 		t.Fatalf("marks should be dropped: %v", h.m.marked)
 	}
 }
+
+// A bulk date prompt closed with esc is forgotten (a later reload says nothing about it).
+func TestBulkDatePromptEscForgetsTasks(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.markRows("t2", "t3")
+	h.key(" ", "d", "G", "k", "enter", "esc")
+	if h.m.bulkDueTasks != nil {
+		t.Fatalf("esc should forget the bulk date prompt: %+v", h.m.bulkDueTasks)
+	}
+}
+
+// The members arrive after a reload hid a marked task: the picker is for the tasks shown.
+func TestBulkAssigneeAfterReload(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.markRows("t2", "t3")
+	tasks := h.m.markedTasks()
+	h.dropFromList("t3")
+	h.m.showBulkAssignee(bulkUsersMsg{tasks: tasks})
+	if p := h.m.picker; p == nil || len(p.bulk) != 1 || p.bulk[0].GID != "t2" || !strings.Contains(p.title, "1 件") {
+		t.Fatalf("picker should be for t2 only: %+v", p)
+	}
+}
