@@ -40,7 +40,7 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 			cwd, _ := os.Getwd()
 			home, _ := os.UserHomeDir()
 			upload := mcpserver.NewUploadPolicy(cwd, home, a.cfg.MCP.ExpandedUploadDirs(),
-				[]string{config.ConfigDir(), config.DataDir(), config.CacheDir()})
+				config.OwnDirs())
 			s := &mcpserver.Server{
 				Upload:     upload,
 				Store:      st,

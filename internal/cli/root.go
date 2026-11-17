@@ -45,6 +45,11 @@ func newRoot(a *app) *cobra.Command {
 		SilenceErrors: true,
 		Version:       version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			// Folders of the former name (asana-tui) move to the new ones. What could not
+			// be moved is left in place: warn and go on with the new folders.
+			if err := config.MigrateLegacyDirs(); err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "注意:", termsafe.String(err.Error()))
+			}
 			cfg, err := config.Load()
 			if err != nil {
 				return err

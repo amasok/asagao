@@ -214,13 +214,16 @@ func CacheDir() string { return xdgDir("XDG_CACHE_HOME", ".cache") }
 
 func FilePath() string { return filepath.Join(ConfigDir(), "config.toml") }
 
-func xdgDir(env, fallback string) string {
+func xdgDir(env, fallback string) string { return filepath.Join(xdgBase(env, fallback), appName) }
+
+// xdgBase is the folder the tool's own folder is made in: $env, or fallback in the home folder.
+func xdgBase(env, fallback string) string {
 	if v := os.Getenv(env); v != "" {
-		return filepath.Join(v, appName)
+		return v
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, fallback, appName)
+	return filepath.Join(home, fallback)
 }
