@@ -870,6 +870,7 @@ func keepIndentation(src string) string {
 	// (#13). As Markdown, the deepest item it reaches is the one it goes on.
 	var items []int
 	itemDepth := 0
+	emptyItem := false // the line before started an item with nothing in it
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
 		depth := strings.Count(prefix, ">")
@@ -889,8 +890,13 @@ func keepIndentation(src string) string {
 		if strings.TrimSpace(trimmed) == "" {
 			endPara(false)
 			inItem = false
+			if emptyItem && len(items) > 0 {
+				items = items[:len(items)-1] // an item starts with at most one blank line
+			}
+			emptyItem = false
 			continue
 		}
+		emptyItem = false
 		col := indentWidth(rest)
 		if !inItem {
 			// not a lazy line of an item's paragraph: the items it does not reach end
@@ -923,6 +929,7 @@ func keepIndentation(src string) string {
 				}
 			}
 			items = append(items, itemContentColumn(rest))
+			emptyItem = strings.TrimSpace(itemText(trimmed)) == ""
 			inItem = true
 			continue
 		}
@@ -1012,20 +1019,22 @@ func thematicBreak(line string) bool {
 	return onlyOf(line, rune(line[0])) && strings.Count(line, line[:1]) >= 3
 }
 
+// itemText is what follows the marker of list item start line (without indentation).
+func itemText(line string) string {
+	if m := orderedMarker.FindStringSubmatch(line); m != nil {
+		return line[len(m[1])+1:]
+	}
+	return line[1:]
+}
+
 // interruptsParagraph reports whether list item start line (without indentation) starts a
 // list right after a paragraph line: an item with text, and if ordered, numbered 1. Any
 // other ("2. a", "-") goes on with the paragraph.
 func interruptsParagraph(line string) bool {
-	rest := ""
-	if m := orderedMarker.FindStringSubmatch(line); m != nil {
-		if strings.TrimLeft(m[1], "0") != "1" {
-			return false
-		}
-		rest = line[len(m[1])+1:]
-	} else {
-		rest = line[1:]
+	if m := orderedMarker.FindStringSubmatch(line); m != nil && strings.TrimLeft(m[1], "0") != "1" {
+		return false
 	}
-	return strings.TrimSpace(rest) != ""
+	return strings.TrimSpace(itemText(line)) != ""
 }
 
 // setextUnderline reports whether line (after its quote prefixes) is a setext heading
