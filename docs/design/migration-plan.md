@@ -121,7 +121,8 @@
 - 2 つ目 (その 2): 通知の型 (`Notification`・`InboxState`・`NotificationFilter` と、そのメソッド、`Inbox*` の値、`NotificationLabel`) を `readmodel/inbox.go` に、一覧の条件 `FilterSpec` (と `FilterError`・`MaxModifiedWithinDays`) を `filter.go` に、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrAmbiguous`・`ErrPushBusy`・`ErrUnsentChanges`・`ErrSectionWithoutProject`) を `errors.go` に移した。store には別名 (エラーは同じ値の変数、関数は呼ぶだけのもの) を残した。`FilterError` を別のパッケージの型にしたので、store の中の書き方をキーつきにした (`go vet` の composites)。
 - 3 つ目 (その 3): 表示の文言 (`store/describe.go` のすべて: `OpLabel`・`OpNote`・`DescribeOp`・`DescribeChange`・`ConflictLines`・`FieldLabel`・`DiscardLine`・`DiscardDetails`・`AccountChangedHelp`・`TaskBadges` ほか、と `StatusLabel`・`StatusTypes`)、破棄した変更の型 `Discard` と `ResetReason` を `readmodel/describe.go` に移した。`Op` は b2 で `domain/outbox` に移ったので、文言の関数は `outbox.Op` を受ける (readmodel は domain を import してよい)。store には呼ぶだけの関数を残した。`DiscardDetail` だけは、store のテストがキーなしで書いているので (別名にすると `go vet` の composites に引っかかる)、store に同じ形の型を残して変換する。
 - 4 つ目 (その 4): 読み取りのポート。`app.Query` (各メソッドは store の同じ名前のものを呼ぶだけ) と、そのポート `app.QueryStore` を置いた (ADR 0009)。入り口はまだ変えない。
-- 次の PR: 入り口ごとに 1 つ (MCP → CLI → TUI)。読み取りを `app.Query` 経由にする。TUI の単位で、`TaskTags` (d1 のあと) と画面の状態の保存 (`SyncState`) の形を決める。
+- 5 つ目 (MCP): MCP の読み取りを `app.Query` 経由にした (`Server.query()`)。表示の型・一覧の条件・エラー・文言も、store の別名ではなく readmodel (と `outbox.Op`) を使う。MCP に残る store は、`*store.Store` (書き込みのユースケースと `sync.Syncer` に渡す。d3・d4)、`ReplaceInlineAssets`・`IsImageName` (表示の手伝い。readmodel に移すかは CLI・TUI の単位で決める) だけ。
+- 次の PR: CLI → TUI。読み取りを `app.Query` 経由にする。TUI の単位で、`TaskTags` (d1 のあと) と画面の状態の保存 (`SyncState`) の形を決める。
 
 ## 段階 d: ポート (Asana と認証)
 
