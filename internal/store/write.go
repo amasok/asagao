@@ -307,6 +307,8 @@ func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []mo
 
 // PruneTasks deletes tasks that a full sync did not return (deleted in Asana, moved out of
 // synced projects, or completed before the retention window). Subtasks of kept tasks are kept.
+// The WHERE clauses below are task.MayPrune and task.RememberRef, in one DELETE
+// (TestPruneTasksFollowsTaskRules checks that they agree).
 func (s *Store) PruneTasks(ctx context.Context, keep map[string]bool) (int64, error) {
 	var deleted int64
 	err := s.tx(ctx, func(tx *sql.Tx) error {
