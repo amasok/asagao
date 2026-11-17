@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/dates"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -91,7 +91,7 @@ func (d fieldDef) enabledOptions(current any) []EnumOptionView {
 // --- values ---
 
 // CustomFieldValue returns the value of a custom field from Asana in the stored form.
-func CustomFieldValue(f asana.CustomField) any {
+func CustomFieldValue(f model.CustomField) any {
 	switch f.Subtype() {
 	case CFText:
 		if f.TextValue != nil && *f.TextValue != "" {
@@ -171,7 +171,7 @@ func CustomFieldAPIValue(fieldType string, v any) any {
 
 // ServerCustomField finds a field on a task fetched from Asana: its value (stored form)
 // and display text. found is false if the task does not have the field (any more).
-func ServerCustomField(t *asana.Task, fieldGID string) (value any, display string, found bool) {
+func ServerCustomField(t *model.Task, fieldGID string) (value any, display string, found bool) {
 	for _, f := range t.CustomFields {
 		if f.GID == fieldGID {
 			display := ""
@@ -227,7 +227,7 @@ type dbQuerier interface {
 // --- storing what Asana returned ---
 
 // upsertFieldDef stores a field definition. Enum options are replaced only when f has them.
-func upsertFieldDef(ctx context.Context, tx *sql.Tx, f asana.CustomField) error {
+func upsertFieldDef(ctx context.Context, tx *sql.Tx, f model.CustomField) error {
 	options := ""
 	if f.EnumOptions != nil {
 		views := make([]EnumOptionView, 0, len(f.EnumOptions))
@@ -250,7 +250,7 @@ func upsertFieldDef(ctx context.Context, tx *sql.Tx, f asana.CustomField) error 
 }
 
 // upsertTaskCustomFields replaces a task's custom field values (if the response had them).
-func upsertTaskCustomFields(ctx context.Context, tx *sql.Tx, t asana.Task) error {
+func upsertTaskCustomFields(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if t.CustomFields == nil {
 		return nil
 	}
@@ -288,7 +288,7 @@ func upsertTaskCustomFields(ctx context.Context, tx *sql.Tx, t asana.Task) error
 }
 
 // ReplaceProjectCustomFields stores the custom fields of a project (with their enum options).
-func (s *Store) ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []asana.CustomFieldSetting) error {
+func (s *Store) ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM project_custom_fields WHERE project_gid = ?", projectGID); err != nil {
 			return err
@@ -299,7 +299,7 @@ func (s *Store) ReplaceProjectCustomFields(ctx context.Context, projectGID strin
 				continue
 			}
 			if f.EnumOptions == nil && (f.Subtype() == CFEnum || f.Subtype() == CFMultiEnum) {
-				f.EnumOptions = []asana.EnumOption{} // the settings list every option: none is none
+				f.EnumOptions = []model.EnumOption{} // the settings list every option: none is none
 			}
 			if err := upsertFieldDef(ctx, tx, f); err != nil {
 				return err

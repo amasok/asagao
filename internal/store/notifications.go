@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
@@ -101,13 +101,13 @@ type Notification = readmodel.Notification
 
 // ReplaceNotifications replaces the cached notifications of a workspace with what Asana
 // returned (newest first). Read / unread changes not sent yet are applied again on top.
-func (s *Store) ReplaceNotifications(ctx context.Context, workspaceGID string, ns []asana.Notification) error {
+func (s *Store) ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM notifications WHERE workspace_gid = ?", workspaceGID); err != nil {
 			return err
 		}
 		for i, n := range ns {
-			var actor asana.Ref
+			var actor model.Ref
 			if n.CreatedBy != nil {
 				actor = *n.CreatedBy
 			}
@@ -135,7 +135,7 @@ func (s *Store) ReplaceNotifications(ctx context.Context, workspaceGID string, n
 }
 
 // notificationTarget picks what a notification is about: its task if it has one.
-func notificationTarget(objs []asana.WorkRef) asana.WorkRef {
+func notificationTarget(objs []model.WorkRef) model.WorkRef {
 	for _, o := range objs {
 		if o.ResourceType == "task" {
 			return o
@@ -144,7 +144,7 @@ func notificationTarget(objs []asana.WorkRef) asana.WorkRef {
 	if len(objs) > 0 {
 		return objs[0]
 	}
-	return asana.WorkRef{}
+	return model.WorkRef{}
 }
 
 // reapplyNotificationMarks keeps unsent read / unread changes after a sync replaced the

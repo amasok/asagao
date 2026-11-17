@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana/model"
 )
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
@@ -77,36 +76,8 @@ func NewClient(httpClient *http.Client) *Client {
 	return &Client{BaseURL: DefaultBaseURL, HTTP: httpClient, MaxRetries: 5}
 }
 
-// Error is an Asana API error response.
-type Error struct {
-	Status int
-	// Hint is what the user can do about it (set on 401 from Client.AuthHint).
-	Hint   string `json:"-"`
-	Errors []struct {
-		Message string `json:"message"`
-		Help    string `json:"help"`
-	} `json:"errors"`
-	// Sync is the new sync token of a 412 from GET /events (see SyncToken).
-	Sync string `json:"sync"`
-}
-
-func (e *Error) Error() string {
-	msg := http.StatusText(e.Status)
-	if len(e.Errors) > 0 {
-		msg = termsafe.String(e.Errors[0].Message) // shown in the TUI status line as is
-	}
-	if e.Hint != "" {
-		return fmt.Sprintf("asana: %d %s（%s）", e.Status, msg, e.Hint)
-	}
-	return fmt.Sprintf("asana: %d %s", e.Status, msg)
-}
-
-// IsUnauthorized reports whether Asana rejected the token (401: revoked or expired PAT,
-// revoked OAuth grant).
-func IsUnauthorized(err error) bool {
-	var e *Error
-	return errors.As(err, &e) && e.Status == http.StatusUnauthorized
-}
+// IsUnauthorized reports whether Asana rejected the token (model.IsUnauthorized).
+func IsUnauthorized(err error) bool { return model.IsUnauthorized(err) }
 
 // newError builds the error for a >= 400 response with body b.
 func (c *Client) newError(status int, b []byte) *Error {
@@ -118,11 +89,8 @@ func (c *Client) newError(status int, b []byte) *Error {
 	return e
 }
 
-// IsPaymentRequired reports whether the endpoint needs a paid Asana plan.
-func IsPaymentRequired(err error) bool {
-	var e *Error
-	return errors.As(err, &e) && e.Status == http.StatusPaymentRequired
-}
+// IsPaymentRequired reports whether the endpoint needs a paid Asana plan (model.IsPaymentRequired).
+func IsPaymentRequired(err error) bool { return model.IsPaymentRequired(err) }
 
 type envelope struct {
 	Data     json.RawMessage `json:"data"`
