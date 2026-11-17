@@ -15,8 +15,9 @@ import (
 type GitLinkStore interface {
 	GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error)
 	Me(ctx context.Context) (readmodel.UserRef, error)
-	AddRichCommentLocal(ctx context.Context, taskGID, text, htmlText string, author readmodel.UserRef, now time.Time) (string, error)
-	UpdateTaskLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error
+	// AddCommentOnceLocal applies changes and adds the comment, in one transaction, unless
+	// the task has a comment containing marker (added is false then).
+	AddCommentOnceLocal(ctx context.Context, taskGID, marker string, changes map[string]any, text, htmlText string, author readmodel.UserRef, now time.Time) (gid string, added bool, err error)
 }
 
 // GitCommit is a git commit as the git link use case reads it.
@@ -79,7 +80,8 @@ type GitLink struct {
 // gets ends with commitref.Marker(c.SHA), and a task that has a comment with the marker
 // (sent or still queued) is left as it is. So a commit handled again (a second scan, a
 // scan over a range the hook saw) neither comments twice nor completes again a task that
-// was reopened since. With dryRun nothing is written, and the actions say what would be
+// was reopened since; nor does a second process handling it at the same time (the store
+// checks the marker again in the transaction that writes). With dryRun nothing is written, and the actions say what would be
 // done. A task not in the cache is reported (GitLinkNotFound) and the others are handled.
 func (g *GitLink) Apply(ctx context.Context, c GitCommit, dryRun bool) ([]GitLinkAction, error) {
 	var out []GitLinkAction
@@ -116,21 +118,27 @@ func (g *GitLink) apply(ctx context.Context, c GitCommit, ref commitref.Ref, dry
 	if dryRun {
 		return act, nil
 	}
-	now := g.Clock()
-	// Complete first: if the comment then fails, the commit is not marked as handled and
-	// the next run tries again (completing a completed task is skipped).
-	if act.Completed {
-		if err := g.Store.UpdateTaskLocal(ctx, ref.TaskGID, map[string]any{"completed": true}, now); err != nil {
-			return act, err
-		}
-	}
 	me, err := g.Store.Me(ctx)
 	if err != nil {
 		return act, err
 	}
+	var changes map[string]any
+	if act.Completed {
+		changes = map[string]any{"completed": true}
+	}
+	// The check above is again in the store's transaction with the writes: another process
+	// handling the same commit meanwhile (the hook and a scan) makes this one a no-op.
 	html, plain := g.Text.Comment(GitComment(c, act.Completed))
-	act.CommentGID, err = g.Store.AddRichCommentLocal(ctx, ref.TaskGID, plain, html, me, now)
-	return act, err
+	gid, added, err := g.Store.AddCommentOnceLocal(ctx, ref.TaskGID, marker, changes, plain, html, me, g.Clock())
+	if err != nil {
+		return act, err
+	}
+	if !added {
+		act.Result, act.Completed = GitLinkAlready, false
+		return act, nil
+	}
+	act.CommentGID = gid
+	return act, nil
 }
 
 // GitComment is the comment (Markdown) for commit c: what happened, the message in a code

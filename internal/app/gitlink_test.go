@@ -26,6 +26,9 @@ type gitStore struct {
 	commentAt []time.Time
 	failWrite error
 	failGet   error
+	// beforeWrite runs in AddCommentOnceLocal before it looks for the marker: another
+	// process writing meanwhile.
+	beforeWrite func()
 }
 
 func newGitStore(gids ...string) *gitStore {
@@ -54,22 +57,25 @@ func (f *gitStore) Me(context.Context) (readmodel.UserRef, error) {
 	return readmodel.UserRef{GID: "me", Name: "Me"}, nil
 }
 
-func (f *gitStore) AddRichCommentLocal(_ context.Context, taskGID, text, _ string, _ readmodel.UserRef, now time.Time) (string, error) {
-	f.calls = append(f.calls, "comment "+taskGID)
+func (f *gitStore) AddCommentOnceLocal(_ context.Context, taskGID, marker string, changes map[string]any, text, _ string, _ readmodel.UserRef, now time.Time) (string, bool, error) {
+	f.calls = append(f.calls, fmt.Sprintf("once %s %v", taskGID, changes))
 	if f.failWrite != nil {
-		return "", f.failWrite
+		return "", false, f.failWrite
+	}
+	if f.beforeWrite != nil {
+		f.beforeWrite()
+	}
+	for _, s := range f.tasks[taskGID].Stories {
+		if strings.Contains(s.Text, marker) {
+			return "", false, nil
+		}
+	}
+	if c, ok := changes["completed"].(bool); ok {
+		f.tasks[taskGID].Completed = c
 	}
 	f.tasks[taskGID].Stories = append(f.tasks[taskGID].Stories, readmodel.StoryView{GID: "local:c", Type: "comment", Text: text, Pending: true})
 	f.commentAt = append(f.commentAt, now)
-	return "local:c", nil
-}
-
-func (f *gitStore) UpdateTaskLocal(_ context.Context, gid string, changes map[string]any, _ time.Time) error {
-	f.calls = append(f.calls, fmt.Sprintf("update %s %v", gid, changes))
-	if c, ok := changes["completed"].(bool); ok {
-		f.tasks[gid].Completed = c
-	}
-	return nil
+	return "local:c", true, nil
 }
 
 func gitLink(st *gitStore) *GitLink {
@@ -92,7 +98,7 @@ func TestGitLinkApply(t *testing.T) {
 	if !reflect.DeepEqual(acts, want) {
 		t.Fatalf("actions\n got %+v\nwant %+v", acts, want)
 	}
-	wantCalls := []string{"comment " + gitTaskA, "update " + gitTaskB + " map[completed:true]", "comment " + gitTaskB}
+	wantCalls := []string{"once " + gitTaskA + " map[]", "once " + gitTaskB + " map[completed:true]"}
 	if !reflect.DeepEqual(st.calls, wantCalls) {
 		t.Errorf("calls %q, want %q", st.calls, wantCalls)
 	}
@@ -156,7 +162,7 @@ func TestGitLinkFixesCompletedTask(t *testing.T) {
 	if len(acts) != 1 || acts[0].Completed || acts[0].Result != GitLinkCommented || !acts[0].Fixes {
 		t.Errorf("%+v", acts)
 	}
-	if !reflect.DeepEqual(st.calls, []string{"comment " + gitTaskA}) {
+	if !reflect.DeepEqual(st.calls, []string{"once " + gitTaskA + " map[]"}) {
 		t.Errorf("calls %q", st.calls)
 	}
 	if !strings.Contains(st.tasks[gitTaskA].Stories[0].Text, "言及されました") {
@@ -238,5 +244,29 @@ func TestGitLinkAmend(t *testing.T) {
 	}
 	if len(st.tasks[gitTaskA].Stories) != 0 {
 		t.Errorf("the amend commented again on %s", gitTaskA)
+	}
+}
+
+// Another process adds the commit's comment between the check and the write: this one
+// reports the task as handled and writes nothing.
+func TestGitLinkConcurrentWriter(t *testing.T) {
+	st := newGitStore(gitTaskA)
+	c := GitCommit{SHA: gitSHA, Message: "fixes #" + gitTaskA}
+	st.beforeWrite = func() {
+		st.beforeWrite = nil
+		if _, err := gitLink(st).Apply(context.Background(), c, false); err != nil {
+			t.Fatal(err)
+		}
+		st.tasks[gitTaskA].Completed = false // and the task reopened since
+	}
+	acts, err := gitLink(st).Apply(context.Background(), c, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acts) != 1 || acts[0].Result != GitLinkAlready || acts[0].Completed || acts[0].CommentGID != "" {
+		t.Errorf("%+v", acts)
+	}
+	if len(st.tasks[gitTaskA].Stories) != 1 || st.tasks[gitTaskA].Completed {
+		t.Errorf("stories %d, completed %v", len(st.tasks[gitTaskA].Stories), st.tasks[gitTaskA].Completed)
 	}
 }

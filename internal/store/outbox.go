@@ -65,59 +65,62 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 	if err := task.ValidateFields(changes); err != nil {
 		return err
 	}
-	return s.tx(ctx, func(tx *sql.Tx) error {
-		cur, modifiedAt, err := currentFields(ctx, tx, gid)
-		if err != nil {
-			return err
-		}
-		subtype, _ := cur["resource_subtype"].(string)
-		if err := task.CheckApproval(subtype, changes); err != nil {
-			return err
-		}
-		if IsLocalGID(gid) {
-			// Not on the server yet: fold the change into the pending create.
-			op, err := findUnsentCreate(ctx, tx, gid)
-			if err != nil {
-				return err
-			}
-			if op != nil {
-				maps.Copy(op.Payload, changes)
-				if err := saveOp(ctx, tx, op); err != nil {
-					return err
-				}
-				return applyFields(ctx, tx, gid, changes, now)
-			}
-			// The create is being sent, was sent (it may be waiting to be verified, which
-			// looks for what was sent), or failed, or the task is a local duplicate: queue
-			// the edit as an update, sent once the task exists.
-			if err := ensureCreateQueued(ctx, tx, gid); err != nil {
-				return err
-			}
-		}
+	return s.tx(ctx, func(tx *sql.Tx) error { return updateTaskLocal(ctx, tx, gid, changes, now) })
+}
 
-		// Join the unsent (or conflicted) entry, so its base stays the server value; an
-		// entry being sent is left alone and the edit gets a new one.
-		op, err := findUpdateOp(ctx, tx, gid)
+// updateTaskLocal is UpdateTaskLocal within tx; changes are validated already.
+func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[string]any, now time.Time) error {
+	cur, modifiedAt, err := currentFields(ctx, tx, gid)
+	if err != nil {
+		return err
+	}
+	subtype, _ := cur["resource_subtype"].(string)
+	if err := task.CheckApproval(subtype, changes); err != nil {
+		return err
+	}
+	if IsLocalGID(gid) {
+		// Not on the server yet: fold the change into the pending create.
+		op, err := findUnsentCreate(ctx, tx, gid)
 		if err != nil {
 			return err
 		}
-		if op == nil {
-			op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
-				BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
-		}
-		folded, deleteOp := outbox.Fold(*op, cur, changes)
-		if err := applyFields(ctx, tx, gid, changes, now); err != nil {
-			return err
-		}
-		if deleteOp {
-			if folded.ID != 0 {
-				_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", folded.ID)
+		if op != nil {
+			maps.Copy(op.Payload, changes)
+			if err := saveOp(ctx, tx, op); err != nil {
 				return err
 			}
-			return nil
+			return applyFields(ctx, tx, gid, changes, now)
 		}
-		return saveOp(ctx, tx, &folded)
-	})
+		// The create is being sent, was sent (it may be waiting to be verified, which
+		// looks for what was sent), or failed, or the task is a local duplicate: queue
+		// the edit as an update, sent once the task exists.
+		if err := ensureCreateQueued(ctx, tx, gid); err != nil {
+			return err
+		}
+	}
+
+	// Join the unsent (or conflicted) entry, so its base stays the server value; an
+	// entry being sent is left alone and the edit gets a new one.
+	op, err := findUpdateOp(ctx, tx, gid)
+	if err != nil {
+		return err
+	}
+	if op == nil {
+		op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
+			BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
+	}
+	folded, deleteOp := outbox.Fold(*op, cur, changes)
+	if err := applyFields(ctx, tx, gid, changes, now); err != nil {
+		return err
+	}
+	if deleteOp {
+		if folded.ID != 0 {
+			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", folded.ID)
+			return err
+		}
+		return nil
+	}
+	return saveOp(ctx, tx, &folded)
 }
 
 // MoveTaskLocal moves a task to another section of a project it belongs to, and queues it.
@@ -289,28 +292,72 @@ func (s *Store) AddRichCommentLocal(ctx context.Context, taskGID, text, htmlText
 		return "", errors.New("コメントが空です")
 	}
 	gid := newLocalGID()
-	err := s.tx(ctx, func(tx *sql.Tx) error {
-		var exists int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", taskGID).Scan(&exists); err != nil {
-			return err
-		}
-		if exists == 0 {
-			return fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
-		}
-		ts := formatTime(now)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO stories
-			(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
-			VALUES(?, ?, 'comment', 'comment_added', ?, ?, ?, ?, ?)`,
-			gid, taskGID, text, author.GID, author.Name, ts, htmlText); err != nil {
-			return err
-		}
-		payload := map[string]any{"text": text, "story_gid": gid}
-		if htmlText != "" {
-			payload["html_text"] = htmlText
-		}
-		return saveOp(ctx, tx, &Op{Kind: OpAddComment, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: ts})
-	})
+	err := s.tx(ctx, func(tx *sql.Tx) error { return addCommentLocal(ctx, tx, gid, taskGID, text, htmlText, author, now) })
 	return gid, err
+}
+
+// addCommentLocal is AddRichCommentLocal within tx, for the comment's local gid.
+func addCommentLocal(ctx context.Context, tx *sql.Tx, gid, taskGID, text, htmlText string, author UserRef, now time.Time) error {
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", taskGID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
+	}
+	ts := formatTime(now)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO stories
+		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
+		VALUES(?, ?, 'comment', 'comment_added', ?, ?, ?, ?, ?)`,
+		gid, taskGID, text, author.GID, author.Name, ts, htmlText); err != nil {
+		return err
+	}
+	payload := map[string]any{"text": text, "story_gid": gid}
+	if htmlText != "" {
+		payload["html_text"] = htmlText
+	}
+	return saveOp(ctx, tx, &Op{Kind: OpAddComment, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: ts})
+}
+
+// AddCommentOnceLocal adds a comment to taskGID, as AddRichCommentLocal, unless one of the
+// task's comments (sent or queued) contains marker; changes, when not empty, are applied to
+// the task first, as UpdateTaskLocal. All of it is one transaction, which takes the write
+// lock at BEGIN: two processes adding the same marker at once (a git hook and a scan of the
+// same commit, #8) add it once. added is false, and nothing is written, when the marker is
+// there already.
+func (s *Store) AddCommentOnceLocal(ctx context.Context, taskGID, marker string, changes map[string]any, text, htmlText string, author UserRef, now time.Time) (gid string, added bool, err error) {
+	if strings.TrimSpace(text) == "" {
+		return "", false, errors.New("コメントが空です")
+	}
+	if marker == "" || !strings.Contains(text, marker) {
+		return "", false, errors.New("コメントに印がありません")
+	}
+	if len(changes) > 0 {
+		if err := task.ValidateFields(changes); err != nil {
+			return "", false, err
+		}
+	}
+	gid = newLocalGID()
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM stories WHERE task_gid = ? AND instr(text, ?) > 0", taskGID, marker).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return nil
+		}
+		if len(changes) > 0 {
+			if err := updateTaskLocal(ctx, tx, taskGID, changes, now); err != nil {
+				return err
+			}
+		}
+		added = true
+		return addCommentLocal(ctx, tx, gid, taskGID, text, htmlText, author, now)
+	})
+	if err != nil || !added {
+		return "", false, err
+	}
+	return gid, true, nil
 }
 
 // --- outbox access for the sync engine ---
