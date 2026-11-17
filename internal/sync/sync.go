@@ -39,7 +39,7 @@ type Config struct {
 
 type Syncer struct {
 	API   AsanaAPI
-	Store *store.Store
+	Store LocalStore
 	Cfg   Config
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)

@@ -1,6 +1,12 @@
 package sync
 
-import "github.com/amasok/asagao/internal/asana"
+import (
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
+)
 
-// The Asana client satisfies the port as it is.
-var _ AsanaAPI = (*asana.Client)(nil)
+// The Asana client and the store satisfy the ports as they are.
+var (
+	_ AsanaAPI   = (*asana.Client)(nil)
+	_ LocalStore = (*store.Store)(nil)
+)
