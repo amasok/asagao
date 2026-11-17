@@ -141,6 +141,9 @@ type htmlWriter struct {
 	// list's last item (see itemBlocks)
 	tail   []gast.Node
 	inHead bool // writing the text of a heading element: one line (#64)
+	// images are the offsets in b of the images written in plain text (which writes nothing
+	// of them), for trimPlainHeadingEdges
+	images []int
 }
 
 // sub returns a writer for a part of the output that is put together afterwards.
@@ -286,14 +289,16 @@ func (w *htmlWriter) block(n gast.Node) {
 		}
 		w.tag("<" + t + ">")
 		// the text without spaces at its ends (typed as character references): the editor
-		// writes a heading without them, so they would go on the next round trip (#24)
+		// writes a heading without them, so they would go on the next round trip (#24). In
+		// a link or emphasis at its ends they go too (the editor moves them out, see
+		// moveEdgeSpaceOutOfMarks), and so they do from the plain text (#26).
 		h := &htmlWriter{src: w.src, plain: w.plain, target: w.target, bold: w.bold,
 			quote: w.quote, item: w.item, text: w.text, inHead: true}
 		h.inlines(n)
 		if w.plain {
-			w.b.WriteString(h.b.String()) // (plain text is not opened again)
+			w.b.WriteString(trimPlainHeadingEdges(h.b.String(), h.images))
 		} else {
-			w.b.WriteString(strings.Trim(h.b.String(), " \t"))
+			w.b.WriteString(trimHeadingEdges(h.b.String()))
 		}
 		w.tag("</" + t + ">")
 		if w.plain {
@@ -368,6 +373,72 @@ func (w *htmlWriter) block(n gast.Node) {
 	default:
 		w.blocks(n)
 	}
+}
+
+// trimHeadingEdges removes the spaces and tabs at the start and the end of the text of a
+// heading as htmlWriter writes it, also those inside the links and emphasis that open or
+// close it ("<a href="u"> a</a>" is "<a href="u">a</a>"). Code keeps its spaces.
+func trimHeadingEdges(s string) string {
+	var head strings.Builder
+	for {
+		s = strings.TrimLeft(s, " \t")
+		t := edgeOpenTag(s)
+		if t == "" {
+			break
+		}
+		head.WriteString(t)
+		s = s[len(t):]
+	}
+	var tail []string
+	for {
+		s = strings.TrimRight(s, " \t")
+		t := edgeCloseTag(s)
+		if t == "" {
+			break
+		}
+		tail = append([]string{t}, tail...)
+		s = s[:len(s)-len(t)]
+	}
+	return head.String() + s + strings.Join(tail, "")
+}
+
+// trimPlainHeadingEdges is trimHeadingEdges for the plain text of a heading: images, which
+// it has no text of (they are at offsets images), are content as they are in the HTML, so
+// the spaces next to them stay.
+func trimPlainHeadingEdges(s string, images []int) string {
+	start, end := len(s)-len(strings.TrimLeft(s, " \t")), len(strings.TrimRight(s, " \t"))
+	if len(images) > 0 {
+		start, end = min(start, images[0]), max(end, images[len(images)-1])
+	}
+	if end < start {
+		return "" // only spaces
+	}
+	return s[start:end]
+}
+
+// edgeOpenTag returns the opening tag of a link or emphasis that s starts with, if any.
+func edgeOpenTag(s string) string {
+	if strings.HasPrefix(s, `<a href="`) {
+		if i := strings.IndexByte(s, '>'); i >= 0 {
+			return s[:i+1]
+		}
+	}
+	for _, t := range []string{"<strong>", "<em>", "<s>"} {
+		if strings.HasPrefix(s, t) {
+			return t
+		}
+	}
+	return ""
+}
+
+// edgeCloseTag returns the closing tag of a link or emphasis that s ends with, if any.
+func edgeCloseTag(s string) string {
+	for _, t := range []string{"</a>", "</strong>", "</em>", "</s>"} {
+		if strings.HasSuffix(s, t) {
+			return t
+		}
+	}
+	return ""
 }
 
 // itemBlocks writes the blocks of a list item. What comes after a nested list in it goes
@@ -744,6 +815,8 @@ func (w *htmlWriter) inline(n gast.Node) {
 			}
 			if !w.plain {
 				w.b.WriteString(`<img data-asana-gid="` + html.EscapeString(gid) + `"/>`)
+			} else {
+				w.images = append(w.images, w.b.Len())
 			}
 			return
 		}
