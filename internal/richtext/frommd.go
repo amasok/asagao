@@ -958,6 +958,10 @@ func keepIndentation(src string) string {
 	// if none): after the quote, a line can go on with them (#24)
 	var parked []int
 	parkedDepth := -1
+	// afterQuote is set back from a quote in an item, until a blank line: the paragraph open
+	// is the quote's (its lazy lines go on it), not the item's, so an item line there starts
+	// a list, as goldmark reads it (#26)
+	afterQuote := false
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
 		depth := strings.Count(prefix, ">")
@@ -977,6 +981,7 @@ func keepIndentation(src string) string {
 		case depth == parkedDepth:
 			// back from the quote in the item
 			items, itemDepth, parked, parkedDepth = append(items[:0], parked...), depth, parked[:0], -1
+			afterQuote = true
 		case depth > itemDepth && len(items) > 0 && quoteColumn(l, itemDepth) >= items[len(items)-1]:
 			// a quote in the item: its lines are the quote's, the items wait for after it
 			parked, parkedDepth = append(parked[:0], items...), itemDepth
@@ -992,7 +997,7 @@ func keepIndentation(src string) string {
 		}
 		if blank {
 			endPara(false)
-			inItem = false
+			inItem, afterQuote = false, false
 			if emptyItem && len(items) > 0 {
 				items = items[:len(items)-1] // an item starts with at most one blank line
 				closeLists = true
@@ -1012,6 +1017,11 @@ func keepIndentation(src string) string {
 				items = items[:len(items)-1]
 			}
 		}
+		if n := len(items); n > 0 && strings.HasPrefix(trimmed, ">") && col >= items[n-1] && col < items[n-1]+4 {
+			// a quote in an item indented 4 columns or more (cutQuotePrefix does not take it
+			// as a quote: at the top it would be code): what follows is back from it
+			afterQuote = true
+		}
 		if inPara {
 			if depth == paraDepth && setextUnderline(rest) {
 				endPara(true)
@@ -1030,8 +1040,8 @@ func keepIndentation(src string) string {
 			fence = f
 			continue
 		}
-		if inItem && len(items) > 0 && col >= items[len(items)-1] && listItemStart(trimmed) &&
-			!interruptsParagraph(trimmed) {
+		if inItem && !afterQuote && len(items) > 0 && col >= items[len(items)-1] &&
+			listItemStart(trimmed) && !interruptsParagraph(trimmed) {
 			// ("2.", or an empty item, as far as the text of an item, in its paragraph: it
 			// would start a list there, which it cannot; the paragraph goes on, or a setext
 			// underline makes it a heading. Further out it is the next item of a list.)
@@ -1045,7 +1055,7 @@ func keepIndentation(src string) string {
 			}
 			items = append(items, itemContentColumn(rest))
 			emptyItem = strings.TrimSpace(itemText(trimmed)) == ""
-			inItem = true
+			inItem, afterQuote = true, false
 			continue
 		}
 		if inItem || len(items) > 0 {

@@ -50,3 +50,34 @@ func TestPlainHeadingEdgeSpacesGo(t *testing.T) {
 		}
 	}
 }
+
+// Back from a quote in a list item, an item line starts a list (the paragraph open is the
+// quote's, which it may interrupt), as goldmark reads it: an empty item there ends the lists
+// at the blank line after it, and the indentation of the line after them is text, as after
+// any empty item (#24, 4; #26, 3).
+func TestEmptyItemAfterQuoteInItem(t *testing.T) {
+	for md, want := range map[string]string{
+		"- a\n  > q\n  -\n\n  c":            "<body><ul><li>a\n&gt; q<ul><li></li></ul></li></ul>  c</body>",
+		"- a\n  > q\n  1.\n\n  c":           "<body><ul><li>a\n&gt; q<ol><li></li></ol></li></ul>  c</body>",
+		"- a\n  > q\n  2.\n\n  c":           "<body><ul><li>a\n&gt; q<ol><li></li></ol></li></ul>  c</body>",
+		"- a\n  > q\n  *\n\n  c":            "<body><ul><li>a\n&gt; q<ul><li></li></ul></li></ul>  c</body>",
+		"- a\n  > q\n  b\n  -\n\n  c":       "<body><ul><li>a\n&gt; q\n&gt; b<ul><li></li></ul></li></ul>  c</body>",
+		"- a\n  > q\n  > r\n  -\n\n  c":     "<body><ul><li>a\n&gt; q\n&gt; r<ul><li></li></ul></li></ul>  c</body>",
+		"- a\n  > q\n    -\n\n  c":          "<body><ul><li>a\n&gt; q<ul><li></li></ul></li></ul>  c</body>",
+		"1. a\n   > q\n   1.\n\n   c":       "<body><ol><li>a\n&gt; q<ol><li></li></ol></li></ol>   c</body>",
+		"- x\n  - a\n    > q\n    -\n\n  c": "<body><ul><li>x<ul><li>a\n&gt; q<ul><li></li></ul></li></ul></li></ul>  c</body>",
+		// (as before: an item with text, and the next item further out)
+		"- a\n  > q\n  - b\n\n  c": "<body><ul><li>a\n&gt; q<ul><li>b\nc</li></ul></li></ul></body>",
+		"- a\n  > q\n -\n\n  c":    "<body><ul><li>a\n&gt; q</li><li></li></ul>  c</body>",
+		// not back from a quote: an empty item in the item's paragraph is its text (#24)
+		"- a\n  -\n\n  c": "<body><ul><li>a\n-\nc</li></ul></body>",
+		// after a blank line, the quote's paragraph has ended (#24)
+		"- a\n  > q\n\n  -\n\n  c": "<body><ul><li>a\n&gt; q<ul><li></li></ul></li></ul>  c</body>",
+	} {
+		h1 := FromMarkdown(md)
+		md2 := ToEditableMarkdown(h1)
+		if h2 := FromMarkdown(md2); h1 != want || h2 != h1 {
+			t.Errorf("md  %q\nh1  %q (want %q)\nmd2 %q\nh2  %q", md, h1, want, md2, h2)
+		}
+	}
+}
