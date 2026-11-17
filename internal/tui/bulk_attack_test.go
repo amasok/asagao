@@ -143,3 +143,29 @@ func TestBulkAttackMixedCompletionCountsOnlyChanged(t *testing.T) {
 		t.Fatalf("already-completed task must not be counted: %q", f)
 	}
 }
+
+// Tasks that already have the chosen due date are not counted; none left says so, no question.
+func TestBulkAttackDueSkipsUnchanged(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	d, _ := h.m.deps.Store.GetTask(context.Background(), "t1")
+	if d.DueOn == "" {
+		t.Skip("t1 has no due date in the fixture")
+	}
+	h.markRows("t1", "t2")
+	h.key(" ", "d", "G", "k", "enter")
+	h.m.prompt.SetValue("")
+	h.typeText(d.DueOn)
+	h.key("enter")
+	if f := h.footer(); !strings.Contains(f, "1 件の期日を") {
+		t.Fatalf("t1 already has the date: %q", f)
+	}
+	h.key("n", "esc")
+	h.markRows("t1")
+	h.key(" ", "d", "G", "k", "enter")
+	h.m.prompt.SetValue("")
+	h.typeText(d.DueOn)
+	h.key("enter")
+	if h.m.bulkAsk != nil || !strings.Contains(h.footer(), "すべてすでに期日が") {
+		t.Fatalf("footer=%q", h.footer())
+	}
+}
