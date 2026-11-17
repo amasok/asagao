@@ -861,6 +861,11 @@ func keepIndentation(src string) string {
 		}
 		inPara, indented = false, indented[:0]
 	}
+	// the content columns of the open list items (at quote depth itemDepth), outermost
+	// first: a line indented up to one of them, even after a blank line, is in that item
+	// (#13). As Markdown, the deepest item it reaches is the one it goes on.
+	var items []int
+	itemDepth := 0
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
 		depth := strings.Count(prefix, ">")
@@ -874,10 +879,20 @@ func keepIndentation(src string) string {
 			}
 			continue
 		}
+		if depth != itemDepth {
+			items, itemDepth = items[:0], depth // (a blank line with fewer ">" ends the quote)
+		}
 		if strings.TrimSpace(trimmed) == "" {
 			endPara(false)
 			inItem = false
 			continue
+		}
+		col := indentWidth(rest)
+		if !inItem {
+			// not a lazy line of an item's paragraph: the items it does not reach end
+			for len(items) > 0 && items[len(items)-1] > col {
+				items = items[:len(items)-1]
+			}
 		}
 		if f := openingFence(trimmed); f != "" {
 			endPara(false)
@@ -890,10 +905,17 @@ func keepIndentation(src string) string {
 		}
 		if listItemStart(trimmed) && (!inPara || interruptsParagraph(trimmed)) {
 			endPara(false)
+			if inItem {
+				for len(items) > 0 && items[len(items)-1] > col {
+					items = items[:len(items)-1]
+				}
+			}
+			items = append(items, itemContentColumn(rest))
 			inItem = true
 			continue
 		}
-		if inItem {
+		if inItem || len(items) > 0 {
+			inItem = true // what follows without a blank line is the item's too
 			continue
 		}
 		if blockStart(trimmed) {
@@ -909,6 +931,51 @@ func keepIndentation(src string) string {
 	}
 	endPara(false)
 	return strings.Join(lines, "\n")
+}
+
+// indentWidth is the width of the indentation of line, in columns (a tab to the next
+// multiple of 4).
+func indentWidth(line string) int {
+	w := 0
+	for _, c := range []byte(line) {
+		switch c {
+		case ' ':
+			w++
+		case '\t':
+			w += 4 - w%4
+		default:
+			return w
+		}
+	}
+	return w
+}
+
+// itemContentColumn is the column where the content of the list item that line (after its
+// quote prefixes) starts lies: after the marker and the spaces after it, or one space after
+// the marker if there are none, or 5 or more (then the rest is indented code).
+func itemContentColumn(line string) int {
+	col := indentWidth(line)
+	rest := strings.TrimLeft(line, " \t")
+	marker := 1
+	if m := orderedMarker.FindStringSubmatch(rest); m != nil {
+		marker = len(m[1]) + 1
+	}
+	after := rest[marker:]
+	w := col + marker
+	sp := 0
+	for _, c := range []byte(after) {
+		if c == ' ' {
+			sp++
+		} else if c == '\t' {
+			sp += 4 - (w+sp)%4
+		} else {
+			break
+		}
+	}
+	if sp == 0 || sp > 4 || strings.TrimSpace(after) == "" {
+		sp = 1
+	}
+	return w + sp
 }
 
 // interruptsParagraph reports whether list item start line (without indentation) starts a

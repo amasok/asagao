@@ -61,7 +61,7 @@ func convert(s string, editable bool, imageDest func(string) string) string {
 	moveTextAfterNestedLists(doc)
 	normalizeMarks(doc)
 	moveEdgeSpaceOutOfMarks(doc)
-	c := &converter{editable: editable, imageDest: imageDest}
+	c := &converter{editable: editable, imageDest: imageDest, listEnd: -1}
 	c.walk(doc)
 	c.keepTrailingSpace(blockEnds)
 	// For display a space sets delimiters apart: the renderer would show "\ " as it is.
@@ -156,6 +156,9 @@ type converter struct {
 	// separateTokens (#58).
 	tokens []inlineToken
 	strong int // inside <strong>: a mention shown as bold is not bold again
+	// listEnd is where the line after the last list ended starts in b (-1 before any list):
+	// indentation written as it is there would be read as the list item's (see text, #13).
+	listEnd int
 }
 
 type listState struct {
@@ -379,6 +382,7 @@ func (c *converter) walk(n *html.Node) {
 		c.lists = c.lists[:len(c.lists)-1]
 		if len(c.lists) == 0 {
 			c.block()
+			c.listEnd = c.b.Len()
 		}
 	case atom.Li:
 		c.listItem(n)
@@ -412,12 +416,20 @@ func (c *converter) text(n *html.Node) {
 		return // whitespace between list tags
 	}
 	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
-	// it stays a character reference, as indentation there is list structure.
+	// it stays a character reference, as indentation there is list structure. So it does on
+	// the line right after a list (afterList): indented as far as the item's text, it would
+	// go on the item (#13).
 	rawIndent := c.editable && !inList
+	afterList := rawIndent && c.lineAfterList()
 	// after indentation written by text before (in another element), the line still starts
 	// here as Markdown reads it: "\t" then "#" would be a heading, or code
 	lineStart := c.atLineStart() || len(bytes.Trim(c.b.Bytes()[c.lineStart:], " \t")) == 0
 	t = escapeText(t, lineStart, rawIndent, c.prevByte(), c.nextOnLine(n))
+	if afterList && lineStart && t != "" && (t[0] == ' ' || t[0] == '\t') {
+		if first, _, _ := strings.Cut(t, "\n"); strings.TrimLeft(first, " \t") != "" {
+			t = indentRef[t[0]] + t[1:]
+		}
+	}
 	// Asana keeps line breaks as plain newlines: make them Markdown line breaks.
 	lines := strings.Split(t, "\n")
 	last := len(lines) - 1
@@ -432,7 +444,7 @@ func (c *converter) text(n *html.Node) {
 			}
 			c.newline()
 		}
-		if i == last && !rawIndent && l != "" && asciiBlank(l) && c.atLineStart() &&
+		if i == last && (!rawIndent || i == 0 && afterList) && l != "" && asciiBlank(l) && c.atLineStart() &&
 			c.lineContentFollows(n) {
 			// whitespace before inline content at the start of a line (in a list item, or
 			// for display): Markdown would drop it as indentation
@@ -440,6 +452,11 @@ func (c *converter) text(n *html.Node) {
 		}
 		c.write(l)
 	}
+}
+
+// lineAfterList reports whether the next text goes on the line right after a list.
+func (c *converter) lineAfterList() bool {
+	return c.listEnd >= 0 && c.listEnd <= c.b.Len() && bytes.IndexByte(c.b.Bytes()[c.listEnd:], '\n') < 0
 }
 
 // nextOnLine is the first byte written after text n on its line, '\n' if the line ends
