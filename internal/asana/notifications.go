@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/amasok/asagao/internal/asana/model"
 )
 
 var notificationFields = []string{
@@ -13,8 +15,9 @@ var notificationFields = []string{
 	"work_objects", "work_objects.name",
 }
 
-// MaxNotificationGIDs is how many notifications one markRead / markUnread request accepts.
-const MaxNotificationGIDs = 50
+// MaxNotificationGIDs is how many notifications one markRead / markUnread request accepts
+// (model.MaxNotificationGIDs).
+const MaxNotificationGIDs = model.MaxNotificationGIDs
 
 // Notifications returns up to max of the user's active (unarchived) notifications in the
 // workspace, newest first.

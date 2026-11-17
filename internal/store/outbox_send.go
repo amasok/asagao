@@ -167,12 +167,8 @@ func (s *Store) completeOp(ctx context.Context, id int64, fn func(*sql.Tx) error
 	})
 }
 
-// MoveTarget is where a task created in Asana still has to be moved.
-type MoveTarget struct {
-	Project, Section string
-	// From is the section Asana put the task in (restored if the move is discarded).
-	From string
-}
+// MoveTarget is where a task created in Asana still has to be moved (outbox.MoveTarget).
+type MoveTarget = outbox.MoveTarget
 
 // CompleteCreate records that Asana created the task of entry id (create_task or
 // duplicate_task) with gid real: the local gid is replaced everywhere and the entry is

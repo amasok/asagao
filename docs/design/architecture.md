@@ -23,7 +23,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
   adapter   │  store (SQLite)  asana (HTTP)  auth  tokenstore   │
             │  richtext (goldmark)  config (TOML)  imageview  browser│
             └──────────────────────────────────────────┘
-  どこからでも: termsafe (標準ライブラリだけ)、asana/model と readmodel (型だけ)
+  どこからでも: termsafe・xdg (標準ライブラリだけ)、asana/model と readmodel (型だけ)
 ```
 
 依存してよい向きは、上から下、adapter から domain と asana/model だけ。
@@ -49,6 +49,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/config` | adapter | 同じ | go-toml | 設定ファイル |
 | `internal/imageview`, `internal/browser` | adapter | 同じ | x/sys、x/term (imageview だけ。browser は標準ライブラリだけ) | 端末と OS |
 | `internal/termsafe` | 共通 | 同じ | なし | 端末の制御文字の除去 |
+| `internal/xdg` | 共通 | (d3 で `internal/config` の `ConfigDir`・`DataDir`・`CacheDir` の決まりを移した) | なし | ツールのフォルダの場所 (XDG)。環境変数とホームディレクトリだけを読む |
 | `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi | 画面 |
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
 | `internal/cli` | 入り口 | 同じ | cobra、bubbletea、MCP go-sdk、x/term、go-runewidth | コマンド |
@@ -83,12 +84,13 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
 | store → asana | なし (型は `asana/model` から) | 直した | d1 (済み) |
-| store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
-| sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
-| sync → asana | `*asana.Client`、型 (型は d1 で `asana/model` に移り、asana は別名) | 直す | d3 (ポートにし、型は `asana/model` で呼ぶ) |
+| store → richtext | なし。`FitQueuedRichText` は変換を関数で受け (sync のポート `RichText`、`richtext.Converter.Fit`)、送り先は `domain/rich` で決める。`ToEditableMarkdown` は c1 で呼ぶ側に移した | 直した | d3 (済み) |
+| sync → store | ストアそのものは d3 で sync のポート `LocalStore` にした (型は domain/outbox・readmodel・asana/model)。残りは store の名前: 操作の種類 (`store.OpX`、domain/outbox の別名)・sync_state のキー (`store.KeyX`)・エラー (`ErrNotFound`・`ErrPushBusy`)・`store.IsLocalGID`・`TaskFieldValues`・`CustomFieldAPIValue` など | 直す | d3 のあと (名前を domain・readmodel に移す) |
+| sync → asana | なし。クライアントは sync のポート `AsanaAPI` (ports.go) で受け、型は `asana/model` で呼ぶ | 直した | d3 (済み) |
 | sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |
-| sync → config | `SyncConfig`、`CacheDir` | 直す | d3 |
+| sync → config | なし。`SyncConfig` は `sync.Config` に、`CacheDir` の既定値は `xdg.CacheDir()` に (d3) | 直した | d3 (済み) |
 | sync → termsafe | 比べる前の文字の除去 | 許す | — |
+| sync → xdg、config → xdg | 添付の既定の場所、ツールのフォルダ | 許す | — |
 | tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
 | mcpserver → store | `*Local` 13 種類と、読み取りの型 約 20 種類 | 直す | a、c2 |
 | cli → store | `*Local` 13 種類、`store.Open`、読み取りの型 約 40 種類 | 直す | a、c2、d4 (`Open` を wire へ) |

@@ -55,7 +55,7 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 					if err != nil {
 						return nil, err
 					}
-					return &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}, nil
+					return a.syncer(api, st), nil
 				},
 			}
 			return s.New().Run(ctx, &mcp.StdioTransport{})

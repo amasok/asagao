@@ -52,7 +52,7 @@ func (a *app) runTUI(ctx context.Context) error {
 			if err != nil {
 				return nil, err
 			}
-			return &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}, nil
+			return a.syncer(api, st), nil
 		}
 	}
 	m := tui.New(ctx, deps)

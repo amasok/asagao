@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -196,7 +195,7 @@ func setupEvents(t *testing.T) *eventsEnv {
 	api := asana.NewClient(e.srv.Client())
 	api.BaseURL = e.srv.URL
 	api.MaxRetries = 0 // a 429 or 5xx reaches the syncer at once
-	e.s = &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return e.now }}
+	e.s = &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}, now: func() time.Time { return e.now }}
 	return e
 }
 

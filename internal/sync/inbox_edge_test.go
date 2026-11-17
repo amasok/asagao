@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -201,7 +200,7 @@ func setupEdge(t *testing.T, f *edgeInbox) (*Syncer, *store.Store, *httptest.Ser
 	api.BaseURL = srv.URL
 	api.MaxRetries = 0 // 5xx answers come back at once
 	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
-	return &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return now }}, st, srv
+	return &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}, now: func() time.Time { return now }}, st, srv
 }
 
 func listAll(t *testing.T, st *store.Store) []store.Notification {
@@ -399,7 +398,7 @@ func TestMarkReadOfflineQueuedThenSent(t *testing.T) {
 	if n, err := st.MarkNotificationsLocal(ctx, []string{"n000"}, true, time.Now()); err != nil || n != 1 {
 		t.Fatalf("mark %d %v", n, err)
 	}
-	s.API.BaseURL = "http://127.0.0.1:1" // nothing listens: offline
+	s.API.(*asana.Client).BaseURL = "http://127.0.0.1:1" // nothing listens: offline
 	if _, err := s.Push(ctx); err == nil {
 		t.Fatal("push offline should report the network error")
 	}
@@ -409,7 +408,7 @@ func TestMarkReadOfflineQueuedThenSent(t *testing.T) {
 	if n := noteByGID(t, st, "n000"); !n.Read || !n.Pending {
 		t.Fatalf("local state %+v", n)
 	}
-	s.API.BaseURL = srv.URL
+	s.API.(*asana.Client).BaseURL = srv.URL
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
 		t.Fatalf("push %+v %v", res, err)
 	}

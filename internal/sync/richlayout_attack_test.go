@@ -63,7 +63,7 @@ func TestPushNastyLayoutInputsNeverRejected(t *testing.T) {
 	api.BaseURL = srv.URL
 	var res PushResult
 	for i := 0; i < 60; i++ {
-		r, e := (&Syncer{API: api, Store: st}).Push(ctx)
+		r, e := (&Syncer{API: api, Store: st, RichText: richtext.Converter{}}).Push(ctx)
 		res.Sent += r.Sent
 		res.Failed += r.Failed
 		res.Remaining, err = r.Remaining, e

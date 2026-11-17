@@ -77,3 +77,11 @@ type Op struct {
 	LastSentAt string `json:"last_sent_at,omitempty"`
 	Verify     bool   `json:"verify,omitempty"`
 }
+
+// MoveTarget is where a task created in Asana still has to be moved: a create sends the
+// task into the project, and the entry becomes a move_task to its section.
+type MoveTarget struct {
+	Project, Section string
+	// From is the section Asana put the task in (restored if the move is discarded).
+	From string
+}

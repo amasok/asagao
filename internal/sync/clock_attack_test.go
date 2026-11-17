@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -128,7 +127,7 @@ func TestPushReconcileInNewProcessPCClockAhead(t *testing.T) {
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
 	api.MaxRetries = 0
-	s2 := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s2 := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	later(s2, 10*time.Minute)
 	res, err := s2.Push(ctx)
 	if err != nil || res.Sent != 1 || res.Remaining != 0 {
@@ -161,7 +160,7 @@ func TestFullSyncEmptyWorkspaceListKeepsProjectsAndKeys(t *testing.T) {
 	defer st.Close()
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}

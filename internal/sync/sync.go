@@ -10,8 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -29,13 +28,26 @@ const (
 	modifiedSinceMargin = 2 * time.Minute
 )
 
+// Config is what a sync keeps and fetches (the [sync] table of config.toml; a
+// config.SyncConfig converts to it).
+type Config struct {
+	// CompletedDays is how many days of completed tasks to keep in the local store.
+	CompletedDays int
+	// AllProjects syncs every project in the workspace instead of only projects you are a member of.
+	AllProjects bool
+}
+
 type Syncer struct {
-	API   *asana.Client
-	Store *store.Store
-	Cfg   config.SyncConfig
+	API   AsanaAPI
+	Store LocalStore
+	Cfg   Config
+	// RichText rewrites comments and status updates queued before #63 before Push sends
+	// them. The caller must set it (richtext.Converter{}): without it, Push fails with
+	// store.ErrNoFit when there is such an entry to check, rather than send it unchecked.
+	RichText RichText
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)
-	// CacheDir is where attachments are downloaded (default: config.CacheDir()/attachments).
+	// CacheDir is where attachments are downloaded (default: xdg.CacheDir()/attachments).
 	CacheDir string
 	// Download fetches a pre-signed attachment URL. It must not add the Asana
 	// Authorization header (the storage service rejects it). Default: plain HTTP GET.
@@ -186,7 +198,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	tokens := map[string]string{} // project gid -> events token, saved once everything is stored
 	var withSubtasks []string
 
-	upsert := func(tasks []asana.Task) error {
+	upsert := func(tasks []model.Task) error {
 		for _, t := range tasks {
 			keep[t.GID] = true
 			if t.NumSubtasks > 0 {
@@ -233,7 +245,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		// My Tasks may hold tasks in no project, which no project's events report: they are
 		// fetched with modified_since on every sync (one request, only what changed).
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)
-		mine, err := s.API.Tasks(ctx, asana.TaskQuery{
+		mine, err := s.API.Tasks(ctx, model.TaskQuery{
 			Assignee: "me", Workspace: w.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
 		})
 		if err != nil {
@@ -256,7 +268,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			}
 		}
 		for _, p := range projects {
-			if !s.Cfg.AllProjects && !slices.ContainsFunc(p.Members, func(r asana.Ref) bool { return r.GID == me.GID }) {
+			if !s.Cfg.AllProjects && !slices.ContainsFunc(p.Members, func(r model.Ref) bool { return r.GID == me.GID }) {
 				continue
 			}
 			s.progress("プロジェクト %s", p.Name)
@@ -295,7 +307,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				if err := statuses(); err != nil {
 					return err
 				}
-				tasks, err := s.API.Tasks(ctx, asana.TaskQuery{
+				tasks, err := s.API.Tasks(ctx, model.TaskQuery{
 					Project: p.GID, CompletedSince: completedSince, ModifiedSince: since,
 				})
 				if err != nil {
@@ -324,7 +336,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			}
 			if err := s.applyEvents(ctx, ev, keep, upsert, &withSubtasks); err != nil {
 				var fe *eventFetchError
-				if !errors.As(err, &fe) || isNetworkError(err) || asana.IsUnauthorized(err) {
+				if !errors.As(err, &fe) || isNetworkError(err) || model.IsUnauthorized(err) {
 					return res, fmt.Errorf("%s の変更の取得: %w", p.Name, err)
 				}
 				// Asana could not give the changed tasks (a 5xx or 429 that outlasted the
@@ -428,7 +440,7 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, settings); err != nil {
 			return err
 		}
-	case asana.IsPaymentRequired(err) || isForbidden(err): // not available on this plan: no custom fields
+	case model.IsPaymentRequired(err) || isForbidden(err): // not available on this plan: no custom fields
 		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, nil); err != nil {
 			return err
 		}
@@ -439,7 +451,7 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 }
 
 func isForbidden(err error) bool {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden
 }
 
@@ -464,7 +476,7 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	// Attachments are optional: if they cannot be read (e.g. the OAuth app lacks the
 	// attachments:read scope), still store everything else and report the problem.
 	atts, attErr := s.API.Attachments(ctx, taskGID)
-	if err := s.Store.UpsertTasks(ctx, append([]asana.Task{*t}, subs...)); err != nil {
+	if err := s.Store.UpsertTasks(ctx, append([]model.Task{*t}, subs...)); err != nil {
 		return err
 	}
 	if attErr == nil {
@@ -485,7 +497,7 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 // fetchDependencies stores the names and states of a task's dependencies and dependents,
 // which may not be cached (the task itself only lists their gids). Without dependencies
 // (e.g. a free plan) or offline, the task simply keeps what it has.
-func (s *Syncer) fetchDependencies(ctx context.Context, t asana.Task) {
+func (s *Syncer) fetchDependencies(ctx context.Context, t model.Task) {
 	if len(t.Dependencies) == 0 && len(t.Dependents) == 0 {
 		return
 	}
