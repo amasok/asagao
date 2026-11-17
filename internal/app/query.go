@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -18,6 +19,7 @@ type QueryStore interface {
 	GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error)
 	TaskSummaries(ctx context.Context, gids []string) (map[string]readmodel.TaskSummary, error)
 	TaskFollowers(ctx context.Context, taskGID string) ([]readmodel.UserRef, error)
+	TaskTags(ctx context.Context, taskGID string) ([]model.Ref, error)
 	GetAttachment(ctx context.Context, gid string) (*readmodel.AttachmentView, error)
 	RealGID(ctx context.Context, gid string) (string, error)
 	ListTags(ctx context.Context) ([]readmodel.TagCount, error)
@@ -81,6 +83,11 @@ func (q Query) TaskSummaries(ctx context.Context, gids []string) (map[string]rea
 // TaskFollowers returns who follows a task.
 func (q Query) TaskFollowers(ctx context.Context, taskGID string) ([]readmodel.UserRef, error) {
 	return q.Store.TaskFollowers(ctx, taskGID)
+}
+
+// TaskTags returns the gids and names of a task's tags.
+func (q Query) TaskTags(ctx context.Context, taskGID string) ([]model.Ref, error) {
+	return q.Store.TaskTags(ctx, taskGID)
 }
 
 // GetAttachment returns one cached attachment.

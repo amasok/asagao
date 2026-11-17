@@ -123,7 +123,9 @@
 - 4 つ目 (その 4): 読み取りのポート。`app.Query` (各メソッドは store の同じ名前のものを呼ぶだけ) と、そのポート `app.QueryStore` を置いた (ADR 0009)。入り口はまだ変えない。
 - 5 つ目 (MCP): MCP の読み取りを `app.Query` 経由にした (`Server.query()`)。表示の型・一覧の条件・エラー・文言も、store の別名ではなく readmodel (と `outbox.Op`) を使う。MCP に残る store は、`*store.Store` (書き込みのユースケースと `sync.Syncer` に渡す。d3・d4)、`ReplaceInlineAssets`・`IsImageName` (表示の手伝い。readmodel に移すかは CLI・TUI の単位で決める) だけ。
 - 6 つ目 (CLI): CLI の読み取りを `app.Query` 経由にした (`query(st)`)。表示の型・一覧の条件・エラー・文言は readmodel、`SubtypeLabel`・`ApprovalLabel` は `domain/task` を使う。CLI に残る store は、`*store.Store` と `store.Open` (組み立て。d4)、書き込み (`MarkDiscardsNotified`・`SetInboxWriteForbidden`・`ResetWithBackup` と `AnyUnsent`)、`IsLocalGID`、`auth` のログインのあとの確認 (`SyncState(KeyMeGID)`) だけ。最後の 1 つは、"" (まだ同期していない) を許す読み方で、`MeGID` では置き換えられない。ログインの書き込み (`SetInboxWriteForbidden`) と同じ所にあるので、d4 で組み立てを移すときに一緒に形を決める。
-- 次の PR: TUI。`SyncState` (画面の状態) と `TaskTags` (d1 のあと) の形も、そこで決める。
+- 7 つ目 (TUI): TUI の読み取りを `app.Query` 経由にした (`queryOf(st)`)。d1 で `TaskTags` が `model.Ref` を返すようになったので、`QueryStore` に足した。表示の型・エラー・文言は readmodel、outbox の型と状態は `domain/outbox`、種類の名前は `domain/task` を使う。TUI に残る store は、`*store.Store` (組み立て。d4)、書き込み (`ResetWithBackup` と `ResetResult`、`MarkDiscardsNotified`)、画面の状態の保存 (`SyncState`・`SetSyncState` と `KeyCollapsed`)、カスタムフィールドの種類 (`CF*`)、`IsLocalGID`・`InlineAssets`・`ReplaceInlineAssets`。
+  - 画面の状態の保存は、キャッシュの読み取りではなく、画面が自分の状態を書いて読み戻すもの。CLI の `SyncState(KeyMeGID)` と同じく、d4 で組み立てを移すときに形を決める (`QueryStore` には入れない)。
+  - `CF*`・`IsLocalGID`・`InlineAssets`・`ReplaceInlineAssets` は、store の中の型や決まり (`domain/gid` など) を呼ぶだけの関数と定数なので、入り口から store の import をなくすとき (d4) に、行き先 (readmodel か domain) と一緒に移す。
 
 ## 段階 d: ポート (Asana と認証)
 

@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Choosers for fields that have a fixed set of values, so nothing has to be typed:
@@ -58,7 +58,7 @@ func (m *Model) openDuePicker() tea.Cmd {
 	return nil
 }
 
-func (m *Model) setDue(t store.TaskSummary, due string) tea.Cmd {
+func (m *Model) setDue(t readmodel.TaskSummary, due string) tea.Cmd {
 	status := "期日を " + longDue(due, "") + " にしました"
 	if due == "" {
 		status = "期日をなしにしました: " + t.Name
@@ -66,7 +66,7 @@ func (m *Model) setDue(t store.TaskSummary, due string) tea.Cmd {
 	return m.updateTask(t, app.TaskUpdate{Due: &due}, status)
 }
 
-func (m *Model) startDuePrompt(t store.TaskSummary) tea.Cmd {
+func (m *Model) startDuePrompt(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptDue)
 	m.dueTask = t
 	m.prompt.SetValue(t.DueOn)
@@ -100,8 +100,8 @@ func (m *Model) openFilterPicker() tea.Cmd {
 // --- tags of a task (multi-select) ---
 
 type taskTagsMsg struct {
-	task store.TaskSummary
-	all  []store.TagCount
+	task readmodel.TaskSummary
+	all  []readmodel.TagCount
 	has  map[string]bool
 	err  error
 }
@@ -114,14 +114,14 @@ func (m *Model) openTagEditor() tea.Cmd {
 	return m.openTagEditorFor(*t)
 }
 
-func (m *Model) openTagEditorFor(task store.TaskSummary) tea.Cmd {
+func (m *Model) openTagEditorFor(task readmodel.TaskSummary) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		all, err := st.ListTags(m.ctx)
+		all, err := queryOf(st).ListTags(m.ctx)
 		if err != nil {
 			return taskTagsMsg{err: err}
 		}
-		mine, err := st.TaskTags(m.ctx, task.GID)
+		mine, err := queryOf(st).TaskTags(m.ctx, task.GID)
 		has := map[string]bool{}
 		for _, r := range mine {
 			has[r.GID] = true
@@ -148,7 +148,7 @@ func (m *Model) showTagEditor(msg taskTagsMsg) {
 	m.picker = p
 }
 
-func (m *Model) toggleTag(t store.TaskSummary, item pickerItem) tea.Cmd {
+func (m *Model) toggleTag(t readmodel.TaskSummary, item pickerItem) tea.Cmd {
 	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
 		if err := relations.SetTag(m.ctx, t.GID, item.value, !item.checked); err != nil {
@@ -158,9 +158,9 @@ func (m *Model) toggleTag(t store.TaskSummary, item pickerItem) tea.Cmd {
 	}
 }
 
-type tagToggledMsg struct{ task store.TaskSummary }
+type tagToggledMsg struct{ task readmodel.TaskSummary }
 
-func (m *Model) startNewTag(t store.TaskSummary) tea.Cmd {
+func (m *Model) startNewTag(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptNewTag)
 	m.tagTask = t
 	return m.prompt.Focus()

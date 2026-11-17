@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
@@ -20,7 +21,7 @@ type imagesReadyMsg struct {
 
 // taskImages lists the images of a task in reading order: images pasted into the
 // description, then into comments, then other image attachments.
-func taskImages(d *store.TaskDetail) []string {
+func taskImages(d *readmodel.TaskDetail) []string {
 	var gids []string
 	seen := map[string]bool{}
 	add := func(gid string) {
