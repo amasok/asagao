@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# Releases are made by .github/workflows/release.yml when a v* tag is pushed.
+# To try it locally (nothing is published):
+#
+#   go run github.com/goreleaser/goreleaser/v2@v2.20.2 release --snapshot --clean
+#
+# The version (v2.20.2) is the same as in release.yml; change both together.
+version: 2
+
+project_name: asagao
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: asagao
+    main: ./cmd/asagao
+    binary: asagao
+    # Every dependency is pure Go (modernc.org/sqlite, go-keyring calls /usr/bin/security on
+    # macOS and D-Bus on Linux), so one ubuntu runner builds all four targets.
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    # The date is the commit's, not the build's, so that the same tag builds the same binary.
+    ldflags:
+      - -s -w
+      - -X github.com/amasok/asagao/internal/cli.version={{ .Version }}
+      - -X github.com/amasok/asagao/internal/cli.commit={{ .FullCommit }}
+      - -X github.com/amasok/asagao/internal/cli.date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-SNAPSHOT-{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^Merge branch "
+
+# A cask, not a formula: goreleaser deprecated `brews` in v2.10, since the formulas it made
+# only repackaged the prebuilt binary, which is what casks are for.
+homebrew_casks:
+  - name: asagao
+    binaries: [asagao]
+    directory: Casks
+    homepage: https://github.com/amasok/asagao
+    description: Asana in the terminal (TUI / CLI / MCP server) with an offline SQLite cache
+    commit_author:
+      name: asagao-release
+      email: noreply@github.com
+    commit_msg_template: "asagao {{ .Tag }}"
+    repository:
+      owner: amasok
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    # The binary is not signed or notarized, so Gatekeeper would refuse to run it the first
+    # time ("cannot be opened because the developer cannot be verified"). Installing it with
+    # Homebrew is the user's choice to trust it; take the quarantine flag off the binary.
+    hooks:
+      post:
+        # -r: xattr -dr exits 0 when the flag is not there (xattr -d would fail the install).
+        # Homebrew's declarative steps: on_macos, not `if OS.mac?` (brew style rejects Ruby
+        # conditionals here). {{ .StagedPath }} becomes Homebrew's {{staged_path}}.
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/asagao"]
+          end
