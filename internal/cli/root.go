@@ -107,8 +107,8 @@ func (a *app) newClient(ctx context.Context, src oauth2.TokenSource) *asana.Clie
 }
 
 // syncer is the Syncer for api and st, with the [sync] settings and the rich text
-// conversion. A nil api leaves
-// Syncer.API unset (offline): a nil *asana.Client in the interface would not be nil.
+// conversion. A nil api leaves Syncer.API unset (offline): a nil *asana.Client in the
+// interface would not be nil.
 func (a *app) syncer(api *asana.Client, st *store.Store) *sync.Syncer {
 	s := &sync.Syncer{Store: st, Cfg: sync.Config(a.cfg.Sync), RichText: richtext.Converter{}}
 	if api != nil {
