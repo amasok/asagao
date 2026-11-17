@@ -41,7 +41,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/sync` | アプリ | 同じ | なし (段階 d で x/oauth2 を外す) | 同期のユースケース (push・照合・pull)。Asana とキャッシュはポート経由 |
 | `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクションだけ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
-| `internal/asana/model` | 共有の型 | (今は `internal/asana` の中) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
+| `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
 | `internal/readmodel` | 共有の型 | (今は `internal/store` の中。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 でタスク・プロジェクト・通知の表示の型、一覧の条件、エラーの値、表示の文言を移した。store には別名が残る) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口が判定に使うエラーの値 (`ErrNotFound` など) |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
@@ -79,13 +79,13 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | cmd/asagao → cli | `Execute` | 許す (組み立て) | — |
 | asana → termsafe | 文字の除去 | 許す | — |
 | auth → auth/tokenstore・config・browser | 保存先、設定、ログインでブラウザを開く | 許す (決まり 3 の例外) | — |
-| auth → asana | `*asana.Error` で 401 の判定 (tokensource.go:56) | 直す | d1 (`asana/model` へ) |
+| auth → asana | なし (401 の判定は `*model.Error`) | 直した | d1 (済み) |
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
-| store → asana | `asana.Task` などの型 (9 ファイル) | 直す | d1 |
+| store → asana | なし (型は `asana/model` から) | 直した | d1 (済み) |
 | store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
 | sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
-| sync → asana | `*asana.Client`、型 | 直す | d1 (型)、d3 (ポート) |
+| sync → asana | `*asana.Client`、型 (型は d1 で `asana/model` に移り、asana は別名) | 直す | d3 (ポートにし、型は `asana/model` で呼ぶ) |
 | sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |
 | sync → config | `SyncConfig`、`CacheDir` | 直す | d3 |
 | sync → termsafe | 比べる前の文字の除去 | 許す | — |

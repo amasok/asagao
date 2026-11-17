@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/task"
@@ -599,11 +599,11 @@ func (s *Store) RealGID(ctx context.Context, gid string) (string, error) {
 }
 
 // ReplaceLocalStory swaps an offline comment for the one Asana created.
-func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string, st asana.Story) error {
+func (s *Store) ReplaceLocalStory(ctx context.Context, localGID, taskGID string, st model.Story) error {
 	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalStory(ctx, tx, localGID, taskGID, st) })
 }
 
-func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string, st asana.Story) error {
+func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string, st model.Story) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ? OR gid = ?", localGID, st.GID); err != nil {
 		return err
 	}
@@ -664,7 +664,7 @@ var (
 )
 
 // TaskFieldValues extracts update_task fields from an API task (for conflict checks).
-func TaskFieldValues(t *asana.Task) map[string]any {
+func TaskFieldValues(t *model.Task) map[string]any {
 	assignee := ""
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
