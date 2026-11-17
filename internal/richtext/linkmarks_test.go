@@ -1,6 +1,9 @@
 package richtext
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Emphasis and code in a link's text stay in the link: ToEditableMarkdown writes them in
 // the link text, and FromMarkdown reads them back (#15).
@@ -75,6 +78,21 @@ func TestLinkTextBlankLine(t *testing.T) {
 		md1, h1, _, h2 := rt2(tc.in)
 		if md1 != tc.md || h1 != out || h2 != out {
 			t.Errorf("in  %q\nmd1 %q (want %q)\nh1  %q (want %q)\nh2  %q", tc.in, md1, tc.md, h1, out, h2)
+		}
+	}
+}
+
+// A link written as its text (with an image, a mention) has its blank lines as one line
+// break: a blank line would end the paragraph (#22).
+func TestLinkTextBlankLineAsText(t *testing.T) {
+	for _, in := range []string{
+		"<body><a href=\"https://e.com\"><img data-asana-gid=\"7\">a\n\nb</a></body>",
+		"<body><a data-asana-gid=\"1\" data-asana-type=\"user\">a\n \n\nb</a></body>",
+		"<body><a href=\"https://e.com\"><br>a\n\nb</a></body>",
+	} {
+		md1, h1, md2, h2 := rt2(in)
+		if strings.Contains(md1, "\n\n") || h1 != h2 || !strings.Contains(h1, "<a ") {
+			t.Errorf("in  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
 		}
 	}
 }

@@ -822,7 +822,9 @@ var selfClosingA = regexp.MustCompile(`<a(\s[^<>]*?)\s*/>`)
 
 func (c *converter) link(n *html.Node) {
 	href := attr(n, "href")
-	text := strings.TrimSpace(textOf(n))
+	// (blank lines in it are one line break: written as the text, a blank line would end
+	// the paragraph, #22; styledLink text is written by walk, which keeps them)
+	text := linkBlankLines.ReplaceAllString(strings.TrimSpace(textOf(n)), "\n")
 	if c.heading > 0 {
 		text = headingBreaks.Replace(text) // a heading is one line
 	}
@@ -872,6 +874,9 @@ func (c *converter) link(n *html.Node) {
 		c.token(")", false, false)
 	}
 }
+
+// linkBlankLines matches a run of blank lines, with the line break before them.
+var linkBlankLines = regexp.MustCompile(`\n(?:[ \t]*\n)+`)
 
 // styledLink reports whether the text of link n has emphasis, code or line breaks in it,
 // and nothing else but text and elements written only as their children: written by walk,
