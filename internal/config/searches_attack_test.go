@@ -114,6 +114,11 @@ func TestSearchFileAttackPermissions(t *testing.T) {
 	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", fi.Mode())
 	}
+	for _, d := range []string{filepath.Join(dir, "sub"), filepath.Join(dir, "sub", "deep")} {
+		if fi, err := os.Stat(d); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", d, fi, err)
+		}
+	}
 }
 
 // Two `searches save` running at once must both end up in the file (no lost update).
