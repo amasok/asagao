@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -26,7 +25,7 @@ func TestFullSyncPrunesGoneWorkspaceAndProjectKeys(t *testing.T) {
 	defer st.Close()
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +85,7 @@ func TestFullSyncEmptyWorkspaceListKeepsTasks(t *testing.T) {
 	defer st.Close()
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -29,10 +28,19 @@ const (
 	modifiedSinceMargin = 2 * time.Minute
 )
 
+// Config is what a sync keeps and fetches (the [sync] table of config.toml; a
+// config.SyncConfig converts to it).
+type Config struct {
+	// CompletedDays is how many days of completed tasks to keep in the local store.
+	CompletedDays int
+	// AllProjects syncs every project in the workspace instead of only projects you are a member of.
+	AllProjects bool
+}
+
 type Syncer struct {
 	API   *asana.Client
 	Store *store.Store
-	Cfg   config.SyncConfig
+	Cfg   Config
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)
 	// CacheDir is where attachments are downloaded (default: config.CacheDir()/attachments).

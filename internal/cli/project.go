@@ -55,7 +55,7 @@ func (a *app) onlineSyncer(ctx context.Context, st *store.Store) (*sync.Syncer, 
 	if err != nil {
 		return nil, fmt.Errorf("Asana に接続できません: %w", err)
 	}
-	return &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}, nil
+	return a.syncer(api, st), nil
 }
 
 func (a *app) projectStatusCmd() *cobra.Command {

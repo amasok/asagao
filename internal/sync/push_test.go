@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -327,7 +326,7 @@ func setupPush(t *testing.T) (*writeServer, *httptest.Server, *Syncer, *store.St
 		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
 		t.Fatal(err)
 	}
-	return ws, srv, &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, st
+	return ws, srv, &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}, st
 }
 
 var now = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)

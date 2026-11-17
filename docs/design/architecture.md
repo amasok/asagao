@@ -87,7 +87,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
 | sync → asana | `*asana.Client`、型 (型は d1 で `asana/model` に移り、asana は別名) | 直す | d3 (ポートにし、型は `asana/model` で呼ぶ) |
 | sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |
-| sync → config | `SyncConfig`、`CacheDir` | 直す | d3 |
+| sync → config | `CacheDir` の既定値 (attachments.go)。`SyncConfig` は d3 で `sync.Config` にした | 直す | d3 |
 | sync → termsafe | 比べる前の文字の除去 | 許す | — |
 | tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
 | mcpserver → store | `*Local` 13 種類と、読み取りの型 約 20 種類 | 直す | a、c2 |

@@ -26,7 +26,7 @@ func (a *app) syncCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			s := &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}
+			s := a.syncer(api, st)
 			if !a.json {
 				s.Progress = func(f string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), "  "+f+"\n", args...) }
 			}

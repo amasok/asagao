@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -101,7 +100,7 @@ func TestRunFullThenIncrementalThenPrune(t *testing.T) {
 	api.BaseURL = srv.URL
 
 	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return now }}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}, now: func() time.Time { return now }}
 
 	// 1st run: full (never synced).
 	res, err := s.Run(ctx, false)
@@ -174,7 +173,7 @@ func TestRunFetchesNestedSubtasks(t *testing.T) {
 	defer st.Close()
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +203,7 @@ func TestRunStopsWhenAccountChanged(t *testing.T) {
 	_ = st.UpdateTaskLocal(ctx, "t9", map[string]any{"completed": true}, time.Now())
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	_, err = (&Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}).Run(ctx, false)
+	_, err = (&Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}).Run(ctx, false)
 	if !errors.Is(err, ErrAccountChanged) {
 		t.Fatalf("run = %v", err)
 	}
@@ -239,7 +238,7 @@ func TestRunSkipsWhileLocked(t *testing.T) {
 	}
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	res, err := s.Run(ctx, false)
 	if !errors.Is(err, ErrPushBusy) || !res.Push.Busy || len(fake.modifiedSince) != 0 {
 		t.Fatalf("run while locked = %+v %v (fetches %d)", res, err, len(fake.modifiedSince))
@@ -281,7 +280,7 @@ func TestRunSendsChangesQueuedDuringPull(t *testing.T) {
 	}
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	res, err := (&Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}).Run(ctx, true)
+	res, err := (&Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}).Run(ctx, true)
 	if err != nil || res.Push.Sent != 1 || res.Push.Remaining != 0 || len(fake.puts) != 1 {
 		t.Fatalf("run = %+v %v (puts %v)", res.Push, err, fake.puts)
 	}
@@ -310,7 +309,7 @@ func TestRunWithoutOptionalTaskFields(t *testing.T) {
 		}
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
-		s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+		s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 		if _, err := s.Run(ctx, false); err != nil {
 			t.Fatalf("%d: sync stopped: %v", status, err)
 		}
@@ -341,7 +340,7 @@ func TestRunPrunesOldResults(t *testing.T) {
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
 	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return now }}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}, now: func() time.Time { return now }}
 	if err := st.SetSyncState(ctx, store.ResultStory+"local:x", "1900"); err != nil {
 		t.Fatal(err)
 	}

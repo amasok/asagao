@@ -205,7 +205,7 @@ func (a *app) fetchDetails(ctx context.Context, st *store.Store, gid string) err
 	if err != nil {
 		return err
 	}
-	return (&sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}).FetchDetails(ctx, gid)
+	return a.syncer(api, st).FetchDetails(ctx, gid)
 }
 
 var weekdays = [...]string{"日", "月", "火", "水", "木", "金", "土"}

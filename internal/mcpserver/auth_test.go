@@ -13,7 +13,6 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -57,7 +56,7 @@ func TestLoginProblemsAreExplainedAndNewLoginIsUsed(t *testing.T) {
 		api.BaseURL = srv.URL
 		api.MaxRetries = 0
 		api.AuthHint = (&auth.Source{Method: "personal_access_token"}).UnauthorizedHint()
-		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
 	}})
 
 	// 1. Not logged in.

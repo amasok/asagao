@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -164,7 +163,7 @@ func TestUpdateProjectOrderAndPartialFailure(t *testing.T) {
 			cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 				c := asana.NewClient(srv.Client())
 				c.BaseURL = srv.URL
-				return &sync.Syncer{API: c, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+				return &sync.Syncer{API: c, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
 			}})
 			args := map[string]any{"project": "新居"}
 			for k, v := range tc.args {
@@ -222,7 +221,7 @@ func TestPushBusyIsNotOffline(t *testing.T) {
 	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
-		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
 	}})
 	unlock, err := st.TryLockPush() // "another process" is sending
 	if err != nil {
@@ -265,7 +264,7 @@ func TestAccountChangedIsExplained(t *testing.T) {
 	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
-		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
 	}})
 
 	var w WriteOutput
@@ -299,7 +298,7 @@ func TestSyncBusyIsNotAnError(t *testing.T) {
 	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
-		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
 	}})
 	unlock, err := st.TryLockPush()
 	if err != nil {

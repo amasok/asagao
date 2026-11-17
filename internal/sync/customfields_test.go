@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -90,7 +89,7 @@ func setupFieldPush(t *testing.T) (*fieldServer, *Syncer, *store.Store) {
 	t.Cleanup(func() { st.Close() })
 	api := asana.NewClient(srv.Client())
 	api.BaseURL, api.MaxRetries = srv.URL, 0
-	s := &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}
+	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
 	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
 		t.Fatal(err)
 	}

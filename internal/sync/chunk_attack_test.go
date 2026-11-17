@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 	_ "modernc.org/sqlite"
 )
@@ -116,7 +115,7 @@ func newChunkEnvTimed(t *testing.T, n int) *chunkEnv {
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
 	e := &chunkEnv{fake: fake, st: st, path: st.Path(), now: time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)}
-	e.s = &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}, now: func() time.Time { return e.now }}
+	e.s = &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}, now: func() time.Time { return e.now }}
 	return e
 }
 

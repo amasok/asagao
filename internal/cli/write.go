@@ -85,7 +85,7 @@ func (a *app) pushNow(ctx context.Context, st *store.Store) (*sync.PushResult, e
 	if err != nil {
 		return nil, err
 	}
-	res, err := (&sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}).Push(ctx)
+	res, err := a.syncer(api, st).Push(ctx)
 	return &res, err
 }
 
