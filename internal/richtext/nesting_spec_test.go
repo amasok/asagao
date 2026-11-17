@@ -129,7 +129,8 @@ func TestFromMarkdownFollowsNestingRules(t *testing.T) {
 		{"- ```\n  a ``` b\n  ```", "<body><ul><li><code>a ``` b</code></li></ul></body>"},
 		{"- a\n  ```\n  ```\n- b", "<body><ul><li>a</li><li>b</li></ul></body>"},
 		{"> - a\n>   ```\n>   c\n>   ```", "<body><blockquote>- a\n<code>c</code></blockquote></body>"},
-		{"- a\n\n      code", "<body><ul><li>a</li></ul>      code</body>"}, // as before: indentation after a blank line is text
+		// code in the item after a blank line (indented past the item's text, #13)
+		{"- a\n\n      code", "<body><ul><li>a\n<code>code</code></li></ul></body>"},
 		// what Asana takes stays as it was
 		{"> # h\n> ```\n> c\n> ```", "<body><blockquote><h1>h</h1><pre>c</pre></blockquote></body>"},
 		{"- a\n  - b", "<body><ul><li>a<ul><li>b</li></ul></li></ul></body>"},
@@ -214,7 +215,7 @@ func genUserMarkdown(r *rand.Rand) (string, []string) {
 // and is stable through another trip (#60).
 func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 	r := rand.New(rand.NewSource(60))
-	fails, skipped := 0, 0
+	fails := 0
 	for i := 0; i < 30000 && fails < 8; i++ {
 		md, words := genUserMarkdown(r)
 		h1 := FromMarkdown(md)
@@ -235,26 +236,14 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 				break
 			}
 		}
-		if unstableOnMain(h1) {
-			skipped++
-			continue
-		}
+		// (an indented setext heading too: its text loses the indentation, #12)
 		md2 := ToEditableMarkdown(h1)
 		if h2 := FromMarkdown(md2); h2 != h1 {
 			fails++
 			t.Errorf("not stable\nmd  %q\nh1  %q\nmd2 %q\nh2  %q", md, h1, md2, h2)
 		}
 	}
-	// what is skipped, so that a wider exclusion shows
-	t.Logf("skipped %d of 30000 as unstable on main too", skipped)
 }
-
-// unstableOnMain reports whether rich text has a shape that does not survive a trip on main
-// either, apart from nesting: a heading with a space at its start (an indented setext
-// heading's, #78).
-func unstableOnMain(h string) bool { return knownUnstable.MatchString(h) }
-
-var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]`)
 
 // liRule matches a rule in a list item.
 var liRule = regexp.MustCompile(`<li>(?:[^<]|<[^/l]|</[^l])*<hr/>`)

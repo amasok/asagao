@@ -835,39 +835,221 @@ func ImageGID(dest string) (string, bool) {
 // and editable Markdown writes it as it is (ToEditableMarkdown). The first indentation
 // character of such a line becomes a character reference ("&#32;" / "&#9;"), which Markdown
 // keeps as text. Lines that are Markdown structure stay as they are: list items and the
-// lines that continue them, quotes, headings, fences and fenced code, rules.
+// lines that continue them, quotes, headings, fences and fenced code, rules. A paragraph
+// that a setext underline makes a heading keeps no indentation as text, as Markdown drops
+// it from a heading's text (the editor writes a heading without it: kept, it would change
+// on the next round trip, #12); its first line loses it, so that it cannot be code.
 func keepIndentation(src string) string {
 	lines := strings.Split(src, "\n")
 	var fence string // the fence of the open code block, "" outside one
 	inItem := false  // in the paragraph of a list item (where indentation is list structure)
+	// the paragraph being read: its quote depth, and its indented lines, which become text
+	// when it ends without a setext underline (each line is looked at once: linear)
+	inPara, paraDepth, paraStart := false, 0, 0
+	var indented []int
+	endPara := func(heading bool) {
+		for _, j := range indented {
+			prefix, rest := cutQuotePrefix(lines[j])
+			trimmed := strings.TrimLeft(rest, " \t")
+			if heading {
+				// the first line's indentation goes (4 columns would make it code); the
+				// paragraph's other lines are left as they are, which Markdown drops too
+				// (taken out, "    # b" would become a heading of its own)
+				if j == paraStart {
+					lines[j] = prefix + trimmed
+				}
+			} else {
+				indent := rest[:len(rest)-len(trimmed)]
+				lines[j] = prefix + indentRef[indent[0]] + indent[1:] + trimmed
+			}
+		}
+		inPara, indented = false, indented[:0]
+	}
+	// the content columns of the open list items (at quote depth itemDepth), outermost
+	// first: a line indented up to one of them, even after a blank line, is in that item
+	// (#13). As Markdown, the deepest item it reaches is the one it goes on.
+	var items []int
+	itemDepth := 0
+	emptyItem := false // the line before started an item with nothing in it
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
+		depth := strings.Count(prefix, ">")
 		trimmed := strings.TrimLeft(rest, " \t")
+		if inPara && depth > paraDepth {
+			endPara(false) // a quote starts (with fewer markers, the line goes on lazily)
+		}
 		if fence != "" {
 			if closesFence(trimmed, fence) {
 				fence = ""
 			}
 			continue
 		}
+		if depth != itemDepth {
+			items, itemDepth = items[:0], depth // (a blank line with fewer ">" ends the quote)
+		}
 		if strings.TrimSpace(trimmed) == "" {
+			endPara(false)
 			inItem = false
+			if emptyItem && len(items) > 0 {
+				items = items[:len(items)-1] // an item starts with at most one blank line
+			}
+			emptyItem = false
 			continue
+		}
+		emptyItem = false
+		col := indentWidth(rest)
+		if !inItem {
+			// not a lazy line of an item's paragraph: the items it does not reach end
+			for len(items) > 0 && items[len(items)-1] > col {
+				items = items[:len(items)-1]
+			}
+		}
+		if inPara {
+			if depth == paraDepth && setextUnderline(rest) {
+				endPara(true)
+				continue
+			}
+			if !interruptsParagraphLine(rest) {
+				// the paragraph goes on (lazily, with fewer ">")
+				if trimmed != rest {
+					indented = append(indented, i)
+				}
+				continue
+			}
+			endPara(false)
 		}
 		if f := openingFence(trimmed); f != "" {
 			fence = f
 			continue
 		}
 		if listItemStart(trimmed) {
+			if inItem {
+				for len(items) > 0 && items[len(items)-1] > col {
+					items = items[:len(items)-1]
+				}
+			}
+			items = append(items, itemContentColumn(rest))
+			emptyItem = strings.TrimSpace(itemText(trimmed)) == ""
 			inItem = true
 			continue
 		}
-		indent := rest[:len(rest)-len(trimmed)]
-		if indent == "" || inItem || blockStart(trimmed) {
+		if inItem || len(items) > 0 {
+			inItem = true // what follows without a blank line is the item's too
 			continue
 		}
-		lines[i] = prefix + indentRef[indent[0]] + indent[1:] + trimmed
+		if blockStart(trimmed) {
+			continue
+		}
+		inPara, paraDepth, paraStart = true, depth, i
+		if trimmed != rest {
+			indented = append(indented, i)
+		}
 	}
+	endPara(false)
 	return strings.Join(lines, "\n")
+}
+
+// indentWidth is the width of the indentation of line, in columns (a tab to the next
+// multiple of 4).
+func indentWidth(line string) int {
+	w := 0
+	for _, c := range []byte(line) {
+		switch c {
+		case ' ':
+			w++
+		case '\t':
+			w += 4 - w%4
+		default:
+			return w
+		}
+	}
+	return w
+}
+
+// itemContentColumn is the column where the content of the list item that line (after its
+// quote prefixes) starts lies: after the marker and the spaces after it, or one space after
+// the marker if there are none, or 5 or more (then the rest is indented code).
+func itemContentColumn(line string) int {
+	col := indentWidth(line)
+	rest := strings.TrimLeft(line, " \t")
+	marker := 1
+	if m := orderedMarker.FindStringSubmatch(rest); m != nil {
+		marker = len(m[1]) + 1
+	}
+	after := rest[marker:]
+	w := col + marker
+	sp := 0
+	for _, c := range []byte(after) {
+		if c == ' ' {
+			sp++
+		} else if c == '\t' {
+			sp += 4 - (w+sp)%4
+		} else {
+			break
+		}
+	}
+	if sp == 0 || sp > 4 || strings.TrimSpace(after) == "" {
+		sp = 1
+	}
+	return w + sp
+}
+
+// interruptsParagraphLine reports whether line (after its quote prefixes) ends the
+// paragraph before it, as CommonMark reads it: a fence, an ATX heading, a rule or a list
+// item that can start a list there, indented by less than 4 columns. Any other line goes
+// on with the paragraph (a setext underline is looked at before).
+func interruptsParagraphLine(line string) bool {
+	if indentWidth(line) >= 4 {
+		return false
+	}
+	t := strings.TrimLeft(line, " \t")
+	return openingFence(t) != "" || atxHeading.MatchString(t) || thematicBreak(t) ||
+		htmlBlockStart.MatchString(t) || listItemStart(t) && interruptsParagraph(t)
+}
+
+// htmlBlockStart matches the start of an HTML block that can end a paragraph (CommonMark's
+// kinds 1 to 6; goldmark reads them so, though FromMarkdown writes them as text).
+var htmlBlockStart = regexp.MustCompile(`(?i)^(?:<(?:script|pre|style|textarea)(?:[ \t>]|$)|<!--|<\?|(?-i:<![A-Z])|<!\[CDATA\[|</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$))`)
+
+// atxHeading matches the start of an ATX heading (without indentation).
+var atxHeading = regexp.MustCompile(`^#{1,6}(?:[ \t]|$)`)
+
+// thematicBreak reports whether line (without indentation) is a rule: 3 or more of "-",
+// "*" or "_", the same one, with spaces or tabs between them.
+func thematicBreak(line string) bool {
+	if line == "" || strings.IndexByte("-*_", line[0]) < 0 {
+		return false
+	}
+	return onlyOf(line, rune(line[0])) && strings.Count(line, line[:1]) >= 3
+}
+
+// itemText is what follows the marker of list item start line (without indentation).
+func itemText(line string) string {
+	if m := orderedMarker.FindStringSubmatch(line); m != nil {
+		return line[len(m[1])+1:]
+	}
+	return line[1:]
+}
+
+// interruptsParagraph reports whether list item start line (without indentation) starts a
+// list right after a paragraph line: an item with text, and if ordered, numbered 1. Any
+// other ("2. a", "-") goes on with the paragraph.
+func interruptsParagraph(line string) bool {
+	if m := orderedMarker.FindStringSubmatch(line); m != nil && strings.TrimLeft(m[1], "0") != "1" {
+		return false
+	}
+	return strings.TrimSpace(itemText(line)) != ""
+}
+
+// setextUnderline reports whether line (after its quote prefixes) is a setext heading
+// underline: "=" or "-" characters only, indented by up to 3 spaces.
+func setextUnderline(line string) bool {
+	t := strings.TrimLeft(line, " ")
+	if len(line)-len(t) > 3 {
+		return false
+	}
+	t = strings.TrimRight(t, " \t")
+	return t != "" && (t[0] == '=' || t[0] == '-') && strings.Count(t, t[:1]) == len(t)
 }
 
 // cutQuotePrefix splits a line into its blockquote markers ("> > ") and the rest.

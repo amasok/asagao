@@ -253,16 +253,43 @@ func (s *Store) UploadAttachmentLocal(ctx context.Context, taskGID, srcPath, cac
 	if err != nil {
 		return "", err
 	}
+	committing := false // fn returned nil: an error from here on came from Commit
+	defer func() {
+		switch {
+		case err == nil:
+		case !committing:
+			_ = os.Remove(dst) // nothing was written: nothing refers to the copy
+		default:
+			s.discardUnrecordedCopy(gid, dst)
+		}
+	}()
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO attachments(gid, parent_gid, name, resource_subtype, host, size, created_at, local_path)
 			VALUES(?, ?, ?, 'asana', 'asana', ?, ?, ?)`, gid, taskGID, name, size, ts, dst); err != nil {
 			return fmt.Errorf("task %s: %w", taskGID, err)
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpUploadAttachment, TaskGID: taskGID, State: OpPending, CreatedAt: ts,
-			Payload: map[string]any{"attachment": gid, "name": name, "path": dst}})
+		if err := saveOp(ctx, tx, &Op{Kind: OpUploadAttachment, TaskGID: taskGID, State: OpPending, CreatedAt: ts,
+			Payload: map[string]any{"attachment": gid, "name": name, "path": dst}}); err != nil {
+			return err
+		}
+		committing = true
+		return nil
 	})
 	return gid, err
+}
+
+// discardUnrecordedCopy removes dst, the cached copy of the attachment gid, after the
+// commit recording it returned an error, so no file is left that nothing refers to.
+// The file stays when the row is there after all (the commit went through: the outbox
+// op still needs it) or when that can't be checked: an unused file is better than an
+// upload that has lost its file.
+func (s *Store) discardUnrecordedCopy(gid, dst string) {
+	var n int
+	if err := s.db.QueryRowContext(context.Background(), `SELECT count(*) FROM attachments WHERE gid = ?`, gid).Scan(&n); err != nil || n != 0 {
+		return
+	}
+	_ = os.Remove(dst)
 }
 
 // MaxUploadSize is the largest file that can be attached (Asana's limit).
@@ -283,7 +310,8 @@ func copyFile(src, dst string, want os.FileInfo, limit int64) (int64, error) {
 	} else if !got.Mode().IsRegular() || !os.SameFile(got, want) {
 		return 0, fmt.Errorf("%s が確認中に変わりました", src)
 	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// O_EXCL: never write over (or, on failure, remove) a file that was already there.
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
 	}
