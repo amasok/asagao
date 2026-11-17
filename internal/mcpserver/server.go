@@ -20,6 +20,8 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
@@ -56,6 +58,9 @@ type Server struct {
 	mu     stdsync.Mutex
 	syncer *sync.Syncer
 }
+
+// query reads the local cache (app.Query over the store).
+func (s *Server) query() app.Query { return app.Query{Store: s.Store} }
 
 // New builds the MCP server with all tools registered.
 func (s *Server) New() *mcp.Server {
@@ -163,8 +168,8 @@ type SearchInput struct {
 }
 
 type TasksOutput struct {
-	Tasks []store.TaskSummary `json:"tasks"`
-	Count int                 `json:"count"`
+	Tasks []readmodel.TaskSummary `json:"tasks"`
+	Count int                     `json:"count"`
 }
 
 type GetTaskInput struct {
@@ -173,7 +178,7 @@ type GetTaskInput struct {
 }
 
 type GetTaskOutput struct {
-	Task *store.TaskDetail `json:"task"`
+	Task *readmodel.TaskDetail `json:"task"`
 	// DescriptionMarkdown is the description as Markdown (images as ![画像](asana:<gid>),
 	// readable with get_attachment).
 	DescriptionMarkdown string `json:"description_markdown"`
@@ -196,7 +201,7 @@ type ListProjectsInput struct {
 }
 
 type ProjectsOutput struct {
-	Projects []store.ProjectView `json:"projects"`
+	Projects []readmodel.ProjectView `json:"projects"`
 }
 
 type SyncInput struct {
@@ -212,7 +217,7 @@ type SyncStatusOutput struct {
 	Failed   int        `json:"failed"`
 	// Outbox lists local changes not yet sent. Conflicts need the user to decide
 	// (asagao TUI "!" or `asagao outbox resolve`).
-	Outbox []store.Op `json:"outbox"`
+	Outbox []outbox.Op `json:"outbox"`
 }
 
 type SyncOutput struct {
@@ -279,7 +284,7 @@ type RenameSectionInput struct {
 }
 
 type TagsOutput struct {
-	Tags []store.TagCount `json:"tags"`
+	Tags []readmodel.TagCount `json:"tags"`
 }
 
 type AddCommentInput struct {
@@ -310,7 +315,7 @@ type WriteOutput struct {
 	Sent bool   `json:"sent"`
 	Note string `json:"note,omitempty"`
 	// Discarded lists queued changes dropped because what they change was deleted in Asana.
-	Discarded []store.Discard `json:"discarded,omitempty"`
+	Discarded []readmodel.Discard `json:"discarded,omitempty"`
 }
 
 // --- read tools ---
@@ -331,7 +336,7 @@ func (s *Server) listTasks(ctx context.Context, _ *mcp.CallToolRequest, in TaskF
 	if err != nil {
 		return nil, TasksOutput{}, err
 	}
-	tasks, err := s.Store.ListTasks(ctx, f)
+	tasks, err := s.query().ListTasks(ctx, f)
 	return nil, TasksOutput{Tasks: tasks, Count: len(tasks)}, err
 }
 
@@ -344,12 +349,12 @@ func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 		return nil, TasksOutput{}, err
 	}
 	f.Query = in.Query
-	tasks, err := s.Store.ListTasks(ctx, f)
+	tasks, err := s.query().ListTasks(ctx, f)
 	return nil, TasksOutput{Tasks: tasks, Count: len(tasks)}, err
 }
 
-func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee string, defaultCompleted *bool) (store.TaskFilter, error) {
-	return s.Store.BuildFilter(ctx, store.FilterSpec{
+func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee string, defaultCompleted *bool) (readmodel.TaskFilter, error) {
+	return s.query().BuildFilter(ctx, readmodel.FilterSpec{
 		Assignee: in.Assignee, DefaultAssignee: defaultAssignee,
 		Project: in.Project, Section: in.Section, Tag: in.Tag, Field: in.Field,
 		DueBefore: in.DueBefore, DueAfter: in.DueAfter,
@@ -365,7 +370,7 @@ func (s *Server) getTask(ctx context.Context, _ *mcp.CallToolRequest, in GetTask
 			out.Note = "Asana could not be reached; showing the local cache: " + err.Error()
 		}
 	}
-	d, err := s.Store.GetTask(ctx, in.GID)
+	d, err := s.query().GetTask(ctx, in.GID)
 	if err != nil {
 		return nil, out, err
 	}
@@ -397,21 +402,21 @@ func editableMarkdown(htmlText, plain string) string {
 }
 
 func (s *Server) listProjects(ctx context.Context, _ *mcp.CallToolRequest, in ListProjectsInput) (*mcp.CallToolResult, ProjectsOutput, error) {
-	ps, err := s.Store.ListProjects(ctx, !in.All)
+	ps, err := s.query().ListProjects(ctx, !in.All)
 	return nil, ProjectsOutput{Projects: ps}, err
 }
 
 type UsersOutput struct {
-	Users []store.UserRef `json:"users"`
+	Users []readmodel.UserRef `json:"users"`
 }
 
 func (s *Server) listUsers(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, UsersOutput, error) {
-	users, err := s.Store.ListUsers(ctx)
+	users, err := s.query().ListUsers(ctx)
 	return nil, UsersOutput{Users: users}, err
 }
 
 func (s *Server) listTags(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, TagsOutput, error) {
-	tags, err := s.Store.ListTags(ctx)
+	tags, err := s.query().ListTags(ctx)
 	return nil, TagsOutput{Tags: tags}, err
 }
 
@@ -422,15 +427,15 @@ func (s *Server) syncStatus(ctx context.Context, _ *mcp.CallToolRequest, _ struc
 
 func (s *Server) status(ctx context.Context) (SyncStatusOutput, error) {
 	var out SyncStatusOutput
-	stats, err := s.Store.Stats(ctx)
+	stats, err := s.query().Stats(ctx)
 	if err != nil {
 		return out, err
 	}
 	out.LastSync, out.Tasks, out.Open = stats.LastSync, stats.Tasks, stats.OpenTasks
-	if out.Pending, out.Conflict, out.Failed, err = s.Store.OutboxCounts(ctx); err != nil {
+	if out.Pending, out.Conflict, out.Failed, err = s.query().OutboxCounts(ctx); err != nil {
 		return out, err
 	}
-	out.Outbox, err = s.Store.ListOps(ctx)
+	out.Outbox, err = s.query().ListOps(ctx)
 	return out, err
 }
 
@@ -515,7 +520,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if changes.Count() == 0 && edit.Empty() && len(in.CustomFields) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
-	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
+	if _, err := s.query().GetTask(ctx, in.GID); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	// Resolve every custom field value before changing anything.
@@ -561,12 +566,12 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 // accountChangedNote explains sync.ErrAccountChanged to the model. Resetting is left to
 // the user (TUI or CLI): this server never deletes local data.
 func (s *Server) accountChangedNote(ctx context.Context) string {
-	n, _ := s.Store.UnsentCount(ctx)
+	n, _ := s.query().UnsentCount(ctx)
 	return fmt.Sprintf("the Asana account now logged in is not the one this local data was synced with, so syncing is stopped "+
 		"(%d unsent change(s) from the previous account). Tell the user, and let them choose: log in again with the previous "+
 		"account (`asagao auth login`) to send the changes, or reset the local data to use the new account "+
 		"(`asagao reset`, or \"ローカルデータを初期化\" in the TUI menu; unsent changes are backed up to a JSON file first). "+
-		"This MCP server cannot reset. (%s)", n, store.AccountChangedHelp(n, "asagao reset"))
+		"This MCP server cannot reset. (%s)", n, readmodel.AccountChangedHelp(n, "asagao reset"))
 }
 
 // push sends the outbox now. A failure is reported in the output, not as a tool error:
@@ -607,7 +612,7 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 	default:
 		out.Sent = true
 	}
-	if real, err := s.Store.RealGID(ctx, taskGID); err == nil {
+	if real, err := s.query().RealGID(ctx, taskGID); err == nil {
 		out.TaskGID = real
 	}
 	for _, d := range res.Discarded {
@@ -696,9 +701,9 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 		return nil, AttachmentOutput{}, err
 	}
 	out := AttachmentOutput{LocalPath: path}
-	if a, err := s.Store.GetAttachment(ctx, in.GID); err == nil {
+	if a, err := s.query().GetAttachment(ctx, in.GID); err == nil {
 		out.Name, out.IsImage = a.Name, a.IsImage
-	} else if errors.Is(err, store.ErrNotFound) {
+	} else if errors.Is(err, readmodel.ErrNotFound) {
 		// not recorded: its task in Asana is not in the cache (e.g. an image copied from
 		// another task); the cached file is named "<gid>-name"
 		out.Name = strings.TrimPrefix(filepath.Base(path), in.GID+"-")
@@ -751,10 +756,10 @@ type ProjectInput struct {
 }
 
 type ProjectOutput struct {
-	Project  store.ProjectView `json:"project"`
-	Members  []store.UserRef   `json:"members"`
-	Statuses []StatusOutput    `json:"status_updates"`
-	Note     string            `json:"note,omitempty"`
+	Project  readmodel.ProjectView `json:"project"`
+	Members  []readmodel.UserRef   `json:"members"`
+	Statuses []StatusOutput        `json:"status_updates"`
+	Note     string                `json:"note,omitempty"`
 }
 
 type StatusOutput struct {
@@ -769,7 +774,7 @@ type StatusOutput struct {
 
 func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in ProjectInput) (*mcp.CallToolResult, ProjectOutput, error) {
 	var out ProjectOutput
-	gid, err := s.Store.ResolveProject(ctx, in.Project)
+	gid, err := s.query().ResolveProject(ctx, in.Project)
 	if err != nil {
 		return nil, out, err
 	}
@@ -778,7 +783,7 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 			out.Note = "status updates from the local cache: " + err.Error()
 		}
 	}
-	projects, err := s.Store.ListProjects(ctx, false)
+	projects, err := s.query().ListProjects(ctx, false)
 	if err != nil {
 		return nil, out, err
 	}
@@ -787,10 +792,10 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 			out.Project = p
 		}
 	}
-	if out.Members, err = s.Store.ProjectMembers(ctx, gid); err != nil {
+	if out.Members, err = s.query().ProjectMembers(ctx, gid); err != nil {
 		return nil, out, err
 	}
-	updates, err := s.Store.StatusUpdates(ctx, gid)
+	updates, err := s.query().StatusUpdates(ctx, gid)
 	if err != nil {
 		return nil, out, err
 	}
@@ -848,15 +853,15 @@ type UpdateProjectInput struct {
 
 // updateProject checks all of its input before changing anything in Asana.
 func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in UpdateProjectInput) (*mcp.CallToolResult, ProjectWriteOutput, error) {
-	gid, err := s.Store.ResolveProject(ctx, in.Project)
+	gid, err := s.query().ResolveProject(ctx, in.Project)
 	if err != nil {
 		return nil, ProjectWriteOutput{}, err
 	}
-	add, err := s.Store.ResolveUsers(ctx, in.AddMembers)
+	add, err := s.query().ResolveUsers(ctx, in.AddMembers)
 	if err != nil {
 		return nil, ProjectWriteOutput{}, fmt.Errorf("add_members: %w", err)
 	}
-	remove, err := s.Store.ResolveUsers(ctx, in.RemoveMembers)
+	remove, err := s.query().ResolveUsers(ctx, in.RemoveMembers)
 	if err != nil {
 		return nil, ProjectWriteOutput{}, fmt.Errorf("remove_members: %w", err)
 	}
