@@ -42,7 +42,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクションだけ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
 | `internal/asana/model` | 共有の型 | (今は `internal/asana` の中) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
-| `internal/readmodel` | 共有の型 | (今は `internal/store` の中。`UserRef` だけ a4 で移した) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口が判定に使うエラーの値 (`ErrNotFound` など) |
+| `internal/readmodel` | 共有の型 | (今は `internal/store` の中。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 の最初の PR でタスクとプロジェクトの表示の型を移した) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口が判定に使うエラーの値 (`ErrNotFound` など) |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
 | `internal/richtext` | adapter | 同じ | goldmark、x/net/html | Markdown ⇔ rich text の変換。決まりは `domain/rich` を読む |

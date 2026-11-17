@@ -4,7 +4,9 @@
 // (docs/design/adr/0006-application-use-cases.md, decision 4).
 //
 // The store keeps type aliases for them (store.UserRef), so its methods and their callers
-// do not change. The rest of the read types move here in stage c2 (migration-plan.md).
+// do not change. Stage c2 (migration-plan.md) moves the read types here: the views of
+// tasks (tasks.go) and of projects (projects.go) so far; the notifications, the wording of
+// the views and the errors come next.
 package readmodel
 
 // UserRef is a user as the CLI and MCP show it (keep the JSON stable), and the author of

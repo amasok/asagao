@@ -854,15 +854,8 @@ func reapplyCustomFieldOps(ctx context.Context, tx *sql.Tx, taskGID string) erro
 
 // --- filter ---
 
-// FieldOptions lists the choices of the enum / multi_enum fields that tasks in the store
-// use, for choosing a filter: "field name: option name".
-type FieldOption struct {
-	FieldGID  string `json:"field_gid"`
-	FieldName string `json:"field_name"`
-	Option    string `json:"option"`
-	Color     string `json:"color,omitempty"`
-	Tasks     int    `json:"tasks"` // incomplete tasks with this value
-}
+// FieldOption is readmodel.FieldOption.
+type FieldOption = readmodel.FieldOption
 
 // ListFieldOptions returns the enum options in use by incomplete tasks, by field.
 func (s *Store) ListFieldOptions(ctx context.Context) ([]FieldOption, error) {

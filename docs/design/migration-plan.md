@@ -115,6 +115,11 @@
 - `DiscardDetails(d, toMarkdown)`: 破棄した変更の rich text を Markdown にする変換を、呼ぶ側 (TUI と CLI) が渡す (`richtext.ToEditableMarkdown`)。どの欄を変換し、空なら平文にする、は store のまま。
 - store から richtext の import は、まだ残る。`FitQueuedRichText` (outbox_richtext.go、#71。この表を書いたあとに入った) が `richtext.Target.Fit` を使うため。呼んでいるのは `sync.Push` で、sync は richtext を import できないので、変換を外から渡すには sync のポートと組み立てが要る。それは d3 (sync のポート) で行う。許可リストの行の理由を書き換えた。
 
+### c2 の中身
+
+- 最初の PR (読み取りの型の移動、その 1): タスクとプロジェクトの表示の型を `internal/readmodel` に移した。`tasks.go` に `TaskSummary`・`TaskDetail`・`MembershipView`・`StoryView`・`TaskRef`・`AttachmentView`・`DependencyView`・`TagCount`・`FieldOption` と、一覧の条件 `TaskFilter` (読み取りのポートの引数になるため)。`projects.go` に `ProjectView`・`SectionView`・`StatusUpdateView`・`Stats`。中身はそのまま (JSON の形を `readmodel/views_test.go` で押さえた)。store には型の別名を残したので、store の関数の形も、入り口も変わらない。
+- 次の PR: 通知の型 (`Notification`・`InboxState` はメソッドを持つので、メソッドごと移す)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、エラーの値 (`ErrNotFound` など)。outbox の型 (`Op` など) は b2 で `domain/outbox` に移るので、ここでは扱わない。そのあと読み取りのポート (`app.TaskQuery` ほか)。
+
 ## 段階 d: ポート (Asana と認証)
 
 | PR | 範囲 |

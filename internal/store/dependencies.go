@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Dependencies: a task waits for its dependencies; its dependents wait for it. Each link is
@@ -24,15 +25,8 @@ const (
 	MaxDependencies = 30
 )
 
-// DependencyView is a task linked to another by a dependency.
-type DependencyView struct {
-	GID             string `json:"gid"`
-	Name            string `json:"name"`
-	Completed       bool   `json:"completed"`
-	ResourceSubtype string `json:"resource_subtype,omitempty"`
-	// Pending: the link was added here and not sent yet.
-	Pending bool `json:"pending,omitempty"`
-}
+// DependencyView is readmodel.DependencyView.
+type DependencyView = readmodel.DependencyView
 
 // upsertTaskDependencies replaces a task's links (each direction only if the response had it).
 func upsertTaskDependencies(ctx context.Context, tx *sql.Tx, t asana.Task) error {

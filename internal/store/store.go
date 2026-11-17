@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"modernc.org/sqlite"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 type Store struct {
@@ -191,15 +193,8 @@ func (s *Store) SetSyncState(ctx context.Context, key, value string) error {
 	return err
 }
 
-// Stats summarises what is in the store (for `sync status`).
-type Stats struct {
-	Workspaces int        `json:"workspaces"`
-	Projects   int        `json:"projects"`
-	Sections   int        `json:"sections"`
-	Tasks      int        `json:"tasks"`
-	OpenTasks  int        `json:"open_tasks"`
-	LastSync   *time.Time `json:"last_sync,omitempty"`
-}
+// Stats is readmodel.Stats.
+type Stats = readmodel.Stats
 
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	var st Stats
