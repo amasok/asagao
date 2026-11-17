@@ -208,10 +208,10 @@ func buildAPIRequest(path string, o apiOpts, stdin io.Reader) (apiRequest, error
 	default:
 		return apiRequest{}, fmt.Errorf("メソッドは GET / POST / PUT / DELETE のどれかにしてください: %q", o.method)
 	}
-	if strings.Contains(path, "://") {
-		return apiRequest{}, fmt.Errorf("%w (URL ではなくパスを渡してください)", model.ErrRawPath)
-	}
 	if !strings.HasPrefix(path, "/") {
+		if p, _, _ := strings.Cut(path, "?"); strings.Contains(p, ":") {
+			return apiRequest{}, fmt.Errorf("%w (URL ではなくパスを渡してください)", model.ErrRawPath)
+		}
 		path = "/" + path
 	}
 	if err := model.CheckRawPath(path); err != nil {

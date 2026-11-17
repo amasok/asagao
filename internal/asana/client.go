@@ -136,10 +136,9 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 	return &env, nil
 }
 
-// reply is a response as it arrived: its status, headers and body.
+// reply is a response as it arrived: its status and body.
 type reply struct {
 	status int
-	header http.Header
 	body   []byte
 }
 
@@ -183,7 +182,7 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, pa
 			}
 			continue
 		}
-		return &reply{status: resp.StatusCode, header: resp.Header, body: b}, nil
+		return &reply{status: resp.StatusCode, body: b}, nil
 	}
 }
 

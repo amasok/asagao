@@ -36,6 +36,7 @@ func TestBuildAPIRequest(t *testing.T) {
 			"/tasks", `{"data":{"b":false,"big":12345678901234567890,"completed":"true","custom_fields":{"9":"高"},"done":true,"f":-1.5e3,"n":12,"name":"買う","projects":["1","2"],"s":"0x1","z":null}}`},
 		{"put nested append", "/x", apiOpts{method: "PUT", rawFields: []string{"a[b][]=1", "a[b][]=2", "a[c]=3"}},
 			"/x", `{"data":{"a":{"b":["1","2"],"c":"3"}}}`},
+		{"URL in the query", "/x?u=https://example.com/a", apiOpts{method: "GET"}, "/x?u=https://example.com/a", ""},
 		{"post without fields has no body", "/tasks/1/duplicate", apiOpts{method: "POST"}, "/tasks/1/duplicate", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,6 +77,7 @@ func TestBuildAPIRequestErrors(t *testing.T) {
 		{"absolute URL", "https://evil.example/x", apiOpts{method: "GET"}, ""},
 		{"asana URL too", "https://app.asana.com/api/1.0/users/me", apiOpts{method: "GET"}, ""},
 		{"scheme relative", "//evil.example/x", apiOpts{method: "GET"}, ""},
+		{"host without scheme", "evil.example:443/x", apiOpts{method: "GET"}, ""},
 		{"dot dot", "/tasks/../../x", apiOpts{method: "GET"}, ""},
 		{"encoded dot dot", "/%2e%2e/x", apiOpts{method: "GET"}, ""},
 		{"unknown method", "/x", apiOpts{method: "PATCH"}, ""},
