@@ -89,6 +89,11 @@ type CreateHereInput struct {
 	Parent    string // gid of the parent task: a subtask
 	Project   string // gid of the project the user is looking at
 	Section   string // gid of a section of Project ("": the first section)
+
+	// Assignee is the gid to assign instead of the default (nil: the default below;
+	// "": no one). Tags are existing tags (gids) to add after the task is created.
+	Assignee *string
+	Tags     []task.TagRef
 }
 
 // CreateHere creates a task from gids, without resolving names, locally and queued in the
@@ -97,6 +102,10 @@ type CreateHereInput struct {
 //   - A subtask (Parent) gets its workspace from the parent and is in no project.
 //   - In Project, the task goes to Section, or to the first section, assigned to no one.
 //   - Otherwise it goes to the default workspace, assigned to me.
+//
+// Assignee, when given, replaces the default. Tags are added after the task is created,
+// as in Create: if that fails, the task is still created and its gid is returned with
+// the error.
 //
 // Errors are the store's, as they are (there is no user input to name in a *FieldError).
 // Nothing is written when one comes before the task is created.
@@ -119,9 +128,21 @@ func (t *Tasks) CreateHere(ctx context.Context, in CreateHereInput) (string, err
 			return "", err
 		}
 		// "me" resolves to my gid without a name lookup (the store's MeGID)
-		if nt.AssigneeGID, err = t.Store.ResolveUser(ctx, "me"); err != nil {
-			return "", err
+		if in.Assignee == nil {
+			if nt.AssigneeGID, err = t.Store.ResolveUser(ctx, "me"); err != nil {
+				return "", err
+			}
 		}
 	}
-	return t.Store.CreateTaskLocal(ctx, nt, now)
+	if in.Assignee != nil {
+		nt.AssigneeGID = *in.Assignee
+	}
+	gid, err := t.Store.CreateTaskLocal(ctx, nt, now)
+	if err != nil || len(in.Tags) == 0 {
+		return gid, err
+	}
+	if err := t.Store.ApplyTagEdit(ctx, gid, task.TagEdit{Add: in.Tags}, now); err != nil {
+		return gid, err
+	}
+	return gid, nil
 }

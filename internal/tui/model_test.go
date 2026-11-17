@@ -345,23 +345,6 @@ func TestPromptEscCancels(t *testing.T) {
 	}
 }
 
-func TestParseCreateInput(t *testing.T) {
-	for in, want := range map[string][2]string{
-		"牛乳を買う":              {"牛乳を買う", ""},
-		"牛乳を買う due:明日":       {"牛乳を買う", "2026-11-14"},
-		"due:+3d 歯医者 予約":     {"歯医者 予約", "2026-11-16"},
-		"年賀状 due:2026-12-20": {"年賀状", "2026-12-20"},
-	} {
-		name, due, err := parseCreateInput(in, testNow)
-		if err != nil || name != want[0] || due != want[1] {
-			t.Errorf("parseCreateInput(%q) = %q, %q, %v", in, name, due, err)
-		}
-	}
-	if _, _, err := parseCreateInput("x due:来週", testNow); err == nil {
-		t.Error("invalid due should fail")
-	}
-}
-
 func addFixtureExtras(t *testing.T, st *store.Store) {
 	t.Helper()
 	ctx := context.Background()

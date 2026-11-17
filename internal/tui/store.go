@@ -22,6 +22,7 @@ type Store interface {
 	app.NotificationStore
 	app.OutboxStore
 	app.QueryStore
+	app.QuickAddStore
 	sync.LocalStore
 
 	SyncState(ctx context.Context, key string) (string, error)

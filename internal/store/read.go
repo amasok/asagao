@@ -437,6 +437,29 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserRef, error) {
 	return users, rows.Err()
 }
 
+// UserContact is readmodel.UserContact.
+type UserContact = readmodel.UserContact
+
+// ListUserContacts returns known users with their name and email, me first.
+func (s *Store) ListUserContacts(ctx context.Context) ([]UserContact, error) {
+	me, _ := s.SyncState(ctx, KeyMeGID)
+	rows, err := s.db.QueryContext(ctx, `SELECT gid, name, email FROM users
+		WHERE name <> '' OR email <> '' ORDER BY gid = ? DESC, name`, me)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []UserContact{}
+	for rows.Next() {
+		var u UserContact
+		if err := rows.Scan(&u.GID, &u.Name, &u.Email); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 // ResolveUser turns "me", "none"/"" (unassigned), a gid, or a unique (partial) name or
 // email into a user gid ("" for unassigned). A numeric gid of a user not in the store yet
 // is passed through as is.
