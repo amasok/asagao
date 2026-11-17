@@ -470,6 +470,8 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
+	// Stories stored after this (a comment sent meanwhile) are newer than the list (#40).
+	storiesFrom := s.clock()
 	stories, err := s.API.Stories(ctx, taskGID)
 	if err != nil {
 		return err
@@ -485,7 +487,7 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 			return err
 		}
 	}
-	if err := s.Store.ReplaceStories(ctx, taskGID, stories, s.clock()); err != nil {
+	if err := s.Store.ReplaceStories(ctx, taskGID, stories, storiesFrom); err != nil {
 		return err
 	}
 	s.fetchDependencies(ctx, *t)
