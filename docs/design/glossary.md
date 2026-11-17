@@ -22,26 +22,26 @@
 
 | 用語 | 意味 | コードの名前 |
 |---|---|---|
-| outbox | 送信待ちの操作の表。オフラインでも書き込めるのはこれがあるから | `outbox` 表, `store.Op` |
-| 操作 (op) | outbox の 1 行。種類 (kind)・対象 (`task_gid`)・payload・base を持つ | `store.Op` |
-| 操作の種類 | `update_task`・`create_task`・`add_comment` など 18 個 | `store.Op*` 定数 |
+| outbox | 送信待ちの操作の表。オフラインでも書き込めるのはこれがあるから | `outbox` 表, `outbox.Op` (`internal/domain/outbox`) |
+| 操作 (op) | outbox の 1 行。種類 (kind)・対象 (`task_gid`)・payload・base を持つ | `outbox.Op` |
+| 操作の種類 | `update_task`・`create_task`・`add_comment` など 18 個 | `outbox.Kind*` 定数 (store には別名 `store.Op*`) |
 | base | 操作を積んだときの元の値。競合の判断と、捨てたときに戻す値に使う | `Op.Base` |
-| 畳み込み | 新しい操作を積まずに、既にある未送信の操作に変更を合わせること。元の値に戻したら操作を消す | `UpdateTaskLocal` の中 |
-| 状態 | `pending` (未送信)・`sending` (送信中)・`conflict` (競合)・`failed` (失敗) | `store.Op*` 定数 |
+| 畳み込み | 新しい操作を積まずに、既にある未送信の操作に変更を合わせること。元の値に戻したら操作を消す | `outbox.Fold` (`UpdateTaskLocal` が呼ぶ) |
+| 状態 | `pending` (未送信)・`sending` (送信中)・`conflict` (競合)・`failed` (失敗) | `outbox.State*` 定数 (store には別名 `store.Op*`) |
 | 自動確認中 (verify) | 送れたか分からない操作の印。次に送る前に Asana を見て照合する。利用者の操作は要らない | `verify` 列, `MarkOpVerify` |
 | 照合 (reconcile) | 自動確認中の作成について、Asana に既にできているかを探して決めること | `Syncer.reconcile` |
-| 再送してよい | 同じ操作を 2 回送っても結果が変わらないこと。作成は再送してよくない | `store.safeToResend` |
+| 再送してよい | 同じ操作を 2 回送っても結果が変わらないこと。作成は再送してよくない | `outbox.SafeToResend` |
 | 競合 (conflict) | 送る前に Asana を見たら、base ともローカルの値とも違う値になっていたこと | `MarkOpConflict` |
 | 解決 (resolve) | 競合・失敗の操作に、利用者が `keep_local`・`keep_remote`・`retry`・`discard` を指示すること | `app.Outbox.Resolve` (b2 までは `sync.Resolve`) |
 | 捨てた変更 (discard) | 自動または利用者の指示で捨てた操作の記録。payload ごと残す | `discarded_changes` 表 |
-| 送った記録 (result) | ローカル gid と本物の gid の対応。`gid:`・`story:`・`att:`・`status:`・`tag:` | `sync_state` 表, `RecordedResults` |
+| 送った記録 (result) | ローカル gid と本物の gid の対応。`gid:`・`story:`・`att:`・`status:`・`tag:` | `sync_state` 表, `readmodel.Result*` (キーの接頭辞), `RecordedResults` |
 
 ## タスクとその周り
 
 | 用語 | 意味 | コードの名前 |
 |---|---|---|
 | gid | Asana のものの ID (数字の文字列) | `GID` |
-| ローカル gid | まだ Asana に作っていないものの仮の ID。`local:` + 16 桁の 16 進数 | `store.LocalPrefix`, `store.IsLocalGID` |
+| ローカル gid | まだ Asana に作っていないものの仮の ID。`local:` + 16 桁の 16 進数 | `gid.Prefix`, `gid.IsLocal` (`internal/domain/gid`) |
 | タスク | Asana のタスク。サブタスクも同じ。名前は空にできない | `asana.Task` |
 | 種類 (subtype) | `default_task`・`milestone`・`approval` | `resource_subtype` |
 | 承認の状態 | `pending`・`approved`・`rejected`・`changes_requested`。種類が `approval` のタスクだけ | `approval_status` |

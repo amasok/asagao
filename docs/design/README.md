@@ -10,7 +10,7 @@ DDD の考え方で、ドメイン・アプリケーション層・リポジト�
 4. [集約と不変条件](aggregates.md) — 1 つのトランザクションで守る決まり
 5. [目標の構成と依存の向き](architecture.md) — 層、パッケージの置き場所、今との違い
 6. [依存の向きを守らせる方法](dependency-rules.md) — go list を使うテスト (`internal/archtest`)
-7. [移行の順番](migration-plan.md) — 段階 a〜d の PR の範囲
+7. [移行の順番](migration-plan.md) — 段階 a〜d と仕上げ (e1) の PR の範囲。移行は e1 で終わった
 8. [ADR](adr/) — 判断ごとの記録
 
 | ADR | 判断 |
