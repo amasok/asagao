@@ -34,6 +34,8 @@ func TestBuildAPIRequest(t *testing.T) {
 			rawFields: []string{"name=買う", "projects[]=1", "projects[]=2", "custom_fields[9]=高", "completed=true"},
 			fields:    []string{"done=true", "n=12", "f=-1.5e3", "z=null", "s=0x1", "b=false", "big=12345678901234567890"}},
 			"/tasks", `{"data":{"b":false,"big":12345678901234567890,"completed":"true","custom_fields":{"9":"高"},"done":true,"f":-1.5e3,"n":12,"name":"買う","projects":["1","2"],"s":"0x1","z":null}}`},
+		{"-F number with spaces is a string", "/x", apiOpts{method: "PUT", fields: []string{"a=1 ", "b=2\n", "c= 3"}},
+			"/x", `{"data":{"a":"1 ","b":"2\n","c":" 3"}}`},
 		{"put nested append", "/x", apiOpts{method: "PUT", rawFields: []string{"a[b][]=1", "a[b][]=2", "a[c]=3"}},
 			"/x", `{"data":{"a":{"b":["1","2"],"c":"3"}}}`},
 		{"URL in the query", "/x?u=https://example.com/a", apiOpts{method: "GET"}, "/x?u=https://example.com/a", ""},

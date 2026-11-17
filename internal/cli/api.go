@@ -306,7 +306,7 @@ func typedValue(s string) any {
 	case "null":
 		return nil
 	}
-	if s != "" && (s[0] == '-' || (s[0] >= '0' && s[0] <= '9')) && json.Valid([]byte(s)) {
+	if s != "" && s == strings.TrimSpace(s) && (s[0] == '-' || (s[0] >= '0' && s[0] <= '9')) && json.Valid([]byte(s)) {
 		return json.Number(s) // a valid JSON text starting so is a number: sent as written
 	}
 	return s
