@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 func (s *Store) UpsertUser(ctx context.Context, u model.User) error {
@@ -386,7 +387,7 @@ const (
 	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
 	KeyCustomFields = "custom_fields:"
 	// KeyCollapsed + scope: the TUI's collapsed groups of a list ("my", "inbox", or a project gid).
-	KeyCollapsed = "ui:collapsed:"
+	KeyCollapsed = readmodel.KeyCollapsed
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
 	KeyEvents = "events:"
 )

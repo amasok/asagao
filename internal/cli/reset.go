@@ -39,7 +39,7 @@ func (a *app) resetCmd() *cobra.Command {
 			// without it, and afterwards with the backup and in `outbox discarded`).
 			upTo := int64(0)
 			if force {
-				upTo = store.AnyUnsent
+				upTo = readmodel.AnyUnsent
 			}
 			res, err := st.ResetWithBackup(ctx, backupDir(), upTo, time.Now())
 			switch {

@@ -19,7 +19,6 @@ import (
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // EnvClientSecret lets the client secret be passed non-interactively (e.g. `op run`).
@@ -194,7 +193,7 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 	}
 	defer st.Close()
 	_ = st.SetInboxWriteForbidden(ctx, false) // the new login may allow marking notifications
-	if want, err := st.SyncState(ctx, store.KeyMeGID); err != nil || want == "" || want == gid {
+	if want, err := st.SyncState(ctx, readmodel.KeyMeGID); err != nil || want == "" || want == gid {
 		return
 	}
 	n, _ := query(st).UnsentCount(ctx)

@@ -30,12 +30,13 @@ import (
 // have none: nothing is shown and nothing fails.
 
 const (
-	CFText      = "text"
-	CFNumber    = "number"
-	CFEnum      = "enum"
-	CFMultiEnum = "multi_enum"
-	CFDate      = "date"
-	CFPeople    = "people"
+	// The types of custom fields are readmodel's.
+	CFText      = readmodel.CFText
+	CFNumber    = readmodel.CFNumber
+	CFEnum      = readmodel.CFEnum
+	CFMultiEnum = readmodel.CFMultiEnum
+	CFDate      = readmodel.CFDate
+	CFPeople    = readmodel.CFPeople
 
 	// OpSetCustomField sets one custom field of a task (outbox.KindSetCustomField).
 	OpSetCustomField = outbox.KindSetCustomField

@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asagao/internal/store"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
 )
 
 // Keys are organised in three layers:
@@ -184,7 +184,7 @@ func (m *Model) openInBrowser() tea.Cmd {
 	if t == nil {
 		return nil
 	}
-	if store.IsLocalGID(t.GID) {
+	if localgid.IsLocal(t.GID) {
 		m.status = "まだ Asana に送信されていないタスクです"
 		return nil
 	}

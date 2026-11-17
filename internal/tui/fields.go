@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Custom fields: shown in the detail view (enter changes one: a chooser for enum fields,
@@ -26,7 +25,7 @@ func (f fieldFilter) label() string { return f.fieldName + "=" + f.value }
 func fieldBadges(t *readmodel.TaskSummary) string {
 	var b strings.Builder
 	for _, f := range t.CustomFields {
-		if f.Important && f.Display != "" && (f.Type == store.CFEnum || f.Type == store.CFMultiEnum) {
+		if f.Important && f.Display != "" && (f.Type == readmodel.CFEnum || f.Type == readmodel.CFMultiEnum) {
 			b.WriteString(" [" + f.Display + "]")
 		}
 	}
@@ -40,7 +39,7 @@ func (m *Model) editCustomField(t readmodel.TaskSummary, f readmodel.CustomField
 		return nil
 	}
 	switch f.Type {
-	case store.CFEnum, store.CFMultiEnum:
+	case readmodel.CFEnum, readmodel.CFMultiEnum:
 		m.showFieldPicker(t, f)
 		return nil
 	}
@@ -48,11 +47,11 @@ func (m *Model) editCustomField(t readmodel.TaskSummary, f readmodel.CustomField
 	m.fieldTask, m.fieldEdit = t, f
 	m.prompt.Prompt = f.Name + ": "
 	switch f.Type {
-	case store.CFNumber:
+	case readmodel.CFNumber:
 		m.prompt.Placeholder = "数値（空欄で空にする）"
-	case store.CFDate:
+	case readmodel.CFDate:
 		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で空にする）"
-	case store.CFPeople:
+	case readmodel.CFPeople:
 		m.prompt.Placeholder = "me / 名前（カンマ区切りで複数。空欄で空にする）"
 	default:
 		m.prompt.Placeholder = "テキスト（空欄で空にする）"
@@ -69,7 +68,7 @@ func fieldInput(f readmodel.CustomFieldView) string {
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case string:
-		if f.Type == store.CFDate || f.Type == store.CFText {
+		if f.Type == readmodel.CFDate || f.Type == readmodel.CFText {
 			return v
 		}
 	}
@@ -82,7 +81,7 @@ func (m *Model) showFieldPicker(t readmodel.TaskSummary, f readmodel.CustomField
 		m.status = fmt.Sprintf("「%s」の選択肢がまだ取得されていません（同期すると選べます）", f.Name)
 		return
 	}
-	multi := f.Type == store.CFMultiEnum
+	multi := f.Type == readmodel.CFMultiEnum
 	kind, title := pickField, f.Name+"（"+truncateRunes(t.Name, 30)+"）"
 	if multi {
 		kind, title = pickFieldMulti, title+"  enter / space で付け外し・esc で閉じる"

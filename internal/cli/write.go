@@ -15,6 +15,7 @@ import (
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/config"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
@@ -108,7 +109,7 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 		}
 	}
 	// The gid may have changed from local:... to the real one.
-	if r.TaskGID != "" && store.IsLocalGID(r.TaskGID) && r.Sent {
+	if r.TaskGID != "" && localgid.IsLocal(r.TaskGID) && r.Sent {
 		r.TaskGID = ""
 	}
 	if a.json {

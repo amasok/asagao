@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Dependencies, task types and approvals in the detail view: the tasks a task waits for
@@ -152,7 +152,7 @@ func (m *Model) openDependencyTargets(t readmodel.TaskSummary, dependents bool, 
 		}
 		var out []readmodel.TaskSummary
 		for _, c := range tasks {
-			if !linked[c.GID] && !store.IsLocalGID(c.GID) {
+			if !linked[c.GID] && !localgid.IsLocal(c.GID) {
 				linked[c.GID] = true
 				out = append(out, c)
 			}

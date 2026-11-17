@@ -118,7 +118,7 @@ func editableBody(htmlNotes, plain string, imagePath func(gid string) string) st
 	if htmlNotes != "" {
 		return richtext.ToEditableMarkdownWith(htmlNotes, imagePath)
 	}
-	md := richtext.FromPlainEditable(store.ReplaceInlineAssets(plain, func(gid string) string {
+	md := richtext.FromPlainEditable(readmodel.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	}))
 	return richtext.ImageTokenRe.ReplaceAllStringFunc(md, func(tok string) string {

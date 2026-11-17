@@ -27,7 +27,7 @@ func notFound(err error, what string) error {
 // ErrAmbiguous is readmodel.ErrAmbiguous.
 var ErrAmbiguous = readmodel.ErrAmbiguous
 
-const KeyMeGID = "me_gid"
+const KeyMeGID = readmodel.KeyMeGID
 
 // --- views (the JSON shapes returned by the CLI and MCP; keep them stable) ---
 

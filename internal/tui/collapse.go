@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -22,7 +23,7 @@ func (m *Model) scopeKey() string {
 	return "my"
 }
 
-func collapsedStateKey(scope string) string { return store.KeyCollapsed + scope }
+func collapsedStateKey(scope string) string { return readmodel.KeyCollapsed + scope }
 
 // loadCollapsed reads the collapsed group keys of a scope (in a command goroutine).
 func loadCollapsed(ctx context.Context, st *store.Store, scope string) map[string]bool {

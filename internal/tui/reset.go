@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Resetting the local data (to use another Asana account), with a confirmation that shows
@@ -21,7 +20,7 @@ type (
 		err    error
 	}
 	resetDoneMsg struct {
-		res store.ResetResult
+		res readmodel.ResetResult
 		err error
 	}
 )

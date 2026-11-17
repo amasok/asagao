@@ -12,8 +12,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/imageview"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -28,7 +28,7 @@ func textMarkdown(htmlText, plain string) string {
 	if htmlText != "" {
 		return richtext.ToMarkdown(htmlText)
 	}
-	plain = store.ReplaceInlineAssets(plain, func(gid string) string {
+	plain = readmodel.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	})
 	return richtext.FromPlain(plain)
