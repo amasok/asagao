@@ -84,7 +84,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
 | store → asana | なし (型は `asana/model` から) | 直した | d1 (済み) |
-| store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
+| store → richtext | なし。`FitQueuedRichText` は変換を関数で受け (sync のポート `RichText`、`richtext.Converter.Fit`)、送り先は `domain/rich` で決める。`ToEditableMarkdown` は c1 で呼ぶ側に移した | 直した | d3 (済み) |
 | sync → store | ストアそのものは d3 で sync のポート `LocalStore` にした (型は domain/outbox・readmodel・asana/model)。残りは store の名前: 操作の種類 (`store.OpX`、domain/outbox の別名)・sync_state のキー (`store.KeyX`)・エラー (`ErrNotFound`・`ErrPushBusy`)・`store.IsLocalGID`・`TaskFieldValues`・`CustomFieldAPIValue` など | 直す | d3 のあと (名前を domain・readmodel に移す) |
 | sync → asana | なし。クライアントは sync のポート `AsanaAPI` (ports.go) で受け、型は `asana/model` で呼ぶ | 直した | d3 (済み) |
 | sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |

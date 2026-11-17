@@ -54,6 +54,12 @@ func (Converter) StatusUpdate(md string) (html, plain string) {
 	return StatusUpdate.FromMarkdown(md), StatusUpdate.PlainFromMarkdown(md)
 }
 
+// Fit is Target(t).Fit, for the sync engine and the store, which name targets by
+// domain/rich.
+func (Converter) Fit(t rich.Target, htmlText string) (fitted, plain string, changed bool) {
+	return Target(t).Fit(htmlText)
+}
+
 // Fit returns rich text html as it is written for the target now, and whether it changed.
 // Rich text queued for a comment or a status update before #63 may hold headings, rules or
 // images, which Asana rejects there with 400 (#71): it is read back as editable Markdown

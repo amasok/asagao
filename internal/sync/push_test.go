@@ -834,7 +834,7 @@ func TestPushRichNotesAndComment(t *testing.T) {
 	_, _ = st.AddRichCommentLocal(ctx, "t1", "hi", "<body><strong>hi</strong></body>", store.UserRef{GID: "me"}, now)
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	res, err := (&Syncer{API: api, Store: st, RichText: richtext.Converter{}}).Push(ctx)
 	if err != nil || res.Sent != 2 {
 		t.Fatalf("push = %+v %v", res, err)
 	}
@@ -1042,7 +1042,7 @@ func TestProjectOperations(t *testing.T) {
 	_ = st.SetSyncState(ctx, store.KeyMeGID, "me")
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	s := &Syncer{API: api, Store: st}
+	s := &Syncer{API: api, Store: st, RichText: richtext.Converter{}}
 
 	p, err := s.CreateProject(ctx, "新規")
 	if err != nil || p.GID != "P9" {
@@ -2031,6 +2031,7 @@ func TestPushVerifyRejectedFails(t *testing.T) {
 // from ours.
 func TestPushRichComment5xxButCreated(t *testing.T) {
 	ws, _, s, st := setupPush(t)
+	s.RichText = richtext.Converter{}
 	ctx := context.Background()
 	md := "見て [資料](https://example.com/doc) と [@Partner](asana:user:u2)\n\n- 一つ目\n- 二つ目"
 	_, err := st.AddRichCommentLocal(ctx, "t1", richtext.Comment.PlainFromMarkdown(md), richtext.Comment.FromMarkdown(md), store.UserRef{GID: "me"}, now)

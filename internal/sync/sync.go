@@ -41,6 +41,10 @@ type Syncer struct {
 	API   AsanaAPI
 	Store LocalStore
 	Cfg   Config
+	// RichText rewrites comments and status updates queued before #63 before Push sends
+	// them. The caller must set it (richtext.Converter{}): without it, Push fails with
+	// store.ErrNoFit when there is such an entry to check, rather than send it unchecked.
+	RichText RichText
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)
 	// CacheDir is where attachments are downloaded (default: xdg.CacheDir()/attachments).

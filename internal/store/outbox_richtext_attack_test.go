@@ -31,7 +31,7 @@ func TestFitQueuedRichTextLeavesOtherFailures(t *testing.T) {
 	must(t, s.CountAttempt(ctx, id, fitNow))
 	must(t, s.MarkOpFailed(ctx, id, errors.New("403 Forbidden")))
 	for i := 0; i < 3; i++ {
-		if n, err := s.FitQueuedRichText(ctx); err != nil || n != 0 {
+		if n, err := s.FitQueuedRichText(ctx, richtext.Converter{}.Fit); err != nil || n != 0 {
 			t.Fatalf("Fit = %d, %v", n, err)
 		}
 	}
@@ -58,7 +58,7 @@ func TestFitQueuedRichTextIgnoresOtherEntries(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `UPDATE outbox SET payload = json_set(payload, '$.html_text', 42) WHERE kind = ?`, OpAddComment); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.FitQueuedRichText(ctx); err != nil || n != 0 {
+	if n, err := s.FitQueuedRichText(ctx, richtext.Converter{}.Fit); err != nil || n != 0 {
 		t.Fatalf("Fit = %d, %v", n, err)
 	}
 	for _, op := range func() []Op { o, _ := s.ListOps(ctx); return o }() {
@@ -97,7 +97,7 @@ func TestFitQueuedRichTextConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, err := s.FitQueuedRichText(ctx)
+			c, err := s.FitQueuedRichText(ctx, richtext.Converter{}.Fit)
 			if err != nil {
 				t.Error(err)
 			}

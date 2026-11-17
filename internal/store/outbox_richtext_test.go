@@ -51,7 +51,7 @@ func TestFitQueuedRichText(t *testing.T) {
 		t.Fatalf("BeginSend = %v %v", ok, err)
 	}
 
-	n, err := s.FitQueuedRichText(ctx)
+	n, err := s.FitQueuedRichText(ctx, richtext.Converter{}.Fit)
 	must(t, err)
 	if n != 3 {
 		t.Fatalf("fitted %d, want 3", n)
@@ -74,7 +74,7 @@ func TestFitQueuedRichText(t *testing.T) {
 	}
 	// once fitted, nothing changes any more: a failure for another reason stays failed
 	must(t, s.MarkOpFailed(ctx, id["t2"], errors.New("403 Forbidden")))
-	if n, err := s.FitQueuedRichText(ctx); err != nil || n != 0 {
+	if n, err := s.FitQueuedRichText(ctx, richtext.Converter{}.Fit); err != nil || n != 0 {
 		t.Fatalf("second FitQueuedRichText = %d, %v", n, err)
 	}
 	if op, _ := s.GetOp(ctx, id["t2"]); op.State != OpFailed || !strings.Contains(op.LastError, "403") {

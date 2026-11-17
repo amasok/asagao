@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -166,7 +167,11 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 		return res, last, err
 	}
 	// comments and status updates queued before #63 are sent as they are converted now (#71)
-	if _, err := s.Store.FitQueuedRichText(ctx); err != nil {
+	var fit func(rich.Target, string) (string, string, bool)
+	if s.RichText != nil {
+		fit = s.RichText.Fit
+	}
+	if _, err := s.Store.FitQueuedRichText(ctx, fit); err != nil {
 		return res, last, err
 	}
 	all, err := s.Store.PendingOps(ctx)

@@ -124,7 +124,6 @@ type violation struct {
 // The rows marked "許す" are not here: layers, adapterExceptions, entryAdapters and
 // entryToEntry let them through.
 var allowed = []violation{
-	{"internal/store", "internal/richtext", "d3: outbox_richtext.go's Target.Fit comes through a port of sync.Push (c1 moved describe.go's ToEditableMarkdown to the caller)"},
 	{"internal/sync", "internal/store", "after d3 (the store is the LocalStore port now): the names sync still takes from the store, the outbox kinds, sync_state keys, errors and helpers (store.OpX, store.KeyX, store.ErrNotFound, store.TaskFieldValues, ...), move out of it"},
 	{"internal/tui", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
 	{"internal/mcpserver", "internal/store", "a: writes go through app; c2: read types move to readmodel"},

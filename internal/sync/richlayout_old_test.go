@@ -66,7 +66,7 @@ func TestPushFitsRichTextQueuedBefore63(t *testing.T) {
 
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	res, err := (&Syncer{API: api, Store: st, RichText: richtext.Converter{}}).Push(ctx)
 	if len(fake.rejected) > 0 {
 		t.Fatalf("Asana rejected: %v", fake.rejected)
 	}
@@ -110,7 +110,7 @@ func TestFitQueuedRichTextLeavesOthers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := st.FitQueuedRichText(ctx)
+	n, err := st.FitQueuedRichText(ctx, richtext.Converter{}.Fit)
 	if err != nil || n != 0 {
 		t.Fatalf("FitQueuedRichText = %d, %v", n, err)
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -82,7 +83,7 @@ type LocalStore interface {
 	DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]readmodel.Discard, error)
 	DiscardGoneOp(ctx context.Context, id int64, reason string, now time.Time) (readmodel.Discard, error)
 	DropNotificationMarks(ctx context.Context, also int64) (int, error)
-	FitQueuedRichText(ctx context.Context) (int, error)
+	FitQueuedRichText(ctx context.Context, fit func(target rich.Target, html string) (fitted, plain string, changed bool)) (int, error)
 	GetAttachment(ctx context.Context, gid string) (*readmodel.AttachmentView, error)
 	GetOp(ctx context.Context, id int64) (*outbox.Op, error)
 	GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error)
@@ -128,4 +129,10 @@ type LocalStore interface {
 	UpsertUser(ctx context.Context, u model.User) error
 	UpsertUsers(ctx context.Context, users []model.User) error
 	UpsertWorkspaces(ctx context.Context, ws []model.Workspace) error
+}
+
+// RichText rewrites rich text queued for a comment or a status update before #63 as it is
+// written for its target now (see store.FitQueuedRichText). richtext.Converter satisfies it.
+type RichText interface {
+	Fit(target rich.Target, html string) (fitted, plain string, changed bool)
 }
