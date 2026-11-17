@@ -203,12 +203,12 @@ due = ["D", "ctrl+t"]
 | `auth migrate --to <store>` | トークンの保存先を移す |
 | `sync [--full]` | Asana からローカルストアへ同期（通常は前回以降の変更分。24 時間ごとに自動で全件） |
 | `sync status` | ローカルストアの状態 |
-| `task list` | タスク一覧（デフォルトは自分の未完了タスク） |
-| `task show <gid> [--offline]` | タスク詳細（サブタスク・コメント込み）。オンラインなら最新を取得 |
+| `task list` | タスク一覧（デフォルトは自分の未完了タスク。[`.asana.json`](#ai-エージェントから使う) があればそのプロジェクトの未完了タスク） |
+| `task show [<gid>] [--offline]` | タスク詳細（サブタスク・コメント込み）。オンラインなら最新を取得。gid を省くと `.asana.json` のタスク |
 | `search <キーワード>...` | タスク名・説明・コメントを全文検索 |
 | `project list [--all]` | プロジェクトとセクションの一覧 |
 | `task complete <gid>...` / `task reopen <gid>...` | 完了にする / 未完了に戻す |
-| `task create <名前> [--project] [--section] [--due] [--assignee] [--notes]` | タスクを作成（プロジェクト未指定なら自分に割り当て） |
+| `task create <名前> [--project] [--section] [--due] [--assignee] [--notes]` | タスクを作成（プロジェクト未指定なら `.asana.json` のプロジェクト、それもなければ自分に割り当て） |
 | `task create --quick <名前 @担当 期日 #タグ>` | 名前の末尾の担当・期日・タグを読んで作成（[クイック追加](#クイック追加)） |
 | `task move <gid> --section <セクション> [--project]` | 別のセクションへ移動 |
 | `task assign <gid> <me\|none\|名前>` | 担当者を変更 |
@@ -229,6 +229,8 @@ due = ["D", "ctrl+t"]
 | `outbox retry <id>` / `outbox discard <id>` | 失敗した変更を再送 / 変更を取り消す |
 | `mcp [--read-only]` | MCP サーバーとして起動（stdio） |
 | `keys` | キー設定で使える操作名の一覧 |
+| `context` | このフォルダの `.asana.json`（作業中のプロジェクト・セクション・タスク）を表示 |
+| `agent-guide` | AI エージェント向けの使い方（CLAUDE.md に貼るブロック）を表示 |
 | `project status <プロジェクト>` / `project status post` | ステータス更新を見る / 投稿する |
 | `project create <名前>` / `project archive <プロジェクト> [--undo]` | プロジェクトを作る / アーカイブ（オンラインのみ） |
 | `project members <プロジェクト> [--add] [--remove]` | メンバーを表示 / 追加 / 外す（変更はオンラインのみ） |
@@ -263,7 +265,7 @@ asagao searches rm 今週
 - `--query` のない検索は `task list` と同じく自分の未完了のタスク（`--project` なら全員の）を、ある検索は `search` と同じく全員の・完了済みも含むタスクを探します。`--assignee`・`--open`・`--completed`・`--all` で変えられます。
 - searches.toml は手で書き換えてもかまいません（`[[search]]` の表を並べ、キーは `name`・`query`・`assignee`・`project`・`section`・`tag`・`field`・`due_before`・`due_after`・`completion`・`overdue`・`modified_within_days`・`limit`）。読めない内容や知らないキーがあるとエラーになり、ファイルは書き換えません。保存すると書き直すので、コメントは残りません。
 
-すべてのコマンドで `--json` を付けると JSON で出力します。
+すべてのコマンドで `--json` を付けると JSON で出力します。書き込み系のコマンドは `--dry-run` で、何も変えずに行われる変更だけを表示します（[AI エージェントから使う](#ai-エージェントから使う)）。
 
 ### API を直接呼ぶ
 
@@ -317,6 +319,15 @@ claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 | `list_inbox` | 受信トレイ（Asana の通知）。取得できないときは理由と最近の更新を返す |
 | `mark_notifications` | 通知を既読 / 未読にする（`--read-only` では無効） |
 | `add_comment` | コメント（マークダウン。`--read-only` では無効） |
+| `get_context` | 起動したフォルダの `.asana.json`（作業中のプロジェクト・セクション・タスク）。gid と名前を引いて返す |
+
+定型のプロンプトもあります（Claude Code では `/mcp__asana__standup` のように呼べます）。どれも引数 `project` を省くと `.asana.json` のプロジェクト、それもなければ自分のタスク全体が対象です。
+
+| プロンプト | 内容 |
+|------------|------|
+| `standup` | 昨日やったこと・今日やること・困っていること |
+| `triage_overdue` | 期限切れのタスクを 1 件ずつ見て、新しい期日・完了・任せる先を提案（変更は了承を得てから） |
+| `weekly_review` | 1 週間で終わったこと・遅れていること・来週やること。プロジェクトならステータス更新の下書きも |
 
 - 読み取りはローカルストアから行うので、高速でオフラインでも動きます。
 - 書き込みは TUI・CLI と同じ「未送信の変更」を通ります。オンラインならすぐに送り、結果の `sent` で送れたかどうかが分かります。
@@ -333,6 +344,65 @@ claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 [mcp]
 upload_dirs = ["~/Documents/見積", "/Volumes/share/資料"]
 ```
+
+## AI エージェントから使う
+
+Claude Code などの AI エージェントに、リポジトリの作業と Asana のタスクを結び付けて使わせるための仕組みです。
+
+### `.asana.json`
+
+リポジトリのルート（またはその下のフォルダ）に `.asana.json` を置くと、そのフォルダで作業中のプロジェクト・セクション・タスクを決められます。
+
+```json
+{"project": "新居", "section": "家具", "task": "1203455468597469"}
+```
+
+- `project` と `section` は gid か名前（`--project` / `--section` と同じ）、`task` はタスクの gid（数字）。どれも省略できます（`section` は `project` と一緒に）。
+- git のリポジトリの中では、カレントディレクトリからリポジトリのルート（`.git` のあるフォルダ）まで上に向かって探し、最初に見つかったものを使います。リポジトリの外では、カレントディレクトリだけを見ます。ホームフォルダより上は探しません。ほかのユーザーのファイル（共有の `/tmp` に置かれたものなど）はエラーにします。
+- `asagao context` で、書かれた内容をキャッシュで引いて表示します（`--json` も可）。MCP では `get_context` です。
+- `task create` は `--project`（と `--parent`）がないとき、`.asana.json` のプロジェクト（と、`--section` がなければセクション）に作ります。`--project ""` なら使いません。
+- `task list` は `--project` がないとき、`.asana.json` のプロジェクトの未完了タスク（全員の）を表示します。全体を見るには `--project ""` です。
+- `task show` は gid を省くと、`.asana.json` のタスクを表示します。
+- `.asana.json` を使ったときは、エラー出力にそのファイルを書きます（`--json` の出力は変わりません）。`--no-context` を付けると `.asana.json` を使いません（`asagao mcp --no-context` も同じ）。
+- 知らないキーや読めない内容があるとエラーにして、何もしません（書き間違いのせいで、別のプロジェクトで作業してしまわないように）。
+
+### `--dry-run`
+
+書き込み系のコマンド（`task create` / `complete` / `move` / `assign` / `tag` / `field` / …、`comment add`、`section rename`、`project status post` / `create` / `archive` / `members`、`inbox read`、`outbox resolve` / `retry` / `discard`）は、`--dry-run` を付けると何も変えずに、行われる変更だけを表示します。
+
+```sh
+$ asagao task complete 1203455468597469 --dry-run
+--dry-run: 次の変更をするところでした（何も変えていません）:
+  - ソファを買う: 完了にする
+```
+
+- ローカルストアの使い捨ての写し（自分だけが読める一時フォルダ）の上で同じ処理をするので、本番と同じ検査（日付の形式、セクションの有無など）が行われます。写しは終わったら消し、Ctrl-C で止めたときも消します（強制終了で残ったものは、次の `--dry-run` が消します）。
+- Asana には何も送らず、ローカルストアや未送信の変更（outbox）、添付ファイルのキャッシュにも何も書きません。
+- `--json` では `{"dry_run": true, "planned": [{"kind": "update_task", "task_gid": "…", "description": "…", "payload": {…}}]}` を返します。取り消される未送信の変更は `cancelled` に入ります。
+
+### CLAUDE.md に貼るブロック
+
+`asagao agent-guide` で、エージェント向けの使い方を表示します。リポジトリの `CLAUDE.md`（や `AGENTS.md`）に貼ってください。
+
+```sh
+asagao agent-guide >> CLAUDE.md
+```
+
+貼られる内容:
+
+````markdown
+## Asana（asagao）
+
+このリポジトリの作業は Asana で管理している。Asana の操作には `asagao` を使う。
+
+- 作業中のプロジェクト・タスクは `.asana.json` にある。最初に `asagao context --json` で確かめる。
+- 読む: `asagao task list --json`（.asana.json のプロジェクトの未完了タスク）、`asagao task show [<gid>] --json`（gid を省くと .asana.json のタスク）、`asagao task search <語> --json`。
+- 書く前に、同じコマンドに `--dry-run` を付けて、何が変わるかを確かめる。`--dry-run` は Asana にも outbox にも何も書かない。
+- 書く: `asagao comment add <gid> <本文>`（進捗の報告）、`asagao task complete <gid>`、`asagao task create <名前> [--due <日付>]`（.asana.json のプロジェクトに作る）、`asagao task move <gid> --section <セクション>`。
+- 書き込みはオフラインでも受け付け、次の同期で送る。`--json` の `sent` が false なら未送信。勝手に再送したり `asagao outbox` を操作したりしない。
+- プロジェクトのアーカイブ、ほかの人への割り当て、ほかの人が担当するタスクの完了は、ユーザーに頼まれたときだけ行う。
+- MCP サーバー（`asagao mcp`）が使えるなら、`get_context` で .asana.json を読み、定型の手順はプロンプト（standup・triage_overdue・weekly_review）を使う。
+````
 
 ## 詳細画面
 

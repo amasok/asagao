@@ -41,7 +41,12 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 			home, _ := os.UserHomeDir()
 			upload := mcpserver.NewUploadPolicy(cwd, home, a.cfg.MCP.ExpandedUploadDirs(),
 				xdg.OwnDirs())
+			contextDir := "" // where .asana.json is looked for from
+			if !a.noContext {
+				contextDir, _ = getwd()
+			}
 			s := &mcpserver.Server{
+				ContextDir: contextDir,
 				Upload:     upload,
 				Store:      st,
 				ReadOnly:   readOnly,
