@@ -30,7 +30,7 @@ func resetHarness(t *testing.T) (*harness, string) {
 // The reset asks first, showing how many unsent changes would go; "やめる" keeps everything.
 func TestResetAsksWithUnsentCount(t *testing.T) {
 	h, dir := resetHarness(t)
-	ctx, st := context.Background(), h.m.deps.Store
+	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
 	_, _ = st.AddCommentLocal(ctx, "t2", "大事なメモ", store.UserRef{GID: "me"}, testNow)
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 
@@ -75,7 +75,7 @@ func TestResetAsksAgainWhenChangesAppear(t *testing.T) {
 	for _, before := range []int{0, 1} {
 		t.Run(fmt.Sprint(before, " unsent"), func(t *testing.T) {
 			h, dir := resetHarness(t)
-			ctx, st := context.Background(), h.m.deps.Store
+			ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
 			if before == 1 {
 				_, _ = st.AddCommentLocal(ctx, "t2", "確認したメモ", store.UserRef{GID: "me"}, testNow)
 			}
@@ -105,7 +105,7 @@ func TestResetAsksAgainWhenChangesAppear(t *testing.T) {
 
 func TestAccountChangedStatus(t *testing.T) {
 	h, _ := resetHarness(t)
-	ctx, st := context.Background(), h.m.deps.Store
+	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 	h.run(h.m.loadOutbox())
 	h.send(syncDoneMsg{err: fmt.Errorf("%w (other / me)", sync.ErrAccountChanged), at: testNow})
@@ -146,7 +146,7 @@ func TestSyncBusyIsNotOffline(t *testing.T) {
 // A broken record of a dropped change must not keep the outbox from opening.
 func TestOutboxOpensWhenDiscardsCannotBeRead(t *testing.T) {
 	h, _ := resetHarness(t)
-	ctx, st := context.Background(), h.m.deps.Store
+	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 	db, err := sql.Open("sqlite", st.Path())
 	if err != nil {

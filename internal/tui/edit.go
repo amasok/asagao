@@ -10,8 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -117,7 +117,7 @@ func editableBody(htmlNotes, plain string, imagePath func(gid string) string) st
 	if htmlNotes != "" {
 		return richtext.ToEditableMarkdownWith(htmlNotes, imagePath)
 	}
-	md := richtext.FromPlainEditable(store.ReplaceInlineAssets(plain, func(gid string) string {
+	md := richtext.FromPlainEditable(readmodel.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	}))
 	return richtext.ImageTokenRe.ReplaceAllStringFunc(md, func(tok string) string {
@@ -126,11 +126,11 @@ func editableBody(htmlNotes, plain string, imagePath func(gid string) string) st
 	})
 }
 
-func docFor(ctx context.Context, st *store.Store, d *store.TaskDetail, imagePath func(string) string) taskDoc {
+func docFor(ctx context.Context, st Store, d *readmodel.TaskDetail, imagePath func(string) string) taskDoc {
 	doc := taskDoc{Name: d.Name, Due: d.DueOn, Completed: d.Completed, Body: editableBody(d.HTMLNotes, d.Notes, imagePath)}
 	if d.Assignee != nil {
 		doc.Assignee = d.Assignee.Name
-		if me, _ := st.MeGID(ctx); me == d.Assignee.GID {
+		if me, _ := queryOf(st).MeGID(ctx); me == d.Assignee.GID {
 			doc.Assignee = "me"
 		}
 	}
@@ -173,7 +173,7 @@ func (m *Model) editTask(gid string) tea.Cmd {
 		syncer = &sync.Syncer{Store: st} // offline: cached images only
 	}
 	return func() tea.Msg {
-		d, err := st.GetTask(m.ctx, gid)
+		d, err := queryOf(st).GetTask(m.ctx, gid)
 		if err != nil {
 			return editReadyMsg{err: err}
 		}

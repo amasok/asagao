@@ -5,27 +5,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
+
+	"github.com/amasok/asagao/internal/asana/model"
 )
-
-// Notification is an item of the user's Asana inbox (GET /users/{gid}/notifications).
-// Scopes: notifications:read to list, notifications:write to mark read / unread.
-type Notification struct {
-	GID                  string    `json:"gid"`
-	IsRead               bool      `json:"is_read"`
-	CreatedAt            time.Time `json:"created_at"`
-	CreatedBy            *Ref      `json:"created_by"`
-	StoryResourceSubtype string    `json:"story_resource_subtype"`
-	Story                *Story    `json:"story"`
-	WorkObjects          []WorkRef `json:"work_objects"`
-}
-
-// WorkRef is a compact reference to what a notification is about (a task, project, ...).
-type WorkRef struct {
-	GID          string `json:"gid"`
-	ResourceType string `json:"resource_type"`
-	Name         string `json:"name"`
-}
 
 var notificationFields = []string{
 	"is_read", "created_at", "created_by.name", "story_resource_subtype",
@@ -33,8 +15,9 @@ var notificationFields = []string{
 	"work_objects", "work_objects.name",
 }
 
-// MaxNotificationGIDs is how many notifications one markRead / markUnread request accepts.
-const MaxNotificationGIDs = 50
+// MaxNotificationGIDs is how many notifications one markRead / markUnread request accepts
+// (model.MaxNotificationGIDs).
+const MaxNotificationGIDs = model.MaxNotificationGIDs
 
 // Notifications returns up to max of the user's active (unarchived) notifications in the
 // workspace, newest first.

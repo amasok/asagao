@@ -23,7 +23,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
   adapter   │  store (SQLite)  asana (HTTP)  auth  tokenstore   │
             │  richtext (goldmark)  config (TOML)  imageview  browser│
             └──────────────────────────────────────────┘
-  どこからでも: termsafe (標準ライブラリだけ)、asana/model と readmodel (型だけ)
+  どこからでも: termsafe・xdg (標準ライブラリだけ)、asana/model と readmodel (型だけ)
 ```
 
 依存してよい向きは、上から下、adapter から domain と asana/model だけ。
@@ -41,18 +41,20 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/sync` | アプリ | 同じ | なし (段階 d で x/oauth2 を外す) | 同期のユースケース (push・照合・pull)。Asana とキャッシュはポート経由 |
 | `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクションだけ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
-| `internal/asana/model` | 共有の型 | (今は `internal/asana` の中) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
-| `internal/readmodel` | 共有の型 | (今は `internal/store` の中。`UserRef` だけ a4 で移した) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口が判定に使うエラーの値 (`ErrNotFound` など) |
+| `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
+| `internal/readmodel` | 共有の型 | (今は `internal/store` の中。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 でタスク・プロジェクト・通知の表示の型、一覧の条件、エラーの値、表示の文言を移した。store には別名が残る) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口が判定に使うエラーの値 (`ErrNotFound` など) |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
 | `internal/richtext` | adapter | 同じ | goldmark、x/net/html | Markdown ⇔ rich text の変換。決まりは `domain/rich` を読む |
 | `internal/config` | adapter | 同じ | go-toml | 設定ファイル |
 | `internal/imageview`, `internal/browser` | adapter | 同じ | x/sys、x/term (imageview だけ。browser は標準ライブラリだけ) | 端末と OS |
 | `internal/termsafe` | 共通 | 同じ | なし | 端末の制御文字の除去 |
+| `internal/settings` | 共有の型 | (d4b で `internal/config` の `Config` などの型と `Default` を移した。config に別名) | なし | 設定の型と既定値。ファイルや TOML は読まない |
+| `internal/xdg` | 共通 | (d3 で `internal/config` の `ConfigDir`・`DataDir`・`CacheDir` の決まりを移した) | なし | ツールのフォルダの場所 (XDG)。環境変数とホームディレクトリだけを読む |
 | `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi | 画面 |
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
 | `internal/cli` | 入り口 | 同じ | cobra、bubbletea、MCP go-sdk、x/term、go-runewidth | コマンド |
-| `internal/wire` | 組み立て | (`internal/cli/root.go` の一部) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |
+| `internal/wire` | 組み立て | 同じ (d4 で `internal/cli/root.go` から移した。cmd/asagao が `cli.Wiring` で cli に渡す) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |
 
 `domain/rich` などの名前は、その段階の PR で決め直してよい (ADR にする)。
 
@@ -79,29 +81,32 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | cmd/asagao → cli | `Execute` | 許す (組み立て) | — |
 | asana → termsafe | 文字の除去 | 許す | — |
 | auth → auth/tokenstore・config・browser | 保存先、設定、ログインでブラウザを開く | 許す (決まり 3 の例外) | — |
-| auth → asana | `*asana.Error` で 401 の判定 (tokensource.go:56) | 直す | d1 (`asana/model` へ) |
+| auth → asana | なし (401 の判定は `*model.Error`) | 直した | d1 (済み) |
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
-| store → asana | `asana.Task` などの型 (9 ファイル) | 直す | d1 |
-| store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
-| sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
-| sync → asana | `*asana.Client`、型 | 直す | d1 (型)、d3 (ポート) |
-| sync → auth | `ErrNotLoggedIn`・`ErrLoginReplaced` (push.go:616) | 直す | d2 |
-| sync → config | `SyncConfig`、`CacheDir` | 直す | d3 |
+| store → asana | なし (型は `asana/model` から) | 直した | d1 (済み) |
+| store → richtext | なし。`FitQueuedRichText` は変換を関数で受け (sync のポート `RichText`、`richtext.Converter.Fit`)、送り先は `domain/rich` で決める。`ToEditableMarkdown` は c1 で呼ぶ側に移した | 直した | d3 (済み) |
+| sync → store | ストアそのものは d3 で sync のポート `LocalStore` にした (型は domain/outbox・readmodel・asana/model)。残りは store の名前: 操作の種類 (`store.OpX`、domain/outbox の別名)・sync_state のキー (`store.KeyX`)・エラー (`ErrNotFound`・`ErrPushBusy`)・`store.IsLocalGID`・`TaskFieldValues`・`CustomFieldAPIValue` など | 直す | d3 のあと (名前を domain・readmodel に移す) |
+| sync → asana | なし。クライアントは sync のポート `AsanaAPI` (ports.go) で受け、型は `asana/model` で呼ぶ | 直した | d3 (済み) |
+| sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |
+| sync → config | なし。`SyncConfig` は `sync.Config` に、`CacheDir` の既定値は `xdg.CacheDir()` に (d3) | 直した | d3 (済み) |
 | sync → termsafe | 比べる前の文字の除去 | 許す | — |
-| tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
-| mcpserver → store | `*Local` 13 種類と、読み取りの型 約 20 種類 | 直す | a、c2 |
-| cli → store | `*Local` 13 種類、`store.Open`、読み取りの型 約 40 種類 | 直す | a、c2、d4 (`Open` を wire へ) |
+| sync → xdg、config → xdg | 添付の既定の場所、ツールのフォルダ | 許す | — |
+| tui → store | なし。ストアは `tui.Store` (app と sync のポートと、画面が書く状態) で受け、名前は readmodel・domain から | 直した | a・c2・d4b (済み) |
+| mcpserver → store | なし。ストアは `mcpserver.Store` (app と sync のポート) で受ける | 直した | a・c2・d4b (済み) |
+| cli → store | なし。ストアは `cli.Store` (tui.Store・mcpserver.Store と、コマンドが書くもの) で受け、`Wiring.OpenStore` (wire.OpenStore) で開く | 直した | a・c2・d4・d4b (済み) |
 | tui・mcpserver・cli → richtext | Markdown → html (11 か所) と、表示の変換 (tui/edit.go:118-125、tui/markdown.go:29-34、mcpserver/server.go:393-398 ほか) | Markdown → html は直す (a5 で済み。archtest の関数の決まりで確かめる)、表示の変換は許す | a1・a4・a5 |
 | tui・mcpserver・cli → auth | `LoginHelp`・`ErrNotLoggedIn`・`ErrLoginReplaced`、cli のログインのコマンド | 許す (決まり 4) | — |
 | tui・mcpserver・cli → sync | `Syncer.Run`・`Push`・`Resolve`・`Result`・`ErrPushBusy` など | 許す (アプリ層)。ただし `sync.Syncer{...}` の組み立て (5 か所と cli) は直す | d4 |
 | tui・cli → imageview、cli → browser | 画像の表示、ブラウザ | 許す (決まり 4) | — |
 | tui・mcpserver・cli → dates | 期日の解釈 (6 か所) | import は許す (ドメイン)。呼び出しは app に移した (`app.ParseDue`。archtest の関数の決まりで確かめる) | a1・a5 (済み) |
 | cli → tui・mcpserver | 起動 | 許す (決まり 5) | — |
-| cli → asana・config・tokenstore | `asana.NewClient`、設定の読み込み、`auth migrate` の保存先 | 直す | d4 (組み立てを wire へ、移す処理を auth へ) |
+| cli → asana | なし。クライアントは wire が作り (`wire.APIClient`・`wire.CheckPAT`)、cmd/asagao が `cli.Wiring` で渡す | 直した | d4 (済み) |
+| cli → config | なし。設定の型は `internal/settings` (共有の型)、読み込みとフォルダの移し替えは `Wiring.LoadSettings`・`MigrateLegacyDirs`、場所は `internal/xdg` | 直した | d4b (済み) |
+| cli → tokenstore | なし。保存先は auth を通す (`auth.TokenStore`・`OpenTokenStore`・`MoveLogin` ほか) | 直した | d4b (済み) |
 | cli → termsafe、tui → termsafe ほか | 文字の除去 | 許す | — |
 
-外部ライブラリの「直す」: sync → x/oauth2 (d2)、cli → x/oauth2 (d4)。ほかは表のとおり許す。
+外部ライブラリの「直す」: なし。cli → x/oauth2 は d4 で済んだ (HTTP クライアントは `auth.Source.Client`・`auth.PATClient`)。sync → x/oauth2 は d2 で済んだ。ほかは表のとおり許す。
 
 段階 d が終わると「直す」の行がなくなる。これを #69 の終わりの条件の 1 つにする (ADR 0007)。
 
@@ -109,5 +114,5 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 
 - 読み取り (一覧、検索、詳細) は、段階 a では今のまま入り口から `store` を呼んでよい。書き込みと違って、同じ手順が入り口ごとに重なっている量が少なく、振る舞いの違いの原因にもなっていない。
 - 入り口が読む型は、`asana/model` の型ではなく、**store が定義した表示用の型** (`store.TaskSummary`・`store.TaskDetail`・`store.CustomFieldView`・`store.ProjectView` など) と、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp`・`AccountChangedHelp` など) と、エラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など)。tui だけで約 50 種類ある。
-- 段階 c2 で、これらを標準ライブラリだけの `internal/readmodel` に移す。store は readmodel の型を作って返し、エラーも readmodel の値を返す。store には型の別名をしばらく残し、入り口を少しずつ移す。そのあと `app` に読み取りのポート (例: `TaskQuery`) を置き、入り口は `app` を通して読む。これで入り口から `store` の import がなくなる。
+- 段階 c2 で、これらを標準ライブラリだけの `internal/readmodel` に移す。store は readmodel の型を作って返し、エラーも readmodel の値を返す。store には型の別名をしばらく残し、入り口を少しずつ移す。そのあと `app` に読み取りのユースケース `Query` とポート `QueryStore` を置き (ADR 0009)、入り口は `app` を通して読む。これで入り口から `store` の import がなくなる。
 - `asana/model` の型 (ADR 0005) は、キャッシュと同期が Asana の応答を扱うための型で、入り口の表示には readmodel を使う。

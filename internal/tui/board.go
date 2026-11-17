@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // This file holds the v0.2 views: the board (sections as columns), the zoomed detail view,
@@ -18,7 +18,7 @@ import (
 
 type boardColumn struct {
 	gid, name string
-	tasks     []*store.TaskSummary
+	tasks     []*readmodel.TaskSummary
 }
 
 const minBoardColumn = 26
@@ -38,7 +38,7 @@ func (m *Model) boardColumns() []boardColumn {
 		index[s.GID] = len(cols)
 		cols = append(cols, boardColumn{gid: s.GID, name: s.Name})
 	}
-	var other []*store.TaskSummary
+	var other []*readmodel.TaskSummary
 	for _, r := range m.allRows {
 		if r.task == nil || r.depth > 0 { // expanded subtasks are not cards
 			continue
@@ -62,7 +62,7 @@ func (m *Model) boardColumns() []boardColumn {
 	return cols
 }
 
-func (m *Model) boardSelected() *store.TaskSummary {
+func (m *Model) boardSelected() *readmodel.TaskSummary {
 	cols := m.boardColumns()
 	if m.boardCol < 0 || m.boardCol >= len(cols) {
 		return nil
@@ -193,14 +193,14 @@ func (m *Model) renderBoard(w, h int) string {
 	return strings.Join(joinColumns(panes), "\n")
 }
 
-func (m *Model) cardLine(t *store.TaskSummary, w int, today string, selected bool) string {
+func (m *Model) cardLine(t *readmodel.TaskSummary, w int, today string, selected bool) string {
 	check := "☐"
 	if t.Completed {
 		check = "☑"
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	name := t.Name + fieldBadges(t)
-	if badges := store.TaskBadges(*t); badges != "" {
+	if badges := readmodel.TaskBadges(*t); badges != "" {
 		name = t.Name + " " + badges + fieldBadges(t)
 	}
 	if t.Pending {
@@ -281,27 +281,27 @@ type picker struct {
 	items  []pickerItem
 	cursor int
 	// for pickSection
-	task    store.TaskSummary
+	task    readmodel.TaskSummary
 	project string
-	field   store.CustomFieldView // pickField, pickFieldMulti
+	field   readmodel.CustomFieldView // pickField, pickFieldMulti
 	// pickDepAction, pickDepTarget: the chosen task waits for p.task (else p.task waits for it)
 	dependents bool
 }
 
 type tagsLoadedMsg struct {
-	tags []store.TagCount
+	tags []readmodel.TagCount
 	err  error
 }
 
 func (m *Model) openTagPicker() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		tags, err := st.ListTags(m.ctx)
+		tags, err := queryOf(st).ListTags(m.ctx)
 		return tagsLoadedMsg{tags: tags, err: err}
 	}
 }
 
-func (m *Model) showTagPicker(tags []store.TagCount) {
+func (m *Model) showTagPicker(tags []readmodel.TagCount) {
 	p := &picker{kind: pickTag, title: "タグで絞り込む", items: []pickerItem{{label: "（すべてのタスク）"}}}
 	for i, t := range tags {
 		p.items = append(p.items, pickerItem{label: "#" + t.Name, value: t.Name, hint: fmt.Sprintf("未完了 %d", t.Open)})
@@ -330,7 +330,7 @@ func (m *Model) openSectionPicker() {
 		m.status = "どのプロジェクトのセクションに移動するか決められません（プロジェクトを開いてから m を押してください）"
 		return
 	}
-	var sections []store.SectionView
+	var sections []readmodel.SectionView
 	var projectName string
 	for _, sc := range m.scopes {
 		if sc.project == project {
@@ -452,7 +452,7 @@ func (m *Model) renderPicker(w, h int) string {
 	return m.pane(p.title, lines, w, h, true)
 }
 
-func (m *Model) moveTask(t store.TaskSummary, project, section, sectionName string) tea.Cmd {
+func (m *Model) moveTask(t readmodel.TaskSummary, project, section, sectionName string) tea.Cmd {
 	sections := m.sections(m.deps.Now())
 	return func() tea.Msg {
 		if err := sections.MoveHere(m.ctx, t.GID, project, section); err != nil {

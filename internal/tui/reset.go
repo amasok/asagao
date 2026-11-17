@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Resetting the local data (to use another Asana account), with a confirmation that shows
@@ -20,7 +20,7 @@ type (
 		err    error
 	}
 	resetDoneMsg struct {
-		res store.ResetResult
+		res readmodel.ResetResult
 		err error
 	}
 )
@@ -28,7 +28,7 @@ type (
 func (m *Model) startReset() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		n, newest, err := st.UnsentState(m.ctx)
+		n, newest, err := queryOf(st).UnsentState(m.ctx)
 		return resetAskMsg{unsent: n, newest: newest, err: err}
 	}
 }
@@ -74,10 +74,10 @@ func (m *Model) updateReset(msg tea.Msg) (tea.Cmd, bool) {
 		return nil, true
 	case resetDoneMsg:
 		switch {
-		case errors.Is(msg.err, store.ErrUnsentChanges):
+		case errors.Is(msg.err, readmodel.ErrUnsentChanges):
 			m.status = "未送信の変更が増えたため、何も消さずに初期化をやめました。もう一度確かめてください"
 			return m.startReset(), true
-		case errors.Is(msg.err, store.ErrPushBusy):
+		case errors.Is(msg.err, readmodel.ErrPushBusy):
 			m.status = "別の asagao が同期・送信中のため初期化できません。終わってからやり直してください"
 			return nil, true
 		case msg.err != nil:
@@ -100,5 +100,5 @@ func (m *Model) updateReset(msg tea.Msg) (tea.Cmd, bool) {
 // accountChangedStatus explains a sync stopped by sync.ErrAccountChanged.
 func (m *Model) accountChangedStatus() string {
 	unsent := m.outbox.pending + m.outbox.conflict + m.outbox.failed
-	return store.AccountChangedHelp(unsent, m.actionKey("reset")+" で初期化")
+	return readmodel.AccountChangedHelp(unsent, m.actionKey("reset")+" で初期化")
 }

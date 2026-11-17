@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -36,7 +36,7 @@ func (m *Model) online() (*sync.Syncer, bool) {
 
 type statusesLoadedMsg struct {
 	project string
-	updates []store.StatusUpdateView
+	updates []readmodel.StatusUpdateView
 	err     error
 }
 
@@ -49,7 +49,7 @@ func (m *Model) openStatuses() tea.Cmd {
 	m.statusOffset = 0
 	st, syncer := m.deps.Store, m.syncer
 	load := func() tea.Msg {
-		updates, err := st.StatusUpdates(m.ctx, project)
+		updates, err := queryOf(st).StatusUpdates(m.ctx, project)
 		return statusesLoadedMsg{project: project, updates: updates, err: err}
 	}
 	if syncer == nil {
@@ -104,7 +104,7 @@ func (m *Model) renderStatuses(w, h int) string {
 }
 
 func (m *Model) statusBadge(t string) string {
-	label := "[" + store.StatusLabel(t) + "]"
+	label := "[" + readmodel.StatusLabel(t) + "]"
 	switch t {
 	case "on_track", "complete":
 		return m.st.tag.Render(label)
@@ -243,7 +243,7 @@ func (m *Model) applyStatus(msg statusEditDoneMsg) tea.Cmd {
 		if _, err := statuses.CreateHere(m.ctx, in); err != nil {
 			return writeDoneMsg{err: err}
 		}
-		return writeDoneMsg{status: "ステータスを投稿しました（" + store.StatusLabel(status) + "）"}
+		return writeDoneMsg{status: "ステータスを投稿しました（" + readmodel.StatusLabel(status) + "）"}
 	}
 }
 
@@ -309,7 +309,7 @@ func (m *Model) archive(project string) tea.Cmd {
 
 type membersMsg struct {
 	project string
-	users   []store.UserRef
+	users   []readmodel.UserRef
 	members map[string]bool
 	err     error
 }
@@ -328,11 +328,11 @@ func (m *Model) openMembers() tea.Cmd {
 func (m *Model) loadMembers(project string) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		users, err := st.ListUsers(m.ctx)
+		users, err := queryOf(st).ListUsers(m.ctx)
 		if err != nil {
 			return membersMsg{err: err}
 		}
-		cur, err := st.ProjectMembers(m.ctx, project)
+		cur, err := queryOf(st).ProjectMembers(m.ctx, project)
 		has := map[string]bool{}
 		for _, u := range cur {
 			has[u.GID] = true

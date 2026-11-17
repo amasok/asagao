@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
@@ -91,7 +91,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		return sent, notFound, err
 	}
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	byMe := func(r *asana.Ref) bool { return r == nil || me == "" || r.GID == me }
+	byMe := func(r *model.Ref) bool { return r == nil || me == "" || r.GID == me }
 	recent := func(t time.Time) bool { return !t.Before(since) }
 	taken := func(prefix string) (map[string]bool, error) { return s.Store.RecordedResults(ctx, prefix) }
 
@@ -105,7 +105,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil {
 			return sent, notFound, err
 		}
-		t, m := pick(tasks, func(t asana.Task) bool {
+		t, m := pick(tasks, func(t model.Task) bool {
 			return !used[t.GID] && t.Name == str("name") && recent(t.CreatedAt) && byMe(t.CreatedBy) && sameTaskFields(t, op.Payload)
 		})
 		if m != matched {
@@ -151,7 +151,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil {
 			return sent, notFound, err
 		}
-		t, m := pick(tasks, func(t asana.Task) bool {
+		t, m := pick(tasks, func(t model.Task) bool {
 			return !used[t.GID] && t.Name == str("name") && t.GID != src.GID && recent(t.CreatedAt)
 		})
 		if m != matched {
@@ -172,7 +172,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil {
 			return sent, notFound, err
 		}
-		st, m := pick(stories, func(st asana.Story) bool {
+		st, m := pick(stories, func(st model.Story) bool {
 			return !used[st.GID] && st.Type == "comment" && byMe(st.CreatedBy) && recent(st.CreatedAt) &&
 				sameComment(st, str("text"), str("html_text"))
 		})
@@ -190,7 +190,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil {
 			return sent, notFound, err
 		}
-		a, m := pick(atts, func(a asana.Attachment) bool { return !used[a.GID] && a.Name == str("name") && recent(a.CreatedAt) })
+		a, m := pick(atts, func(a model.Attachment) bool { return !used[a.GID] && a.Name == str("name") && recent(a.CreatedAt) })
 		if m != matched {
 			return sent, m, nil
 		}
@@ -205,7 +205,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil {
 			return sent, notFound, err
 		}
-		u, m := pick(ups, func(u asana.StatusUpdate) bool {
+		u, m := pick(ups, func(u model.StatusUpdate) bool {
 			return !used[u.GID] && u.Title == str("title") && u.StatusType == str("status_type") && recent(u.CreatedAt) && byMe(u.Author)
 		})
 		if m != matched {
@@ -225,7 +225,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 		if err != nil {
 			return sent, notFound, err
 		}
-		g, m := pick(tags, func(g asana.Ref) bool { return g.Name == str("tag_name") })
+		g, m := pick(tags, func(g model.Ref) bool { return g.Name == str("tag_name") })
 		switch m {
 		case ambiguous:
 			return sent, ambiguous, nil
@@ -240,7 +240,7 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 }
 
 // sameTaskFields is outbox.SameTaskFields on the task as Asana returns it.
-func sameTaskFields(t asana.Task, payload map[string]any) bool {
+func sameTaskFields(t model.Task, payload map[string]any) bool {
 	f := outbox.TaskFields{DueOn: t.DueOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
 	if t.Assignee != nil {
 		f.AssigneeGID = t.Assignee.GID
@@ -251,8 +251,8 @@ func sameTaskFields(t asana.Task, payload map[string]any) bool {
 // tasksCreatedUnder lists the tasks a new task could be among: the parent's subtasks, the
 // project's tasks, or the assignee's tasks (modified since since). ok is false when there
 // is no list to look in (no parent, project or assignee).
-func (s *Syncer) tasksCreatedUnder(ctx context.Context, parent, project, assignee, workspace string, since time.Time) ([]asana.Task, bool, error) {
-	var tasks []asana.Task
+func (s *Syncer) tasksCreatedUnder(ctx context.Context, parent, project, assignee, workspace string, since time.Time) ([]model.Task, bool, error) {
+	var tasks []model.Task
 	var err error
 	switch {
 	case parent != "":
@@ -261,9 +261,9 @@ func (s *Syncer) tasksCreatedUnder(ctx context.Context, parent, project, assigne
 		}
 		tasks, err = s.API.Subtasks(ctx, parent)
 	case project != "":
-		tasks, err = s.API.Tasks(ctx, asana.TaskQuery{Project: project, ModifiedSince: since})
+		tasks, err = s.API.Tasks(ctx, model.TaskQuery{Project: project, ModifiedSince: since})
 	case assignee != "" && workspace != "":
-		tasks, err = s.API.Tasks(ctx, asana.TaskQuery{Assignee: assignee, Workspace: workspace, ModifiedSince: since})
+		tasks, err = s.API.Tasks(ctx, model.TaskQuery{Assignee: assignee, Workspace: workspace, ModifiedSince: since})
 	default:
 		return nil, false, nil
 	}
@@ -296,6 +296,6 @@ func pick[T any](items []T, keep func(T) bool) (T, match) {
 }
 
 // sameComment is outbox.SameComment on a story as Asana returns it.
-func sameComment(st asana.Story, text, htmlText string) bool {
+func sameComment(st model.Story, text, htmlText string) bool {
 	return outbox.SameComment(st.Text, st.HTMLText, text, htmlText, termsafe.String)
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/amasok/asagao/internal/app"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -33,11 +33,11 @@ type ListInboxInput struct {
 }
 
 type InboxOutput struct {
-	Available     bool                 `json:"available"`
-	Notice        string               `json:"notice,omitempty"`
-	Unread        int                  `json:"unread"`
-	Notifications []store.Notification `json:"notifications"`
-	Recent        []store.TaskSummary  `json:"recent,omitempty"`
+	Available     bool                     `json:"available"`
+	Notice        string                   `json:"notice,omitempty"`
+	Unread        int                      `json:"unread"`
+	Notifications []readmodel.Notification `json:"notifications"`
+	Recent        []readmodel.TaskSummary  `json:"recent,omitempty"`
 }
 
 type MarkNotificationsInput struct {
@@ -53,26 +53,26 @@ type MarkNotificationsOutput struct {
 
 func (s *Server) listInbox(ctx context.Context, _ *mcp.CallToolRequest, in ListInboxInput) (*mcp.CallToolResult, InboxOutput, error) {
 	limit := clampLimit(in.Limit, 50)
-	state, err := s.Store.InboxState(ctx)
+	state, err := s.query().InboxState(ctx)
 	if err != nil {
 		return nil, InboxOutput{}, err
 	}
-	out := InboxOutput{Available: state.Available(), Notifications: []store.Notification{}}
+	out := InboxOutput{Available: state.Available(), Notifications: []readmodel.Notification{}}
 	if out.Available && state.WriteForbidden {
 		out.Notice = sync.InboxReadOnlyMessage(s.AuthScopes)
 	}
 	if !out.Available {
 		out.Notice = sync.InboxUnavailableMessage(state, s.AuthScopes)
-		out.Recent, err = s.Store.ListTasks(ctx, store.TaskFilter{
+		out.Recent, err = s.query().ListTasks(ctx, readmodel.TaskFilter{
 			ModifiedAfter:  s.Now().AddDate(0, 0, -7).UTC().Format(time.RFC3339),
 			SortByModified: true, Limit: limit,
 		})
 		return nil, out, err
 	}
-	if out.Notifications, err = s.Store.ListNotifications(ctx, store.NotificationFilter{UnreadOnly: in.Unread, Limit: limit}); err != nil {
+	if out.Notifications, err = s.query().ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: in.Unread, Limit: limit}); err != nil {
 		return nil, out, err
 	}
-	out.Unread, err = s.Store.UnreadNotifications(ctx)
+	out.Unread, err = s.query().UnreadNotifications(ctx)
 	return nil, out, err
 }
 
@@ -80,7 +80,7 @@ func (s *Server) markNotifications(ctx context.Context, _ *mcp.CallToolRequest, 
 	read := in.Read == nil || *in.Read
 	gids := in.GIDs
 	if in.All {
-		ns, err := s.Store.ListNotifications(ctx, store.NotificationFilter{})
+		ns, err := s.query().ListNotifications(ctx, readmodel.NotificationFilter{})
 		if err != nil {
 			return nil, MarkNotificationsOutput{}, err
 		}

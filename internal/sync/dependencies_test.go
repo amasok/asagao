@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -68,7 +67,7 @@ func setupDeps(t *testing.T) (*depServer, *Syncer, *store.Store) {
 	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A"}, {GID: "t2", Name: "B"}, {GID: "gone", Name: "C"}}); err != nil {
 		t.Fatal(err)
 	}
-	return ds, &Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, st
+	return ds, &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}, st
 }
 
 func TestPushDependencies(t *testing.T) {

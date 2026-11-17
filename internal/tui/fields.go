@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Custom fields: shown in the detail view (enter changes one: a chooser for enum fields,
@@ -22,10 +22,10 @@ type fieldFilter struct {
 func (f fieldFilter) label() string { return f.fieldName + "=" + f.value }
 
 // fieldBadges is the short text of a task's important enum values, e.g. " [高]".
-func fieldBadges(t *store.TaskSummary) string {
+func fieldBadges(t *readmodel.TaskSummary) string {
 	var b strings.Builder
 	for _, f := range t.CustomFields {
-		if f.Important && f.Display != "" && (f.Type == store.CFEnum || f.Type == store.CFMultiEnum) {
+		if f.Important && f.Display != "" && (f.Type == readmodel.CFEnum || f.Type == readmodel.CFMultiEnum) {
 			b.WriteString(" [" + f.Display + "]")
 		}
 	}
@@ -33,13 +33,13 @@ func fieldBadges(t *store.TaskSummary) string {
 }
 
 // editCustomField starts changing field f of task t.
-func (m *Model) editCustomField(t store.TaskSummary, f store.CustomFieldView) tea.Cmd {
+func (m *Model) editCustomField(t readmodel.TaskSummary, f readmodel.CustomFieldView) tea.Cmd {
 	if !f.Editable {
 		m.status = fmt.Sprintf("「%s」は変更できません（%s）", f.Name, f.Type)
 		return nil
 	}
 	switch f.Type {
-	case store.CFEnum, store.CFMultiEnum:
+	case readmodel.CFEnum, readmodel.CFMultiEnum:
 		m.showFieldPicker(t, f)
 		return nil
 	}
@@ -47,11 +47,11 @@ func (m *Model) editCustomField(t store.TaskSummary, f store.CustomFieldView) te
 	m.fieldTask, m.fieldEdit = t, f
 	m.prompt.Prompt = f.Name + ": "
 	switch f.Type {
-	case store.CFNumber:
+	case readmodel.CFNumber:
 		m.prompt.Placeholder = "数値（空欄で空にする）"
-	case store.CFDate:
+	case readmodel.CFDate:
 		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で空にする）"
-	case store.CFPeople:
+	case readmodel.CFPeople:
 		m.prompt.Placeholder = "me / 名前（カンマ区切りで複数。空欄で空にする）"
 	default:
 		m.prompt.Placeholder = "テキスト（空欄で空にする）"
@@ -63,12 +63,12 @@ func (m *Model) editCustomField(t store.TaskSummary, f store.CustomFieldView) te
 
 // fieldInput is a field's value as the prompt takes it back: the raw number (the display
 // may be formatted, e.g. "¥1,000" or "50%"), the date without a time, else the display.
-func fieldInput(f store.CustomFieldView) string {
+func fieldInput(f readmodel.CustomFieldView) string {
 	switch v := f.Value.(type) {
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case string:
-		if f.Type == store.CFDate || f.Type == store.CFText {
+		if f.Type == readmodel.CFDate || f.Type == readmodel.CFText {
 			return v
 		}
 	}
@@ -76,12 +76,12 @@ func fieldInput(f store.CustomFieldView) string {
 }
 
 // showFieldPicker opens the chooser of an enum field (multi_enum: toggles, stays open).
-func (m *Model) showFieldPicker(t store.TaskSummary, f store.CustomFieldView) {
+func (m *Model) showFieldPicker(t readmodel.TaskSummary, f readmodel.CustomFieldView) {
 	if len(f.Options) == 0 {
 		m.status = fmt.Sprintf("「%s」の選択肢がまだ取得されていません（同期すると選べます）", f.Name)
 		return
 	}
-	multi := f.Type == store.CFMultiEnum
+	multi := f.Type == readmodel.CFMultiEnum
 	kind, title := pickField, f.Name+"（"+truncateRunes(t.Name, 30)+"）"
 	if multi {
 		kind, title = pickFieldMulti, title+"  enter / space で付け外し・esc で閉じる"
@@ -123,7 +123,7 @@ func (m *Model) showFieldPicker(t store.TaskSummary, f store.CustomFieldView) {
 
 // fieldSetMsg reports a custom field change; reopen keeps a multi_enum chooser open.
 type fieldSetMsg struct {
-	task   store.TaskSummary
+	task   readmodel.TaskSummary
 	field  string
 	status string
 	reopen bool
@@ -131,7 +131,7 @@ type fieldSetMsg struct {
 }
 
 // setField sets field f of task t to value (stored form, nil clears).
-func (m *Model) setField(t store.TaskSummary, f store.CustomFieldView, value any, reopen bool) tea.Cmd {
+func (m *Model) setField(t readmodel.TaskSummary, f readmodel.CustomFieldView, value any, reopen bool) tea.Cmd {
 	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
 		display, err := relations.SetFieldHere(m.ctx, t.GID, f.GID, value)
@@ -178,8 +178,8 @@ func fieldKey(task, field string) string { return task + "\x00" + field }
 
 // queuedField is a multi_enum value to save once the change being saved is done.
 type queuedField struct {
-	task  store.TaskSummary
-	field store.CustomFieldView
+	task  readmodel.TaskSummary
+	field readmodel.CustomFieldView
 	value []string
 }
 
@@ -193,10 +193,10 @@ func (m *Model) submitField(input string) tea.Cmd {
 }
 
 // reopenFieldPicker shows the multi_enum chooser again with the stored values.
-func (m *Model) reopenFieldPicker(t store.TaskSummary, fieldGID string) tea.Cmd {
+func (m *Model) reopenFieldPicker(t readmodel.TaskSummary, fieldGID string) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		d, err := st.GetTask(m.ctx, t.GID)
+		d, err := queryOf(st).GetTask(m.ctx, t.GID)
 		if err != nil {
 			return fieldPickerMsg{err: err}
 		}
@@ -210,27 +210,27 @@ func (m *Model) reopenFieldPicker(t store.TaskSummary, fieldGID string) tea.Cmd 
 }
 
 type fieldPickerMsg struct {
-	task  store.TaskSummary
-	field store.CustomFieldView
+	task  readmodel.TaskSummary
+	field readmodel.CustomFieldView
 	err   error
 }
 
 // --- filter ---
 
 type fieldOptionsMsg struct {
-	options []store.FieldOption
+	options []readmodel.FieldOption
 	err     error
 }
 
 func (m *Model) openFieldFilterPicker() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		opts, err := st.ListFieldOptions(m.ctx)
+		opts, err := queryOf(st).ListFieldOptions(m.ctx)
 		return fieldOptionsMsg{options: opts, err: err}
 	}
 }
 
-func (m *Model) showFieldFilterPicker(opts []store.FieldOption) {
+func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
 	if len(opts) == 0 && m.fieldFilter.field == "" {
 		m.status = "絞り込みに使える選択式のカスタムフィールドがありません"
 		return

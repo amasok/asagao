@@ -27,7 +27,7 @@ const (
 	layerEntry   layer = "entry"   // rules 4 and 5: app, domain, shared types, termsafe, entryAdapters
 	layerWire    layer = "wire"    // rule 6: anything
 	layerShared  layer = "shared"  // types only (asana/model, readmodel): the standard library
-	layerCommon  layer = "common"  // termsafe: the standard library only
+	layerCommon  layer = "common"  // termsafe, xdg: the standard library only
 	layerTest    layer = "test"    // packages with only tests: nothing may import them
 )
 
@@ -52,8 +52,10 @@ var layers = map[string]layer{
 
 	"internal/asana/model": layerShared,
 	"internal/readmodel":   layerShared,
+	"internal/settings":    layerShared,
 
 	"internal/termsafe": layerCommon,
+	"internal/xdg":      layerCommon,
 
 	"internal/tui":       layerEntry,
 	"internal/cli":       layerEntry,
@@ -123,19 +125,5 @@ type violation struct {
 // The rows marked "許す" are not here: layers, adapterExceptions, entryAdapters and
 // entryToEntry let them through.
 var allowed = []violation{
-	{"internal/auth", "internal/asana", "d1: *asana.Error (401) moves to asana/model"},
-	{"internal/store", "internal/asana", "d1: the asana types move to asana/model"},
-	{"internal/store", "internal/richtext", "d3: outbox_richtext.go's Target.Fit comes through a port of sync.Push (c1 moved describe.go's ToEditableMarkdown to the caller)"},
-	{"internal/sync", "internal/store", "b2: store.Op moves to domain/outbox; d3: the store becomes a port"},
-	{"internal/sync", "internal/asana", "d1: the types move to asana/model; d3: the client becomes a port"},
-	{"internal/sync", "internal/auth", "d2: ErrNotLoggedIn and ErrLoginReplaced (push.go)"},
-	{"internal/sync", "internal/config", "d3: SyncConfig becomes sync's own type"},
-	{"internal/sync", "golang.org/x/oauth2", "d2: push.go's *oauth2.RetrieveError becomes auth's own error"},
-	{"internal/tui", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
-	{"internal/mcpserver", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
-	{"internal/cli", "internal/store", "a: writes go through app; c2: read types move to readmodel; d4: Open moves to wire"},
-	{"internal/cli", "internal/asana", "d4: NewClient moves to wire"},
-	{"internal/cli", "internal/config", "d4: loading the settings moves to wire"},
-	{"internal/cli", "internal/auth/tokenstore", "d4: auth migrate moves to auth"},
-	{"internal/cli", "golang.org/x/oauth2", "d4: root.go's oauth2.NewClient moves to wire and auth"},
+	{"internal/sync", "internal/store", "after d3 (the store is the LocalStore port now): the names sync still takes from the store, the outbox kinds, sync_state keys, errors and helpers (store.OpX, store.KeyX, store.ErrNotFound, store.TaskFieldValues, ...), move out of it"},
 }

@@ -197,7 +197,7 @@ func TestMCPUploadDirs(t *testing.T) {
 	if err := parse([]byte("[mcp]\nupload_dirs = [\"~/Documents/receipts\", \"/srv/share/\", \"~\"]\n"), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.validate(); err != nil {
+	if err := validate(cfg); err != nil {
 		t.Fatal(err)
 	}
 	got := cfg.MCP.ExpandedUploadDirs()
@@ -206,7 +206,7 @@ func TestMCPUploadDirs(t *testing.T) {
 		t.Fatalf("upload_dirs = %v, want %v", got, want)
 	}
 	cfg.MCP.UploadDirs = []string{"Downloads"}
-	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "mcp.upload_dirs") {
+	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "mcp.upload_dirs") {
 		t.Fatalf("a relative folder should be refused: %v", err)
 	}
 }

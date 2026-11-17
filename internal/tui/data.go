@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // queryRows loads the tasks for the list pane and groups them:
 //   - search: one group with all hits (across every project)
 //   - My Tasks: by due date (期限切れ / 今日 / 7日以内 / それ以降 / 期日なし)
 //   - project: by section, in Asana's section order
-func queryRows(ctx context.Context, st *store.Store, sc scope, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
-	f := store.TaskFilter{Query: query, Tag: tag, Field: field.field, FieldValue: field.value}
+func queryRows(ctx context.Context, st Store, sc scope, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
+	f := readmodel.TaskFilter{Query: query, Tag: tag, Field: field.field, FieldValue: field.value}
 	today := now.Format(time.DateOnly)
 	f.Completed = boolPtr(false)
 	switch filter {
@@ -31,11 +31,11 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 		if filter == filterOpen {
 			f.Completed = nil // search includes completed tasks unless a filter says otherwise
 		}
-		tasks, err := st.ListTasks(ctx, f)
+		tasks, err := queryOf(st).ListTasks(ctx, f)
 		if err != nil {
 			return nil, err
 		}
-		return group(tasks, []string{fmt.Sprintf("検索結果 (%d)", len(tasks))}, func(store.TaskSummary) int { return 0 }), nil
+		return group(tasks, []string{fmt.Sprintf("検索結果 (%d)", len(tasks))}, func(readmodel.TaskSummary) int { return 0 }), nil
 	}
 
 	switch sc.kind {
@@ -47,7 +47,7 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 		if filter == filterOpen {
 			f.Completed = nil // recent changes include completions
 		}
-		tasks, err := st.ListTasks(ctx, f)
+		tasks, err := queryOf(st).ListTasks(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -60,14 +60,14 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 				labels = append(labels, l)
 			}
 		}
-		rows := groupKeyed(tasks, labels, labels, func(t store.TaskSummary) int { return index[modifiedDay(t.ModifiedAt, now)] })
+		rows := groupKeyed(tasks, labels, labels, func(t readmodel.TaskSummary) int { return index[modifiedDay(t.ModifiedAt, now)] })
 		if sc.notice != "" { // why this is shown instead of the inbox
 			rows = append([]row{{header: sc.notice, note: true}}, rows...)
 		}
 		return rows, nil
 	case scopeProject:
 		f.ProjectGID = sc.project
-		tasks, err := st.ListTasks(ctx, f)
+		tasks, err := queryOf(st).ListTasks(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +82,7 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 		other := len(names)
 		names = append(names, "その他")
 		keys = append(keys, "other")
-		return groupKeyed(tasks, names, keys, func(t store.TaskSummary) int {
+		return groupKeyed(tasks, names, keys, func(t readmodel.TaskSummary) int {
 			for _, m := range t.Memberships {
 				if m.ProjectGID == sc.project {
 					if i, ok := index[m.SectionGID]; ok {
@@ -94,20 +94,20 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 		}), nil
 
 	default: // My Tasks
-		me, err := st.MeGID(ctx)
+		me, err := queryOf(st).MeGID(ctx)
 		if err != nil {
 			return nil, err
 		}
 		f.AssigneeGID = me
-		tasks, err := st.ListTasks(ctx, f)
+		tasks, err := queryOf(st).ListTasks(ctx, f)
 		if err != nil {
 			return nil, err
 		}
 		if filter == filterCompleted {
-			return group(tasks, []string{"完了済み"}, func(store.TaskSummary) int { return 0 }), nil
+			return group(tasks, []string{"完了済み"}, func(readmodel.TaskSummary) int { return 0 }), nil
 		}
 		week := now.AddDate(0, 0, 7).Format(time.DateOnly)
-		return group(tasks, []string{"期限切れ", "今日", "7日以内", "それ以降", "期日なし"}, func(t store.TaskSummary) int {
+		return group(tasks, []string{"期限切れ", "今日", "7日以内", "それ以降", "期日なし"}, func(t readmodel.TaskSummary) int {
 			switch {
 			case t.DueOn == "":
 				return 4
@@ -124,13 +124,13 @@ func queryRows(ctx context.Context, st *store.Store, sc scope, query string, fil
 }
 
 // group buckets tasks (keeping their order) under headers, dropping empty groups.
-func group(tasks []store.TaskSummary, headers []string, bucket func(store.TaskSummary) int) []row {
+func group(tasks []readmodel.TaskSummary, headers []string, bucket func(readmodel.TaskSummary) int) []row {
 	return groupKeyed(tasks, headers, headers, bucket)
 }
 
 // groupKeyed is group with a stable key per header (section gid), used to remember
 // which groups are collapsed.
-func groupKeyed(tasks []store.TaskSummary, headers, keys []string, bucket func(store.TaskSummary) int) []row {
+func groupKeyed(tasks []readmodel.TaskSummary, headers, keys []string, bucket func(readmodel.TaskSummary) int) []row {
 	buckets := make([][]int, len(headers))
 	for i, t := range tasks {
 		b := bucket(t)

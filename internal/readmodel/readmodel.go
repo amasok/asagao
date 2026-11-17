@@ -4,7 +4,10 @@
 // (docs/design/adr/0006-application-use-cases.md, decision 4).
 //
 // The store keeps type aliases for them (store.UserRef), so its methods and their callers
-// do not change. The rest of the read types move here in stage c2 (migration-plan.md).
+// do not change. Stage c2 (migration-plan.md) moves the read types here: the views of
+// tasks (tasks.go) and of projects (projects.go), the inbox (inbox.go), the task list
+// query (filter.go), the errors the entry points check (errors.go) and the wording of
+// outbox entries, dropped changes and status updates (describe.go).
 package readmodel
 
 import (

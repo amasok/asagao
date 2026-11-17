@@ -6,40 +6,29 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // LegacyAppName is the tool's former name. Its folders are moved to the new ones on startup
 // (MigrateLegacyDirs), and its keychain entry and 1Password item are read when nothing is
 // saved under the new name yet (tokenstore).
-const LegacyAppName = "asana-tui"
+const LegacyAppName = xdg.LegacyAppName
 
 // dirPair is one of the tool's folders under the former name and under the current one.
 type dirPair struct{ old, new string }
 
 func dirPairs() []dirPair {
-	bases := []struct{ env, fallback string }{
-		{"XDG_CONFIG_HOME", ".config"},
-		{"XDG_DATA_HOME", filepath.Join(".local", "share")},
-		{"XDG_CACHE_HOME", ".cache"},
-	}
+	bases := []string{xdg.ConfigHome(), xdg.DataHome(), xdg.CacheHome()}
 	pairs := make([]dirPair, 0, len(bases))
-	for _, b := range bases {
-		base := xdgBase(b.env, b.fallback)
+	for _, base := range bases {
 		pairs = append(pairs, dirPair{old: filepath.Join(base, LegacyAppName), new: filepath.Join(base, appName)})
 	}
 	return pairs
 }
 
-// OwnDirs is every folder that holds the tool's own files (the token, the store, downloaded
-// attachments): the config, data and cache folders, under the current name and the former
-// one (left in place when both exist, or a link to the new folder).
-func OwnDirs() []string {
-	dirs := []string{ConfigDir(), DataDir(), CacheDir()}
-	for _, p := range dirPairs() {
-		dirs = append(dirs, p.old)
-	}
-	return dirs
-}
+// OwnDirs is xdg.OwnDirs.
+func OwnDirs() []string { return xdg.OwnDirs() }
 
 // MigrateLegacyDirs moves the config, data and cache folders of the former name (asana-tui)
 // to the current ones, so nothing is lost and nothing has to be done by hand. For each:

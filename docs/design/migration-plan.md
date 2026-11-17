@@ -6,6 +6,7 @@
 
 1. **振る舞いを変えない。** `openspec/specs/` に差分がないこと。振る舞いを変えたくなったら、別の Issue にして、`openspec/changes/` に変更の提案を置く。
 2. **既存のテストは、import のパスと呼び出し先の書き換え以外で変えない。** 入り口のテスト (`internal/cli/*_test.go`、`internal/mcpserver/*_test.go`、`internal/tui/*_test.go`) が、そのまま通ることが、振る舞いを変えていない証拠になる。
+   - 例外: d3 で、Syncer を手で作っていて rich text の変換に頼るテストにだけ、`Syncer.RichText` の欄を渡す 1 項目を足した (sync は richtext を import できず、変換の既定値を持てないため)。
 3. **`go build ./... && go vet ./... && go test -race ./...` と `npm run spec:validate` が通る。**
 4. **トランザクションの単位を変えない。** 同じトランザクションで行っていたことを、2 つに分けない (#50・#55)。逆に、別だったものを 1 つにもしない (例: MCP の作成とタグ付けは、今は別のトランザクション。まとめるのは振る舞いの変更)。
 5. **1 つの PR は、1 つのユースケースか、1 つの判断の移動。** 差分の目安は 500 行まで (テストを除く)。
@@ -105,7 +106,7 @@
 | PR | 範囲 |
 |---|---|
 | c1 | `store/describe.go` の表示用の変換 (`richtext.ToEditableMarkdown`) を、呼ぶ側 (app か入り口) に移す。store から richtext の import がなくなる |
-| c2 | 表示用の読み取りの型 (`store.TaskSummary`・`TaskDetail`・`CustomFieldView` など約 50 種類)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など) を `internal/readmodel` に移す。store には別名を残す。そのあと読み取りのポート (`app.TaskQuery` ほか) を作り、入り口の読み取りを app 経由にする (型の移動で 1〜2 PR、入り口ごとに 1 PR) |
+| c2 | 表示用の読み取りの型 (`store.TaskSummary`・`TaskDetail`・`CustomFieldView` など約 50 種類)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など) を `internal/readmodel` に移す。store には別名を残す。そのあと読み取りのユースケース `app.Query` とポート `app.QueryStore` を作り (ADR 0009)、入り口の読み取りを app 経由にする (型の移動で 1〜2 PR、入り口ごとに 1 PR) |
 | c3 | `PruneTasks` の「消してはいけない」条件を、`domain/task` の文書とテストにする。SQL の WHERE は残す (1 回の DELETE で行うことが、途中で止まっても壊れないことの前提のため) |
 
 - トランザクションの単位 (`Store.tx`、`UpsertTasks` の 500ms ごとの分け方、`PruneResults` の読み取りの計画) は変えない。TestUpsertTasksLetsOtherWritersIn、TestFullSyncFailingWhileWritingTasksKeepsTheCache、TestPruneResultsWithNothingToChangeTakesNoWriteLock が、そのまま通ること。
@@ -114,6 +115,18 @@
 
 - `DiscardDetails(d, toMarkdown)`: 破棄した変更の rich text を Markdown にする変換を、呼ぶ側 (TUI と CLI) が渡す (`richtext.ToEditableMarkdown`)。どの欄を変換し、空なら平文にする、は store のまま。
 - store から richtext の import は、まだ残る。`FitQueuedRichText` (outbox_richtext.go、#71。この表を書いたあとに入った) が `richtext.Target.Fit` を使うため。呼んでいるのは `sync.Push` で、sync は richtext を import できないので、変換を外から渡すには sync のポートと組み立てが要る。それは d3 (sync のポート) で行う。許可リストの行の理由を書き換えた。
+
+### c2 の中身
+
+- 最初の PR (読み取りの型の移動、その 1): タスクとプロジェクトの表示の型を `internal/readmodel` に移した。`tasks.go` に `TaskSummary`・`TaskDetail`・`MembershipView`・`StoryView`・`TaskRef`・`AttachmentView`・`DependencyView`・`TagCount`・`FieldOption` と、一覧の条件 `TaskFilter` (読み取りのポートの引数になるため)。`projects.go` に `ProjectView`・`SectionView`・`StatusUpdateView`・`Stats`。中身はそのまま (JSON の形を `readmodel/views_test.go` で押さえた)。store には型の別名を残したので、store の関数の形も、入り口も変わらない。
+- 2 つ目 (その 2): 通知の型 (`Notification`・`InboxState`・`NotificationFilter` と、そのメソッド、`Inbox*` の値、`NotificationLabel`) を `readmodel/inbox.go` に、一覧の条件 `FilterSpec` (と `FilterError`・`MaxModifiedWithinDays`) を `filter.go` に、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrAmbiguous`・`ErrPushBusy`・`ErrUnsentChanges`・`ErrSectionWithoutProject`) を `errors.go` に移した。store には別名 (エラーは同じ値の変数、関数は呼ぶだけのもの) を残した。`FilterError` を別のパッケージの型にしたので、store の中の書き方をキーつきにした (`go vet` の composites)。
+- 3 つ目 (その 3): 表示の文言 (`store/describe.go` のすべて: `OpLabel`・`OpNote`・`DescribeOp`・`DescribeChange`・`ConflictLines`・`FieldLabel`・`DiscardLine`・`DiscardDetails`・`AccountChangedHelp`・`TaskBadges` ほか、と `StatusLabel`・`StatusTypes`)、破棄した変更の型 `Discard` と `ResetReason` を `readmodel/describe.go` に移した。`Op` は b2 で `domain/outbox` に移ったので、文言の関数は `outbox.Op` を受ける (readmodel は domain を import してよい)。store には呼ぶだけの関数を残した。`DiscardDetail` だけは、store のテストがキーなしで書いているので (別名にすると `go vet` の composites に引っかかる)、store に同じ形の型を残して変換する。
+- 4 つ目 (その 4): 読み取りのポート。`app.Query` (各メソッドは store の同じ名前のものを呼ぶだけ) と、そのポート `app.QueryStore` を置いた (ADR 0009)。入り口はまだ変えない。
+- 5 つ目 (MCP): MCP の読み取りを `app.Query` 経由にした (`Server.query()`)。表示の型・一覧の条件・エラー・文言も、store の別名ではなく readmodel (と `outbox.Op`) を使う。MCP に残る store は、`*store.Store` (書き込みのユースケースと `sync.Syncer` に渡す。d3・d4)、`ReplaceInlineAssets`・`IsImageName` (表示の手伝い。readmodel に移すかは CLI・TUI の単位で決める) だけ。
+- 6 つ目 (CLI): CLI の読み取りを `app.Query` 経由にした (`query(st)`)。表示の型・一覧の条件・エラー・文言は readmodel、`SubtypeLabel`・`ApprovalLabel` は `domain/task` を使う。CLI に残る store は、`*store.Store` と `store.Open` (組み立て。d4)、書き込み (`MarkDiscardsNotified`・`SetInboxWriteForbidden`・`ResetWithBackup` と `AnyUnsent`)、`IsLocalGID`、`auth` のログインのあとの確認 (`SyncState(KeyMeGID)`) だけ。最後の 1 つは、"" (まだ同期していない) を許す読み方で、`MeGID` では置き換えられない。ログインの書き込み (`SetInboxWriteForbidden`) と同じ所にあるので、d4 で組み立てを移すときに一緒に形を決める。
+- 7 つ目 (TUI): TUI の読み取りを `app.Query` 経由にした (`queryOf(st)`)。d1 で `TaskTags` が `model.Ref` を返すようになったので、`QueryStore` に足した。表示の型・エラー・文言は readmodel、outbox の型と状態は `domain/outbox`、種類の名前は `domain/task` を使う。TUI に残る store は、`*store.Store` (組み立て。d4)、書き込み (`ResetWithBackup` と `ResetResult`、`MarkDiscardsNotified`)、画面の状態の保存 (`SyncState`・`SetSyncState` と `KeyCollapsed`)、カスタムフィールドの種類 (`CF*`)、`IsLocalGID`・`InlineAssets`・`ReplaceInlineAssets`。
+  - 画面の状態の保存は、キャッシュの読み取りではなく、画面が自分の状態を書いて読み戻すもの。CLI の `SyncState(KeyMeGID)` と同じく、d4 で組み立てを移すときに形を決める (`QueryStore` には入れない)。
+  - `CF*`・`IsLocalGID`・`InlineAssets`・`ReplaceInlineAssets` は、store の中の型や決まり (`domain/gid` など) を呼ぶだけの関数と定数なので、入り口から store の import をなくすとき (d4) に、行き先 (readmodel か domain) と一緒に移す。
 
 ## 段階 d: ポート (Asana と認証)
 
@@ -125,6 +138,8 @@
 | d4 | `internal/wire` (組み立て) を作り、`cli/root.go` の `apiClient`・`newClient`・`openStore` と、TUI・MCP の `sync.Syncer{...}` の組み立て (5 か所) を移す。cli から x/oauth2 の import がなくなる |
 
 - 段階 d が終わると、依存の向きのテストの許可リストが空になる。
+- d4 は 3 つに分けた: d4 (`internal/wire`。cmd/asagao が `cli.Wiring` で cli に渡す。入り口は wire を import しない)、d4b (入り口の store の名前を readmodel・domain/gid に、ストアを入り口ごとのポート `tui.Store`・`mcpserver.Store`・`cli.Store` に)、d4c (設定の型を `internal/settings` に、フォルダの場所を `internal/xdg` に、保存先の操作を auth に)。
+- 残る許可は sync → store の 1 行: sync が store から取る名前 (操作の種類 `OpX`、sync_state のキー、エラー、`IsLocalGID`、`TaskFieldValues`・`CustomFieldAPIValue` など) を domain・readmodel に移せば消える。
 
 ## 並行してよい作業
 

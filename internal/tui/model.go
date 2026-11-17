@@ -14,14 +14,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/imageview"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
 
 // Deps are the TUI's external dependencies (swapped out in tests).
 type Deps struct {
-	Store *store.Store
+	Store Store
 	// NewSyncer creates a syncer with an authenticated API client. It is called lazily in the
 	// background so the UI never waits for authentication (e.g. a 1Password unlock).
 	// nil means offline-only.
@@ -88,7 +89,7 @@ type scope struct {
 	kind     scopeKind
 	name     string
 	project  string // gid
-	sections []store.SectionView
+	sections []readmodel.SectionView
 	status   string // latest status update type of the project
 	notice   string // scopeRecent: why the inbox is not shown (inbox.go)
 }
@@ -100,9 +101,9 @@ type row struct {
 	count     int    // tasks in the group
 	collapsed bool
 	depth     int // 0 = task in the list, 1+ = expanded subtask
-	task      *store.TaskSummary
-	notif     *store.Notification // inbox: the notification (task is what it is about, if a task)
-	note      bool                // header is an explanation, not a group (never collapsed)
+	task      *readmodel.TaskSummary
+	notif     *readmodel.Notification // inbox: the notification (task is what it is about, if a task)
+	note      bool                    // header is an explanation, not a group (never collapsed)
 }
 
 // selectable rows: tasks, notifications, and collapsed group headers (so they can be
@@ -146,7 +147,7 @@ type Model struct {
 	listOffset int
 	taskSeq    int // drops stale task loads
 
-	detail     *store.TaskDetail
+	detail     *readmodel.TaskDetail
 	detailView viewport.Model
 
 	search    textinput.Model
@@ -172,12 +173,12 @@ type Model struct {
 	syncAgain   bool   // a write happened during a sync; sync again when it finishes
 	outbox      outboxCounts
 	showOutbox  bool
-	ops         []store.Op
+	ops         []outbox.Op
 	opCursor    int
-	inbox       store.InboxState // whether the notifications can be shown (inbox.go)
+	inbox       readmodel.InboxState // whether the notifications can be shown (inbox.go)
 	inboxUnread int
-	discards    []store.Discard // recently dropped changes, newest first (shown in full in the outbox)
-	outboxTop   int             // first line of the outbox overlay on screen (it scrolls)
+	discards    []readmodel.Discard // recently dropped changes, newest first (shown in full in the outbox)
+	outboxTop   int                 // first line of the outbox overlay on screen (it scrolls)
 
 	// views (board.go)
 	zoom           bool // detail pane fills the screen
@@ -213,12 +214,12 @@ type Model struct {
 	calendar bool
 	calDay   time.Time // selected day
 	calMonth time.Time // month of calTasks
-	calTasks map[string][]store.TaskSummary
+	calTasks map[string][]readmodel.TaskSummary
 
 	// projects (projects.go)
 	statusView         bool
 	statusOffset       int
-	statuses           []store.StatusUpdateView
+	statuses           []readmodel.StatusUpdateView
 	selectProjectAfter string
 
 	// subtasks (subtasks.go)
@@ -233,18 +234,18 @@ type Model struct {
 	commentGID   string       // task the comment prompt posts to
 
 	// keys (keymap.go) and choosers (pickers.go)
-	leader         bool              // space was pressed: the menu is open
-	renderedActive bool              // the detail was last rendered with selectable items
-	dueTask        store.TaskSummary // task for promptDue
-	tagTask        store.TaskSummary // task for promptNewTag
+	leader         bool                  // space was pressed: the menu is open
+	renderedActive bool                  // the detail was last rendered with selectable items
+	dueTask        readmodel.TaskSummary // task for promptDue
+	tagTask        readmodel.TaskSummary // task for promptNewTag
 	// custom fields (fields.go)
-	fieldTask   store.TaskSummary     // task for promptField
-	fieldEdit   store.CustomFieldView // field for promptField
+	fieldTask   readmodel.TaskSummary     // task for promptField
+	fieldEdit   readmodel.CustomFieldView // field for promptField
 	fieldFilter fieldFilter
 	fieldSaving map[string]bool         // fieldKey: a multi_enum toggle of it is being saved
 	fieldQueued map[string]*queuedField // fieldKey: its latest toggle made meanwhile
 	// dependencies (deps.go)
-	depTask       store.TaskSummary // task for promptDepSearch
+	depTask       readmodel.TaskSummary // task for promptDepSearch
 	depDependents bool
 	// extras.go
 	dupSource      string // task to duplicate (promptDuplicate)
@@ -295,8 +296,8 @@ func newInput() textinput.Model {
 
 type (
 	scopesLoadedMsg struct {
-		projects []store.ProjectView
-		inbox    store.InboxState
+		projects []readmodel.ProjectView
+		inbox    readmodel.InboxState
 		unread   int
 		err      error
 	}
@@ -309,7 +310,7 @@ type (
 	}
 	detailLoadedMsg struct {
 		gid string
-		d   *store.TaskDetail
+		d   *readmodel.TaskDetail
 		err error
 	}
 	detailDebounceMsg struct{ gid string }
@@ -336,13 +337,13 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) loadScopes() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		ps, err := st.ListProjects(m.ctx, true)
+		ps, err := queryOf(st).ListProjects(m.ctx, true)
 		msg := scopesLoadedMsg{projects: ps, err: err}
 		if err == nil {
-			msg.inbox, msg.err = st.InboxState(m.ctx)
+			msg.inbox, msg.err = queryOf(st).InboxState(m.ctx)
 		}
 		if msg.err == nil {
-			msg.unread, msg.err = st.UnreadNotifications(m.ctx)
+			msg.unread, msg.err = queryOf(st).UnreadNotifications(m.ctx)
 		}
 		return msg
 	}
@@ -385,7 +386,7 @@ func (m *Model) loadList() tea.Cmd {
 func (m *Model) loadDetail(gid string) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		d, err := st.GetTask(m.ctx, gid)
+		d, err := queryOf(st).GetTask(m.ctx, gid)
 		return detailLoadedMsg{gid: gid, d: d, err: err}
 	}
 }
@@ -546,7 +547,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.detail = nil
 			m.status = msg.err.Error()
-			if errors.Is(msg.err, store.ErrNotFound) && m.selectedNotification() != nil {
+			if errors.Is(msg.err, readmodel.ErrNotFound) && m.selectedNotification() != nil {
 				m.status = "通知のタスクはまだ取得していません（オンラインなら自動で取得します）"
 			}
 		} else {
@@ -840,7 +841,7 @@ func (m *Model) currentScope() scope {
 	return m.scopes[0]
 }
 
-func (m *Model) setProjects(ps []store.ProjectView) {
+func (m *Model) setProjects(ps []readmodel.ProjectView) {
 	current := m.currentScope()
 	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, m.inboxScope()}
 	for _, p := range ps {
@@ -992,7 +993,7 @@ func (m *Model) nextTaskRow(i, dir int) int {
 	return -1
 }
 
-func (m *Model) selectedTask() *store.TaskSummary {
+func (m *Model) selectedTask() *readmodel.TaskSummary {
 	if m.boardActive() {
 		return m.boardSelected()
 	}

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -33,7 +33,7 @@ func (s *Syncer) syncInbox(ctx context.Context, workspaceGID string) error {
 // plan, ...), that is recorded for the front ends, which show recent updates instead, and
 // the sync goes on. An invalid login or a network error stops the sync like any other
 // fetch; Asana having trouble (5xx, 429) keeps the cached notifications.
-func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) error {
+func (s *Syncer) syncInboxes(ctx context.Context, workspaces []model.Workspace) error {
 	ok := false
 	var refused store.InboxState
 	for _, w := range workspaces {
@@ -42,7 +42,7 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) 
 		switch {
 		case err == nil:
 			ok = true
-		case asana.IsUnauthorized(err) || isNetworkError(err):
+		case model.IsUnauthorized(err) || isNetworkError(err):
 			return fmt.Errorf("%s の通知の取得: %w", w.Name, err)
 		case isRejected(err):
 			if refused.Status == "" {
@@ -66,7 +66,7 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []asana.Workspace) 
 
 // inboxStateFor classifies why Asana refused to list notifications.
 func inboxStateFor(err error) store.InboxState {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	st := store.InboxState{Status: store.InboxError, Error: err.Error()}
 	if errors.As(err, &apiErr) {
 		switch apiErr.Status {
@@ -117,7 +117,7 @@ func InboxReadOnlyMessage(scopes []string) string {
 // sync every one (so the prune keeps them); otherwise the ones not cached yet and those
 // with a notification since the previous sync (since), which have changed. At most
 // maxTargetFetches per sync; the others are kept as cached (added to keep).
-func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]bool, full bool, since time.Time, upsert func([]asana.Task) error) error {
+func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]bool, full bool, since time.Time, upsert func([]model.Task) error) error {
 	var after string
 	if !since.IsZero() {
 		after = since.UTC().Format(time.RFC3339)
@@ -146,10 +146,10 @@ func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]b
 		t, err := s.API.Task(ctx, gid)
 		switch {
 		case err == nil:
-			if err := upsert([]asana.Task{*t}); err != nil {
+			if err := upsert([]model.Task{*t}); err != nil {
 				return err
 			}
-		case isRejected(err) && !asana.IsUnauthorized(err): // deleted, or not visible to us: the notification is still listed
+		case isRejected(err) && !model.IsUnauthorized(err): // deleted, or not visible to us: the notification is still listed
 		default:
 			return fmt.Errorf("通知のタスクの取得 (%s): %w", gid, err)
 		}
@@ -170,7 +170,7 @@ func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]b
 func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out outcome, batched int, err error) {
 	ws, _ := op.Payload["workspace"].(string)
 	read, _ := op.Payload["read"].(bool)
-	peers, err := s.Store.PendingNotificationMarks(ctx, op, asana.MaxNotificationGIDs-1)
+	peers, err := s.Store.PendingNotificationMarks(ctx, op, model.MaxNotificationGIDs-1)
 	if err != nil {
 		return sent, batched, err
 	}
@@ -192,7 +192,7 @@ func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out out
 	failed, err := s.API.MarkNotifications(ctx, ws, gids, read)
 	if err != nil {
 		release()
-		var apiErr *asana.Error
+		var apiErr *model.Error
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden {
 			if err := s.Store.SetInboxWriteForbidden(ctx, true); err != nil {
 				return sent, batched, err
@@ -213,7 +213,7 @@ func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out out
 		}
 	}
 	if slices.Contains(failed, op.TaskGID) { // deleted or archived in Asana
-		return sent, batched, fmt.Errorf("通知が Asana にありません: %w", &asana.Error{Status: http.StatusNotFound})
+		return sent, batched, fmt.Errorf("通知が Asana にありません: %w", &model.Error{Status: http.StatusNotFound})
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 		return sent, batched, sentNotSaved(err)

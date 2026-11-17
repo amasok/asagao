@@ -9,8 +9,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Writes (complete / create / comment) are applied to the local store immediately and
@@ -38,9 +39,9 @@ type outboxCounts struct{ pending, conflict, failed int }
 type (
 	outboxLoadedMsg struct {
 		counts   outboxCounts
-		ops      []store.Op
-		discards []store.Discard // dropped changes to announce (now marked as notified)
-		recent   []store.Discard // recently dropped changes, to show in full
+		ops      []outbox.Op
+		discards []readmodel.Discard // dropped changes to announce (now marked as notified)
+		recent   []readmodel.Discard // recently dropped changes, to show in full
 		// discardErr: the dropped changes could not be read; the outbox itself still opens.
 		discardErr error
 		err        error
@@ -58,11 +59,11 @@ func (m *Model) loadOutbox() tea.Cmd {
 	return func() tea.Msg {
 		var c outboxCounts
 		var err error
-		c.pending, c.conflict, c.failed, err = st.OutboxCounts(m.ctx)
+		c.pending, c.conflict, c.failed, err = queryOf(st).OutboxCounts(m.ctx)
 		if err != nil {
 			return outboxLoadedMsg{err: err}
 		}
-		ops, err := st.ListOps(m.ctx)
+		ops, err := queryOf(st).ListOps(m.ctx)
 		if err != nil {
 			return outboxLoadedMsg{err: err}
 		}
@@ -72,13 +73,13 @@ func (m *Model) loadOutbox() tea.Cmd {
 		// shown the backup (they are still listed in the overlay).
 		// The dropped changes are extra information: if they cannot be read (e.g. one bad
 		// row), the outbox still opens so conflicts and failures can be resolved.
-		pending, discardErr := st.PendingDiscards(m.ctx)
-		var discards []store.Discard
+		pending, discardErr := queryOf(st).PendingDiscards(m.ctx)
+		var discards []readmodel.Discard
 		if discardErr == nil && len(pending) > 0 {
 			ids := make([]int64, len(pending))
 			for i, d := range pending {
 				ids[i] = d.ID
-				if !store.IsResetDiscard(d) {
+				if !readmodel.IsResetDiscard(d) {
 					discards = append(discards, d)
 				}
 			}
@@ -86,7 +87,7 @@ func (m *Model) loadOutbox() tea.Cmd {
 				discards = nil
 			}
 		}
-		recent, err := st.RecentDiscards(m.ctx, recentDiscards)
+		recent, err := queryOf(st).RecentDiscards(m.ctx, recentDiscards)
 		if err != nil {
 			discardErr = err
 		}
@@ -102,6 +103,9 @@ func (m *Model) requestSync() tea.Cmd {
 	}
 	return m.startSync()
 }
+
+// queryOf reads the local cache (app.Query over the store).
+func queryOf(st Store) app.Query { return app.Query{Store: st} }
 
 // tasks returns the task use cases on the cache, with the clock stopped at now: the time
 // the key was pressed, which the TUI's writes use. The use cases only write locally and
@@ -266,7 +270,7 @@ func (m *Model) writeKey(key string) tea.Cmd {
 	return nil
 }
 
-func (m *Model) toggleComplete(t store.TaskSummary) tea.Cmd {
+func (m *Model) toggleComplete(t readmodel.TaskSummary) tea.Cmd {
 	done := !t.Completed
 	if done {
 		return m.updateTask(t, app.TaskUpdate{Completed: &done}, "完了にしました: "+t.Name)
@@ -424,7 +428,7 @@ func parseCreateInput(input string, now time.Time) (name, due string, err error)
 // --- outbox overlay ---
 
 func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
-	var op *store.Op
+	var op *outbox.Op
 	if m.opCursor < len(m.ops) {
 		op = &m.ops[m.opCursor]
 	}
@@ -432,7 +436,7 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 		if op == nil {
 			return nil
 		}
-		if op.State == store.OpSending { // the keys do nothing while Push has it
+		if op.State == outbox.StateSending { // the keys do nothing while Push has it
 			m.status = "送信中の変更は操作できません（送信が終わると結果が表示されます）"
 			return nil
 		}
@@ -472,8 +476,8 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 }
 
 // discardStatus is the one-line notice for changes dropped by a push.
-func (m *Model) discardStatus(ds []store.Discard) string {
-	s := store.DiscardNotice + ": " + store.DiscardLine(ds[0])
+func (m *Model) discardStatus(ds []readmodel.Discard) string {
+	s := readmodel.DiscardNotice + ": " + readmodel.DiscardLine(ds[0])
 	if len(ds) > 1 {
 		s += fmt.Sprintf(" ほか %d 件（%s で一覧）", len(ds)-1, m.actionKey("outbox"))
 	}
@@ -521,8 +525,8 @@ func (m *Model) outboxCursorLine() int {
 	line := 2 // help, blank
 	for _, op := range m.ops[:min(m.opCursor, len(m.ops))] {
 		line++
-		line += len(store.ConflictLines(op))
-		if _, text := store.OpNote(op); text != "" {
+		line += len(readmodel.ConflictLines(op))
+		if _, text := readmodel.OpNote(op); text != "" {
 			line++
 		}
 	}
@@ -548,19 +552,19 @@ func (m *Model) outboxLines(inner int) []string {
 	for i, op := range m.ops {
 		style := m.st.dim // pending, sending (Push has it; nothing to resolve)
 		switch op.State {
-		case store.OpConflict:
+		case outbox.StateConflict:
 			style = m.st.today
-		case store.OpFailed:
+		case outbox.StateFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+store.OpLabel(op)+"]", opStateWidth)) + " " + store.DescribeOp(op)
+		line := style.Render(padRight("["+readmodel.OpLabel(op)+"]", opStateWidth)) + " " + readmodel.DescribeOp(op)
 		lines = append(lines, m.highlight(line, inner, i == m.opCursor, true))
-		for _, c := range store.ConflictLines(op) {
+		for _, c := range readmodel.ConflictLines(op) {
 			lines = append(lines, opDetailIndent+c)
 		}
-		if _, text := store.OpNote(op); text != "" {
+		if _, text := readmodel.OpNote(op); text != "" {
 			note := m.st.dim // e.g. being checked against Asana: nothing to do
-			if op.State == store.OpFailed {
+			if op.State == outbox.StateFailed {
 				note = m.st.errorText
 			}
 			lines = append(lines, note.Render(opDetailIndent+text))
@@ -569,8 +573,8 @@ func (m *Model) outboxLines(inner int) []string {
 	if len(m.discards) > 0 {
 		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
 		for _, d := range m.discards {
-			lines = append(lines, "  "+store.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
-			for _, dt := range store.DiscardDetails(d, richtext.ToEditableMarkdown) {
+			lines = append(lines, "  "+readmodel.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
+			for _, dt := range readmodel.DiscardDetails(d, richtext.ToEditableMarkdown) {
 				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))
 				for _, l := range strings.Split(ansi.Wrap(dt.Text, max(10, inner-6), ""), "\n") {
 					lines = append(lines, "      "+l)

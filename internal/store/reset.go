@@ -3,17 +3,17 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"os"
 	"time"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// ErrUnsentChanges is returned by Reset (without force) when local changes have not been
-// sent to Asana yet; Reset then deletes nothing.
-var ErrUnsentChanges = errors.New("Asana に送っていない変更があります")
+// ErrUnsentChanges is readmodel.ErrUnsentChanges.
+var ErrUnsentChanges = readmodel.ErrUnsentChanges
 
-// ResetReason is the reason recorded for unsent changes deleted by Reset.
-const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"
+// ResetReason is readmodel.ResetReason.
+const ResetReason = readmodel.ResetReason
 
 // Reset deletes all local data: tasks, projects, comments, attachments, the outbox, the
 // record of dropped changes and sync state including the account (KeyMeGID), so the store
@@ -44,7 +44,7 @@ func (s *Store) Reset(ctx context.Context, force bool, now time.Time) (unsent in
 }
 
 // AnyUnsent lets ResetUpTo delete every unsent change, however many there are.
-const AnyUnsent int64 = -1
+const AnyUnsent = readmodel.AnyUnsent
 
 // ResetUpTo is Reset for a reset the user confirmed after seeing the unsent changes: it
 // deletes them only if none was queued after outbox entry upTo (the newest one shown;

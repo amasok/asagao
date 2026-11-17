@@ -264,7 +264,7 @@ func TestPushWithoutTokenIsNotSent(t *testing.T) {
 			_, _ = st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "新しいタスク"}, now)
 			_, _ = st.AddCommentLocal(ctx, "t1", "コメント", store.UserRef{GID: "me"}, now)
 			good := s.API
-			bad := asana.NewClient(oauth2.NewClient(ctx, failingTokens{tc.err}))
+			bad := asana.NewClient(oauth2.NewClient(ctx, &auth.Source{TokenSource: failingTokens{tc.err}}))
 			bad.BaseURL, bad.MaxRetries = srv.URL, 0
 			s.API = bad
 			// The token goes away after this Syncer confirmed the account (the usual case

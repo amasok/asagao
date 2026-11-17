@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
 )
@@ -53,7 +53,7 @@ func (s *Source) UnauthorizedHint() string {
 // LoginHelp returns what the user should do when err means they must log in (again):
 // nothing stored, or a token Asana rejects. It returns "" for any other error.
 func LoginHelp(err error) string {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	switch {
 	case errors.Is(err, ErrNotLoggedIn):
 		return ErrNotLoggedIn.Error()

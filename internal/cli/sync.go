@@ -26,7 +26,7 @@ func (a *app) syncCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			s := &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}
+			s := a.syncer(api, st)
 			if !a.json {
 				s.Progress = func(f string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), "  "+f+"\n", args...) }
 			}
@@ -66,7 +66,7 @@ func (a *app) syncCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d / 取得したタスク %d / 削除 %d（%s）\n",
 				kind, res.Workspaces, res.Projects, res.Tasks, res.Pruned, res.Duration.Round(100*time.Millisecond))
-			if inbox, err := st.InboxState(ctx); err == nil && !inbox.Available() {
+			if inbox, err := query(st).InboxState(ctx); err == nil && !inbox.Available() {
 				fmt.Fprintln(cmd.ErrOrStderr(), sync.InboxUnavailableMessage(inbox, a.cfg.Auth.Scopes))
 			}
 			return nil
@@ -82,7 +82,7 @@ func (a *app) syncCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			stats, err := st.Stats(cmd.Context())
+			stats, err := query(st).Stats(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -95,7 +95,7 @@ func (a *app) syncCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "最終同期: %s\nワークスペース %d / プロジェクト %d / セクション %d / タスク %d（未完了 %d）\n",
 				last, stats.Workspaces, stats.Projects, stats.Sections, stats.Tasks, stats.OpenTasks)
-			if p, c, f, err := st.OutboxCounts(cmd.Context()); err == nil && p+c+f > 0 {
+			if p, c, f, err := query(st).OutboxCounts(cmd.Context()); err == nil && p+c+f > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "未送信 %d / 競合 %d / 失敗 %d（`asagao outbox list`）\n", p, c, f)
 			}
 			return nil

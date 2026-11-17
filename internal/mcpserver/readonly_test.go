@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -40,7 +39,7 @@ func TestReadOnlySyncDoesNotSendOutbox(t *testing.T) {
 	cs := connect(t, &Server{Store: st, ReadOnly: true, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
-		return &sync.Syncer{API: api, Store: st, Cfg: config.SyncConfig{CompletedDays: 14}}, nil
+		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
 	}})
 
 	tools, err := cs.ListTools(ctx, nil)

@@ -8,41 +8,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // OpCreateStatus posts a project status update (outbox.KindCreateStatus).
 const OpCreateStatus = outbox.KindCreateStatus
 
-// StatusTypes are the status values of a project status update, with Japanese labels.
-var StatusTypes = []struct{ Value, Label string }{
-	{"on_track", "順調"}, {"at_risk", "要注意"}, {"off_track", "遅れ"}, {"on_hold", "保留"}, {"complete", "完了"},
-}
+// StatusTypes is readmodel.StatusTypes.
+var StatusTypes = readmodel.StatusTypes
 
-// StatusLabel returns the Japanese label of a status type.
-func StatusLabel(t string) string {
-	for _, s := range StatusTypes {
-		if s.Value == t {
-			return s.Label
-		}
-	}
-	return t
-}
+// StatusLabel is readmodel.StatusLabel.
+func StatusLabel(t string) string { return readmodel.StatusLabel(t) }
 
-type StatusUpdateView struct {
-	GID        string `json:"gid"`
-	StatusType string `json:"status_type"`
-	Title      string `json:"title"`
-	Text       string `json:"text"`
-	HTMLText   string `json:"html_text,omitempty"`
-	Author     string `json:"author"`
-	CreatedAt  string `json:"created_at"`
-	Pending    bool   `json:"pending"`
-}
+// StatusUpdateView is readmodel.StatusUpdateView.
+type StatusUpdateView = readmodel.StatusUpdateView
 
 // ReplaceStatusUpdates stores a project's status updates (keeping unsent local ones).
-func (s *Store) ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []asana.StatusUpdate) error {
+func (s *Store) ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE project_gid = ? AND gid NOT LIKE 'local:%'", projectGID); err != nil {
 			return err
@@ -115,11 +99,11 @@ func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, t
 }
 
 // ReplaceLocalStatus records the Asana gid of a posted status update.
-func (s *Store) ReplaceLocalStatus(ctx context.Context, local string, u asana.StatusUpdate) error {
+func (s *Store) ReplaceLocalStatus(ctx context.Context, local string, u model.StatusUpdate) error {
 	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalStatus(ctx, tx, local, u) })
 }
 
-func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u asana.StatusUpdate) error {
+func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u model.StatusUpdate) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local); err != nil {
 		return err
 	}

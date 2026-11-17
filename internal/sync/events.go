@@ -3,7 +3,7 @@ package sync
 import (
 	"context"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -52,7 +52,7 @@ func (s *Syncer) readEvents(ctx context.Context, projectGID string) (projectEven
 	hadToken := token != ""
 	for page := 0; page < maxEventPages; page++ {
 		p, err := s.API.Events(ctx, projectGID, token)
-		if fresh, ok := asana.SyncToken(err); ok {
+		if fresh, ok := model.SyncToken(err); ok {
 			// No token yet, or it expired: what changed before is unknown. The events read
 			// so far (with the old token) are still applied; the fetch covers the rest.
 			ev.token, ev.fallback, ev.fresh = fresh, true, !hadToken
@@ -79,7 +79,7 @@ func (s *Syncer) readEvents(ctx context.Context, projectGID string) (projectEven
 	return ev, nil
 }
 
-func (ev *projectEvents) note(projectGID string, e asana.Event) {
+func (ev *projectEvents) note(projectGID string, e model.Event) {
 	switch e.Resource.ResourceType {
 	case "task":
 		if e.Resource.GID == "" {
@@ -109,7 +109,7 @@ func (ev *projectEvents) note(projectGID string, e asana.Event) {
 // and removes those Asana no longer has or shows us. Unsent local changes keep winning
 // (store.UpsertTasks reapplies them; a task with queued changes is not removed).
 func (s *Syncer) applyEvents(ctx context.Context, ev projectEvents, keep map[string]bool,
-	upsert func([]asana.Task) error, withSubtasks *[]string) error {
+	upsert func([]model.Task) error, withSubtasks *[]string) error {
 	var gids []string
 	for _, gid := range ev.order {
 		if !keep[gid] && !store.IsLocalGID(gid) {

@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Dependencies: a task waits for its dependencies; its dependents wait for it. Each link is
@@ -25,20 +26,13 @@ const (
 	MaxDependencies = 30
 )
 
-// DependencyView is a task linked to another by a dependency.
-type DependencyView struct {
-	GID             string `json:"gid"`
-	Name            string `json:"name"`
-	Completed       bool   `json:"completed"`
-	ResourceSubtype string `json:"resource_subtype,omitempty"`
-	// Pending: the link was added here and not sent yet.
-	Pending bool `json:"pending,omitempty"`
-}
+// DependencyView is readmodel.DependencyView.
+type DependencyView = readmodel.DependencyView
 
 // upsertTaskDependencies replaces a task's links (each direction only if the response had it).
-func upsertTaskDependencies(ctx context.Context, tx *sql.Tx, t asana.Task) error {
+func upsertTaskDependencies(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	type side struct {
-		refs []asana.Ref
+		refs []model.Ref
 		del  string
 		pair func(other string) (task, dependency string)
 	}
@@ -58,7 +52,7 @@ func upsertTaskDependencies(ctx context.Context, tx *sql.Tx, t asana.Task) error
 				return err
 			}
 			if r.Name != "" {
-				if err := upsertTaskRef(ctx, tx, asana.TaskRef{GID: r.GID, Name: r.Name}); err != nil {
+				if err := upsertTaskRef(ctx, tx, model.TaskRef{GID: r.GID, Name: r.Name}); err != nil {
 					return err
 				}
 			}
@@ -67,7 +61,7 @@ func upsertTaskDependencies(ctx context.Context, tx *sql.Tx, t asana.Task) error
 	return nil
 }
 
-func upsertTaskRef(ctx context.Context, tx *sql.Tx, r asana.TaskRef) error {
+func upsertTaskRef(ctx context.Context, tx *sql.Tx, r model.TaskRef) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO task_refs(gid, name, completed, resource_subtype) VALUES(?, ?, ?, ?)
 		ON CONFLICT(gid) DO UPDATE SET name = excluded.name, completed = excluded.completed, resource_subtype = excluded.resource_subtype`,
 		r.GID, r.Name, r.Completed, r.ResourceSubtype)
@@ -76,15 +70,15 @@ func upsertTaskRef(ctx context.Context, tx *sql.Tx, r asana.TaskRef) error {
 
 // ReplaceDependencies stores a task's dependencies and dependents as listed by Asana (with
 // the names of tasks that may not be cached), keeping unsent changes.
-func (s *Store) ReplaceDependencies(ctx context.Context, taskGID string, deps, dependents []asana.TaskRef) error {
+func (s *Store) ReplaceDependencies(ctx context.Context, taskGID string, deps, dependents []model.TaskRef) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		t := asana.Task{GID: taskGID, Dependencies: []asana.Ref{}, Dependents: []asana.Ref{}}
+		t := model.Task{GID: taskGID, Dependencies: []model.Ref{}, Dependents: []model.Ref{}}
 		for _, list := range []struct {
-			refs []asana.TaskRef
-			dst  *[]asana.Ref
+			refs []model.TaskRef
+			dst  *[]model.Ref
 		}{{deps, &t.Dependencies}, {dependents, &t.Dependents}} {
 			for _, r := range list.refs {
-				*list.dst = append(*list.dst, asana.Ref{GID: r.GID})
+				*list.dst = append(*list.dst, model.Ref{GID: r.GID})
 				if err := upsertTaskRef(ctx, tx, r); err != nil {
 					return err
 				}

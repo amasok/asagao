@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -27,7 +27,7 @@ func (a *app) projectCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			projects, err := st.ListProjects(ctx, !all)
+			projects, err := query(st).ListProjects(ctx, !all)
 			if err != nil {
 				return err
 			}
@@ -50,12 +50,12 @@ func (a *app) projectCmd() *cobra.Command {
 }
 
 // onlineSyncer returns a syncer with an API client (for online-only project operations).
-func (a *app) onlineSyncer(ctx context.Context, st *store.Store) (*sync.Syncer, error) {
+func (a *app) onlineSyncer(ctx context.Context, st Store) (*sync.Syncer, error) {
 	api, err := a.apiClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("Asana に接続できません: %w", err)
 	}
-	return &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}, nil
+	return a.syncer(api, st), nil
 }
 
 func (a *app) projectStatusCmd() *cobra.Command {
@@ -70,14 +70,14 @@ func (a *app) projectStatusCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := st.ResolveProject(ctx, args[0])
+			gid, err := query(st).ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
 			if s, err := a.onlineSyncer(ctx, st); err == nil {
 				_ = s.FetchStatusUpdates(ctx, gid)
 			}
-			updates, err := st.StatusUpdates(ctx, gid)
+			updates, err := query(st).StatusUpdates(ctx, gid)
 			if err != nil {
 				return err
 			}
@@ -88,7 +88,7 @@ func (a *app) projectStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "ステータス更新はまだありません")
 			}
 			for _, u := range updates {
-				fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s  %s %s\n%s\n\n", store.StatusLabel(u.StatusType), u.Title, u.Author, u.CreatedAt, indent(u.Text))
+				fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s  %s %s\n%s\n\n", readmodel.StatusLabel(u.StatusType), u.Title, u.Author, u.CreatedAt, indent(u.Text))
 			}
 			return nil
 		},
@@ -158,7 +158,7 @@ func (a *app) projectArchiveCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := st.ResolveProject(ctx, args[0])
+			gid, err := query(st).ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -190,7 +190,7 @@ func (a *app) projectMembersCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := st.ResolveProject(ctx, args[0])
+			gid, err := query(st).ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -201,14 +201,14 @@ func (a *app) projectMembersCmd() *cobra.Command {
 				}
 				var addG, remG []string
 				for _, u := range add {
-					g, err := st.ResolveUser(ctx, u)
+					g, err := query(st).ResolveUser(ctx, u)
 					if err != nil {
 						return err
 					}
 					addG = append(addG, g)
 				}
 				for _, u := range remove {
-					g, err := st.ResolveUser(ctx, u)
+					g, err := query(st).ResolveUser(ctx, u)
 					if err != nil {
 						return err
 					}
@@ -218,7 +218,7 @@ func (a *app) projectMembersCmd() *cobra.Command {
 					return err
 				}
 			}
-			members, err := st.ProjectMembers(ctx, gid)
+			members, err := query(st).ProjectMembers(ctx, gid)
 			if err != nil {
 				return err
 			}

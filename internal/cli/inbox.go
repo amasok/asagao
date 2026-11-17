@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -19,11 +19,11 @@ import (
 type inboxOutput struct {
 	// Available is false when the notifications cannot be fetched (see Notice); Recent then
 	// lists the tasks modified in the last 7 days instead.
-	Available     bool                 `json:"available"`
-	Notice        string               `json:"notice,omitempty"`
-	Unread        int                  `json:"unread"`
-	Notifications []store.Notification `json:"notifications"`
-	Recent        []store.TaskSummary  `json:"recent,omitempty"`
+	Available     bool                     `json:"available"`
+	Notice        string                   `json:"notice,omitempty"`
+	Unread        int                      `json:"unread"`
+	Notifications []readmodel.Notification `json:"notifications"`
+	Recent        []readmodel.TaskSummary  `json:"recent,omitempty"`
 }
 
 // recentDays is how far back the recent updates (the inbox substitute) go.
@@ -77,27 +77,27 @@ func (a *app) inboxCmd() *cobra.Command {
 	return cmd
 }
 
-func loadInbox(ctx context.Context, st *store.Store, unread bool, limit int, scopes []string, now time.Time) (inboxOutput, error) {
-	state, err := st.InboxState(ctx)
+func loadInbox(ctx context.Context, st Store, unread bool, limit int, scopes []string, now time.Time) (inboxOutput, error) {
+	state, err := query(st).InboxState(ctx)
 	if err != nil {
 		return inboxOutput{}, err
 	}
-	out := inboxOutput{Available: state.Available(), Notifications: []store.Notification{}}
+	out := inboxOutput{Available: state.Available(), Notifications: []readmodel.Notification{}}
 	if out.Available && state.WriteForbidden {
 		out.Notice = sync.InboxReadOnlyMessage(scopes)
 	}
 	if !out.Available {
 		out.Notice = sync.InboxUnavailableMessage(state, scopes)
-		out.Recent, err = st.ListTasks(ctx, store.TaskFilter{
+		out.Recent, err = query(st).ListTasks(ctx, readmodel.TaskFilter{
 			ModifiedAfter:  now.AddDate(0, 0, -recentDays).UTC().Format(time.RFC3339),
 			SortByModified: true, Limit: limit,
 		})
 		return out, err
 	}
-	if out.Notifications, err = st.ListNotifications(ctx, store.NotificationFilter{UnreadOnly: unread, Limit: limit}); err != nil {
+	if out.Notifications, err = query(st).ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: unread, Limit: limit}); err != nil {
 		return out, err
 	}
-	out.Unread, err = st.UnreadNotifications(ctx)
+	out.Unread, err = query(st).UnreadNotifications(ctx)
 	return out, err
 }
 
@@ -149,9 +149,9 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 
 // resolveNotifications turns the arguments (gids or unique suffixes) into gids; all
 // takes every cached notification not in the read state yet.
-func resolveNotifications(ctx context.Context, st *store.Store, args []string, all, read bool) ([]string, error) {
+func resolveNotifications(ctx context.Context, st Store, args []string, all, read bool) ([]string, error) {
 	if all {
-		ns, err := st.ListNotifications(ctx, store.NotificationFilter{UnreadOnly: read})
+		ns, err := query(st).ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: read})
 		if err != nil {
 			return nil, err
 		}
@@ -168,7 +168,7 @@ func resolveNotifications(ctx context.Context, st *store.Store, args []string, a
 
 // printNotifications prints one line per notification: unread mark, when, who, what,
 // the task, the story text, and the ID.
-func printNotifications(w io.Writer, ns []store.Notification, now time.Time) {
+func printNotifications(w io.Writer, ns []readmodel.Notification, now time.Time) {
 	if len(ns) == 0 {
 		fmt.Fprintln(w, "通知はありません")
 		return
@@ -183,7 +183,7 @@ func printNotifications(w io.Writer, ns []store.Notification, now time.Time) {
 			mark += "↑"
 		}
 		rows = append(rows, []string{mark, notificationTime(n.CreatedAt, now), n.ActorName,
-			store.NotificationLabel(n.Subtype), n.TargetName, clipText(n.Text, 50), n.GID})
+			readmodel.NotificationLabel(n.Subtype), n.TargetName, clipText(n.Text, 50), n.GID})
 	}
 	printTable(w, rows)
 }

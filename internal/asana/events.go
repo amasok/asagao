@@ -8,35 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"time"
+
+	"github.com/amasok/asagao/internal/asana/model"
 )
-
-// Event is one change from GET /events.
-type Event struct {
-	Action   string `json:"action"` // changed, added, removed, deleted, undeleted
-	Resource struct {
-		GID          string `json:"gid"`
-		ResourceType string `json:"resource_type"`
-	} `json:"resource"`
-	// Parent is set for added / removed (e.g. the task a subtask was added to).
-	Parent *struct {
-		GID          string `json:"gid"`
-		ResourceType string `json:"resource_type"`
-	} `json:"parent"`
-	Change *struct {
-		Field  string `json:"field"`
-		Action string `json:"action"`
-	} `json:"change"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// EventPage is one answer of GET /events: up to 100 events, the token for the next call,
-// and whether more are waiting.
-type EventPage struct {
-	Events  []Event
-	Sync    string
-	HasMore bool
-}
 
 var eventFields = []string{"action", "resource", "resource.resource_type", "parent", "parent.resource_type", "change.field", "change.action", "created_at"}
 
@@ -62,14 +36,8 @@ func (c *Client) Events(ctx context.Context, resource, token string) (EventPage,
 	return page, nil
 }
 
-// SyncToken returns the new sync token of a 412 from Events (no token, or it expired).
-func SyncToken(err error) (string, bool) {
-	var e *Error
-	if errors.As(err, &e) && e.Status == http.StatusPreconditionFailed && e.Sync != "" {
-		return e.Sync, true
-	}
-	return "", false
-}
+// SyncToken returns the new sync token of a 412 from Events (model.SyncToken).
+func SyncToken(err error) (string, bool) { return model.SyncToken(err) }
 
 const (
 	batchPath = "/batch"

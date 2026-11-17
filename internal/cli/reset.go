@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asagao/internal/config"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // backupDir is where unsent changes are written before a reset.
-func backupDir() string { return filepath.Join(config.DataDir(), "backups") }
+func backupDir() string { return filepath.Join(xdg.DataDir(), "backups") }
 
 func (a *app) resetCmd() *cobra.Command {
 	var force bool
@@ -38,15 +38,15 @@ func (a *app) resetCmd() *cobra.Command {
 			// without it, and afterwards with the backup and in `outbox discarded`).
 			upTo := int64(0)
 			if force {
-				upTo = store.AnyUnsent
+				upTo = readmodel.AnyUnsent
 			}
 			res, err := st.ResetWithBackup(ctx, backupDir(), upTo, time.Now())
 			switch {
-			case errors.Is(err, store.ErrUnsentChanges):
+			case errors.Is(err, readmodel.ErrUnsentChanges):
 				return fmt.Errorf("Asana に送っていない変更が %d 件あり、初期化すると消えます。"+
 					"消した変更の内容は、初期化の後も `asagao outbox discarded` で確認できます（JSON ファイルにも自動でバックアップします）。"+
 					"今の内容は `asagao outbox list` で見られます。よろしければ --force を付けて実行してください", res.Unsent)
-			case errors.Is(err, store.ErrPushBusy):
+			case errors.Is(err, readmodel.ErrPushBusy):
 				return errors.New("別の asagao が同期・送信中のため初期化できません。終わってからやり直してください")
 			case err != nil:
 				return err
@@ -70,7 +70,7 @@ func (a *app) resetCmd() *cobra.Command {
 }
 
 // accountChanged explains sync.ErrAccountChanged with the number of unsent changes.
-func accountChanged(ctx context.Context, st *store.Store) error {
-	n, _ := st.UnsentCount(ctx)
-	return fmt.Errorf("%s: %w", store.AccountChangedHelp(n, "asagao reset"), sync.ErrAccountChanged)
+func accountChanged(ctx context.Context, st Store) error {
+	n, _ := query(st).UnsentCount(ctx)
+	return fmt.Errorf("%s: %w", readmodel.AccountChangedHelp(n, "asagao reset"), sync.ErrAccountChanged)
 }

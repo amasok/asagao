@@ -8,9 +8,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/mcpserver"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 func (a *app) mcpCmd() *cobra.Command {
@@ -40,12 +40,12 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 			cwd, _ := os.Getwd()
 			home, _ := os.UserHomeDir()
 			upload := mcpserver.NewUploadPolicy(cwd, home, a.cfg.MCP.ExpandedUploadDirs(),
-				config.OwnDirs())
+				xdg.OwnDirs())
 			s := &mcpserver.Server{
 				Upload:     upload,
 				Store:      st,
 				ReadOnly:   readOnly,
-				CacheDir:   filepath.Join(config.CacheDir(), "attachments"),
+				CacheDir:   filepath.Join(xdg.CacheDir(), "attachments"),
 				Version:    version,
 				AuthScopes: a.cfg.Auth.Scopes,
 				// The syncer outlives the tool call that creates it, so build it with the
@@ -55,7 +55,7 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 					if err != nil {
 						return nil, err
 					}
-					return &sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}, nil
+					return a.syncer(api, st), nil
 				},
 			}
 			return s.New().Run(ctx, &mcp.StdioTransport{})

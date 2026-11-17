@@ -11,7 +11,8 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -48,8 +49,8 @@ func (f *listFlags) register(cmd *cobra.Command, defaultAssignee string) {
 // spec converts flags to a filter spec. The default assignee (defaultAssignee) applies when
 // --assignee is not given; with --project it is everyone. defaultCompleted applies when
 // neither --completed nor --all is given.
-func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool) store.FilterSpec {
-	sp := store.FilterSpec{
+func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool) readmodel.FilterSpec {
+	sp := readmodel.FilterSpec{
 		DefaultAssignee: defaultAssignee, DefaultCompleted: defaultCompleted,
 		Project: f.project, Section: f.section, Tag: f.tag, Field: f.field,
 		DueBefore: f.dueBefore, DueAfter: f.dueAfter, Overdue: f.overdue,
@@ -71,12 +72,12 @@ func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultComp
 }
 
 // filter builds the store filter for the flags.
-func (f *listFlags) filter(ctx context.Context, st *store.Store, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (store.TaskFilter, error) {
-	tf, err := st.BuildFilter(ctx, f.spec(cmd, defaultAssignee, defaultCompleted), now)
-	var fe *store.FilterError
+func (f *listFlags) filter(ctx context.Context, st Store, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (readmodel.TaskFilter, error) {
+	tf, err := query(st).BuildFilter(ctx, f.spec(cmd, defaultAssignee, defaultCompleted), now)
+	var fe *readmodel.FilterError
 	if errors.As(err, &fe) {
 		flag := "--" + strings.ReplaceAll(fe.Field, "_", "-")
-		if errors.Is(fe.Err, store.ErrSectionWithoutProject) {
+		if errors.Is(fe.Err, readmodel.ErrSectionWithoutProject) {
 			return tf, errors.New("--section は --project と一緒に指定してください")
 		}
 		return tf, fmt.Errorf("%s: %w", flag, fe.Err)
@@ -104,7 +105,7 @@ func (a *app) taskListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tasks, err := st.ListTasks(ctx, tf)
+			tasks, err := query(st).ListTasks(ctx, tf)
 			if err != nil {
 				return err
 			}
@@ -138,7 +139,7 @@ func (a *app) searchCmd() *cobra.Command {
 				return err
 			}
 			tf.Query = strings.Join(args, " ")
-			tasks, err := st.ListTasks(ctx, tf)
+			tasks, err := query(st).ListTasks(ctx, tf)
 			if err != nil {
 				return err
 			}
@@ -173,7 +174,7 @@ func (a *app) taskShowCmd() *cobra.Command {
 			if !offline {
 				fetchErr = a.fetchDetails(ctx, st, args[0])
 			}
-			d, err := st.GetTask(ctx, args[0])
+			d, err := query(st).GetTask(ctx, args[0])
 			if err != nil {
 				if fetchErr != nil {
 					return fmt.Errorf("%w（Asana からの取得にも失敗: %v）", err, fetchErr)
@@ -198,19 +199,19 @@ func (a *app) taskShowCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) fetchDetails(ctx context.Context, st *store.Store, gid string) error {
+func (a *app) fetchDetails(ctx context.Context, st Store, gid string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	api, err := a.apiClient(ctx)
 	if err != nil {
 		return err
 	}
-	return (&sync.Syncer{API: api, Store: st, Cfg: a.cfg.Sync}).FetchDetails(ctx, gid)
+	return a.syncer(api, st).FetchDetails(ctx, gid)
 }
 
 var weekdays = [...]string{"日", "月", "火", "水", "木", "金", "土"}
 
-func formatDue(t store.TaskSummary) string {
+func formatDue(t readmodel.TaskSummary) string {
 	if t.DueOn == "" {
 		return ""
 	}
@@ -232,7 +233,7 @@ func checkbox(done bool) string {
 	return "☐"
 }
 
-func membershipLabel(ms []store.MembershipView) string {
+func membershipLabel(ms []readmodel.MembershipView) string {
 	parts := make([]string, 0, len(ms))
 	for _, m := range ms {
 		if m.SectionName != "" && m.SectionName != "(no section)" && m.SectionName != "Untitled section" {
@@ -244,7 +245,7 @@ func membershipLabel(ms []store.MembershipView) string {
 	return strings.Join(parts, ", ")
 }
 
-func printTaskTable(w io.Writer, tasks []store.TaskSummary) {
+func printTaskTable(w io.Writer, tasks []readmodel.TaskSummary) {
 	if len(tasks) == 0 {
 		fmt.Fprintln(w, "該当するタスクはありません")
 		return
@@ -261,7 +262,7 @@ func printTaskTable(w io.Writer, tasks []store.TaskSummary) {
 			}
 		}
 		name := t.Name
-		if b := store.TaskBadges(t); b != "" {
+		if b := readmodel.TaskBadges(t); b != "" {
 			name += " " + b
 		}
 		rows = append(rows, []string{checkbox(t.Completed), formatDue(t), name, membershipLabel(t.Memberships), tags, t.GID})
@@ -270,7 +271,7 @@ func printTaskTable(w io.Writer, tasks []store.TaskSummary) {
 	fmt.Fprintf(w, "\n%d 件\n", len(tasks))
 }
 
-func printTaskDetail(w io.Writer, d *store.TaskDetail) {
+func printTaskDetail(w io.Writer, d *readmodel.TaskDetail) {
 	fmt.Fprintf(w, "%s %s\n\n", checkbox(d.Completed), d.Name)
 	row := func(label, v string) {
 		if v != "" {
@@ -290,18 +291,18 @@ func printTaskDetail(w io.Writer, d *store.TaskDetail) {
 		row("親タスク", d.Parent.Name+" ("+d.Parent.GID+")")
 	}
 	if d.ResourceSubtype != "" && d.ResourceSubtype != "default_task" {
-		row("種類", store.SubtypeLabel(d.ResourceSubtype))
+		row("種類", task.SubtypeLabel(d.ResourceSubtype))
 	}
 	if d.ResourceSubtype == "approval" {
 		status := d.ApprovalStatus
 		if status == "" {
 			status = "pending"
 		}
-		row("承認", store.ApprovalLabel(status))
+		row("承認", task.ApprovalLabel(status))
 	}
 	for _, list := range []struct {
 		label string
-		deps  []store.DependencyView
+		deps  []readmodel.DependencyView
 	}{{"待っている", d.Dependencies}, {"待たれている", d.Dependents}} {
 		for i, dep := range list.deps {
 			label := ""
@@ -332,7 +333,7 @@ func printTaskDetail(w io.Writer, d *store.TaskDetail) {
 			fmt.Fprintf(w, "  %s %s  %s\n", checkbox(s.Completed), s.Name, formatDue(s))
 		}
 	}
-	var comments []store.StoryView
+	var comments []readmodel.StoryView
 	for _, s := range d.Stories {
 		if s.Type == "comment" {
 			comments = append(comments, s)

@@ -12,14 +12,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
 	"golang.org/x/term"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/auth/tokenstore"
-	"github.com/amasok/asagao/internal/config"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // EnvClientSecret lets the client secret be passed non-interactively (e.g. `op run`).
@@ -55,7 +53,7 @@ OAuth で使うなら、Asana に OAuth アプリを登録して config.toml の
 			}
 			if a.cfg.Auth.ClientID == "" && !pat && (manual || noBrowser) {
 				return fmt.Errorf("auth.client_id が未設定です。OAuth を使うなら %s に設定するか ASANA_CLIENT_ID を指定してください"+
-					"（OAuth アプリを登録しないなら asagao auth login --pat）", config.FilePath())
+					"（OAuth アプリを登録しないなら asagao auth login --pat）", xdg.ConfigFile())
 			}
 			if pat || a.cfg.Auth.ClientID == "" {
 				return a.loginPAT(cmd, ts)
@@ -109,7 +107,7 @@ func busyMessage(status int) string {
 }
 
 // loginPAT reads a Personal Access Token, checks it with /users/me and saves it.
-func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
+func (a *app) loginPAT(cmd *cobra.Command, ts auth.TokenStore) error {
 	ctx := cmd.Context()
 	token, err := readPAT(cmd)
 	if err != nil {
@@ -117,18 +115,15 @@ func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, loginTimeout)
 	defer cancel()
-	c := a.newClient(checkCtx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"}))
 	// The user is waiting: retry a busy or failing Asana once, briefly and saying so, not
 	// with the backoff of a sync (about 30 s in all, #24).
-	c.MaxRetries, c.MaxRetryDelay = 1, loginRetryDelay
-	c.OnRetry = func(status int, wait time.Duration) {
+	me, err := wiring.CheckPAT(checkCtx, token, a.baseURL, loginRetryDelay, func(status int, wait time.Duration) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s。%s後にもう一度確かめます…\n", busyMessage(status), wait.Round(time.Second))
-	}
-	me, err := c.Me(checkCtx)
-	if asana.IsUnauthorized(err) {
+	})
+	if model.IsUnauthorized(err) {
 		return fmt.Errorf("Asana がこのトークンを受け付けませんでした。貼り付け間違いがないか確かめるか、%s で作り直してください", auth.PATConsoleURL)
 	}
-	var ae *asana.Error
+	var ae *model.Error
 	if errors.As(err, &ae) && (ae.Status >= 500 || ae.Status == http.StatusTooManyRequests) {
 		return fmt.Errorf("%s。トークンは保存していません。少し待ってから、もう一度 asagao auth login --pat を実行してください", busyMessage(ae.Status))
 	}
@@ -138,7 +133,7 @@ func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	if err != nil {
 		return fmt.Errorf("トークンの確認 (/users/me): %w", err)
 	}
-	creds := &tokenstore.Credentials{PersonalAccessToken: token, UserGID: me.GID, UserName: me.Name, UserEmail: me.Email}
+	creds := &auth.Credentials{PersonalAccessToken: token, UserGID: me.GID, UserName: me.Name, UserEmail: me.Email}
 	// Keep the client secret of an earlier OAuth login, so switching back needs no re-entry.
 	if old, err := ts.Load(ctx); err == nil {
 		creds.ClientSecret = old.ClientSecret
@@ -197,15 +192,15 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 	}
 	defer st.Close()
 	_ = st.SetInboxWriteForbidden(ctx, false) // the new login may allow marking notifications
-	if want, err := st.SyncState(ctx, store.KeyMeGID); err != nil || want == "" || want == gid {
+	if want, err := st.SyncState(ctx, readmodel.KeyMeGID); err != nil || want == "" || want == gid {
 		return
 	}
-	n, _ := st.UnsentCount(ctx)
-	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+store.AccountChangedHelp(n, "asagao reset"))
+	n, _ := query(st).UnsentCount(ctx)
+	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+readmodel.AccountChangedHelp(n, "asagao reset"))
 }
 
 // clientSecret takes the secret from the environment, an existing login, or a hidden prompt.
-func (a *app) clientSecret(cmd *cobra.Command, ts tokenstore.Store) (string, error) {
+func (a *app) clientSecret(cmd *cobra.Command, ts auth.TokenStore) (string, error) {
 	if v := os.Getenv(EnvClientSecret); v != "" {
 		return v, nil
 	}
@@ -240,7 +235,7 @@ func (a *app) authStatusCmd() *cobra.Command {
 			}
 			var st status
 			if os.Getenv(auth.EnvToken) != "" {
-				st = status{LoggedIn: true, Method: string(tokenstore.MethodPAT), Env: auth.EnvToken}
+				st = status{LoggedIn: true, Method: string(auth.MethodPAT), Env: auth.EnvToken}
 			} else {
 				ts, err := a.tokenStore()
 				if err != nil {
@@ -249,7 +244,7 @@ func (a *app) authStatusCmd() *cobra.Command {
 				st.TokenStore = ts.Name()
 				c, err := ts.Load(cmd.Context())
 				switch {
-				case errors.Is(err, tokenstore.ErrNotFound):
+				case errors.Is(err, auth.ErrNoSavedLogin):
 				case err != nil:
 					return err
 				default:
@@ -267,15 +262,15 @@ func (a *app) authStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "%s の Personal Access Token を使用中\n", st.Env)
 			default:
 				fmt.Fprintf(out, "%s (%s) としてログイン中（方式: %s、保存先: %s）\n",
-					st.UserName, st.UserEmail, methodLabel(tokenstore.Method(st.Method)), st.TokenStore)
+					st.UserName, st.UserEmail, methodLabel(auth.Method(st.Method)), st.TokenStore)
 			}
 			return nil
 		},
 	}
 }
 
-func methodLabel(m tokenstore.Method) string {
-	if m == tokenstore.MethodPAT {
+func methodLabel(m auth.Method) string {
+	if m == auth.MethodPAT {
 		return "Personal Access Token"
 	}
 	return "OAuth"
@@ -313,30 +308,12 @@ func (a *app) authMigrateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dstCfg := a.cfg.Auth
-			dstCfg.TokenStore = to
-			dst, err := tokenstore.New(dstCfg)
+			dst, err := auth.MoveLogin(ctx, from, a.cfg.Auth, to)
 			if err != nil {
 				return err
 			}
-			if dst.Name() == from.Name() {
-				return fmt.Errorf("移行元と移行先が同じです (%s)", to)
-			}
-			c, err := from.Load(ctx)
-			if err != nil {
-				return fmt.Errorf("%s からの読み込み: %w", from.Name(), err)
-			}
-			if !dst.CachesAccessToken() {
-				c.AccessToken = ""
-			}
-			if err := dst.Save(ctx, c); err != nil {
-				return fmt.Errorf("%s への保存: %w", dst.Name(), err)
-			}
-			if err := from.Delete(ctx); err != nil {
-				return fmt.Errorf("%s からの削除: %w", from.Name(), err)
-			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s から %s に移しました。%s の auth.token_store を %q にしてください\n",
-				from.Name(), dst.Name(), config.FilePath(), to)
+				from.Name(), dst.Name(), xdg.ConfigFile(), to)
 			return nil
 		},
 	}

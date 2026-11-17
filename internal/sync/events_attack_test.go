@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -196,7 +197,7 @@ func TestEventsSubtaskFailureIsRetriedNextSync(t *testing.T) {
 		e.fake.ServeHTTP(w, r)
 	}))
 	defer wrap.Close()
-	e.s.API.BaseURL = wrap.URL
+	e.s.API.(*asana.Client).BaseURL = wrap.URL
 	e.run(t, 0)
 	e.fake.setTask("t3", "new with subtasks", `,"num_subtasks":1`)
 	e.fake.events = func(token string) (int, string) {

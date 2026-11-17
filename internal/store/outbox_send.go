@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -167,12 +167,8 @@ func (s *Store) completeOp(ctx context.Context, id int64, fn func(*sql.Tx) error
 	})
 }
 
-// MoveTarget is where a task created in Asana still has to be moved.
-type MoveTarget struct {
-	Project, Section string
-	// From is the section Asana put the task in (restored if the move is discarded).
-	From string
-}
+// MoveTarget is where a task created in Asana still has to be moved (outbox.MoveTarget).
+type MoveTarget = outbox.MoveTarget
 
 // CompleteCreate records that Asana created the task of entry id (create_task or
 // duplicate_task) with gid real: the local gid is replaced everywhere and the entry is
@@ -205,7 +201,7 @@ func (s *Store) CompleteCreate(ctx context.Context, id int64, local, real string
 }
 
 // CompleteComment records the comment Asana created for entry id.
-func (s *Store) CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st asana.Story) error {
+func (s *Store) CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error {
 	return s.completeOp(ctx, id, func(tx *sql.Tx) error { return replaceLocalStory(ctx, tx, localGID, taskGID, st) })
 }
 
@@ -215,7 +211,7 @@ func (s *Store) CompleteUpload(ctx context.Context, id int64, local, real, viewU
 }
 
 // CompleteStatus records the status update Asana created for entry id.
-func (s *Store) CompleteStatus(ctx context.Context, id int64, local string, u asana.StatusUpdate) error {
+func (s *Store) CompleteStatus(ctx context.Context, id int64, local string, u model.StatusUpdate) error {
 	return s.completeOp(ctx, id, func(tx *sql.Tx) error { return replaceLocalStatus(ctx, tx, local, u) })
 }
 
