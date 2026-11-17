@@ -68,6 +68,16 @@
 - 時刻: MCP と TUI は 1 つの時刻を返す `Clock` を渡す (期日を読む時刻と書く時刻が、今と同じく同じになる)。CLI は `time.Now`。
 - 結果: 入り口から `dates.Parse` と Markdown → html の変換 (`richtext.*.FromMarkdown`・`PlainFromMarkdown`) がなくなったので、`dependency-rules.md` の「関数の決まり」の 2 つを `internal/archtest/calls_test.go` に入れた (許可リストは空)。import の許可リスト (`allowed`) から消せる行はない (入り口は読み取りでまだ store を使う)。
 
+### a6 の中身
+
+- ポートは、a4 と同じく書き込みのまとまりごとに分けた: `RelationStore` (タグ・フォロワー・プロジェクト・依存・カスタムフィールド)、`SectionStore` (移動・セクション名)、`CopyStore` (複製・添付)、`NotificationStore` (通知の既読)。`CustomFieldView`・`EnumOptionView` を readmodel に移した (store には別名)。
+- 形は a5 と同じく「解決だけ」と「解決済みの値で書く」の 2 つ:
+  - `Relations.Resolve` (名前を解決するだけ。解決できなければ `*FieldError`、Field は MCP の引数の名前 `add_followers` など。タグは store のエラーのまま)、`ResolveFields` (カスタムフィールド。`custom_fields`)、`Apply` (タグ → カスタムフィールド → 依存 → フォロワー → プロジェクトの順に書く。今の MCP の順番)。TUI の選択肢は 1 件ずつの `SetTag`・`AddNewTag`・`SetFollower`・`SetProject`・`SetDependency`・`SetFieldHere` を使う。CLI は `flagErr` で Field を `--add` などに読み替える。
+  - MCP の update_task は、解決 (`ResolveUpdate` → `Relations.Resolve`) → 「変えるものがない」とタスクの確認 → `ResolveFields` → `UpdateHere` → `Apply` の順で、今と同じ。
+  - `Sections.Move` / `MoveHere` / `ResolveMove`、`Rename` / `RenameHere`。`Copies.Duplicate`・`Attach` (MCP のパスの制限は入り口に残す)。`Notifications.Resolve` / `Mark` / `MarkHere` (「すべて」の一覧の作り方は入り口ごとに違うので入り口の読み取りに残す)。
+- 時刻: TUI と MCP の update_task は 1 つの時刻、CLI は書き込みごとに `time.Now` (今と同じ)。
+- 結果: `internal/archtest/calls_test.go` に「入り口は store の書き込みを呼ばない」(`Local` で終わる公開のメソッドと `ApplyTagEdit`、`storeWrites`) を足し、まとまりごとに許可リストから消して、空になった。
+
 ## 段階 b: ドメイン層 (`internal/domain/...`)
 
 ねらい: Asana と outbox の決まりを、SQL と外部ライブラリから離して、単体でテストできる関数にする。
