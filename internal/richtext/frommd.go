@@ -835,25 +835,29 @@ func ImageGID(dest string) (string, bool) {
 // and editable Markdown writes it as it is (ToEditableMarkdown). The first indentation
 // character of such a line becomes a character reference ("&#32;" / "&#9;"), which Markdown
 // keeps as text. Lines that are Markdown structure stay as they are: list items and the
-// lines that continue them, quotes, headings, fences and fenced code, rules. The lines of a
-// paragraph that a setext underline makes a heading lose their indentation, as Markdown
-// drops it from a heading's text (the editor writes a heading without it: kept, it would
-// change on the next round trip, #12); taken out, it cannot make the first line code or
-// the paragraph part of a list item either.
+// lines that continue them, quotes, headings, fences and fenced code, rules. A paragraph
+// that a setext underline makes a heading keeps no indentation as text, as Markdown drops
+// it from a heading's text (the editor writes a heading without it: kept, it would change
+// on the next round trip, #12); its first line loses it, so that it cannot be code.
 func keepIndentation(src string) string {
 	lines := strings.Split(src, "\n")
 	var fence string // the fence of the open code block, "" outside one
 	inItem := false  // in the paragraph of a list item (where indentation is list structure)
 	// the paragraph being read: its quote depth, and its indented lines, which become text
 	// when it ends without a setext underline (each line is looked at once: linear)
-	inPara, paraDepth := false, 0
+	inPara, paraDepth, paraStart := false, 0, 0
 	var indented []int
 	endPara := func(heading bool) {
 		for _, j := range indented {
 			prefix, rest := cutQuotePrefix(lines[j])
 			trimmed := strings.TrimLeft(rest, " \t")
 			if heading {
-				lines[j] = prefix + trimmed
+				// the first line's indentation goes (4 columns would make it code); the
+				// paragraph's other lines are left as they are, which Markdown drops too
+				// (taken out, "    # b" would become a heading of its own)
+				if j == paraStart {
+					lines[j] = prefix + trimmed
+				}
 			} else {
 				indent := rest[:len(rest)-len(trimmed)]
 				lines[j] = prefix + indentRef[indent[0]] + indent[1:] + trimmed
@@ -894,17 +898,25 @@ func keepIndentation(src string) string {
 				items = items[:len(items)-1]
 			}
 		}
-		if f := openingFence(trimmed); f != "" {
+		if inPara {
+			if depth == paraDepth && setextUnderline(rest) {
+				endPara(true)
+				continue
+			}
+			if !interruptsParagraphLine(rest) {
+				// the paragraph goes on (lazily, with fewer ">")
+				if trimmed != rest {
+					indented = append(indented, i)
+				}
+				continue
+			}
 			endPara(false)
+		}
+		if f := openingFence(trimmed); f != "" {
 			fence = f
 			continue
 		}
-		if inPara && depth == paraDepth && setextUnderline(rest) {
-			endPara(true)
-			continue
-		}
-		if listItemStart(trimmed) && (!inPara || interruptsParagraph(trimmed)) {
-			endPara(false)
+		if listItemStart(trimmed) {
 			if inItem {
 				for len(items) > 0 && items[len(items)-1] > col {
 					items = items[:len(items)-1]
@@ -919,12 +931,9 @@ func keepIndentation(src string) string {
 			continue
 		}
 		if blockStart(trimmed) {
-			endPara(false)
 			continue
 		}
-		if !inPara {
-			inPara, paraDepth = true, depth
-		}
+		inPara, paraDepth, paraStart = true, depth, i
 		if trimmed != rest {
 			indented = append(indented, i)
 		}
@@ -976,6 +985,31 @@ func itemContentColumn(line string) int {
 		sp = 1
 	}
 	return w + sp
+}
+
+// interruptsParagraphLine reports whether line (after its quote prefixes) ends the
+// paragraph before it, as CommonMark reads it: a fence, an ATX heading, a rule or a list
+// item that can start a list there, indented by less than 4 columns. Any other line goes
+// on with the paragraph (a setext underline is looked at before).
+func interruptsParagraphLine(line string) bool {
+	if indentWidth(line) >= 4 {
+		return false
+	}
+	t := strings.TrimLeft(line, " \t")
+	return openingFence(t) != "" || atxHeading.MatchString(t) || thematicBreak(t) ||
+		listItemStart(t) && interruptsParagraph(t)
+}
+
+// atxHeading matches the start of an ATX heading (without indentation).
+var atxHeading = regexp.MustCompile(`^#{1,6}(?:[ \t]|$)`)
+
+// thematicBreak reports whether line (without indentation) is a rule: 3 or more of "-",
+// "*" or "_", the same one, with spaces or tabs between them.
+func thematicBreak(line string) bool {
+	if line == "" || strings.IndexByte("-*_", line[0]) < 0 {
+		return false
+	}
+	return onlyOf(line, rune(line[0])) && strings.Count(line, line[:1]) >= 3
 }
 
 // interruptsParagraph reports whether list item start line (without indentation) starts a

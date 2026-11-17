@@ -582,7 +582,9 @@ func (c *converter) contentFollows(n *html.Node, blocks bool) bool {
 			case blockAtoms[sib.DataAtom]:
 				return blocks
 			case sib.DataAtom == atom.Img:
-				return c.editable || blocks // displayed as a block of its own
+				if writes, inline := c.imageWrites(sib); writes {
+					return inline || blocks // displayed as a block of its own
+				}
 			case !asciiBlank(textOf(sib)) || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
 				return true
 			}
@@ -612,7 +614,9 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 			case sib.DataAtom == atom.Br, blockAtoms[sib.DataAtom]:
 				return false
 			case sib.DataAtom == atom.Img:
-				return c.editable
+				if writes, inline := c.imageWrites(sib); writes {
+					return inline
+				}
 			default:
 				// an inline element: what it writes first
 				if attr(sib, "data-asana-gid") != "" {
@@ -650,7 +654,9 @@ func (c *converter) firstLineContent(n *html.Node) (content, ended bool) {
 		case ch.DataAtom == atom.Br, blockAtoms[ch.DataAtom]:
 			return false, true
 		case ch.DataAtom == atom.Img:
-			return c.editable, true
+			if writes, inline := c.imageWrites(ch); writes {
+				return inline, !inline
+			}
 		case attr(ch, "data-asana-gid") != "":
 			return true, false
 		default:
@@ -1480,13 +1486,32 @@ func hasBlock(n *html.Node) bool {
 	return false
 }
 
-func (c *converter) image(n *html.Node) {
-	gid := attr(n, "data-asana-gid")
-	if gid == "" {
-		if m := assetID.FindStringSubmatch(attr(n, "src")); m != nil {
-			gid = m[1]
-		}
+// imageGID is the gid of the attachment image n shows, "" if none.
+func imageGID(n *html.Node) string {
+	if gid := attr(n, "data-asana-gid"); gid != "" {
+		return gid
 	}
+	if m := assetID.FindStringSubmatch(attr(n, "src")); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// imageWrites reports whether image n writes anything (see image), and if so, whether on
+// the line (in editable Markdown, or its alt text) rather than as a block of its own. An
+// image with neither a gid nor alt text writes nothing: it is not content on the line.
+func (c *converter) imageWrites(n *html.Node) (writes, inline bool) {
+	switch {
+	case imageGID(n) != "":
+		return true, c.editable
+	case attr(n, "alt") != "":
+		return true, true
+	}
+	return false, false
+}
+
+func (c *converter) image(n *html.Node) {
+	gid := imageGID(n)
 	if gid == "" {
 		if alt := attr(n, "alt"); alt != "" {
 			c.write("[画像: " + escape(alt, false) + "]")

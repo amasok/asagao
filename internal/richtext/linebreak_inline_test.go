@@ -32,3 +32,20 @@ func TestSpaceBeforeInlineStartingWithBreak(t *testing.T) {
 		t.Errorf("h1 %q", h1)
 	}
 }
+
+// An image that writes nothing (no gid, no alt text) is not content on the line: the
+// whitespace before it in a list item is not kept for it (#14).
+func TestSpaceBeforeEmptyImage(t *testing.T) {
+	for _, in := range []string{
+		"<body><ul><li>a\n\n\t<u><img src=\"x\"><br>x</u></li></ul></body>",
+		"<body><ul><li>a\n\n\t<img src=\"x\"><br>x</li></ul></body>",
+		"<body><ul><li>a\n\n\t<img alt=\"p\"><br>x</li></ul></body>",
+		"<body><ul><li>a\n\n\t<u><img alt=\"p\"><br>x</u></li></ul></body>",
+		"<body><ul><li>a \t<img src=\"x\"><br>x</li></ul></body>",
+	} {
+		md1, h1, md2, h2 := rt2(in)
+		if h1 != h2 {
+			t.Errorf("not stable\nin  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
+		}
+	}
+}
