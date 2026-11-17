@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -67,7 +68,7 @@ func TestEventsFailureFallsBackOnlyThatProject(t *testing.T) {
 				}
 			}))
 			defer wrap.Close()
-			e.s.API.BaseURL = wrap.URL
+			e.s.API.(*asana.Client).BaseURL = wrap.URL
 			e.run(t, 0) // both projects: 412, full fetch
 			mu.Lock()
 			first := p2Fetches

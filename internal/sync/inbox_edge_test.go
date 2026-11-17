@@ -398,7 +398,7 @@ func TestMarkReadOfflineQueuedThenSent(t *testing.T) {
 	if n, err := st.MarkNotificationsLocal(ctx, []string{"n000"}, true, time.Now()); err != nil || n != 1 {
 		t.Fatalf("mark %d %v", n, err)
 	}
-	s.API.BaseURL = "http://127.0.0.1:1" // nothing listens: offline
+	s.API.(*asana.Client).BaseURL = "http://127.0.0.1:1" // nothing listens: offline
 	if _, err := s.Push(ctx); err == nil {
 		t.Fatal("push offline should report the network error")
 	}
@@ -408,7 +408,7 @@ func TestMarkReadOfflineQueuedThenSent(t *testing.T) {
 	if n := noteByGID(t, st, "n000"); !n.Read || !n.Pending {
 		t.Fatalf("local state %+v", n)
 	}
-	s.API.BaseURL = srv.URL
+	s.API.(*asana.Client).BaseURL = srv.URL
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
 		t.Fatalf("push %+v %v", res, err)
 	}

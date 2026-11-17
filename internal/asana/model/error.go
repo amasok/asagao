@@ -44,3 +44,12 @@ func IsPaymentRequired(err error) bool {
 	var e *Error
 	return errors.As(err, &e) && e.Status == http.StatusPaymentRequired
 }
+
+// SyncToken returns the new sync token of a 412 from GET /events (no token, or it expired).
+func SyncToken(err error) (string, bool) {
+	var e *Error
+	if errors.As(err, &e) && e.Status == http.StatusPreconditionFailed && e.Sync != "" {
+		return e.Sync, true
+	}
+	return "", false
+}

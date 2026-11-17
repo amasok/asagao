@@ -9,6 +9,7 @@ import (
 	stdsync "sync"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -40,7 +41,7 @@ func hookAPI(t *testing.T, s *Syncer, next http.Handler) *hooked {
 	h := &hooked{next: next}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	s.API.BaseURL = srv.URL
+	s.API.(*asana.Client).BaseURL = srv.URL
 	return h
 }
 

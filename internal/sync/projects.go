@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -18,17 +18,17 @@ import (
 // ErrOffline is returned by online-only operations when there is no API client.
 var ErrOffline = errors.New("オンラインのときだけできる操作です")
 
-func (s *Syncer) saveProject(ctx context.Context, p *asana.Project) error {
+func (s *Syncer) saveProject(ctx context.Context, p *model.Project) error {
 	me, _ := s.Store.MeGID(ctx)
 	ws := ""
 	if p.Workspace != nil {
 		ws = p.Workspace.GID
 	}
-	return s.Store.UpsertProjects(ctx, ws, []asana.Project{*p}, me)
+	return s.Store.UpsertProjects(ctx, ws, []model.Project{*p}, me)
 }
 
 // CreateProject creates a project (in the default workspace) and stores it with its sections.
-func (s *Syncer) CreateProject(ctx context.Context, name string) (*asana.Project, error) {
+func (s *Syncer) CreateProject(ctx context.Context, name string) (*model.Project, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -47,7 +47,7 @@ func (s *Syncer) CreateProject(ctx context.Context, name string) (*asana.Project
 		}
 	}
 	if p.Workspace == nil {
-		p.Workspace = &asana.Ref{GID: ws}
+		p.Workspace = &model.Ref{GID: ws}
 	}
 	if err := s.saveProject(ctx, p); err != nil {
 		return nil, err
@@ -63,8 +63,8 @@ func (s *Syncer) CreateProject(ctx context.Context, name string) (*asana.Project
 // created since started, that is it. Asana may need a moment to list a new project, so it
 // looks twice, projectSettle apart. If it is still not there, the project is not created
 // again (that could make a duplicate); the error says to check after the next sync.
-func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*asana.Project, error) {
-	var apiErr *asana.Error
+func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*model.Project, error) {
+	var apiErr *model.Error
 	if (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil {
 		return nil, cause // not created
 	}
@@ -81,11 +81,11 @@ func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, star
 		// By Asana's clock, like created_at. Measured only now: a dropped connection may
 		// have been this process's first request, and the list's answer has a Date header.
 		since := started.Add(s.API.ClockOffset()).Add(-clockSkew)
-		p, m := pick(projects, func(p asana.Project) bool { return p.Name == name && !p.CreatedAt.Before(since) })
+		p, m := pick(projects, func(p model.Project) bool { return p.Name == name && !p.CreatedAt.Before(since) })
 		switch m {
 		case matched:
 			if p.Workspace == nil {
-				p.Workspace = &asana.Ref{GID: ws}
+				p.Workspace = &model.Ref{GID: ws}
 			}
 			return &p, nil
 		case ambiguous:
@@ -113,7 +113,7 @@ func (s *Syncer) SetProjectMembers(ctx context.Context, gid string, add, remove 
 	if s.API == nil {
 		return ErrOffline
 	}
-	var p *asana.Project
+	var p *model.Project
 	var err error
 	if len(add) > 0 {
 		if p, err = s.API.AddMembers(ctx, gid, add); err != nil {

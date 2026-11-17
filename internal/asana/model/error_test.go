@@ -56,3 +56,22 @@ func TestCustomFieldSubtype(t *testing.T) {
 		}
 	}
 }
+
+func TestSyncToken(t *testing.T) {
+	for _, tc := range []struct {
+		err   error
+		token string
+		ok    bool
+	}{
+		{&Error{Status: 412, Sync: "tok"}, "tok", true},
+		{fmt.Errorf("events: %w", &Error{Status: 412, Sync: "tok"}), "tok", true},
+		{&Error{Status: 412}, "", false},              // no token in the answer
+		{&Error{Status: 400, Sync: "tok"}, "", false}, // not a 412
+		{fmt.Errorf("412"), "", false},
+		{nil, "", false},
+	} {
+		if token, ok := SyncToken(tc.err); token != tc.token || ok != tc.ok {
+			t.Errorf("SyncToken(%v) = %q, %v; want %q, %v", tc.err, token, ok, tc.token, tc.ok)
+		}
+	}
+}

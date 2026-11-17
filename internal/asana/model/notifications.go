@@ -20,3 +20,6 @@ type WorkRef struct {
 	ResourceType string `json:"resource_type"`
 	Name         string `json:"name"`
 }
+
+// MaxNotificationGIDs is how many notifications one markRead / markUnread request accepts.
+const MaxNotificationGIDs = 50

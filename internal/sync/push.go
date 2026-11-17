@@ -11,7 +11,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -232,7 +232,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 						return res, last, err
 					}
 					sendIt = false
-				case asana.IsUnauthorized(err): // the token is rejected: keep it for after a new login
+				case model.IsUnauthorized(err): // the token is rejected: keep it for after a new login
 					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
 						return res, last, rerr
 					}
@@ -300,7 +300,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 					res.Sent++ // a follow-up is part of the change already counted
 				}
 				again = out == followUp
-			case isNetworkError(err) || isRateLimited(err) || asana.IsUnauthorized(err):
+			case isNetworkError(err) || isRateLimited(err) || model.IsUnauthorized(err):
 				if err := s.holdBack(ctx, *op, err); err != nil {
 					return res, last, err
 				}
@@ -381,7 +381,7 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 		out, _, err := s.pushMarkNotification(ctx, op)
 		return out, err
 	default:
-		err = &asana.Error{Status: 400}
+		err = &model.Error{Status: 400}
 	}
 	return sent, err
 }
@@ -392,7 +392,7 @@ func (s *Syncer) send(ctx context.Context, op store.Op) (outcome, error) {
 // waits, unchanged, for the next push (after the user logs in again).
 func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
-	if requestNotSent(cause) || isRateLimited(cause) || asana.IsUnauthorized(cause) {
+	if requestNotSent(cause) || isRateLimited(cause) || model.IsUnauthorized(cause) {
 		return s.Store.ReleaseNotSent(ctx, op.ID)
 	}
 	safe, err := s.Store.SafeToResend(ctx, op)
@@ -410,7 +410,7 @@ func (s *Syncer) holdBack(ctx context.Context, op store.Op, cause error) error {
 // response to a create, or a change Asana accepted but we could not save, may have been
 // applied: the entry is verified (verify = true).
 func (s *Syncer) handleError(ctx context.Context, op store.Op, cause error) (verify bool, err error) {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	var notSaved *sentNotSavedError
 	switch {
 	case errors.As(cause, &notSaved):
@@ -439,7 +439,7 @@ func (s *Syncer) handleError(ctx context.Context, op store.Op, cause error) (ver
 const maxSendAttempts = 5
 
 func isNotFound(err error) bool {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
 }
 
@@ -455,7 +455,7 @@ func (s *Syncer) dropGone(ctx context.Context, op store.Op, cause error, st *dro
 	// account or organization than the one the store was synced with). Make sure it is
 	// the same user before dropping anything.
 	if err := s.checkAccount(ctx, st); err != nil {
-		if isTemporary(err) || asana.IsUnauthorized(err) {
+		if isTemporary(err) || model.IsUnauthorized(err) {
 			if rerr := s.Store.ReleaseOp(context.WithoutCancel(ctx), op.ID); rerr != nil {
 				return rerr
 			}
@@ -564,7 +564,7 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 		if isTemporary(err) {
 			return err // not checked: try again next time
 		}
-		if asana.IsUnauthorized(err) {
+		if model.IsUnauthorized(err) {
 			return err // the token is rejected (e.g. an expired PAT): log in again, not reset
 		}
 		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
@@ -583,21 +583,21 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 
 // isTemporary reports whether err may go away by itself (offline, rate limit, 5xx).
 func isTemporary(err error) bool {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	return isNetworkError(err) || isRateLimited(err) || (errors.As(err, &apiErr) && apiErr.Status >= 500)
 }
 
 // isRejected reports whether Asana answered with a 4xx other than 429: the request itself
 // is not acceptable (missing, forbidden, invalid), so repeating it will not help.
 func isRejected(err error) bool {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	return errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != http.StatusTooManyRequests
 }
 
 // isRateLimited reports whether Asana still answered 429 after the client's retries: the
 // request was not processed, so the entry is kept for the next push.
 func isRateLimited(err error) bool {
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests
 }
 
@@ -628,7 +628,7 @@ func requestNotSent(err error) bool {
 
 func (s *Syncer) pushUpdate(ctx context.Context, op store.Op) (outcome, error) {
 	if store.IsLocalGID(op.TaskGID) {
-		return sent, &asana.Error{Status: 404} // its create failed
+		return sent, &model.Error{Status: 404} // its create failed
 	}
 	server, err := s.API.Task(ctx, op.TaskGID)
 	if err != nil {
@@ -671,7 +671,7 @@ func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, err
 		return sent, err
 	}
 	if store.IsLocalGID(task) {
-		return sent, &asana.Error{Status: 404} // its create failed
+		return sent, &model.Error{Status: 404} // its create failed
 	}
 	field, _ := op.Payload["field"].(string)
 	server, err := s.API.Task(ctx, task)
@@ -682,7 +682,7 @@ func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, err
 	if !server.Partial { // else Asana gave no custom fields to compare with: just send
 		sv, display, found := store.ServerCustomField(server, field)
 		if !found {
-			return sent, &asana.Error{Status: http.StatusNotFound} // removed from the task's projects
+			return sent, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
 		}
 		if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
 			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
@@ -690,7 +690,7 @@ func (s *Syncer) pushCustomField(ctx context.Context, op store.Op) (outcome, err
 	}
 	fieldType, _ := op.Payload["type"].(string)
 	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: store.CustomFieldAPIValue(fieldType, local)}})
-	var apiErr *asana.Error
+	var apiErr *model.Error
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
 		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
 		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
@@ -722,8 +722,8 @@ func normalize(v any) any {
 
 // refresh stores a task as Asana returned it after a change. The change is already
 // recorded, so a failure here only leaves the cache stale until the next sync.
-func (s *Syncer) refresh(ctx context.Context, t asana.Task) {
-	_ = s.Store.UpsertTasks(ctx, []asana.Task{t})
+func (s *Syncer) refresh(ctx context.Context, t model.Task) {
+	_ = s.Store.UpsertTasks(ctx, []model.Task{t})
 }
 
 func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
@@ -737,7 +737,7 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
 	if project != "" {
 		fields["projects"] = []string{project}
 	}
-	var t *asana.Task
+	var t *model.Task
 	var err error
 	if parent != "" {
 		// The parent may have been created offline too; it has been sent before us.
@@ -745,7 +745,7 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
 			return sent, err
 		}
 		if store.IsLocalGID(parent) {
-			return sent, &asana.Error{Status: 404} // the parent's create failed
+			return sent, &model.Error{Status: 404} // the parent's create failed
 		}
 		delete(fields, "workspace")
 		t, err = s.API.CreateSubtask(ctx, parent, fields)
@@ -772,7 +772,7 @@ func (s *Syncer) pushCreate(ctx context.Context, op store.Op) (outcome, error) {
 }
 
 // sectionIn returns the section t is in within project ("" if unknown).
-func sectionIn(t *asana.Task, project string) string {
+func sectionIn(t *model.Task, project string) string {
 	for _, m := range t.Memberships {
 		if m.Project != nil && m.Project.GID == project && m.Section != nil {
 			return m.Section.GID
@@ -783,7 +783,7 @@ func sectionIn(t *asana.Task, project string) string {
 
 func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
 	if store.IsLocalGID(op.TaskGID) {
-		return &asana.Error{Status: 404} // its create failed
+		return &model.Error{Status: 404} // its create failed
 	}
 	text, _ := op.Payload["text"].(string)
 	htmlText, _ := op.Payload["html_text"].(string)
@@ -797,7 +797,7 @@ func (s *Syncer) pushComment(ctx context.Context, op store.Op) error {
 
 func (s *Syncer) pushMove(ctx context.Context, op store.Op) error {
 	if store.IsLocalGID(op.TaskGID) {
-		return &asana.Error{Status: 404} // its create failed
+		return &model.Error{Status: 404} // its create failed
 	}
 	section, _ := op.Payload["section"].(string)
 	if err := s.API.AddTaskToSection(ctx, section, op.TaskGID); err != nil {
@@ -834,7 +834,7 @@ func (s *Syncer) pushRenameSection(ctx context.Context, op store.Op) (outcome, e
 
 func (s *Syncer) pushTag(ctx context.Context, op store.Op) error {
 	if store.IsLocalGID(op.TaskGID) {
-		return &asana.Error{Status: 404} // its create failed
+		return &model.Error{Status: 404} // its create failed
 	}
 	tag, _ := op.Payload["tag"].(string)
 	tag, err := s.Store.RealTagGID(ctx, tag)
@@ -871,7 +871,7 @@ func (s *Syncer) pushRelation(ctx context.Context, op store.Op) error {
 		return err
 	}
 	if store.IsLocalGID(task) {
-		return &asana.Error{Status: 404} // its create failed
+		return &model.Error{Status: 404} // its create failed
 	}
 	user, _ := op.Payload["user"].(string)
 	project, _ := op.Payload["project"].(string)
@@ -904,7 +904,7 @@ func (s *Syncer) pushDependency(ctx context.Context, op store.Op) error {
 		return err
 	}
 	if store.IsLocalGID(task) || store.IsLocalGID(dep) {
-		return &asana.Error{Status: 404} // its create failed
+		return &model.Error{Status: 404} // its create failed
 	}
 	if op.Kind == store.OpAddDependency {
 		err = s.API.AddDependencies(ctx, task, []string{dep})
@@ -939,14 +939,14 @@ func (s *Syncer) pushUpload(ctx context.Context, op store.Op) error {
 		return err
 	}
 	if store.IsLocalGID(task) {
-		return &asana.Error{Status: 404} // its create failed
+		return &model.Error{Status: 404} // its create failed
 	}
 	local, _ := op.Payload["attachment"].(string)
 	name, _ := op.Payload["name"].(string)
 	path, _ := op.Payload["path"].(string)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return &asana.Error{Status: 400} // the copied file is gone: cannot be retried
+		return &model.Error{Status: 400} // the copied file is gone: cannot be retried
 	}
 	att, err := s.API.UploadAttachment(ctx, task, name, data)
 	if err != nil {

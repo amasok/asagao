@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+
+	"github.com/amasok/asagao/internal/asana/model"
 )
 
 var eventFields = []string{"action", "resource", "resource.resource_type", "parent", "parent.resource_type", "change.field", "change.action", "created_at"}
@@ -34,14 +36,8 @@ func (c *Client) Events(ctx context.Context, resource, token string) (EventPage,
 	return page, nil
 }
 
-// SyncToken returns the new sync token of a 412 from Events (no token, or it expired).
-func SyncToken(err error) (string, bool) {
-	var e *Error
-	if errors.As(err, &e) && e.Status == http.StatusPreconditionFailed && e.Sync != "" {
-		return e.Sync, true
-	}
-	return "", false
-}
+// SyncToken returns the new sync token of a 412 from Events (model.SyncToken).
+func SyncToken(err error) (string, bool) { return model.SyncToken(err) }
 
 const (
 	batchPath = "/batch"
