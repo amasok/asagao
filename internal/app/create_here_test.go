@@ -108,3 +108,59 @@ func TestCreateHereErrorsWriteNothing(t *testing.T) {
 		t.Errorf("gid %q, err %v", gid, err)
 	}
 }
+
+// An assignee given to CreateHere replaces the default (me outside a project, nobody in
+// one), and tags are added to the new task after it is created.
+func TestCreateHereAssigneeAndTags(t *testing.T) {
+	hanako, nobody := "u-hanako", ""
+	tags := []task.TagRef{{GID: "g1", Name: "急ぎ"}}
+	for _, tc := range []struct {
+		name     string
+		in       CreateHereInput
+		calls    []string
+		assignee string
+	}{
+		{"no project, given", CreateHereInput{Assignee: &hanako},
+			[]string{"DefaultWorkspace", "CreateTaskLocal"}, "u-hanako"},
+		{"no project, nobody", CreateHereInput{Assignee: &nobody},
+			[]string{"DefaultWorkspace", "CreateTaskLocal"}, ""},
+		{"in a project, given", CreateHereInput{Project: "p9", Section: "s9", Assignee: &hanako},
+			[]string{"CreateTaskLocal"}, "u-hanako"},
+		{"subtask, given", CreateHereInput{Parent: "123", Assignee: &hanako},
+			[]string{"CreateTaskLocal"}, "u-hanako"},
+		{"tags", CreateHereInput{Project: "p9", Section: "s9", Tags: tags},
+			[]string{"CreateTaskLocal", "ApplyTagEdit local:1"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFake()
+			tc.in.Name = "牛乳を買う"
+			gid, err := newTasks(st, &fakeText{}).CreateHere(context.Background(), tc.in)
+			if err != nil || gid != "local:1" {
+				t.Fatalf("gid %q, err %v", gid, err)
+			}
+			if !slices.Equal(st.calls, tc.calls) {
+				t.Errorf("calls %q, want %q", st.calls, tc.calls)
+			}
+			if got := st.created[0].AssigneeGID; got != tc.assignee {
+				t.Errorf("assignee %q, want %q", got, tc.assignee)
+			}
+			if tc.in.Tags != nil {
+				if len(st.tagged) != 1 || !slices.Equal(st.tagged[0].Add, tags) || !st.taggedAt[0].Equal(now) {
+					t.Errorf("tagged %+v at %v", st.tagged, st.taggedAt)
+				}
+			}
+		})
+	}
+}
+
+// When the tags cannot be added, the task is still created: its gid comes with the error.
+func TestCreateHereTagError(t *testing.T) {
+	st := newFake()
+	boom := errors.New("boom")
+	st.applyErr = boom
+	gid, err := newTasks(st, &fakeText{}).CreateHere(context.Background(),
+		CreateHereInput{Name: "a", Project: "p9", Section: "s9", Tags: []task.TagRef{{GID: "g1"}}})
+	if gid != "local:1" || !errors.Is(err, boom) {
+		t.Fatalf("gid %q, err %v", gid, err)
+	}
+}

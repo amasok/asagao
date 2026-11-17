@@ -32,6 +32,8 @@ type writeResult struct {
 	// (by this push or an earlier one not shown yet).
 	Discarded []readmodel.Discard `json:"discarded,omitempty"`
 	Error     string              `json:"error,omitempty"`
+	// Quick is what `task create --quick` read from the name.
+	Quick *quickAddJSON `json:"quick,omitempty"`
 }
 
 // printDiscard prints a dropped change with what the user wrote in full, so it can be
@@ -163,6 +165,7 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 // createOpts are the flags of `task create`.
 type createOpts struct {
 	name, project, section, due, assignee, notes, parent string
+	tags                                                 []string
 }
 
 // createTask resolves every option and then creates the task locally. Nothing is written
@@ -171,7 +174,7 @@ func createTask(ctx context.Context, st Store, o createOpts, now time.Time) (str
 	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
 	gid, err := tasks.Create(ctx, usecase.CreateTaskInput{
 		Name: o.name, Parent: o.parent, Project: o.project, Section: o.section,
-		Due: o.due, Assignee: o.assignee, Notes: o.notes,
+		Due: o.due, Assignee: o.assignee, Notes: o.notes, Tags: o.tags,
 	})
 	var fe *usecase.FieldError
 	if errors.As(err, &fe) {
@@ -218,11 +221,13 @@ func flagErr(err error, flags map[string]string) error {
 
 func (a *app) taskCreateCmd() *cobra.Command {
 	var o createOpts
+	var quick bool
 	cmd := &cobra.Command{
 		Use:   "create <タスク名>",
 		Short: "タスクを作成する（プロジェクト未指定なら自分に割り当て）",
 		Example: `  asagao task create "牛乳を買う" --due tomorrow
-  asagao task create "ソファを買う" --project 新居 --section 家具`,
+  asagao task create "ソファを買う" --project 新居 --section 家具
+  asagao task create --quick "牛乳を買う @me 明日 #買い物"`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -232,11 +237,25 @@ func (a *app) taskCreateCmd() *cobra.Command {
 			}
 			defer st.Close()
 			o.name = strings.Join(args, " ")
-			gid, err := createTask(ctx, st, o, time.Now())
+			now := time.Now()
+			var q *usecase.QuickAddResult
+			if quick {
+				if q, err = readQuickAdd(ctx, st, &o, now); err != nil {
+					return err
+				}
+			}
+			gid, err := createTask(ctx, st, o, now)
 			if err != nil {
 				return err
 			}
-			return a.reportWrite(cmd, st, writeResult{TaskGID: gid}, "タスクを作成しました: "+o.name)
+			r := writeResult{TaskGID: gid}
+			if q != nil {
+				r.Quick = newQuickAddJSON(*q)
+				if !a.json {
+					printQuickAdd(cmd.OutOrStdout(), *q)
+				}
+			}
+			return a.reportWrite(cmd, st, r, "タスクを作成しました: "+o.name)
 		},
 	}
 	cmd.Flags().StringVar(&o.project, "project", "", "プロジェクト（gid または名前）")
@@ -245,6 +264,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&o.assignee, "assignee", "", `担当者（"me"・"none"・ユーザーの gid か名前。プロジェクト未指定なら me）`)
 	cmd.Flags().StringVar(&o.notes, "notes", "", "説明（マークダウン）")
 	cmd.Flags().StringVar(&o.parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
+	cmd.Flags().BoolVar(&quick, "quick", false, "名前の末尾の @担当・期日・#タグ を読む（例: 牛乳を買う @me 明日 #買い物）")
 	return cmd
 }
 

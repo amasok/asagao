@@ -284,7 +284,7 @@ func (m *Model) openPrompt(kind promptKind) {
 	switch kind {
 	case promptCreate:
 		m.prompt.Prompt = "新しいタスク: "
-		m.prompt.Placeholder = "タスク名  （例: 牛乳を買う due:明日 / due:+3d / due:2026-12-01）"
+		m.prompt.Placeholder = "タスク名  （例: 牛乳を買う @me 明日 #買い物 / +3d / 2026-12-01）"
 	case promptComment:
 		m.prompt.Prompt = "コメント: "
 		m.prompt.Placeholder = "Enter で投稿 / Esc で取り消し"
@@ -293,7 +293,7 @@ func (m *Model) openPrompt(kind promptKind) {
 		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
 	case promptSubtask:
 		m.prompt.Prompt = "サブタスク: "
-		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る due:+3d）"
+		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
 	case promptDue:
 		m.prompt.Prompt = "期日: "
 		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
@@ -364,38 +364,27 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // createTask creates a task in the current context: the selected project (and the section
-// of the selected task), or — in My Tasks — the default workspace, assigned to me.
+// of the selected task), or — in My Tasks — the default workspace, assigned to me. The
+// assignee, due date and tags may be at the end of input (quick add, see quickCreate).
 func (m *Model) createTask(input string) tea.Cmd {
-	name, due, err := parseCreateInput(input, m.deps.Now())
-	if err != nil {
-		return func() tea.Msg { return writeDoneMsg{err: err} }
-	}
-	if due == "" && m.calendarActive() {
-		due = m.calDay.Format(time.DateOnly) // the day selected in the calendar
+	now := m.deps.Now()
+	var defaultDue string
+	if m.calendarActive() {
+		defaultDue = m.calDay.Format(time.DateOnly) // the day selected in the calendar
 	}
 	sc := m.currentScope()
-	var section string
+	var in app.CreateHereInput
 	if sc.kind == scopeProject {
+		in.Project = sc.project
 		if t := m.selectedTask(); t != nil {
 			for _, ms := range t.Memberships {
 				if ms.ProjectGID == sc.project {
-					section = ms.SectionGID
+					in.Section = ms.SectionGID
 				}
 			}
 		}
 	}
-	in := app.CreateHereInput{Name: name, Due: due}
-	if sc.kind == scopeProject {
-		in.Project, in.Section = sc.project, section
-	}
-	tasks := m.tasks(m.deps.Now())
-	return func() tea.Msg {
-		gid, err := tasks.CreateHere(m.ctx, in)
-		if err != nil {
-			return writeDoneMsg{err: err}
-		}
-		return writeDoneMsg{status: "タスクを作成しました: " + name, gid: gid}
-	}
+	return m.quickCreate(input, now, in, defaultDue, "タスクを作成しました: ", false)
 }
 
 func (m *Model) addComment(taskGID, text string) tea.Cmd {
@@ -407,22 +396,6 @@ func (m *Model) addComment(taskGID, text string) tea.Cmd {
 		}
 		return writeDoneMsg{status: "コメントしました"}
 	}
-}
-
-// parseCreateInput splits "name due:<date>" (date: 今日/明日/today/tomorrow/+Nd/YYYY-MM-DD).
-func parseCreateInput(input string, now time.Time) (name, due string, err error) {
-	var words []string
-	for _, w := range strings.Fields(input) {
-		v, ok := strings.CutPrefix(w, "due:")
-		if !ok {
-			words = append(words, w)
-			continue
-		}
-		if due, err = app.ParseDue(v, now); err != nil {
-			return "", "", err
-		}
-	}
-	return strings.Join(words, " "), due, nil
 }
 
 // --- outbox overlay ---

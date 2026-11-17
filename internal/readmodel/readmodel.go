@@ -23,6 +23,12 @@ type UserRef struct {
 	Name string `json:"name"`
 }
 
+// UserContact is a known user with the name and email Asana gave (either may be ""), for
+// matching what a user types (the quick-add "@name") against both.
+type UserContact struct {
+	GID, Name, Email string
+}
+
 // EnumOptionView is a choice of an enum / multi_enum field.
 type EnumOptionView struct {
 	GID     string `json:"gid"`
