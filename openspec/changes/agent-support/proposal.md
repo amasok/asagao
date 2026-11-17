@@ -21,5 +21,5 @@ Claude Code などのエージェントに asagao を使わせるとき、(1) �
 - MCP の `create_task` / `list_tasks` は `.asana.json` を既定に使わない (エージェントが `get_context` で読んで、引数で渡す)。
 - `search` / 保存した検索 / TUI は `.asana.json` を使わない。
 - `searches save` / `rm` (searches.toml を書く)、`sync`、`reset`、`auth` には `--dry-run` を付けない。
-- `api` コマンド (#9) と git 連携 (#8) の書き込みへの `--dry-run` は、それぞれの取り込みのあとに足す。
+- `api` コマンド (#9) と `git scan` (#8) は、それぞれ自分のローカルフラグで `--dry-run` を持つ (この変更の仕組みは使わない)。`git install-hook` / `uninstall-hook` には付けない (hook のファイルを書くだけ)。
 - タスクの gid の代わりに `.asana.json` のタスクを指す記法 (`.` など) は足さない。
