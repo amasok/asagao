@@ -43,7 +43,7 @@ type Syncer struct {
 	Cfg   Config
 	// Progress receives human-readable progress messages (optional).
 	Progress func(format string, args ...any)
-	// CacheDir is where attachments are downloaded (default: config.CacheDir()/attachments).
+	// CacheDir is where attachments are downloaded (default: xdg.CacheDir()/attachments).
 	CacheDir string
 	// Download fetches a pre-signed attachment URL. It must not add the Asana
 	// Authorization header (the storage service rejects it). Default: plain HTTP GET.

@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/amasok/asagao/internal/xdg"
 )
 
-const appName = "asagao"
+const appName = xdg.AppName
 
 // Token store backends.
 const (
@@ -212,26 +214,12 @@ func (c Config) validate() error {
 }
 
 // ConfigDir follows XDG: $XDG_CONFIG_HOME/asagao or ~/.config/asagao (also on macOS).
-func ConfigDir() string { return xdgDir("XDG_CONFIG_HOME", ".config") }
+func ConfigDir() string { return xdg.ConfigDir() }
 
 // DataDir follows XDG: $XDG_DATA_HOME/asagao or ~/.local/share/asagao.
-func DataDir() string { return xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share")) }
+func DataDir() string { return xdg.DataDir() }
 
 // CacheDir follows XDG: $XDG_CACHE_HOME/asagao or ~/.cache/asagao (downloaded attachments).
-func CacheDir() string { return xdgDir("XDG_CACHE_HOME", ".cache") }
+func CacheDir() string { return xdg.CacheDir() }
 
 func FilePath() string { return filepath.Join(ConfigDir(), "config.toml") }
-
-func xdgDir(env, fallback string) string { return filepath.Join(xdgBase(env, fallback), appName) }
-
-// xdgBase is the folder the tool's own folder is made in: $env, or fallback in the home folder.
-func xdgBase(env, fallback string) string {
-	if v := os.Getenv(env); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, fallback)
-}
