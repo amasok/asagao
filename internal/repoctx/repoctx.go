@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // FileName is the name of the file.
@@ -35,35 +37,50 @@ type Context struct {
 	Path string `json:"-"`
 }
 
-// Find looks for .asana.json in dir, then in each parent folder up to the root of the
-// repository dir is in (the first folder that has a .git), the home folder, or the root of
-// the file system, whichever comes first. It returns nil (and no error) when there is none.
-// A file that is there but cannot be read or is invalid is an error: silently working on
-// another project than the one written down would be worse.
+// Find looks for .asana.json in dir and, when dir is in a repository, in each parent
+// folder up to the repository's root (the first folder that has a .git, folder or file).
+// Outside a repository only dir itself is looked at: a .asana.json in a parent folder that
+// others can write to (/tmp, say) must not choose where the changes go. The search never
+// goes above the home folder (a repository whose root is above it counts as none). It
+// returns nil (and no error) when there is none. A file that is there but cannot be read
+// or is invalid is an error: silently working on another project than the one written
+// down would be worse.
 func Find(dir string) (*Context, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	home, _ := os.UserHomeDir()
-	for {
-		path := filepath.Join(dir, FileName)
+	top := dir // the last folder to look in
+	if root, ok := repoRoot(dir); ok {
+		top = root
+	}
+	for d := dir; ; d = filepath.Dir(d) {
+		path := filepath.Join(d, FileName)
 		if _, err := os.Lstat(path); err == nil {
 			return Load(path)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			return nil, nil // the root of the repository: do not look outside it
-		}
-		if home != "" && dir == filepath.Clean(home) {
-			return nil, nil // not above the home folder
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
+		if d == top || filepath.Dir(d) == d {
 			return nil, nil
 		}
-		dir = parent
+	}
+}
+
+// repoRoot is the root of the repository dir is in: the nearest folder from dir up that
+// has a .git, not above the home folder.
+func repoRoot(dir string) (string, bool) {
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		home = filepath.Clean(home)
+	}
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return d, true
+		}
+		if d == home || filepath.Dir(d) == d {
+			return "", false
+		}
 	}
 }
 
@@ -118,7 +135,7 @@ func Parse(b []byte) (*Context, error) {
 	c.Task = strings.TrimSpace(c.Task)
 	if c.Task != "" && strings.Trim(c.Task, "0123456789") != "" {
 		// it goes into Asana's URL (/tasks/<gid>): a gid is digits only
-		return nil, errors.New(`"task" はタスクの gid（数字）で指定してください`)
+		return nil, fmt.Errorf(`"task" はタスクの gid（数字）で指定してください: 「%s」`, termsafe.String(c.Task))
 	}
 	if c.Section != "" && c.Project == "" {
 		return nil, errors.New(`"section" は "project" と一緒に指定してください`)

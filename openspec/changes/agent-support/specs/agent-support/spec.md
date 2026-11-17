@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: .asana.json を探す
-`.asana.json` は、カレントディレクトリ (MCP ではサーバーを起動したフォルダ) から上に向かって探し、最初に見つかったものを使う (MUST)。`.git` (フォルダでもファイルでも) のあるフォルダと、ホームフォルダより上は探さない。`--no-context` (`asagao mcp --no-context` も) では探さない。
+`.asana.json` は、カレントディレクトリ (MCP ではサーバーを起動したフォルダ) がリポジトリの中なら、そこからリポジトリのルート (`.git` のあるフォルダ。フォルダでもファイルでも) まで上に向かって探し、最初に見つかったものを使う (MUST)。リポジトリの外ではカレントディレクトリだけを見る。ホームフォルダより上は探さない。`--no-context` (`asagao mcp --no-context` も) では探さない。
 根拠: internal/repoctx/repoctx.go (Find); internal/cli/context.go (repoContext); internal/cli/mcp.go; TestFind, TestFindStopsAtHome, TestFindNoRepository
 
 #### Scenario: リポジトリの下のフォルダから

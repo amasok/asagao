@@ -38,7 +38,7 @@ func (a *app) contextCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "context",
 		Short: "このフォルダの .asana.json（作業中のプロジェクト・セクション・タスク）を表示する",
-		Long: "カレントディレクトリから上に向かって .asana.json を探し（リポジトリのルートかホームフォルダまで）、\n" +
+		Long: "カレントディレクトリから上に向かって .asana.json を探し（リポジトリのルートまで。リポジトリの外ではカレントディレクトリだけ）、\n" +
 			"書かれたプロジェクト・セクション・タスクをキャッシュで引いて表示します。\n\n" +
 			".asana.json の例:\n" +
 			`  {"project": "新居", "section": "家具", "task": "1203455468597469"}` + "\n\n" +
@@ -58,7 +58,7 @@ func (a *app) contextCmd() *cobra.Command {
 						Found bool `json:"found"`
 					}{})
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), ".asana.json はありません（このフォルダから、リポジトリのルートかホームフォルダまで）")
+				fmt.Fprintln(cmd.OutOrStdout(), ".asana.json はありません（このフォルダから、リポジトリのルートまで）")
 				return nil
 			}
 			ctx := cmd.Context()

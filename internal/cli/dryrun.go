@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"reflect"
+	gosync "sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -39,10 +42,41 @@ type dryRunStore struct {
 	dir string
 	// before is the copy's outbox before the command ran.
 	before []outbox.Op
+	// unwatch stops removing dir on a signal (removeOnSignal).
+	unwatch func()
 }
 
 func (d *dryRunStore) Close() error {
+	defer d.unwatch()
 	return errors.Join(d.Store.Close(), os.RemoveAll(d.dir))
+}
+
+// exitOnSignal ends the process after a signal removed a dry run's copy (the tests swap it).
+var exitOnSignal = func() { os.Exit(130) }
+
+// removeOnSignal removes dir and ends the process when the dry run is stopped (Ctrl-C,
+// SIGTERM): the copy holds the cache, and must not stay in the temporary folder. A folder
+// left by a dry run that was killed outright is removed by a later one (removeStaleDryRuns).
+// The returned function stops watching.
+func removeOnSignal(dir string) (unwatch func()) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ch:
+			_ = os.RemoveAll(dir)
+			exitOnSignal()
+		case <-done:
+		}
+	}()
+	var once gosync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(ch)
+			close(done)
+		})
+	}
 }
 
 // openDryRun copies st (which it closes) to a private temporary folder and opens the copy.
@@ -53,7 +87,11 @@ func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (Store, error) { return nil, errors.Join(err, os.RemoveAll(dir)) }
+	unwatch := removeOnSignal(dir)
+	fail := func(err error) (Store, error) {
+		defer unwatch()
+		return nil, errors.Join(err, os.RemoveAll(dir))
+	}
 	path := filepath.Join(dir, "store.db")
 	if err := st.CopyTo(ctx, path); err != nil {
 		return fail(err)
@@ -66,14 +104,14 @@ func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	if err != nil {
 		return fail(errors.Join(err, cp.Close()))
 	}
-	return &dryRunStore{Store: cp, dir: dir, before: before}, nil
+	return &dryRunStore{Store: cp, dir: dir, before: before, unwatch: unwatch}, nil
 }
 
 // dryRunPrefix starts the name of a dry run's temporary folder.
 const dryRunPrefix = "asagao-dry-run-"
 
 // staleDryRun is how old a dry run's folder must be to be taken as left behind (by a dry
-// run stopped with Ctrl-C or killed, which could not remove it). A dry run takes seconds.
+// run that was killed, which could not remove it). A dry run takes seconds.
 const staleDryRun = time.Hour
 
 // removeStaleDryRuns removes the folders that earlier dry runs left behind. Folders of

@@ -55,10 +55,12 @@ func TestFind(t *testing.T) {
 	}
 }
 
-// The search does not go above the home folder.
+// The search does not go above the home folder, even for a repository whose root is above
+// it.
 func TestFindStopsAtHome(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, FileName), `{"project": "p"}`)
+	write(t, filepath.Join(root, ".git", "HEAD"), "")
 	home := filepath.Join(root, "home")
 	deep := filepath.Join(home, "work")
 	if err := os.MkdirAll(deep, 0o700); err != nil {
@@ -68,14 +70,17 @@ func TestFindStopsAtHome(t *testing.T) {
 	if c, err := Find(deep); err != nil || c != nil {
 		t.Errorf("found %+v %v above the home folder", c, err)
 	}
-	write(t, filepath.Join(home, FileName), `{"project": "h"}`)
-	if c, err := Find(deep); err != nil || c == nil || c.Project != "h" {
-		t.Errorf("the home folder's own: %+v %v", c, err)
+	if c, err := Find(home); err != nil || c != nil {
+		t.Errorf("from the home folder: %+v %v", c, err)
+	}
+	write(t, filepath.Join(deep, FileName), `{"project": "w"}`)
+	if c, err := Find(deep); err != nil || c == nil || c.Project != "w" {
+		t.Errorf("the folder's own: %+v %v", c, err)
 	}
 }
 
-// Outside any repository and the home folder the search goes up to the root of the file
-// system.
+// Outside a repository only the folder itself is looked at: a parent folder (a shared
+// /tmp, say) does not choose the project.
 func TestFindNoRepository(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, FileName), `{"project": "p"}`)
@@ -83,8 +88,11 @@ func TestFindNoRepository(t *testing.T) {
 	if err := os.MkdirAll(deep, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if c, err := Find(deep); err != nil || c == nil || c.Project != "p" {
-		t.Errorf("Find: %+v %v", c, err)
+	if c, err := Find(deep); err != nil || c != nil {
+		t.Errorf("used a parent's file outside a repository: %+v %v", c, err)
+	}
+	if c, err := Find(root); err != nil || c == nil || c.Project != "p" {
+		t.Errorf("the folder's own: %+v %v", c, err)
 	}
 }
 
@@ -99,7 +107,8 @@ func TestInvalid(t *testing.T) {
 		{`{"project": "a\u001b[2Jb"}`, "制御文字"},
 		{`{"project": "a\u009bb"}`, "制御文字"},
 		{`{"task": "t1"}`, "数字"},
-		{`{"task": "../users/me"}`, "数字"},
+		{`{"task": "../users/me"}`, "「../users/me」"},
+		{`{"task": "1\u001b[2J"}`, "「1[2J」"},
 		{`{"task": "123?opt_fields=x"}`, "数字"},
 	} {
 		dir := t.TempDir()
