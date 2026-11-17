@@ -56,12 +56,25 @@ type Store interface {
 	CachesAccessToken() bool
 }
 
+// keychainService is the keychain service the login is saved under (it was "asana-tui"
+// before the rename; that one is still read, see withLegacy).
+const keychainService = "asagao"
+
+// New returns the store cfg chooses. The keychain, and 1Password with the default item name,
+// also read a login saved under the former name (asana-tui) when none is saved yet.
 func New(cfg config.AuthConfig) (Store, error) {
 	switch cfg.TokenStore {
 	case config.TokenStoreKeychain:
-		return &Keychain{Service: "asagao", User: "default"}, nil
+		return &withLegacy{
+			Store:  &Keychain{Service: keychainService, User: "default"},
+			legacy: &Keychain{Service: config.LegacyAppName, User: "default"},
+		}, nil
 	case config.TokenStore1Password:
-		return &OnePassword{Vault: cfg.OnePassword.Vault, Item: cfg.OnePassword.Item, Account: cfg.OnePassword.Account}, nil
+		op := &OnePassword{Vault: cfg.OnePassword.Vault, Item: cfg.OnePassword.Item, Account: cfg.OnePassword.Account}
+		if l := cfg.OnePassword.LegacyItem; l != "" && l != op.Item {
+			return &withLegacy{Store: op, legacy: &OnePassword{Vault: op.Vault, Item: l, Account: op.Account}}, nil
+		}
+		return op, nil
 	case config.TokenStoreFile:
 		return &File{Path: defaultFilePath()}, nil
 	}

@@ -104,9 +104,12 @@ type AuthConfig struct {
 }
 
 type OnePasswordConfig struct {
-	Vault   string `toml:"vault"`
-	Item    string `toml:"item"`
-	Account string `toml:"account"` // optional, for multiple 1Password accounts
+	Vault string `toml:"vault"`
+	Item  string `toml:"item"`
+	// LegacyItem is the item read when Item has nothing yet: the default item name before
+	// the rename (asana-tui). Empty when config.toml sets item (a name chosen is kept).
+	LegacyItem string `toml:"-"`
+	Account    string `toml:"account"` // optional, for multiple 1Password accounts
 }
 
 type SyncConfig struct {
@@ -121,7 +124,7 @@ func Default() Config {
 		Auth: AuthConfig{
 			RedirectPort: 8976,
 			TokenStore:   TokenStoreKeychain,
-			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName},
+			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName, LegacyItem: LegacyAppName},
 		},
 		Sync: SyncConfig{CompletedDays: 14},
 		UI:   UIConfig{ImageProtocol: "auto", InlineImages: "auto"},
@@ -159,6 +162,11 @@ func parse(b []byte, cfg *Config) error {
 	if a, ok := raw["auth"].(map[string]any); ok {
 		if n, ok := a["client_id"].(int64); ok {
 			a["client_id"] = strconv.FormatInt(n, 10)
+		}
+		if op, ok := a["onepassword"].(map[string]any); ok {
+			if _, ok := op["item"]; ok {
+				cfg.Auth.OnePassword.LegacyItem = ""
+			}
 		}
 	}
 	normalized, err := toml.Marshal(raw)

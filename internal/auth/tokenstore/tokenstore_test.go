@@ -33,6 +33,14 @@ func TestNew(t *testing.T) {
 		if s.Name() != tc.name || s.CachesAccessToken() != tc.caches {
 			t.Errorf("New(%q) = %s caches=%v, want %s caches=%v", tc.store, s.Name(), s.CachesAccessToken(), tc.name, tc.caches)
 		}
+		if w, ok := s.(*withLegacy); ok {
+			if l, ok := w.legacy.(*Keychain); !ok || l.Service != config.LegacyAppName || l.User != "default" {
+				t.Errorf("%s: legacy store = %+v", tc.store, w.legacy)
+			}
+			s = w.Store
+		} else if tc.store == config.TokenStoreKeychain {
+			t.Errorf("keychain should fall back to %s: %T", config.LegacyAppName, s)
+		}
 		switch s := s.(type) {
 		case *Keychain:
 			if s.Service != "asagao" || s.User != "default" {
