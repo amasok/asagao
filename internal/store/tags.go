@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
@@ -19,7 +19,7 @@ const (
 )
 
 // UpsertTags stores the tags of a workspace (so unused tags can be picked too).
-func (s *Store) UpsertTags(ctx context.Context, tags []asana.Ref) error {
+func (s *Store) UpsertTags(ctx context.Context, tags []model.Ref) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, t := range tags {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name) VALUES(?, ?)
@@ -32,16 +32,16 @@ func (s *Store) UpsertTags(ctx context.Context, tags []asana.Ref) error {
 }
 
 // TaskTags returns the gids and names of a task's tags.
-func (s *Store) TaskTags(ctx context.Context, taskGID string) ([]asana.Ref, error) {
+func (s *Store) TaskTags(ctx context.Context, taskGID string) ([]model.Ref, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT g.gid, g.name FROM task_tags tt JOIN tags g ON g.gid = tt.tag_gid
 		WHERE tt.task_gid = ? ORDER BY g.name`, taskGID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []asana.Ref
+	var out []model.Ref
 	for rows.Next() {
-		var r asana.Ref
+		var r model.Ref
 		if err := rows.Scan(&r.GID, &r.Name); err != nil {
 			return nil, err
 		}

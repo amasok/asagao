@@ -10,17 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 )
 
-func (s *Store) UpsertUser(ctx context.Context, u asana.User) error {
+func (s *Store) UpsertUser(ctx context.Context, u model.User) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO users(gid, name, email) VALUES(?, ?, ?)
 		ON CONFLICT(gid) DO UPDATE SET name = excluded.name, email = excluded.email`,
 		u.GID, u.Name, u.Email)
 	return err
 }
 
-func (s *Store) UpsertWorkspaces(ctx context.Context, ws []asana.Workspace) error {
+func (s *Store) UpsertWorkspaces(ctx context.Context, ws []model.Workspace) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, w := range ws {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces(gid, name, is_organization) VALUES(?, ?, ?)
@@ -34,10 +34,10 @@ func (s *Store) UpsertWorkspaces(ctx context.Context, ws []asana.Workspace) erro
 }
 
 // UpsertProjects stores projects of a workspace. meGID marks the projects the user is a member of.
-func (s *Store) UpsertProjects(ctx context.Context, workspaceGID string, ps []asana.Project, meGID string) error {
+func (s *Store) UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, p := range ps {
-			isMember := slices.ContainsFunc(p.Members, func(r asana.Ref) bool { return r.GID == meGID })
+			isMember := slices.ContainsFunc(p.Members, func(r model.Ref) bool { return r.GID == meGID })
 			if p.Members != nil {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM project_members WHERE project_gid = ?", p.GID); err != nil {
 					return err
@@ -74,7 +74,7 @@ func (s *Store) UpsertProjects(ctx context.Context, workspaceGID string, ps []as
 }
 
 // ReplaceSections replaces all sections of a project, keeping Asana's order.
-func (s *Store) ReplaceSections(ctx context.Context, projectGID string, secs []asana.Section) error {
+func (s *Store) ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM sections WHERE project_gid = ?", projectGID); err != nil {
 			return err
@@ -115,7 +115,7 @@ func SetTaskWriteSlicesForTest(slice, yield time.Duration) (restore func()) {
 // stored whole or not at all, and storing the same tasks again gives the same result, so a
 // pull that failed is simply done again; what a sync records of its progress (events
 // tokens, the last sync, pruning by what it fetched) waits until all tasks are written.
-func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
+func (s *Store) UpsertTasks(ctx context.Context, tasks []model.Task) error {
 	for len(tasks) > 0 {
 		err := s.tx(ctx, func(tx *sql.Tx) error {
 			start := time.Now()
@@ -147,7 +147,7 @@ func (s *Store) UpsertTasks(ctx context.Context, tasks []asana.Task) error {
 
 // upsertTaskTx stores one task and reapplies its unsent local edits, which win over what
 // the server returned until they are pushed.
-func upsertTaskTx(ctx context.Context, tx *sql.Tx, t asana.Task) error {
+func upsertTaskTx(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if err := upsertTask(ctx, tx, t); err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func upsertTaskTx(ctx context.Context, tx *sql.Tx, t asana.Task) error {
 	return reapplyDependencyOps(ctx, tx, t.GID)
 }
 
-func upsertTask(ctx context.Context, tx *sql.Tx, t asana.Task) error {
+func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	var assignee, workspace, parent string
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
@@ -281,7 +281,7 @@ func formatTimePtr(t *time.Time) any {
 }
 
 // ReplaceStories replaces the stories (comments and activity) of a task and records the fetch time.
-func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []asana.Story, fetchedAt time.Time) error {
+func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		// Keep comments posted offline ("local:" gids) until they are sent.
 		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ? AND gid NOT LIKE 'local:%'", taskGID); err != nil {
@@ -398,13 +398,13 @@ var projectKeys = []struct{ prefix, isProject string }{
 }
 
 // PruneProjects deletes projects (and their sections) of a workspace that are no longer returned.
-func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []asana.Project) error {
+func (s *Store) PruneProjects(ctx context.Context, workspaceGID string, keep []model.Project) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		return pruneProjects(ctx, tx, workspaceGID, keep)
 	})
 }
 
-func pruneProjects(ctx context.Context, tx *sql.Tx, workspaceGID string, keep []asana.Project) error {
+func pruneProjects(ctx context.Context, tx *sql.Tx, workspaceGID string, keep []model.Project) error {
 	rows, err := tx.QueryContext(ctx, "SELECT gid FROM projects WHERE workspace_gid = ?", workspaceGID)
 	if err != nil {
 		return err
@@ -416,7 +416,7 @@ func pruneProjects(ctx context.Context, tx *sql.Tx, workspaceGID string, keep []
 			rows.Close()
 			return err
 		}
-		if !slices.ContainsFunc(keep, func(p asana.Project) bool { return p.GID == gid }) {
+		if !slices.ContainsFunc(keep, func(p model.Project) bool { return p.GID == gid }) {
 			stale = append(stale, gid)
 		}
 	}
@@ -460,7 +460,7 @@ func pruneProjectKeys(ctx context.Context, tx *sql.Tx) error {
 // PruneWorkspaces deletes the workspaces (with their projects and the projects' keys) that
 // are not in keep, the workspaces Asana returned. An empty keep is ignored: an account
 // always has a workspace, so it would only mean a broken answer.
-func (s *Store) PruneWorkspaces(ctx context.Context, keep []asana.Workspace) error {
+func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) error {
 	if len(keep) == 0 {
 		return nil
 	}
@@ -476,7 +476,7 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []asana.Workspace) err
 				rows.Close()
 				return err
 			}
-			if !slices.ContainsFunc(keep, func(w asana.Workspace) bool { return w.GID == gid }) {
+			if !slices.ContainsFunc(keep, func(w model.Workspace) bool { return w.GID == gid }) {
 				stale = append(stale, gid)
 			}
 		}
@@ -497,7 +497,7 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []asana.Workspace) err
 }
 
 // UpsertUsers stores workspace members.
-func (s *Store) UpsertUsers(ctx context.Context, users []asana.User) error {
+func (s *Store) UpsertUsers(ctx context.Context, users []model.User) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, u := range users {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name, email) VALUES(?, ?, ?)

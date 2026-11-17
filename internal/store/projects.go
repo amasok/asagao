@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -35,7 +35,7 @@ func StatusLabel(t string) string {
 type StatusUpdateView = readmodel.StatusUpdateView
 
 // ReplaceStatusUpdates stores a project's status updates (keeping unsent local ones).
-func (s *Store) ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []asana.StatusUpdate) error {
+func (s *Store) ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE project_gid = ? AND gid NOT LIKE 'local:%'", projectGID); err != nil {
 			return err
@@ -108,11 +108,11 @@ func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, t
 }
 
 // ReplaceLocalStatus records the Asana gid of a posted status update.
-func (s *Store) ReplaceLocalStatus(ctx context.Context, local string, u asana.StatusUpdate) error {
+func (s *Store) ReplaceLocalStatus(ctx context.Context, local string, u model.StatusUpdate) error {
 	return s.tx(ctx, func(tx *sql.Tx) error { return replaceLocalStatus(ctx, tx, local, u) })
 }
 
-func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u asana.StatusUpdate) error {
+func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u model.StatusUpdate) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local); err != nil {
 		return err
 	}

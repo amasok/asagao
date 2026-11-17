@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -23,7 +23,7 @@ func IsImageName(name string) bool { return imageExts[strings.ToLower(filepath.E
 
 // ReplaceAttachments stores a task's attachments, keeping local paths of files already
 // downloaded and files attached offline ("local:" gids) that are not uploaded yet.
-func (s *Store) ReplaceAttachments(ctx context.Context, taskGID string, atts []asana.Attachment) error {
+func (s *Store) ReplaceAttachments(ctx context.Context, taskGID string, atts []model.Attachment) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		paths := map[string]string{}
 		rows, err := tx.QueryContext(ctx, "SELECT gid, local_path FROM attachments WHERE parent_gid = ?", taskGID)
@@ -99,7 +99,7 @@ func (s *Store) queryAttachments(ctx context.Context, where string, args ...any)
 }
 
 // UpsertAttachment stores one attachment of a task (e.g. an inline image found in its notes).
-func (s *Store) UpsertAttachment(ctx context.Context, taskGID string, a asana.Attachment) error {
+func (s *Store) UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO attachments
 		(gid, parent_gid, name, resource_subtype, host, view_url, permanent_url, size, created_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
