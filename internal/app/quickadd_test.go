@@ -99,6 +99,14 @@ func TestParseQuickAdd(t *testing.T) {
 		{"a 2026-13-01", want{name: "a 2026-13-01"}},
 		{"a +3days", want{name: "a +3days"}},
 		{"", want{}},
+		// a prefix shorter than minPrefix is not matched
+		{"a @g", want{name: "a @g", unread: "@g"}}, // only ghost starts with g
+		{"a @my", want{name: "a", assignee: "u-me"}},
+		// full-width signs, as an IME types them
+		{"a ＠hanako 明日 ＃買い物", want{name: "a", due: "2026-11-17", assignee: "u-hanako", tags: []string{"g-buy"}}},
+		{"a ＠nobody", want{name: "a ＠nobody", unread: "@nobody"}},
+		{`メール \＠hanako`, want{name: "メール ＠hanako"}},
+		{"a＠b", want{name: "a＠b"}},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			r := ParseQuickAdd(tc.in, now, quickCands)
@@ -189,5 +197,29 @@ func TestReadQuickAdd(t *testing.T) {
 	boom := errors.New("boom")
 	if _, err := ReadQuickAdd(ctx, quickStore{me: "u-me", usersErr: boom}, "a", now); !errors.Is(err, boom) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// A due:<date> in the middle of the name (which the TUI used to read) is not read, and
+// Problem says so; an ordinary word starting with due: does not.
+func TestQuickAddMidDue(t *testing.T) {
+	for _, tc := range []struct {
+		in     string
+		midDue bool
+	}{
+		{"歯医者 due:+3d 予約", true},
+		{"due:明日 歯医者", true},
+		{"歯医者 due:+3d", false},
+		{"歯医者 due:来週 予約", false},
+		{"歯医者 予約", false},
+	} {
+		r := ParseQuickAdd(tc.in, now, quickCands)
+		if r.MidDue != tc.midDue || strings.Contains(r.Problem(), "途中の due:") != tc.midDue {
+			t.Errorf("%q: MidDue %v, problem %q", tc.in, r.MidDue, r.Problem())
+		}
+	}
+	r := ParseQuickAdd("歯医者 due:+3d 予約 #nope", now, quickCands)
+	if p := r.Problem(); !strings.Contains(p, "「#nope」") || !strings.Contains(p, "途中の due:") {
+		t.Errorf("problem %q", p)
 	}
 }

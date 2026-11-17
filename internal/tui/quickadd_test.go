@@ -2,11 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -124,5 +129,32 @@ func TestCreateSubtaskQuickAdd(t *testing.T) {
 	}
 	if want := "担当: 自分 / 期日: 2026-11-16 / タグ: #急ぎ"; !strings.Contains(h.m.status, want) {
 		t.Errorf("status %q should say %q", h.m.status, want)
+	}
+}
+
+// tagFailStore is a store whose tags cannot be added, with control characters in the error.
+type tagFailStore struct{ *store.Store }
+
+func (tagFailStore) ApplyTagEdit(context.Context, string, task.TagEdit, time.Time) error {
+	return errors.New("disk\x1b]0;pwned\x07 full")
+}
+
+// When the tags cannot be added the task is still created and shown, and the status line
+// says why, without the error's control characters.
+func TestCreateTaskQuickAddTagError(t *testing.T) {
+	st := quickAddStore(t)
+	m := New(context.Background(), Deps{Store: tagFailStore{st}, Now: func() time.Time { return testNow }})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("h", "j", "j", "l")
+	h.key("a")
+	h.typeText("カーテンを買う #買い物")
+	h.key("enter")
+	if got := h.m.selectedTask(); got == nil || got.Name != "カーテンを買う" {
+		t.Fatalf("the task should be created and selected: %+v", got)
+	}
+	if !strings.Contains(h.m.status, "タグを付けられませんでした: disk") || strings.ContainsAny(h.m.status, "\x1b\x07") {
+		t.Errorf("status %q", h.m.status)
 	}
 }
