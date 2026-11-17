@@ -436,7 +436,7 @@ func TestAtLineStart(t *testing.T) {
 		{"<body><ol><li>- x</li></ol></body>", `1. \- x`},
 		{"<body><ul><li><strong>a</strong># x</li></ul></body>", `- **a**# x`},
 		{"<body><blockquote># x\n# y</blockquote></body>", "> \\# x  \n> \\# y"},
-		{"<body><strong>a</strong>\n# x</body>", "**a**\n\\# x"},
+		{"<body><strong>a</strong>\n# x</body>", "**a**  \n\\# x"}, // (a hard break after text of another element too, #24)
 		{"<body>a > b\n> c</body>", "a > b  \n\\> c"},
 	} {
 		if got := ToMarkdown(tc.in); got != tc.want {
