@@ -106,3 +106,17 @@ func TestIssue24HardBreakExact(t *testing.T) {
 		}
 	}
 }
+
+// A "-", "2." or empty "1." right after an item's paragraph is paragraph text, not an
+// empty item: the lines after a blank line stay in the item.
+func TestIssue24EmptyMarkerAfterParagraphAttack(t *testing.T) {
+	for _, src := range []string{
+		"- a\n  -\n\n  c", "- a\n  2.\n\n  c", "- a\n  1.\n\n  c", "- a\n  -\n  c", "- a\n  - \n\n  c", "1. a\n   -\n\n   c",
+		"- a\n  -\n\n  - d", "- a\n\n  -\n\n  c", "-\n  -\n\n  c", "- a\n  1)\n\n  c", "- a\n  -\n-\n\n  c", "> - a\n>   -\n>\n>   c",
+	} {
+		stableMD(t, src)
+	}
+	if h := FromMarkdown("- a\n  -\n\n  c"); strings.Contains(h, "</ul>c") || strings.Contains(h, "</ul>\nc") || strings.Contains(h, "</ul>  c") {
+		t.Errorf("c left the list: %q", h)
+	}
+}
