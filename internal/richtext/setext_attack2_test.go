@@ -53,3 +53,18 @@ func TestBareImgAttack(t *testing.T) {
 		}
 	}
 }
+
+// An HTML block start (types 1-6) ends a paragraph; type 7 (any tag) does not.
+func TestSetextHTMLBlockEndersAttack(t *testing.T) {
+	for _, src := range []string{
+		"  a\n<div>\n---", "  a\n<!--\n---", "  a\n<script>\n---", "  a\n<pre>\n---", "  a\n<?x\n---",
+		"  a\n<!DOCTYPE x>\n---", "  a\n<![CDATA[\n---", "  a\n<table>\n---", "  a\n<span>\n---",
+		"  a\n<x>\n---", "  a\n    <div>\n---", "  a\n<div\n---", "  a\n</div>\n---", "  a\n<DIV>\n  ---",
+	} {
+		h1 := FromMarkdown(src)
+		md := ToEditableMarkdown(h1)
+		if h2 := FromMarkdown(md); h1 != h2 {
+			t.Errorf("src %q\nh1 %q\nmd %q\nh2 %q", src, h1, md, h2)
+		}
+	}
+}
