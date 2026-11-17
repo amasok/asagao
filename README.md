@@ -13,11 +13,27 @@ asana-tui から asagao に名前を変えました。手で移すものはあ�
 - キーチェーン（サービス `asana-tui`）と 1Password（設定で項目名を変えていなければ項目 `asana-tui`）に保存したログインは、`asagao` の名前で保存し直して使います。古い方は残します（`auth logout` では両方を消します）。
 - MCP サーバーは、都合のよいときに `claude mcp add asana -- asagao mcp` で登録し直してください。
 
-## インストール（開発版）
+## インストール
+
+macOS / Linux（amd64・arm64）向けです。
+
+### Homebrew
 
 ```sh
-go install github.com/amasok/asagao/cmd/asagao@latest
+brew install amasok/tap/asagao
 ```
+
+`amasok/homebrew-tap` の cask で入れます。バイナリは署名していないので、macOS で初めて動かすときに止められないよう、入れるときに quarantine（ダウンロードした印）を外します。
+
+### go install
+
+```sh
+go install github.com/amasok/asagao/cmd/asagao@latest   # または @v0.1.0 のようにバージョンを指定
+```
+
+Go 1.27.4 以上が要ります。
+
+入ったバージョンは `asagao --version` で確かめられます。
 
 ## セットアップ
 

@@ -239,7 +239,7 @@ asagao sync status     # 送信待ちキューの確認
 - **無料プランで動くこと**: 有料プラン限定の API・項目は使わない。
 - **セキュリティ**: トークンはログに出さない。ローカルストアの権限は 600。
 - **対応環境**: macOS / Linux のみ。
-- **配布**: シングルバイナリ（goreleaser）、Homebrew tap。
+- **配布**: シングルバイナリ（goreleaser）。`v*` のタグを push すると `.github/workflows/release.yml` が macOS / Linux × amd64 / arm64 の tar.gz・checksums・changelog を GitHub Releases に出し、Homebrew tap（`amasok/homebrew-tap` の cask）を更新する。`brew install amasok/tap/asagao` と `go install` で入れられる。バイナリは署名していないので、cask が入れるときに macOS の quarantine を外す。
 
 ## 11. 技術選定
 
