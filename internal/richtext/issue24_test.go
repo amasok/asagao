@@ -88,6 +88,11 @@ func TestItemAfterQuoteAndEmptyItem(t *testing.T) {
 		"- a\n  - b\n\n    -\n\n  c": "<body><ul><li>a<ul><li>b<ul><li></li></ul></li></ul></li></ul>  c</body>",
 		"- a\n\n  -\n\n- d":          "<body><ul><li>a<ul><li></li></ul></li><li>d</li></ul></body>",
 		"1. a\n\n   1.\n\n   c":      "<body><ol><li>a<ol><li></li></ol></li></ol>   c</body>",
+		// an item line that cannot start a list in an item's paragraph is not an item
+		"- a\n  -\n\n  c":            "<body><ul><li>a\n-\nc</li></ul></body>",
+		"- a\n  2.\n\n  c":           "<body><ul><li>a\n2.\nc</li></ul></body>",
+		"1. a\n   1.\n\n   c":        "<body><ol><li>a\n1.\nc</li></ol></body>",
+		"- a\n  - b\n    -\n\n    c": "<body><ul><li>a<ul><li>b\n-\nc</li></ul></li></ul></body>",
 	} {
 		h1 := FromMarkdown(md)
 		md2 := ToEditableMarkdown(h1)
