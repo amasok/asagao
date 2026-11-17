@@ -25,6 +25,7 @@ type AsanaAPI interface {
 	AddProject(ctx context.Context, taskGID, projectGID, sectionGID string) error
 	AddTag(ctx context.Context, taskGID, tagGID string) error
 	AddTaskToSection(ctx context.Context, sectionGID, taskGID string) error
+	Batch(ctx context.Context, writes []model.BatchWrite) ([]model.BatchWriteResult, error)
 	Attachment(ctx context.Context, gid string) (*model.Attachment, error)
 	Attachments(ctx context.Context, parentGID string) ([]model.Attachment, error)
 	CreateProject(ctx context.Context, workspaceGID, teamGID, name string) (*model.Project, error)

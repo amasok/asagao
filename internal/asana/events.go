@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/amasok/asagao/internal/asana/model"
 )
@@ -42,12 +43,13 @@ func SyncToken(err error) (string, bool) { return model.SyncToken(err) }
 const (
 	batchPath = "/batch"
 	// MaxBatchActions is how many requests Asana accepts in one POST /batch.
-	MaxBatchActions = 10
+	MaxBatchActions = model.MaxBatchActions
 )
 
 type batchAction struct {
 	Method       string         `json:"method"`
 	RelativePath string         `json:"relative_path"`
+	Data         map[string]any `json:"data,omitempty"`
 	Options      map[string]any `json:"options,omitempty"`
 }
 
@@ -115,6 +117,59 @@ func (c *Client) tasksBatch(ctx context.Context, gids []string) (tasks []Task, g
 		}
 	}
 	return tasks, gone, nil
+}
+
+// Batch sends up to MaxBatchActions writes in one POST /batch and returns Asana's answer
+// to each, in order. An error means the batch as a whole failed (offline, 401, 429, 5xx
+// after the client's retries, a refused batch, or a broken answer): Asana may have applied
+// any of the writes. A write answered with a status >= 400 has its *Error in its result.
+// The client retries a 5xx to /batch, so only writes that are harmless to repeat belong
+// in one.
+func (c *Client) Batch(ctx context.Context, writes []model.BatchWrite) ([]model.BatchWriteResult, error) {
+	if len(writes) == 0 {
+		return nil, nil
+	}
+	if len(writes) > MaxBatchActions {
+		return nil, fmt.Errorf("asana: batch: %d requests (at most %d)", len(writes), MaxBatchActions)
+	}
+	plain := c.plainTasks.Load()
+	actions := make([]batchAction, len(writes))
+	for i, w := range writes {
+		actions[i] = batchAction{Method: strings.ToLower(w.Method), RelativePath: w.Path, Data: w.Data}
+		if w.Task {
+			actions[i].Options = map[string]any{"fields": c.taskFields(false)}
+		}
+	}
+	var results []batchResult
+	if _, err := c.do(ctx, http.MethodPost, batchPath, nil, map[string]any{"actions": actions}, &results); err != nil {
+		return nil, err
+	}
+	if len(results) != len(writes) {
+		return nil, fmt.Errorf("asana: batch: %d results for %d requests", len(results), len(writes))
+	}
+	out := make([]model.BatchWriteResult, len(writes))
+	for i, r := range results {
+		if r.StatusCode < 200 || r.StatusCode >= 300 {
+			status := r.StatusCode
+			if status < 400 { // not an answer a write gets: treat it like a server error
+				status = http.StatusBadGateway
+			}
+			out[i].Err = c.newError(status, r.Body)
+			continue
+		}
+		if !writes[i].Task {
+			continue
+		}
+		var env struct {
+			Data Task `json:"data"`
+		}
+		if err := json.Unmarshal(r.Body, &env); err != nil {
+			return nil, fmt.Errorf("asana: batch: decode task: %w", err)
+		}
+		env.Data.Partial = plain
+		out[i].Task = &env.Data
+	}
+	return out, nil
 }
 
 func (c *Client) tasksOneByOne(ctx context.Context, gids []string) (tasks []Task, gone []string, err error) {

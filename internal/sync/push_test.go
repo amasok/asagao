@@ -1,11 +1,13 @@
 package sync
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,6 +40,7 @@ type writeServer struct {
 	mu    stdsync.Mutex
 	tasks map[string]*serverTask
 	calls []string // "METHOD path body"
+	outer []string // "METHOD path" of each request as it came (not the actions of a batch)
 	next  int
 	// hook, if set, may answer a request itself (returning true) to inject failures.
 	hook func(rw http.ResponseWriter, r *http.Request) bool
@@ -136,6 +139,7 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.calls = append(w.calls, r.Method+" "+r.URL.Path+" "+strings.TrimSpace(string(b)))
 	}
+	w.outer = append(w.outer, r.Method+" "+r.URL.Path)
 	if w.requests++; w.requests > maxRequests {
 		w.t.Errorf("more than %d requests: Push is looping (%s %s)", maxRequests, r.Method, r.URL.Path)
 		rw.WriteHeader(http.StatusBadRequest)
@@ -144,7 +148,12 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if w.shift != 0 {
 		rw.Header().Set("Date", w.serverTime().Format(http.TimeFormat))
 	}
+	r.Body = io.NopCloser(strings.NewReader(string(b))) // for a hook to read
 	if w.hook != nil && w.hook(rw, r) {
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/batch" {
+		w.serveBatch(rw, body.Data)
 		return
 	}
 	if key := r.Method + " " + r.URL.Path; w.failAfter[key] > 0 {
@@ -154,6 +163,65 @@ func (w *writeServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.handle(rw, r, b, body.Data)
+}
+
+// serveBatch answers POST /batch: each action is handled like a request of its own (its
+// writes are recorded in calls too, after the batch itself).
+func (w *writeServer) serveBatch(rw http.ResponseWriter, data map[string]any) {
+	actions, _ := data["actions"].([]any)
+	var results []string
+	for _, a := range actions {
+		act, _ := a.(map[string]any)
+		method := strings.ToUpper(fmt.Sprint(act["method"]))
+		path := fmt.Sprint(act["relative_path"])
+		var b []byte
+		inner := map[string]any{}
+		if d, ok := act["data"].(map[string]any); ok {
+			inner = d
+			b, _ = json.Marshal(map[string]any{"data": d})
+		}
+		r := httptest.NewRequest(method, path, strings.NewReader(string(b)))
+		if method != http.MethodGet {
+			w.calls = append(w.calls, method+" "+path+" "+string(b))
+		}
+		rec := &batchRecorder{httptest.NewRecorder(), rw, false}
+		switch key := method + " " + path; {
+		case w.hook != nil && w.hook(rec, r):
+			if rec.hijacked {
+				return // the connection of the whole batch was dropped
+			}
+			if !json.Valid(rec.Body.Bytes()) { // e.g. a proxy's error page: it answers the batch
+				rw.WriteHeader(rec.Code)
+				rw.Write(rec.Body.Bytes())
+				return
+			}
+		case w.failAfter[key] > 0:
+			w.failAfter[key]--
+			w.handle(httptest.NewRecorder(), r, b, inner) // applied, but this action answers 500
+			rec.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.handle(rec, r, b, inner)
+		}
+		body := strings.TrimSpace(rec.Body.String())
+		if body == "" {
+			body = "null"
+		}
+		results = append(results, fmt.Sprintf(`{"status_code":%d,"body":%s}`, rec.Code, body))
+	}
+	fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(results, ","))
+}
+
+// batchRecorder records the answer to one action of a batch. A hook that drops the
+// connection drops the batch's.
+type batchRecorder struct {
+	*httptest.ResponseRecorder
+	outer    http.ResponseWriter
+	hijacked bool
+}
+
+func (b *batchRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	b.hijacked = true
+	return b.outer.(http.Hijacker).Hijack()
 }
 
 func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, data map[string]any) {
