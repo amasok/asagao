@@ -69,7 +69,7 @@ asagao にまだ無い操作の逃げ道です。
 	f.StringArrayVarP(&o.fields, "field", "F", nil, "型付きのフィールド key=value。true / false / null / 数値はその型 (くり返せる)")
 	f.StringVar(&o.input, "input", "", `本文の JSON のファイル ("-" で標準入力)。そのまま送る`)
 	f.BoolVar(&o.paginate, "paginate", false, "GET で next_page をたどり、全ページの data を 1 つの配列にまとめて出す")
-	f.BoolVar(&o.dryRun, "dry-run", false, "送らずに、送るリクエスト (メソッド・パス・本文) を表示する")
+	f.BoolVar(&o.dryRun, "dry-run", false, `送らずに、送るリクエスト (メソッド・パス・本文) を表示する (--json では {"dry_run": true, ...})`)
 	return cmd
 }
 
@@ -86,6 +86,19 @@ func (a *app) runAPI(cmd *cobra.Command, path string, o apiOpts) error {
 		return err
 	}
 	if o.dryRun {
+		if a.json {
+			// The same "dry_run" key as the write commands' --dry-run --json (#3).
+			v := map[string]any{"dry_run": true, "method": req.method, "path": req.path}
+			if req.body != nil {
+				v["body"] = json.RawMessage(req.body)
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				return err
+			}
+			a.writeAPIBody(cmd, b)
+			return nil
+		}
 		out := cmd.OutOrStdout()
 		fmt.Fprintln(out, req.method, req.path)
 		if req.body != nil {

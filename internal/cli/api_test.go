@@ -297,3 +297,21 @@ func TestAPICommandNotLoggedIn(t *testing.T) {
 		t.Error("no error without a login")
 	}
 }
+
+// --dry-run --json prints the request as JSON with "dry_run": true, as the write commands do.
+func TestAPICommandDryRunJSON(t *testing.T) {
+	f := &fakeRawAsana{reply: func(w http.ResponseWriter, r *http.Request) { t.Error("request sent") }}
+	out, _, err := runAPICLI(t, f, "", "-X", "POST", "/tasks", "-f", "name=x", "--dry-run", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		DryRun bool `json:"dry_run"`
+		Method string
+		Path   string
+		Body   struct{ Data struct{ Name string } }
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || !got.DryRun || got.Method != "POST" || got.Path != "/tasks" || got.Body.Data.Name != "x" {
+		t.Errorf("out = %s (%v)", out, err)
+	}
+}
