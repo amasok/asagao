@@ -17,5 +17,6 @@ func wiring() cli.Wiring {
 		Syncer:            wire.Syncer,
 		OpenStore:         cli.StoreOpener(wire.OpenStore),
 		CheckPAT:          wire.CheckPAT,
+		Searches:          config.SearchFile{},
 	}
 }

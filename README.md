@@ -138,6 +138,7 @@ asagao --offline  # 同期せず、ローカルストアだけで起動
 | `i` / `o` | 画像を全画面で見る / ブラウザで開く | `i` / `o` |
 | **表示** | | |
 | `f` / `T` | 絞り込み / タグで絞り込む（一覧から選ぶ） | `f` / `T` |
+| `/` | 保存した検索を呼び出す（下の「保存した検索」。サイドバーで移動するか「解除」で戻る） | |
 | `v` / `z` | 表示を切り替え（リスト→ボード→カレンダー） / 詳細を全画面 | `v` / `z` |
 | `-` / `_` / `+` | このセクションを折りたたむ / すべて折りたたむ / すべて開く | 同じ |
 | `b` / `<` / `>` | プロジェクト一覧を隠す / 詳細を狭く / 広く | 同じ |
@@ -224,6 +225,23 @@ asagao search 転居 届 --json               # 複数語は AND
 
 日付は `YYYY-MM-DD` / `today` / `tomorrow` / `yesterday` / `+Nd` / `-Nd` で指定できます。
 
+### 保存した検索
+
+よく使う絞り込みに名前を付けて保存し、CLI・TUI（`space` `/`）・MCP から呼び出せます。保存先は `~/.config/asagao/searches.toml`（config.toml とは別のファイル）です。
+
+```sh
+asagao searches save 今週 --due-before +7d             # task list と同じフラグ
+asagao searches save 請求 --query 請求書 --open         # --query があると search と同じ（全員の・完了済みも）
+asagao searches save 今週 --due-before +14d --force     # 同じ名前は --force で上書き
+asagao searches list                                   # 一覧（--json も可）
+asagao searches run 今週                               # 実行（--limit で件数を変える）
+asagao searches rm 今週
+```
+
+- 期日の相対指定（`+7d` など）はそのまま保存し、実行した日から数えます。プロジェクト名や担当者は実行するときに探します。
+- `--query` のない検索は `task list` と同じく自分の未完了のタスク（`--project` なら全員の）を、ある検索は `search` と同じく全員の・完了済みも含むタスクを探します。`--assignee`・`--open`・`--completed`・`--all` で変えられます。
+- searches.toml は手で書き換えてもかまいません（`[[search]]` の表を並べ、キーは `name`・`query`・`assignee`・`project`・`section`・`tag`・`field`・`due_before`・`due_after`・`completion`・`overdue`・`modified_within_days`・`limit`）。読めない内容や知らないキーがあるとエラーになり、ファイルは書き換えません。保存すると書き直すので、コメントは残りません。
+
 すべてのコマンドで `--json` を付けると JSON で出力します。
 
 ## MCP サーバー（AI から使う）
@@ -251,6 +269,7 @@ claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 | `move_task` | 別のセクションへ移動（`--read-only` では無効） |
 | `rename_section` | セクションの名前を変更（`--read-only` では無効） |
 | `list_tags` | タグとタスク数 |
+| `list_saved_searches` / `run_saved_search` | 保存した検索の一覧 / 名前を指定して実行（読み取りだけ。保存・削除は CLI から） |
 | `get_project` | プロジェクトのセクション・メンバー・ステータス更新 |
 | `create_status_update` | ステータス更新を投稿（`--read-only` では無効） |
 | `create_project` / `update_project` | プロジェクトを作る / アーカイブ・メンバー（オンラインのみ。`--read-only` では無効） |
@@ -345,6 +364,7 @@ inline_images = "auto"     # 本文中に画像を表示するか: auto / on / o
 ## データの置き場所
 
 - 設定: `~/.config/asagao/config.toml`
+- 保存した検索: `~/.config/asagao/searches.toml`（権限 600）
 - ローカルストア: `~/.local/share/asagao/store.db`（SQLite、権限 600）
 
 ## 開発

@@ -268,6 +268,7 @@ const (
 	pickApproval    // approval status
 	pickDepAction   // open / remove a linked task
 	pickDepTarget   // a task to link
+	pickSavedSearch // a saved search to show (searches.go)
 )
 
 type pickerItem struct {
@@ -408,6 +409,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.setField(p.task, p.field, value, false)
 		case pickFieldFilter:
 			return m, m.applyFieldFilter(item.value)
+		case pickSavedSearch:
+			return m, m.applySavedSearch(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickReset:

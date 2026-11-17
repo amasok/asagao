@@ -111,8 +111,8 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_project", "create_status_update", "create_task", "duplicate_task", "get_attachment", "get_project", "get_task", "list_inbox", "list_projects", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_task", "rename_section", "resolve_outbox", "search_tasks", "sync", "sync_status", "update_project", "update_task", "upload_attachment"}},
-		{true, []string{"get_attachment", "get_project", "get_task", "list_inbox", "list_projects", "list_tags", "list_tasks", "list_users", "search_tasks", "sync", "sync_status"}},
+		{false, []string{"add_comment", "create_project", "create_status_update", "create_task", "duplicate_task", "get_attachment", "get_project", "get_task", "list_inbox", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_task", "rename_section", "resolve_outbox", "run_saved_search", "search_tasks", "sync", "sync_status", "update_project", "update_task", "upload_attachment"}},
+		{true, []string{"get_attachment", "get_project", "get_task", "list_inbox", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "run_saved_search", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
