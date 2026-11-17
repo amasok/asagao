@@ -6,8 +6,8 @@
 // The store keeps type aliases for them (store.UserRef), so its methods and their callers
 // do not change. Stage c2 (migration-plan.md) moves the read types here: the views of
 // tasks (tasks.go) and of projects (projects.go), the inbox (inbox.go), the task list
-// query (filter.go) and the errors the entry points check (errors.go) so far; the wording
-// of the outbox entries comes next.
+// query (filter.go), the errors the entry points check (errors.go) and the wording of
+// outbox entries, dropped changes and status updates (describe.go).
 package readmodel
 
 import (

@@ -16,20 +16,11 @@ import (
 // OpCreateStatus posts a project status update (outbox.KindCreateStatus).
 const OpCreateStatus = outbox.KindCreateStatus
 
-// StatusTypes are the status values of a project status update, with Japanese labels.
-var StatusTypes = []struct{ Value, Label string }{
-	{"on_track", "順調"}, {"at_risk", "要注意"}, {"off_track", "遅れ"}, {"on_hold", "保留"}, {"complete", "完了"},
-}
+// StatusTypes is readmodel.StatusTypes.
+var StatusTypes = readmodel.StatusTypes
 
-// StatusLabel returns the Japanese label of a status type.
-func StatusLabel(t string) string {
-	for _, s := range StatusTypes {
-		if s.Value == t {
-			return s.Label
-		}
-	}
-	return t
-}
+// StatusLabel is readmodel.StatusLabel.
+func StatusLabel(t string) string { return readmodel.StatusLabel(t) }
 
 // StatusUpdateView is readmodel.StatusUpdateView.
 type StatusUpdateView = readmodel.StatusUpdateView

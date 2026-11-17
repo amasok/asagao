@@ -12,8 +12,8 @@ import (
 // ErrUnsentChanges is readmodel.ErrUnsentChanges.
 var ErrUnsentChanges = readmodel.ErrUnsentChanges
 
-// ResetReason is the reason recorded for unsent changes deleted by Reset.
-const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"
+// ResetReason is readmodel.ResetReason.
+const ResetReason = readmodel.ResetReason
 
 // Reset deletes all local data: tasks, projects, comments, attachments, the outbox, the
 // record of dropped changes and sync state including the account (KeyMeGID), so the store

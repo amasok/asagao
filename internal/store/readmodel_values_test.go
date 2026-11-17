@@ -45,3 +45,25 @@ func TestInboxTypesAreReadmodelTypes(t *testing.T) {
 		t.Error("the store's constants differ from readmodel's")
 	}
 }
+
+// The descriptions of outbox entries are readmodel's: the store's names are its values.
+func TestDescriptionsAreReadmodels(t *testing.T) {
+	if typeName(Discard{}) != typeName(readmodel.Discard{}) {
+		t.Errorf("store.Discard is %s", typeName(Discard{}))
+	}
+	if VerifyNote != readmodel.VerifyNote || DiscardNotice != readmodel.DiscardNotice || ResetReason != readmodel.ResetReason {
+		t.Error("the store's constants differ from readmodel's")
+	}
+	if len(StatusTypes) != len(readmodel.StatusTypes) || &StatusTypes[0] != &readmodel.StatusTypes[0] {
+		t.Error("store.StatusTypes is not readmodel.StatusTypes")
+	}
+	d := Discard{Kind: OpAddComment, Payload: map[string]any{"text": "a", "html_text": "<b>a</b>"}}
+	got := DiscardDetails(d, func(string) string { return "**a**" })
+	want := readmodel.DiscardDetails(d, func(string) string { return "**a**" })
+	if len(got) != 1 || len(want) != 1 || got[0].Label != want[0].Label || got[0].Text != want[0].Text {
+		t.Errorf("DiscardDetails = %+v, want %+v", got, want)
+	}
+	if DiscardDetails(Discard{Kind: OpAddTag}, nil) != nil {
+		t.Error("DiscardDetails of nothing is not nil")
+	}
+}
