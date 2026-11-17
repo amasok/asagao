@@ -1,6 +1,9 @@
 package richtext
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Emphasis and code in a link's text stay in the link: ToEditableMarkdown writes them in
 // the link text, and FromMarkdown reads them back (#15).
@@ -42,6 +45,54 @@ func TestLinkTextKeepsMarks(t *testing.T) {
 		md1, h1, md2, h2 := rt2(tc.in)
 		if md1 != tc.md || h1 != tc.out || md2 != md1 || h2 != h1 {
 			t.Errorf("in  %q\nmd1 %q (want %q)\nh1  %q (want %q)\nmd2 %q\nh2  %q", tc.in, md1, tc.md, h1, tc.out, md2, h2)
+		}
+	}
+}
+
+// A blank line in a link's text is written as a line of a backslash, as in a list item: a
+// blank line would end the paragraph and leave "[" and "](…)" as text (#22).
+func TestLinkTextBlankLine(t *testing.T) {
+	cases := []struct{ in, md, out string }{ // out "" is in
+		{"<body><a href=\"https://e.com\">a\n\nb</a></body>", "[a\n\\\nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\"><strong>a</strong>\n\nb</a></body>", "[**a**\n\\\nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\">a\n\n\nb</a></body>", "[a\n\\\n\\\nb](https://e.com)", ""},
+		{"<body>x <a href=\"https://e.com\">a\n\nb</a> y</body>", "x [a\n\\\nb](https://e.com) y", ""},
+		{"<body><blockquote><a href=\"https://e.com\">a\n\nb</a></blockquote></body>", "> [a\n> \\\n> b](https://e.com)", ""},
+		{"<body><ul><li><a href=\"https://e.com\">a\n\nb</a></li></ul></body>", "- [a\n\\\nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\">a\n\n# b</a></body>", "[a\n\\\n\\# b](https://e.com)", ""},
+		// spaces on the blank line go, as in a list item
+		{"<body><a href=\"https://e.com\">a\n \t\nb</a></body>", "[a  \n\\\nb](https://e.com)", "<body><a href=\"https://e.com\">a\n\nb</a></body>"},
+		// a line break is a hard break, and spaces at the end of a line stay (as in text)
+		{"<body><a href=\"https://e.com\">a\nb</a></body>", "[a  \nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\">a\nx\t\nb</a></body>", "[a  \nx&#9;  \nb](https://e.com)", ""},
+		// (a quote in a list item is text: a line of "> " and a tab in the link)
+		{"<body><ul><li><blockquote><a href=\"https://e.com\">a\n\t\nb</a></blockquote></li></ul></body>",
+			"- \\> [a  \n\\> &#9;  \n\\> b](https://e.com)",
+			"<body><ul><li>&gt; <a href=\"https://e.com\">a\n&gt; \t\n&gt; b</a></li></ul></body>"},
+	}
+	for _, tc := range cases {
+		out := tc.out
+		if out == "" {
+			out = tc.in
+		}
+		md1, h1, _, h2 := rt2(tc.in)
+		if md1 != tc.md || h1 != out || h2 != out {
+			t.Errorf("in  %q\nmd1 %q (want %q)\nh1  %q (want %q)\nh2  %q", tc.in, md1, tc.md, h1, out, h2)
+		}
+	}
+}
+
+// A link written as its text (with an image, a mention) has its blank lines as one line
+// break: a blank line would end the paragraph (#22).
+func TestLinkTextBlankLineAsText(t *testing.T) {
+	for _, in := range []string{
+		"<body><a href=\"https://e.com\"><img data-asana-gid=\"7\">a\n\nb</a></body>",
+		"<body><a data-asana-gid=\"1\" data-asana-type=\"user\">a\n \n\nb</a></body>",
+		"<body><a href=\"https://e.com\"><br>a\n\nb</a></body>",
+	} {
+		md1, h1, md2, h2 := rt2(in)
+		if strings.Contains(md1, "\n\n") || h1 != h2 || !strings.Contains(h1, "<a ") {
+			t.Errorf("in  %q\nmd1 %q\nh1  %q\nmd2 %q\nh2  %q", in, md1, h1, md2, h2)
 		}
 	}
 }
