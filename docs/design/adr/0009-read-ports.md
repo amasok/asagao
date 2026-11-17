@@ -1,6 +1,6 @@
 # ADR 0009: 入り口の読み取りは app.Query を通し、ポートは QueryStore 1 つにする
 
-- 状態: 提案 (Issue #11 の段階 c2)
+- 状態: 採用 (Issue #11 の段階 c2)
 - 日付: 2026-11-17
 - ADR 0003 の決めたことの 5 (読み取りは段階 c までは入り口から store を直接呼んでよい) の、段階 c のあとの形を決める
 
@@ -16,7 +16,7 @@
 2. **ポートは分けない。** 書き込みは、ユースケースごとに使うメソッドが違うので、小さく分けた (a4・a6)。読み取りは `Query` 1 つが全部を使うので、分けても使う側は同じになる。メソッドは、タスク・人・プロジェクト・通知・キャッシュと outbox の順に、コメントで区切って並べる。
 3. **書き込みの前に名前を解決するための読み取り (`ResolveSection` など) は、今までどおり書き込みのポートに置く。** 入り口が表示のために呼ぶもの (`ResolveProject`・`ResolveUser(s)`・`ResolveCustomField`) は、`QueryStore` にも置く。
 4. **入り口は、1 つずつ別の単位で `Query` を通すようにする (MCP → CLI → TUI)。** 入り口に `*store.Store` は残る。書き込みのユースケースと `sync.Syncer` に渡すためで、組み立て (段階 d4) で消える。
-5. **まだ入れないもの**: `TaskTags` は `asana.Ref` を返すので、d1 (`asana/model`) のあと、TUI の単位で入れる。`SyncState`・`SetSyncState` (TUI の画面の状態の保存) は、TUI の単位で形を決める。
+5. **まだ入れないもの**: `TaskTags` は `asana.Ref` を返すので、d1 (`asana/model`) のあと、TUI の単位で入れる。`SyncState`・`SetSyncState` は、CLI と TUI の単位で形を決める。CLI は `SyncState(ctx, store.KeyMeGID)` を読み (cli/auth.go。"" を許すので `MeGID` では置き換えられない)、TUI は画面の状態 (たたんだ行、レイアウト) を読み書きする。
 
 ## 理由
 
