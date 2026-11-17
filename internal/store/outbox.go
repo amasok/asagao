@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/commitref"
 	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/task"
@@ -319,17 +320,42 @@ func addCommentLocal(ctx context.Context, tx *sql.Tx, gid, taskGID, text, htmlTe
 	return saveOp(ctx, tx, &Op{Kind: OpAddComment, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: ts})
 }
 
-// AddCommentOnceLocal adds a comment to taskGID, as AddRichCommentLocal, unless one of the
-// task's comments (sent or queued) contains marker; changes, when not empty, are applied to
+// commentOncePrefix starts the sync_state keys that record the markers AddCommentOnceLocal
+// added: "comment-once:<task gid>\x00<marker>".
+const commentOncePrefix = "comment-once:"
+
+// storyMarked reports whether a comment of taskGID carries marker (commitref.Marked).
+func storyMarked(ctx context.Context, tx *sql.Tx, taskGID, marker string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT text, COALESCE(html_text, '') FROM stories
+		WHERE task_gid = ?1 AND (instr(text, ?2) > 0 OR instr(html_text, ?2) > 0)`, taskGID, marker)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var text, html string
+		if err := rows.Scan(&text, &html); err != nil {
+			return false, err
+		}
+		if commitref.Marked(text, html, marker) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// AddCommentOnceLocal adds a comment to taskGID, as AddRichCommentLocal, unless it added
+// one with marker before (kept in sync_state, which refreshing the comments does not
+// touch) or one of the task's comments (sent or queued) carries marker (commitref.Marked); changes, when not empty, are applied to
 // the task first, as UpdateTaskLocal. All of it is one transaction, which takes the write
 // lock at BEGIN: two processes adding the same marker at once (a git hook and a scan of the
-// same commit, #8) add it once. added is false, and nothing is written, when the marker is
+// same commit, #8) add it once. added is false, and nothing is queued, when the marker is
 // there already.
 func (s *Store) AddCommentOnceLocal(ctx context.Context, taskGID, marker string, changes map[string]any, text, htmlText string, author UserRef, now time.Time) (gid string, added bool, err error) {
 	if strings.TrimSpace(text) == "" {
 		return "", false, errors.New("コメントが空です")
 	}
-	if marker == "" || !strings.Contains(text, marker) {
+	if !commitref.Marked(text, htmlText, marker) {
 		return "", false, errors.New("コメントに印がありません")
 	}
 	if len(changes) > 0 {
@@ -339,12 +365,26 @@ func (s *Store) AddCommentOnceLocal(ctx context.Context, taskGID, marker string,
 	}
 	gid = newLocalGID()
 	err = s.tx(ctx, func(tx *sql.Tx) error {
+		// The record is what counts on this computer: a refresh that read the comments
+		// before another process sent ours replaces them without it (ReplaceStories).
+		key := commentOncePrefix + taskGID + "\x00" + marker
 		var n int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM stories WHERE task_gid = ? AND instr(text, ?) > 0", taskGID, marker).Scan(&n); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sync_state WHERE key = ?", key).Scan(&n); err != nil || n > 0 {
 			return err
 		}
-		if n > 0 {
-			return nil
+		record := func() error {
+			_, err := tx.ExecContext(ctx, "INSERT INTO sync_state(key, value) VALUES(?, ?)", key, formatTime(now))
+			return err
+		}
+		marked, err := storyMarked(ctx, tx, taskGID, marker)
+		if err != nil {
+			return err
+		}
+		if marked { // made elsewhere (another computer), or before the record was kept
+			return record()
+		}
+		if err := record(); err != nil {
+			return err
 		}
 		if len(changes) > 0 {
 			if err := updateTaskLocal(ctx, tx, taskGID, changes, now); err != nil {

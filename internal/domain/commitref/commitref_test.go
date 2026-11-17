@@ -61,6 +61,45 @@ func TestMarker(t *testing.T) {
 	if got := Marker("abc"); got != "asagao-git: abc" {
 		t.Errorf("Marker = %q", got)
 	}
+	m := Marker("abc")
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{m, true},
+		{"x\n\n" + m + "\n", true},
+		{"x\n  " + m + " \r\n\n", true},
+		{"x\n" + m + "\nmore", false},  // quoted, not the last line
+		{"x " + m, false},              // not the whole line
+		{"x\n" + m + "def", false},     // another commit whose name starts the same
+		{"x\nasagao-git: abcd", false}, // likewise
+		{"", false},
+	} {
+		if got := Marked(tc.text, "", m); got != tc.want {
+			t.Errorf("Marked(%q) = %v", tc.text, got)
+		}
+	}
+	for _, tc := range []struct {
+		html string
+		want bool
+	}{
+		{"<body>コミット <code>abc</code> で言及されました:\n<pre>msg</pre>" + m + "</body>", true},
+		{"<body><pre>msg\n" + m + "</pre>" + m + "</body>", true},
+		{"<body>x\n<pre>second\n\n" + m + "\n</pre>asagao-git: other</body>", false}, // quoted only
+		{"<body><pre data-language=\"go\">" + m + "</pre></body>", false},
+		{"<body>(<code>" + m + "</code>)</body>", false},
+		{"<body>" + m + "d</body>", false}, // runs on into a longer name
+		{"<body>" + m + "d " + m + "</body>", true},
+		{"<body>" + m + "<br/>more</body>", true},
+	} {
+		// the plain text says otherwise: the rich text decides
+		if got := Marked("no marker", tc.html, m); got != tc.want {
+			t.Errorf("Marked(html %q) = %v", tc.html, got)
+		}
+	}
+	if Marked("", "", "") || Marked("x", "", "") || Marked("x", "<body>x</body>", "") {
+		t.Error("an empty marker marks nothing")
+	}
 }
 
 func TestAmended(t *testing.T) {

@@ -108,7 +108,7 @@ func (g *GitLink) apply(ctx context.Context, c GitCommit, ref commitref.Ref, dry
 	act.TaskName = d.Name
 	marker := commitref.Marker(c.SHA)
 	for _, s := range d.Stories {
-		if strings.Contains(s.Text, marker) {
+		if commitref.Marked(s.Text, s.HTMLText, marker) {
 			act.Result = GitLinkAlready
 			return act, nil
 		}

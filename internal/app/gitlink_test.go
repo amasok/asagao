@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/commitref"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -66,7 +67,7 @@ func (f *gitStore) AddCommentOnceLocal(_ context.Context, taskGID, marker string
 		f.beforeWrite()
 	}
 	for _, s := range f.tasks[taskGID].Stories {
-		if strings.Contains(s.Text, marker) {
+		if commitref.Marked(s.Text, s.HTMLText, marker) {
 			return "", false, nil
 		}
 	}
@@ -268,5 +269,19 @@ func TestGitLinkConcurrentWriter(t *testing.T) {
 	}
 	if len(st.tasks[gitTaskA].Stories) != 1 || st.tasks[gitTaskA].Completed {
 		t.Errorf("stories %d, completed %v", len(st.tasks[gitTaskA].Stories), st.tasks[gitTaskA].Completed)
+	}
+}
+
+// A commit whose message quotes another commit's marker does not make that commit look
+// handled: only a comment's last line counts.
+func TestGitLinkQuotedMarker(t *testing.T) {
+	st := newGitStore(gitTaskA)
+	first := GitCommit{SHA: gitSHA, Message: "first #" + gitTaskA}
+	second := GitCommit{SHA: strings.Repeat("e", 40), Message: "second #" + gitTaskA + "\n\nasagao-git: " + gitSHA}
+	for _, c := range []GitCommit{second, first} {
+		acts, err := gitLink(st).Apply(context.Background(), c, false)
+		if err != nil || len(acts) != 1 || acts[0].Result != GitLinkCommented {
+			t.Errorf("%s: %+v, %v", c.SHA[:4], acts, err)
+		}
 	}
 }

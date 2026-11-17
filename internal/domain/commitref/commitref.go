@@ -76,10 +76,49 @@ func isWordByte(b byte) bool {
 	return b == '_' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z'
 }
 
-// Marker is the line a comment made for commit sha ends with. Finding it in a task's
-// comments means the commit was handled for that task already, so handling it again (a
-// second scan, the hook and a scan of the same range) adds nothing.
+// Marker is the line a comment made for commit sha ends with. A task with a comment that
+// ends with it (Marked) had the commit handled already, so handling it again (a second
+// scan, the hook and a scan of the same range) adds nothing.
 func Marker(sha string) string { return "asagao-git: " + sha }
+
+// Marked reports whether a comment, given as its plain text and its rich text (html, ""
+// when there is none), carries marker as the comment GitComment-like code writes it, not
+// quoted: in the rich text, outside code (<pre> and <code>, where a commit message that
+// copies another commit's comment puts it); without rich text, as the last line of the
+// plain text (blank lines and spaces around it aside). The marker must not run on into
+// more of an object name ("asagao-git: abc" is not in "asagao-git: abcd").
+func Marked(text, html, marker string) bool {
+	if marker == "" {
+		return false
+	}
+	if html != "" {
+		return containsWhole(codeRE.ReplaceAllString(html, ""), marker)
+	}
+	text = strings.TrimRight(text, " \t\r\n")
+	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+		text = text[i+1:]
+	}
+	return strings.TrimSpace(text) == marker
+}
+
+// codeRE matches code in Asana rich text.
+var codeRE = regexp.MustCompile(`(?s)<pre[^>]*>.*?</pre>|<code[^>]*>.*?</code>`)
+
+// containsWhole reports whether s has marker not followed by a hex digit.
+func containsWhole(s, marker string) bool {
+	for {
+		i := strings.Index(s, marker)
+		if i < 0 {
+			return false
+		}
+		s = s[i+len(marker):]
+		if s == "" || !isHex(s[0]) {
+			return true
+		}
+	}
+}
+
+func isHex(b byte) bool { return '0' <= b && b <= '9' || 'a' <= b && b <= 'f' || 'A' <= b && b <= 'F' }
 
 // Amended returns the refs of an amended commit that its previous version (whose refs are
 // prev) did not have already: the previous version was handled when it was made, so a ref
