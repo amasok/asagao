@@ -13,16 +13,16 @@
 - **THEN** 前のタスクにはコメントだけ、後のタスクは完了にしてコメントし、どちらも outbox に積む
 
 ### Requirement: 同じコミットを二重に処理しない
-コミットを処理してタスクに足すコメントは、末尾に `asagao-git: <コミットの ID (40 桁)>` を持つ (MUST)。タスクのコメント (送信済み・未送信) にこの行があれば、そのコミットではそのタスクに何もしない (コメントも完了もしない)。オンラインなら、判断の前にタスクとコメントを Asana から取り直し、取り直せなければキャッシュで判断して注意を出す。完了はコメントより先に積み、コメントが積めなければ次の処理でやり直す。
-根拠: app/gitlink.go; cli/git.go (refreshTasks); TestGitLinkApplyTwice, TestGitScanOffline, TestGitScanOnline
+コミットを処理してタスクに足すコメントは、末尾に `asagao-git: <コミットの ID (40 桁)>` を持つ (MUST)。タスクのコメント (送信済み・未送信) にこの行があれば、そのコミットではそのタスクに何もしない (コメントも完了もしない)。オンラインなら、判断の前にタスクとコメントを Asana から取り直し、取り直せなければキャッシュで判断して注意を出す。印の確認と、完了・コメントを積むのは store の 1 つのトランザクション (書き込みのロックを BEGIN で取る) で行い、hook と手動の scan が同時に同じコミットを処理してもコメントは 1 つになる。
+根拠: app/gitlink.go; store/outbox.go (AddCommentOnceLocal); cli/git.go (refreshTasks); TestGitLinkApplyTwice, TestGitLinkConcurrentWriter, TestAddCommentOnceLocalConcurrent, TestGitScanOffline, TestGitScanOnline
 
 #### Scenario: 2 回目は何もしない
 - **WHEN** 同じコミットを 2 回 `git scan` する (1 回目のあと、タスクを未完了に戻した)
 - **THEN** 2 回目は「処理済み」と出し、コメントは 1 つのまま、タスクは未完了のまま
 
 ### Requirement: post-commit hook
-`git install-hook` は、`git rev-parse --git-path hooks/post-commit` の場所 (`core.hooksPath` に従う) に、`asagao git scan --hook HEAD` を呼ぶ hook を入れる (MUST)。その場所にほかのファイル (リンクを含む) があれば上書きせず、足す 1 行を出してエラーにする。`git uninstall-hook` は、asagao が入れたまま変わっていない hook だけを消す。hook モードは、HEAD の reflog が `commit` で始まるときだけ処理し (rebase・cherry-pick・revert のコミットは飛ばす)、`commit (amend)` なら amend 前のメッセージになかった参照 (完了が足されたものを含む) だけを扱う。失敗しても終了コード 0 で、理由を出す。
-根拠: cli/git.go; domain/commitref/commitref.go (Amended); TestGitScanHook, TestGitInstallHook, TestGitInstallHookKeepsOtherHooks, TestGitHookScriptRuns
+`git install-hook` は、`git rev-parse --git-path hooks/post-commit` の場所 (`core.hooksPath` に従う) に、`asagao git scan --hook HEAD` を呼ぶ hook を入れる (MUST)。その場所にほかのファイル (リンクを含む) があれば上書きせず、足す 1 行を出してエラーにする。`git uninstall-hook` は、asagao が入れたまま変わっていない hook だけを消す。hook モードは、HEAD の reflog が `commit` で始まるときだけ処理し (rebase・cherry-pick・revert のコミットは飛ばす)、`commit (amend)` なら amend 前のメッセージになかった参照 (完了が足されたものを含む) だけを扱う。hook モードはタスクを Asana から取り直さず、送信は短いタイムアウト (3 秒) で 1 回だけ試す。送れなかった分は outbox に残す。失敗しても終了コード 0 で、理由を出す。
+根拠: cli/git.go; domain/commitref/commitref.go (Amended); TestGitScanHook, TestGitScanHookDoesNotWait, TestGitInstallHook, TestGitInstallHookKeepsOtherHooks, TestGitHookScriptRuns
 
 #### Scenario: ほかの hook を上書きしない
 - **WHEN** post-commit hook がすでにあるリポジトリで `git install-hook` する

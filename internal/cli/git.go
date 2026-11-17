@@ -86,7 +86,7 @@ func (a *app) gitScanCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&dir, "repo", "C", ".", "git リポジトリのフォルダ")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Asana に問い合わせず、ローカルストアだけで判断して outbox に積む（送るのは次の sync）")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "何をするかを表示するだけで、何も変更しない")
-	cmd.Flags().BoolVar(&hook, "hook", false, "post-commit hook から呼ぶ（rebase などで作られたコミットは飛ばし、失敗しても 0 で終わる）")
+	cmd.Flags().BoolVar(&hook, "hook", false, "post-commit hook から呼ぶ（rebase などで作られたコミットは飛ばす。Asana から取り直さず、送信は短く 1 回だけ試す。失敗しても 0 で終わる）")
 	_ = cmd.Flags().MarkHidden("hook")
 	return cmd
 }
@@ -134,8 +134,9 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 	}
 	defer st.Close()
 	// The cache may not have the comment that marks a commit as handled (made on another
-	// computer, say): refresh the tasks first, and judge by the cache when that fails.
-	if !offline {
+	// computer, say): refresh the tasks first, and judge by the cache when that fails. The
+	// hook does not wait for Asana: it judges by the cache.
+	if !offline && !hook {
 		if warn := a.refreshTasks(ctx, st, gids); warn != "" {
 			res.Warnings = append(res.Warnings, warn)
 		}
@@ -158,7 +159,15 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 
 	var pushErr error
 	if wrote && !dryRun && !offline {
-		res.Push, pushErr = a.pushNow(ctx, st)
+		pctx := ctx
+		if hook {
+			// One short try: a commit is not held up by a slow network. What is not sent
+			// stays queued for the next sync (a request cut off is checked then).
+			var cancel context.CancelFunc
+			pctx, cancel = context.WithTimeout(ctx, hookPushTimeout)
+			defer cancel()
+		}
+		res.Push, pushErr = a.pushNow(pctx, st)
 		if pushErr != nil {
 			res.Error = pushErr.Error()
 		} else {
@@ -185,6 +194,8 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 		fmt.Fprintln(out, "（outbox に積みました。次の sync で送ります）")
 	case errors.Is(pushErr, sync.ErrAccountChanged):
 		fmt.Fprintf(out, "（まだ送っていません）\n%v\n", accountChanged(ctx, st))
+	case hook && errors.Is(pushErr, context.DeadlineExceeded):
+		fmt.Fprintln(out, "（すぐには送れなかったため、次の sync で送ります）")
 	case errors.Is(pushErr, sync.ErrPushBusy):
 		fmt.Fprintln(out, "（別の asagao が送信中です。この変更もそちらで送られます）")
 	case pushErr != nil:
@@ -196,6 +207,9 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 	}
 	return nil
 }
+
+// hookPushTimeout is how long the hook tries to send what it queued.
+var hookPushTimeout = 3 * time.Second
 
 // refreshTasks fetches the tasks gids from Asana. It returns a warning when that could not
 // be done, for the commands to go on with the cache.

@@ -15,6 +15,7 @@ import (
 	"strings"
 	gosync "sync"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/auth"
@@ -427,11 +428,26 @@ type fakeGitAsana struct {
 	calls     []string
 	completed map[string]bool
 	stories   map[string][]map[string]any
+	gets      []string      // GET requests for tasks (recorded when they come in)
+	delay     time.Duration // before answering anything
 }
 
 var tagRE = regexp.MustCompile(`<[^>]*>`)
 
 func (f *fakeGitAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	delay := f.delay
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/tasks/") {
+		f.gets = append(f.gets, r.URL.Path)
+	}
+	f.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var body struct {
@@ -601,5 +617,54 @@ func TestGitHookScriptRuns(t *testing.T) {
 	gitCommit(t, repo, "second")
 	if b2, _ := os.ReadFile(rec); string(b2) != want {
 		t.Errorf("hook ran without asagao:\n%s", b2)
+	}
+}
+
+// The hook does not wait for Asana: it judges by the cache (no refresh) and tries to send
+// once, shortly; what is not sent stays queued.
+func TestGitScanHookDoesNotWait(t *testing.T) {
+	path, fake, run := onlineGitEnv(t)
+	repo := gitRepo(t)
+	gitCommit(t, repo, "fixes #"+gitA)
+	old := hookPushTimeout
+	hookPushTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { hookPushTimeout = old })
+	fake.mu.Lock()
+	fake.delay = 10 * time.Second
+	fake.mu.Unlock()
+	start := time.Now()
+	out, errOut, err := run("git", "scan", "--hook", "-C", repo, "HEAD")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the hook took %v", d)
+	}
+	if !strings.Contains(out, "完了にしてコメント: ソファを買う") || !strings.Contains(out, "次の sync で送ります") {
+		t.Errorf("output:\n%s%s", out, errOut)
+	}
+	fake.mu.Lock()
+	gets := append([]string(nil), fake.gets...)
+	fake.mu.Unlock()
+	for _, g := range gets { // the push may read the task; a refresh reads its comments
+		if strings.HasSuffix(g, "/stories") || strings.HasSuffix(g, "/subtasks") {
+			t.Errorf("the hook refreshed the tasks: %q", gets)
+			break
+		}
+	}
+	if kinds := opKinds(cliOps(t, path)); len(kinds) != 2 {
+		t.Errorf("outbox %v", kinds)
+	}
+	// Asana fast again: the hook sends right away, still without refreshing.
+	fake.mu.Lock()
+	fake.delay = 0
+	fake.mu.Unlock()
+	gitCommit(t, repo, "#"+gitB)
+	out, errOut, err = run("git", "scan", "--hook", "-C", repo, "HEAD")
+	if err != nil || !strings.Contains(out, "Asana に送信しました") {
+		t.Errorf("%v\n%s%s", err, out, errOut)
+	}
+	if len(cliOps(t, path)) != 0 {
+		t.Errorf("left in the outbox: %v", opKinds(cliOps(t, path)))
 	}
 }
