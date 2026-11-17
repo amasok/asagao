@@ -110,13 +110,18 @@
 
 - トランザクションの単位 (`Store.tx`、`UpsertTasks` の 500ms ごとの分け方、`PruneResults` の読み取りの計画) は変えない。TestUpsertTasksLetsOtherWritersIn、TestFullSyncFailingWhileWritingTasksKeepsTheCache、TestPruneResultsWithNothingToChangeTakesNoWriteLock が、そのまま通ること。
 
+### c1 の中身
+
+- `DiscardDetails(d, toMarkdown)`: 破棄した変更の rich text を Markdown にする変換を、呼ぶ側 (TUI と CLI) が渡す (`richtext.ToEditableMarkdown`)。どの欄を変換し、空なら平文にする、は store のまま。
+- store から richtext の import は、まだ残る。`FitQueuedRichText` (outbox_richtext.go、#71。この表を書いたあとに入った) が `richtext.Target.Fit` を使うため。呼んでいるのは `sync.Push` で、sync は richtext を import できないので、変換を外から渡すには sync のポートと組み立てが要る。それは d3 (sync のポート) で行う。許可リストの行の理由を書き換えた。
+
 ## 段階 d: ポート (Asana と認証)
 
 | PR | 範囲 |
 |---|---|
 | d1 | `internal/asana/model` に型を移す。`internal/asana` に型の別名を残し、使う側を少しずつ移す |
 | d2 | 認証が「送る前に失敗した」を自前のエラーで返す。sync から x/oauth2 の import を外す |
-| d3 | `sync.Syncer` の `API` と `Store` を、sync で定義したインターフェースにする。`config.SyncConfig` を sync 自身の型にする |
+| d3 | `sync.Syncer` の `API` と `Store` を、sync で定義したインターフェースにする。`config.SyncConfig` を sync 自身の型にする。outbox_richtext.go の `FitQueuedRichText` の変換 (`richtext.Target.Fit`) を sync のポートにし、store→richtext の許可リストの行を消す |
 | d4 | `internal/wire` (組み立て) を作り、`cli/root.go` の `apiClient`・`newClient`・`openStore` と、TUI・MCP の `sync.Syncer{...}` の組み立て (5 か所) を移す。cli から x/oauth2 の import がなくなる |
 
 - 段階 d が終わると、依存の向きのテストの許可リストが空になる。

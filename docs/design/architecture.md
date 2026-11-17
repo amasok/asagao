@@ -83,7 +83,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
 | store → asana | `asana.Task` などの型 (9 ファイル) | 直す | d1 |
-| store → richtext | `ToEditableMarkdown` (describe.go:104) | 直す | c1 |
+| store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
 | sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
 | sync → asana | `*asana.Client`、型 | 直す | d1 (型)、d3 (ポート) |
 | sync → auth | `ErrNotLoggedIn`・`ErrLoginReplaced` (push.go:616) | 直す | d2 |
