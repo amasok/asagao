@@ -19,6 +19,8 @@ type Store interface {
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
 	// AddCommentOnceLocal is for `git scan` (usecase.GitLinkStore).
 	AddCommentOnceLocal(ctx context.Context, taskGID, marker string, changes map[string]any, text, htmlText string, author readmodel.UserRef, now time.Time) (gid string, added bool, err error)
+	// CopyTo writes a copy of the store to a new file (for --dry-run).
+	CopyTo(ctx context.Context, dst string) error
 	Close() error
 }
 

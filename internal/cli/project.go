@@ -51,6 +51,9 @@ func (a *app) projectCmd() *cobra.Command {
 
 // onlineSyncer returns a syncer with an API client (for online-only project operations).
 func (a *app) onlineSyncer(ctx context.Context, st Store) (*sync.Syncer, error) {
+	if a.dryRun {
+		return nil, errDryRunSend
+	}
 	api, err := a.apiClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("Asana に接続できません: %w", err)
@@ -115,12 +118,12 @@ func (a *app) projectStatusCmd() *cobra.Command {
 	post.Flags().StringVar(&status, "status", "on_track", "on_track / at_risk / off_track / on_hold / complete")
 	post.Flags().StringVar(&title, "title", "", "タイトル")
 	post.Flags().StringVar(&text, "text", "", "本文（マークダウン）")
-	cmd.AddCommand(post)
+	cmd.AddCommand(a.addDryRunFlag(post))
 	return cmd
 }
 
 func (a *app) projectCreateCmd() *cobra.Command {
-	return &cobra.Command{
+	return a.addDryRunFlag(&cobra.Command{
 		Use:   "create <名前>",
 		Short: "プロジェクトを作る（オンラインのみ）",
 		Args:  cobra.MinimumNArgs(1),
@@ -131,18 +134,22 @@ func (a *app) projectCreateCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
+			name := strings.Join(args, " ")
+			if a.dryRun {
+				return a.dryRunPlan(cmd, plannedChange{Kind: "create_project", Description: "プロジェクト「" + name + "」の作成"})
+			}
 			s, err := a.onlineSyncer(ctx, st)
 			if err != nil {
 				return err
 			}
-			p, err := s.CreateProject(ctx, strings.Join(args, " "))
+			p, err := s.CreateProject(ctx, name)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "プロジェクトを作りました: %s (%s)\n", p.Name, p.GID)
 			return nil
 		},
-	}
+	})
 }
 
 func (a *app) projectArchiveCmd() *cobra.Command {
@@ -162,6 +169,13 @@ func (a *app) projectArchiveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if a.dryRun {
+				kind, what := "archive_project", "アーカイブ"
+				if undo {
+					kind, what = "unarchive_project", "アーカイブの解除"
+				}
+				return a.dryRunPlan(cmd, plannedChange{Kind: kind, TaskGID: gid, Description: fmt.Sprintf("プロジェクト「%s」の%s", projectName(ctx, st, gid), what)})
+			}
 			s, err := a.onlineSyncer(ctx, st)
 			if err != nil {
 				return err
@@ -174,7 +188,7 @@ func (a *app) projectArchiveCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&undo, "undo", false, "アーカイブを解除する")
-	return cmd
+	return a.addDryRunFlag(cmd)
 }
 
 func (a *app) projectMembersCmd() *cobra.Command {
@@ -195,10 +209,6 @@ func (a *app) projectMembersCmd() *cobra.Command {
 				return err
 			}
 			if len(add)+len(remove) > 0 {
-				s, err := a.onlineSyncer(ctx, st)
-				if err != nil {
-					return err
-				}
 				var addG, remG []string
 				for _, u := range add {
 					g, err := query(st).ResolveUser(ctx, u)
@@ -213,6 +223,21 @@ func (a *app) projectMembersCmd() *cobra.Command {
 						return err
 					}
 					remG = append(remG, g)
+				}
+				if a.dryRun {
+					pname := projectName(ctx, st, gid)
+					var planned []plannedChange
+					for i, g := range addG {
+						planned = append(planned, plannedChange{Kind: "add_member", TaskGID: gid, Description: fmt.Sprintf("プロジェクト「%s」にメンバー「%s」を追加", pname, add[i]), Payload: map[string]any{"user": g}})
+					}
+					for i, g := range remG {
+						planned = append(planned, plannedChange{Kind: "remove_member", TaskGID: gid, Description: fmt.Sprintf("プロジェクト「%s」からメンバー「%s」を外す", pname, remove[i]), Payload: map[string]any{"user": g}})
+					}
+					return a.dryRunPlan(cmd, planned...)
+				}
+				s, err := a.onlineSyncer(ctx, st)
+				if err != nil {
+					return err
 				}
 				if err := s.SetProjectMembers(ctx, gid, addG, remG); err != nil {
 					return err
@@ -233,5 +258,5 @@ func (a *app) projectMembersCmd() *cobra.Command {
 	}
 	cmd.Flags().StringSliceVar(&add, "add", nil, "追加するユーザー（me・名前・gid）")
 	cmd.Flags().StringSliceVar(&remove, "remove", nil, "外すユーザー")
-	return cmd
+	return a.addDryRunFlag(cmd)
 }
