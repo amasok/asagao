@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -342,6 +343,70 @@ func TestPushBatchFails(t *testing.T) {
 			if op.State != store.OpPending || op.Verify || op.Attempts != 0 {
 				t.Fatalf("entry %+v", op)
 			}
+		}
+	})
+
+	t.Run("applied, then 500: sent again alone, no conflict", func(t *testing.T) {
+		ws, s, st := queue(t)
+		failed := false
+		ws.setHook(func(rw http.ResponseWriter, r *http.Request) bool {
+			b, _ := io.ReadAll(r.Body)
+			if r.URL.Path != "/batch" || strings.Contains(string(b), `"method":"get"`) || failed {
+				return false
+			}
+			failed = true
+			var req struct{ Data map[string]any }
+			_ = json.Unmarshal(b, &req)
+			ws.serveBatch(httptest.NewRecorder(), req.Data) // applied, but the answer is lost
+			rw.WriteHeader(http.StatusInternalServerError)
+			return true
+		})
+		res, err := s.Push(context.Background())
+		if err != nil || res.Sent != 3 || res.Failed != 0 || res.Remaining != 0 || completed(ws) != 3 {
+			t.Fatalf("push = %+v, %v (completed %d)", res, err, completed(ws))
+		}
+		if p, c, f := pendingCount(t, st); p+c+f != 0 {
+			t.Fatalf("outbox = %d %d %d", p, c, f)
+		}
+		// Updates are harmless to repeat: sent again alone; the check finds the server
+		// already has the value, so it is no conflict.
+		if got := ws.outerCalls("PUT /tasks/"); len(got) != 3 {
+			t.Fatalf("resent = %v", got)
+		}
+	})
+
+	t.Run("401: kept for after a new login", func(t *testing.T) {
+		ws, s, st := queue(t)
+		ws.setHook(writeBatchHook(func(rw http.ResponseWriter) bool {
+			rw.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(rw, `{"errors":[{"message":"Not Authorized"}]}`)
+			return true
+		}))
+		res, err := s.Push(context.Background())
+		if err == nil || res.Remaining != 3 || res.Failed != 0 || completed(ws) != 0 {
+			t.Fatalf("push = %+v, %v", res, err)
+		}
+		ops, _ := st.ListOps(context.Background())
+		for _, op := range ops {
+			if op.State != store.OpPending || op.Verify || op.Attempts != 0 {
+				t.Fatalf("entry %+v", op)
+			}
+		}
+	})
+
+	t.Run("429: an entry to send alone waits too", func(t *testing.T) {
+		ws, s, _ := queue(t)
+		delete(ws.tasks, "b2") // not in the reading batch: it would be sent alone
+		ws.setHook(writeBatchHook(func(rw http.ResponseWriter) bool {
+			rw.WriteHeader(http.StatusTooManyRequests)
+			return true
+		}))
+		res, err := s.Push(context.Background())
+		if !isRateLimited(err) || res.Remaining != 3 {
+			t.Fatalf("push = %+v, %v", res, err)
+		}
+		if got := ws.outerCalls("GET /tasks/b2"); len(got) != 0 {
+			t.Fatalf("sent alone while rate limited: %v", got)
 		}
 	})
 

@@ -44,6 +44,8 @@ type batchEntry struct {
 	check bool
 	// refresh: read the task again after sending (a move: the answer has no task).
 	refresh bool
+	// alone: send it on its own (it changed after the group was formed).
+	alone bool
 }
 
 // batchGroup returns the entries at the start of ops (as listed when the pass began) that
@@ -181,6 +183,24 @@ func (s *Syncer) pushBatch(ctx context.Context, group []batchEntry, res *PushRes
 		} else if !ok {
 			continue
 		}
+		// Read it again now that it is "sending": an edit made since the group was formed
+		// may have been joined to it (or reverted it); one made from now on gets an entry of
+		// its own. (No entry here is verified, so the sent_at BeginSend sets is not used.)
+		op, err := s.Store.GetOp(ctx, e.op.ID)
+		if errors.Is(err, readmodel.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		fresh, ok, err := s.batchEntryFor(ctx, *op)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || fresh.task != e.task {
+			fresh = batchEntry{op: *op, task: e.task, alone: true}
+		}
+		e = fresh
 		if err := s.Store.CountAttempt(ctx, e.op.ID, s.clock()); err != nil {
 			return nil, err
 		}
@@ -207,8 +227,8 @@ func (s *Syncer) pushBatch(ctx context.Context, group []batchEntry, res *PushRes
 func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSent {
 	results := make([]batchSent, len(entries))
 	alone := make([]bool, len(entries)) // to send on its own instead
-	if len(entries) == 1 {
-		alone[0] = true
+	for i, e := range entries {
+		alone[i] = e.alone || len(entries) == 1
 	}
 
 	// Compare with the tasks in Asana first (one more batch, reading).
@@ -280,6 +300,15 @@ func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSen
 			// had failed so.
 			for _, i := range sentIdx {
 				results[i].err = err
+			}
+			if isNetworkError(err) || isRateLimited(err) || model.IsUnauthorized(err) {
+				// The push stops here: the entries still to be sent alone wait too (not
+				// sent, as if their own request had failed so).
+				for i := range alone {
+					if alone[i] {
+						results[i].err, alone[i] = err, false
+					}
+				}
 			}
 		default: // the batch was refused, or its answer could not be read: one by one
 			for _, i := range sentIdx {
