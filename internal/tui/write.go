@@ -571,7 +571,7 @@ func (m *Model) outboxLines(inner int) []string {
 		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
 		for _, d := range m.discards {
 			lines = append(lines, "  "+store.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
-			for _, dt := range store.DiscardDetails(d) {
+			for _, dt := range store.DiscardDetails(d, richtext.ToEditableMarkdown) {
 				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))
 				for _, l := range strings.Split(ansi.Wrap(dt.Text, max(10, inner-6), ""), "\n") {
 					lines = append(lines, "      "+l)

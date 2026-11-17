@@ -3,6 +3,8 @@ package store
 import (
 	"reflect"
 	"testing"
+
+	"github.com/amasok/asagao/internal/richtext"
 )
 
 func TestDescribeOp(t *testing.T) {
@@ -117,7 +119,7 @@ func TestDiscardDetails(t *testing.T) {
 			[]DiscardDetail{{"説明（Markdown）", "# 見出し"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := DiscardDetails(tc.d); !reflect.DeepEqual(got, tc.want) {
+			if got := DiscardDetails(tc.d, richtext.ToEditableMarkdown); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %+v, want %+v", got, tc.want)
 			}
 		})
