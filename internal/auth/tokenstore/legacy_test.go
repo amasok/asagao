@@ -299,3 +299,33 @@ func TestLegacyCopyDoesNotOverwriteNewLogin(t *testing.T) {
 		t.Errorf("the new login was overwritten: %+v", c)
 	}
 }
+
+// A logout while a copy waits for the lock is not undone by the copy: Load reads the old
+// entry again under the lock, and Delete holds the lock too.
+func TestLegacyCopyDoesNotUndoLogout(t *testing.T) {
+	ctx := context.Background()
+	lock := lockPath(t)
+	cur, old := &memStore{}, &memStore{c: &Credentials{RefreshToken: "old"}}
+	loader := &withLegacy{Store: cur, legacy: old, lockPath: lock}
+	other := &withLegacy{Store: cur, legacy: old, lockPath: lock} // the process logging out
+	unlock, err := lockCopy(ctx, lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		c   *Credentials
+		err error
+	}
+	done := make(chan result)
+	go func() { c, err := loader.Load(ctx); done <- result{c, err} }()
+	time.Sleep(100 * time.Millisecond) // the loader has read the old entry and waits
+	_ = cur.Delete(ctx)
+	_ = old.Delete(ctx)
+	unlock()
+	if r := <-done; !errors.Is(r.err, ErrNotFound) {
+		t.Errorf("Load after logout = %+v, %v; want ErrNotFound", r.c, r.err)
+	}
+	if _, err := other.Load(ctx); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the login came back: %v", err)
+	}
+}

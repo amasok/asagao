@@ -48,14 +48,21 @@ func (s *withLegacy) Load(ctx context.Context) (*Credentials, error) {
 		return old, nil // not copied now (no lock: it might make a second copy); next run
 	}
 	defer unlock()
-	// Another process may have copied it, or saved a new login, while we waited.
+	// Another process may have copied it, saved a new login or logged out while we waited.
 	c, err = s.Store.Load(ctx)
 	if err == nil {
 		return c, nil
 	}
-	if errors.Is(err, ErrNotFound) {
-		_ = s.Store.Save(ctx, old) // if this fails, the login is still used, and copied next run
+	if !errors.Is(err, ErrNotFound) {
+		return old, nil
 	}
+	if old, err = s.legacy.Load(ctx); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound // logged out meanwhile: do not bring it back
+		}
+		return nil, fmt.Errorf("旧名 %s で保存したログインを読めません: %w", config.LegacyAppName, err)
+	}
+	_ = s.Store.Save(ctx, old) // if this fails, the login is still used, and copied next run
 	return old, nil
 }
 
@@ -70,6 +77,12 @@ func (s *withLegacy) Save(ctx context.Context, c *Credentials) error {
 
 // Delete removes the login under both names: `auth logout` and `auth migrate` mean to forget
 // it, and an entry left under the former name would be read again by the next Load.
+//
+// It holds the lock too, so a copy running in another process does not save the login
+// again after it is deleted. If the lock cannot be taken, it deletes anyway.
 func (s *withLegacy) Delete(ctx context.Context) error {
+	if unlock, err := lockCopy(ctx, s.lockPath); err == nil {
+		defer unlock()
+	}
 	return errors.Join(s.Store.Delete(ctx), s.legacy.Delete(ctx))
 }
