@@ -781,9 +781,42 @@ func (c *converter) link(n *html.Node) {
 			c.write(`\!`)
 		}
 		c.token("[", true, false)
-		c.write(escape(text, false) + "](" + linkDest(href))
+		if styledLink(n) {
+			c.children(n) // its emphasis and code, which FromMarkdown keeps in the link (#15)
+		} else {
+			c.write(escape(text, false))
+		}
+		c.write("](" + linkDest(href))
 		c.token(")", false, false)
 	}
+}
+
+// styledLink reports whether the text of link n has emphasis or code in it, and nothing
+// else but text and elements written only as their children: written by walk, the link
+// text keeps them. (Images, line breaks and other links in it are written as the text.)
+func styledLink(n *html.Node) bool {
+	styled := false
+	var rec func(*html.Node) bool
+	rec = func(n *html.Node) bool {
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			switch {
+			case ch.Type == html.TextNode:
+			case ch.Type != html.ElementNode:
+				return false
+			case ch.DataAtom == atom.Code:
+				styled = true
+			case transparentAtoms[ch.DataAtom]:
+				styled = styled || markAtoms[ch.DataAtom]
+				if !rec(ch) {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	return rec(n) && styled
 }
 
 // autolinkSafe reports whether u can be written as an autolink (<u>): a URL with a scheme
