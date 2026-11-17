@@ -1,0 +1,35 @@
+name: Release
+
+# A v* tag (v0.1.0 and so on) builds the binaries with goreleaser (.goreleaser.yaml), makes
+# the GitHub release, and writes the cask to amasok/homebrew-tap.
+#
+# Secrets: HOMEBREW_TAP_GITHUB_TOKEN, a token that may write to amasok/homebrew-tap only
+# (GITHUB_TOKEN reaches this repository only).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the changelog is the commits since the previous tag
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          # The same version as in .goreleaser.yaml's comment; change both together.
+          version: v2.20.2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
