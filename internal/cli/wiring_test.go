@@ -14,5 +14,6 @@ func init() {
 		Syncer:            wire.Syncer,
 		OpenStore:         StoreOpener(wire.OpenStore),
 		CheckPAT:          wire.CheckPAT,
+		Searches:          config.SearchFile{},
 	}
 }

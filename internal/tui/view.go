@@ -190,6 +190,9 @@ func (m *Model) renderHeader() string {
 	}
 	left := m.st.header.Render(" asagao ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
 		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
+	if l := m.savedSearchLabel(); l != "" {
+		left += "  " + m.st.headerFilter.Render(l)
+	}
 	if m.tagFilter != "" {
 		left += "  " + m.st.tag.Render("#"+m.tagFilter)
 	}
@@ -236,6 +239,9 @@ func (m *Model) renderFooter() string {
 	if m.searching {
 		m.search.SetWidth(max(10, m.width-4))
 		return m.search.View()
+	}
+	if q, ok := m.bulkFooter(); ok {
+		return ansi.Truncate(" "+m.st.today.Render(q), m.width, "…")
 	}
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
@@ -316,13 +322,17 @@ func (m *Model) listTitle() string {
 			n++
 		}
 	}
+	marked := ""
+	if len(m.marked) > 0 {
+		marked = fmt.Sprintf("  印 %d 件", len(m.marked))
+	}
 	if m.query != "" {
-		return fmt.Sprintf("検索 (%d)", n)
+		return fmt.Sprintf("検索 (%d)", n) + marked
 	}
 	if m.currentScope().kind == scopeInbox {
 		return fmt.Sprintf("通知 (未読 %d)", m.inboxUnread)
 	}
-	return fmt.Sprintf("タスク (%d)", n)
+	return fmt.Sprintf("タスク (%d)", n) + marked
 }
 
 func (m *Model) listLines(w, h int) []string {
@@ -356,6 +366,10 @@ func (m *Model) listLines(w, h int) []string {
 			} else {
 				lines = append(lines, m.st.sectionHeader.Render(header))
 			}
+			continue
+		}
+		if mark, ok := m.markGutter(r.task); ok {
+			lines = append(lines, mark+m.taskLine(r.task, r.depth, w-2, today, i == m.listCursor))
 			continue
 		}
 		lines = append(lines, m.taskLine(r.task, r.depth, w, today, i == m.listCursor))

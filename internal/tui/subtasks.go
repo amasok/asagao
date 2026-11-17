@@ -114,26 +114,12 @@ func (m *Model) startSubtask() tea.Cmd {
 }
 
 func (m *Model) createSubtask(parent, input string) tea.Cmd {
-	name, due, err := parseCreateInput(input, m.deps.Now())
-	if err != nil {
-		return func() tea.Msg { return writeDoneMsg{err: err} }
-	}
 	if m.expanded == nil {
 		m.expanded = map[string]bool{}
 	}
 	m.expanded[parent] = true // show the new subtask under its parent
-	selectIt := !m.inDetail() // in the detail view, stay on the parent
-	tasks := m.tasks(m.deps.Now())
-	return func() tea.Msg {
-		gid, err := tasks.CreateHere(m.ctx, app.CreateHereInput{Parent: parent, Name: name, Due: due})
-		if err != nil {
-			return writeDoneMsg{err: err}
-		}
-		if !selectIt {
-			gid = ""
-		}
-		return writeDoneMsg{status: "サブタスクを追加しました: " + name, gid: gid}
-	}
+	keep := m.inDetail()      // in the detail view, stay on the parent
+	return m.quickCreate(input, m.deps.Now(), app.CreateHereInput{Parent: parent}, "", "サブタスクを追加しました: ", keep)
 }
 
 func truncateRunes(s string, n int) string {

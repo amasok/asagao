@@ -268,6 +268,7 @@ const (
 	pickApproval    // approval status
 	pickDepAction   // open / remove a linked task
 	pickDepTarget   // a task to link
+	pickSavedSearch // a saved search to show (searches.go)
 )
 
 type pickerItem struct {
@@ -286,6 +287,8 @@ type picker struct {
 	field   readmodel.CustomFieldView // pickField, pickFieldMulti
 	// pickDepAction, pickDepTarget: the chosen task waits for p.task (else p.task waits for it)
 	dependents bool
+	// bulk: the marked tasks the choice is for (pickSection, pickAssignee, pickDue; bulk.go)
+	bulk []readmodel.TaskSummary
 }
 
 type tagsLoadedMsg struct {
@@ -394,6 +397,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.picker = nil
+		if p.bulk != nil {
+			return m, m.bulkPicked(p, item)
+		}
 		if cmd, ok := m.handleDepPicker(p, item); ok {
 			return m, cmd
 		}
@@ -408,6 +414,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.setField(p.task, p.field, value, false)
 		case pickFieldFilter:
 			return m, m.applyFieldFilter(item.value)
+		case pickSavedSearch:
+			return m, m.applySavedSearch(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickReset:

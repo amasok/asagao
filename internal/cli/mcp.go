@@ -48,6 +48,7 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 				CacheDir:   filepath.Join(xdg.CacheDir(), "attachments"),
 				Version:    currentBuild().Version,
 				AuthScopes: a.cfg.Auth.Scopes,
+				Searches:   wiring.Searches,
 				// The syncer outlives the tool call that creates it, so build it with the
 				// server's context, not the request's (token refresh may write to 1Password).
 				NewSyncer: func(context.Context) (*sync.Syncer, error) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/settings"
@@ -64,7 +65,7 @@ func newRoot(a *app) *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "結果を JSON で出力する")
 	root.Flags().BoolVar(&a.offline, "offline", false, "Asana と同期せず、ローカルストアだけで TUI を起動する")
-	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.outboxCmd(), a.mcpCmd(), a.tagCmd(), a.sectionCmd(), a.imageViewCmd(), a.keysCmd(), a.resetCmd(), a.inboxCmd())
+	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.outboxCmd(), a.mcpCmd(), a.tagCmd(), a.sectionCmd(), a.imageViewCmd(), a.keysCmd(), a.resetCmd(), a.inboxCmd(), a.searchesCmd())
 	return root
 }
 
@@ -84,6 +85,8 @@ type Wiring struct {
 	OpenStore func(ctx context.Context, path string) (Store, error)
 	// CheckPAT asks Asana whose a Personal Access Token is, retrying once after retryDelay.
 	CheckPAT func(ctx context.Context, token, baseURL string, retryDelay time.Duration, onRetry func(status int, wait time.Duration)) (*model.User, error)
+	// Searches is searches.toml, the saved searches (config.SearchFile).
+	Searches usecase.SearchFile
 }
 
 // wiring is set by Execute (and by the tests' init).

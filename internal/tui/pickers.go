@@ -20,7 +20,20 @@ func (m *Model) openDuePicker() tea.Cmd {
 	if t == nil {
 		return nil
 	}
-	now := m.deps.Now()
+	p := &picker{kind: pickDue, title: "期日（" + truncateRunes(t.Name, 30) + "）", task: *t, items: dueItems(m.deps.Now())}
+	for i, item := range p.items {
+		if item.value == t.DueOn && item.value != "?" {
+			p.items[i].hint = "現在"
+			p.cursor = i
+		}
+	}
+	m.picker = p
+	return nil
+}
+
+// dueItems are the choices of the due date picker: common dates, "日付を入力…" (value "?")
+// and "期日なし" (value "").
+func dueItems(now time.Time) []pickerItem {
 	day := func(d time.Time) string { return d.Format(time.DateOnly) }
 	label := func(name string, d time.Time) string {
 		return padRight(name, 12) + fmt.Sprintf("%s(%s)", d.Format("1/2"), weekdays[d.Weekday()])
@@ -38,24 +51,11 @@ func (m *Model) openDuePicker() tea.Cmd {
 		{"今週末", saturday}, {"来週の月曜", monday}, {"1週間後", now.AddDate(0, 0, 7)},
 		{"2週間後", now.AddDate(0, 0, 14)}, {"1か月後", now.AddDate(0, 1, 0)},
 	}
-	p := &picker{kind: pickDue, title: "期日（" + truncateRunes(t.Name, 30) + "）", task: *t}
+	var items []pickerItem
 	for _, o := range options {
-		item := pickerItem{label: label(o.name, o.d), value: day(o.d)}
-		if item.value == t.DueOn {
-			item.hint = "現在"
-			p.cursor = len(p.items)
-		}
-		p.items = append(p.items, item)
+		items = append(items, pickerItem{label: label(o.name, o.d), value: day(o.d)})
 	}
-	p.items = append(p.items, pickerItem{label: "日付を入力…", value: "?"})
-	none := pickerItem{label: "期日なし", value: ""}
-	if t.DueOn == "" {
-		none.hint = "現在"
-		p.cursor = len(p.items)
-	}
-	p.items = append(p.items, none)
-	m.picker = p
-	return nil
+	return append(items, pickerItem{label: "日付を入力…", value: "?"}, pickerItem{label: "期日なし", value: ""})
 }
 
 func (m *Model) setDue(t readmodel.TaskSummary, due string) tea.Cmd {
@@ -68,7 +68,7 @@ func (m *Model) setDue(t readmodel.TaskSummary, due string) tea.Cmd {
 
 func (m *Model) startDuePrompt(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptDue)
-	m.dueTask = t
+	m.dueTask, m.bulkDueTasks = t, nil
 	m.prompt.SetValue(t.DueOn)
 	m.prompt.CursorEnd()
 	return m.prompt.Focus()
@@ -78,6 +78,10 @@ func (m *Model) submitDue(input string) tea.Cmd {
 	due, err := app.ParseDue(input, m.deps.Now())
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
+	}
+	if tasks := m.bulkDueTasks; tasks != nil {
+		m.bulkDueTasks = nil
+		return m.askDue(tasks, due)
 	}
 	return m.setDue(m.dueTask, due)
 }
