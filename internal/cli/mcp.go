@@ -46,7 +46,7 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 				Store:      st,
 				ReadOnly:   readOnly,
 				CacheDir:   filepath.Join(xdg.CacheDir(), "attachments"),
-				Version:    version,
+				Version:    currentBuild().Version,
 				AuthScopes: a.cfg.Auth.Scopes,
 				// The syncer outlives the tool call that creates it, so build it with the
 				// server's context, not the request's (token refresh may write to 1Password).

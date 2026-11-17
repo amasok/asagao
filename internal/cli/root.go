@@ -20,8 +20,6 @@ import (
 	"github.com/amasok/asagao/internal/xdg"
 )
 
-var version = "dev"
-
 type app struct {
 	cfg     settings.Config
 	json    bool
@@ -43,7 +41,7 @@ func newRoot(a *app) *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return a.runTUI(cmd.Context()) },
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       version,
+		Version:       currentBuild().String(),
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// Folders of the former name (asana-tui) move to the new ones. What could not
 			// be moved is left in place: warn and go on with the new folders.
