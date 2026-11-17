@@ -23,7 +23,7 @@
 | a3 | TUI のタスク作成とサブタスク作成を `Tasks.CreateHere` (解決済みの gid を受ける。ADR 0008) に | `tui/write.go:334-378`、`tui/subtasks.go:115-127` | TestCreateTaskInProject、TestCreateSubtask、TestParseCreateInput |
 | a4 | コメントと status update (`Comments.Add`、`Status.Create`)。説明文の変換の組 (11 か所のうち 7 か所) がここに集まる | tui/write.go:388、tui/edit.go:334、tui/projects.go:247、cli/write.go:603、cli/project.go:115、mcpserver/server.go:701, :965 | TestTUICommentAndStatusWithoutLayoutTags、TestCLIRichTextTagsPerTarget、TestMCPRichTextTagsPerTarget |
 | a5 | タスクの更新 (`Tasks.Update`: 名前・説明・期日・担当・完了・種類・承認)。期日の解釈 (6 か所) が集まる | tui/edit.go:269-301、tui/pickers.go:64-83、tui/write.go:237、tui/subtasks.go:198、cli/write.go:150, :482、mcpserver/server.go:520-629 | TestEditTaskInEditor、TestEditTaskErrorsAndNoChange、TestFailedWritesChangeNothing |
-| a6 | 残りの書き込み (移動、セクション名、タグ、フォロワー、プロジェクト、依存、カスタムフィールド、添付、複製、いいね、通知の既読、解決) を、まとまりごとに 1〜3 PR で | write-flow の仕様の表 | 各入り口の書き込みのテスト |
+| a6 | 残りの書き込み (移動、セクション名、タグ、フォロワー、プロジェクト、依存、カスタムフィールド、添付、複製、通知の既読) を、まとまりごとに 1〜3 PR で。いいねは a5 で済んだ。解決 (`sync.Resolve`) は段階 b に回した | write-flow の仕様の表 | 各入り口の書き込みのテスト |
 
 段階 a が終わると、入り口は `store` の `*Local` を呼ばなくなる (許可リストから消える)。読み取りは、まだ `store` を呼んでよい。
 
@@ -76,7 +76,8 @@
   - MCP の update_task は、解決 (`ResolveUpdate` → `Relations.Resolve`) → 「変えるものがない」とタスクの確認 → `ResolveFields` → `UpdateHere` → `Apply` の順で、今と同じ。
   - `Sections.Move` / `MoveHere` / `ResolveMove`、`Rename` / `RenameHere`。`Copies.Duplicate`・`Attach` (MCP のパスの制限は入り口に残す)。`Notifications.Resolve` / `Mark` / `MarkHere` (「すべて」の一覧の作り方は入り口ごとに違うので入り口の読み取りに残す)。
 - 時刻: TUI と MCP の update_task は 1 つの時刻、CLI は書き込みごとに `time.Now` (今と同じ)。
-- 結果: `internal/archtest/calls_test.go` に「入り口は store の書き込みを呼ばない」(`Local` で終わる公開のメソッドと `ApplyTagEdit`、`storeWrites`) を足し、まとまりごとに許可リストから消して、空になった。
+- 結果: `internal/archtest/calls_test.go` に「入り口は store の書き込みを呼ばない」(`Local` で終わる公開のメソッドと `ApplyTagEdit`、`storeWrites`) を足し、まとまりごとに許可リストから消して、空になった。import の名前で修飾したもの (`sync.KeepLocal`) は数えないが、その名前をファイルの中で変数などに束縛し直していれば数える (`rebound`)。
+- 解決 (outbox の keep_local など) は a6 から外した。入り口はすでに `sync.Resolve` を通っていて、store の書き込みを直接呼んでいないため。app に移すには `store.Op`・状態と種類の定数・`IsLocalGID` を store の外に出す必要があり、それは b1・b2 の仕事なので、そこで行う。
 
 ## 段階 b: ドメイン層 (`internal/domain/...`)
 
@@ -85,7 +86,7 @@
 | PR | 範囲 |
 |---|---|
 | b1 | `domain/gid`: ローカル gid の型・判定・作り方。`store.IsLocalGID` と `store.LocalPrefix` は、しばらく `domain/gid` を呼ぶ別名として残す |
-| b2 | `domain/outbox`: 操作の種類と状態の定数、`SafeToResend`。`store.safeToResend` は呼ぶだけになる |
+| b2 | `domain/outbox`: 操作の種類と状態の定数、`SafeToResend`。`store.safeToResend` は呼ぶだけになる。解決 (`sync.Resolve`) を app に移すのはここで (b1 の `domain/gid` のあと。a6 から回した) |
 | b3 | `domain/outbox`: 畳み込み (`Fold(op, cur, changes) (op, deleteOp bool)`)。`UpdateTaskLocal` は読む → `Fold` → 書く、になる |
 | b4 | `domain/task`: 欄の検証と承認の状態の決まり (`validateFields` と `UpdateTaskLocal` の承認の確認) |
 | b5 | `domain/rich`: 送り先 (`Target`) と許すタグ。`internal/richtext` はこれを読む |

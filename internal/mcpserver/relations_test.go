@@ -23,11 +23,11 @@ func opList(t *testing.T, st *store.Store) []string {
 	return out
 }
 
-// update_task writes the relations in a fixed order (tags, dependencies, followers,
-// projects), one queued change for each, and a dependent's change goes on the task that
-// waits.
+// update_task writes the relations in a fixed order (tags, custom fields, dependencies,
+// followers, projects), one queued change for each, and a dependent's change goes on the
+// task that waits.
 func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
-	st := seed(t)
+	st := seedFields(t)
 	ctx := context.Background()
 	_ = st.UpsertUsers(ctx, []asana.User{{GID: "u2", Name: "Partner"}})
 	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
@@ -37,12 +37,13 @@ func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
 	res := call(t, cs, "update_task", map[string]any{
 		"gid": "t1", "add_projects": []string{"家計"}, "add_followers": []string{"Partner"},
 		"add_dependents": []string{"t3"}, "add_dependencies": []string{"t2"}, "add_tags": []string{"急ぎ"},
+		"custom_fields": map[string]any{"見積": 3, "優先度": "高"},
 	}, &w)
 	if res.IsError {
 		t.Fatal(toolError(res))
 	}
-	want := []string{store.OpAddTag + ":t1", store.OpAddDependency + ":t1", store.OpAddDependency + ":t3",
-		store.OpAddFollower + ":t1", store.OpAddProject + ":t1"}
+	want := []string{store.OpAddTag + ":t1", store.OpSetCustomField + ":t1", store.OpSetCustomField + ":t1",
+		store.OpAddDependency + ":t1", store.OpAddDependency + ":t3", store.OpAddFollower + ":t1", store.OpAddProject + ":t1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -54,8 +55,8 @@ func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
 	if res.IsError {
 		t.Fatal(toolError(res))
 	}
-	if got := opList(t, st); !slices.Equal(got, want[:1]) {
-		t.Errorf("after removing: ops = %v, want %v", got, want[:1])
+	if got := opList(t, st); !slices.Equal(got, want[:3]) {
+		t.Errorf("after removing: ops = %v, want %v", got, want[:3])
 	}
 }
 
