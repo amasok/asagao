@@ -14,6 +14,8 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
+
+	"github.com/amasok/asagao/internal/domain/rich"
 )
 
 // Editable Markdown keeps Asana-specific references in a form that survives editing:
@@ -175,16 +177,27 @@ func (w *htmlWriter) textOut(s string) {
 // the user wrote stays, around it the quote or the list (its items and numbers) stay as
 // they are, and what is sent is accepted.
 func (w *htmlWriter) asText(n gast.Node) bool {
+	e, ok := blockElement(n)
+	return ok && !rich.Nests(e, w.quote > 0, w.item > 0)
+}
+
+// blockElement returns the rich text element block n is, false for one that is none
+// (a paragraph).
+func blockElement(n gast.Node) (rich.Element, bool) {
 	switch n.Kind() {
 	case gast.KindList:
-		return w.quote > 0
-	case gast.KindBlockquote, gast.KindHeading, gast.KindFencedCodeBlock, gast.KindCodeBlock,
-		gast.KindThematicBreak:
-		// (a rule too: the documentation does not say an item takes <hr/>, and editable
-		// Markdown would write it after the list, #80)
-		return w.item > 0
+		return rich.List, true
+	case gast.KindBlockquote:
+		return rich.Quote, true
+	case gast.KindHeading:
+		return rich.Heading, true
+	case gast.KindFencedCodeBlock, gast.KindCodeBlock:
+		return rich.CodeBlock, true
+	case gast.KindThematicBreak:
+		// (not in a list item either: editable Markdown would write it after the list, #80)
+		return rich.Rule, true
 	}
-	return false
+	return 0, false
 }
 
 // demoted returns block n written as text (see asText and markdownText).
@@ -208,8 +221,10 @@ func (w *htmlWriter) isBlockElement(n gast.Node) bool {
 	switch n.Kind() {
 	case gast.KindList, gast.KindFencedCodeBlock, gast.KindCodeBlock, gast.KindBlockquote:
 		return true
-	case gast.KindHeading, gast.KindThematicBreak:
-		return w.target.layout()
+	case gast.KindHeading:
+		return w.target.accepts(rich.Heading)
+	case gast.KindThematicBreak:
+		return w.target.accepts(rich.Rule)
 	}
 	return false
 }
@@ -261,7 +276,7 @@ func (w *htmlWriter) block(n gast.Node) {
 	case *gast.Paragraph, *gast.TextBlock:
 		w.inlines(n)
 	case *gast.Heading:
-		if !w.target.layout() {
+		if !w.target.accepts(rich.Heading) {
 			w.heading(n)
 			return
 		}
@@ -278,7 +293,7 @@ func (w *htmlWriter) block(n gast.Node) {
 			w.b.WriteString("\n")
 		}
 	case *gast.ThematicBreak:
-		if !w.target.layout() {
+		if !w.target.accepts(rich.Rule) {
 			w.textOut(w.ruleText(n))
 			return
 		}
@@ -532,7 +547,7 @@ func (w *htmlWriter) heading(n *gast.Heading) {
 // emptyHeading reports whether n is a heading without text that is written as a paragraph
 // (see heading), and so writes nothing.
 func (w *htmlWriter) emptyHeading(n gast.Node) bool {
-	if n.Kind() != gast.KindHeading || w.target.layout() || w.asText(n) {
+	if n.Kind() != gast.KindHeading || w.target.accepts(rich.Heading) || w.asText(n) {
 		return false
 	}
 	in := w.sub()
@@ -708,7 +723,7 @@ func (w *htmlWriter) inline(n gast.Node) {
 	case *gast.Image:
 		dest := string(n.Destination)
 		if gid, ok := ImageGID(dest); ok {
-			if !w.target.layout() {
+			if !w.target.accepts(rich.Image) {
 				// No <img> here (see Target): the image stays as the Markdown that refers
 				// to it, by gid (a cached file's path is local to this machine).
 				w.textOut("![")

@@ -40,7 +40,7 @@ func printDiscard(w io.Writer, d store.Discard) {
 		when = "  (" + t.Local().Format("2006-01-02 15:04") + ")"
 	}
 	fmt.Fprintln(w, "  - "+store.DiscardLine(d)+when)
-	for _, dt := range store.DiscardDetails(d) {
+	for _, dt := range store.DiscardDetails(d, richtext.ToEditableMarkdown) {
 		fmt.Fprintf(w, "      %s:\n", dt.Label)
 		for _, l := range strings.Split(strings.TrimRight(dt.Text, "\n"), "\n") {
 			fmt.Fprintln(w, "        "+l)

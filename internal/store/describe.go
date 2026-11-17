@@ -9,7 +9,6 @@ import (
 
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/richtext"
 )
 
 // Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
@@ -79,8 +78,9 @@ type DiscardDetail struct {
 // DiscardDetails returns, in full, what the user wrote or attached in a dropped change
 // (name, description, comment or status text, the local copy of an attachment), so it can
 // be recovered. Rich text is given as Markdown, which keeps the formatting when pasted back
-// (the editors and the MCP tools take Markdown).
-func DiscardDetails(d Discard) []DiscardDetail {
+// (the editors and the MCP tools take Markdown): toMarkdown converts it, and is
+// richtext.ToEditableMarkdown in the callers (the store does not convert rich text).
+func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDetail {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return v }
 	var out []DiscardDetail
 	add := func(label, key string) {
@@ -91,7 +91,7 @@ func DiscardDetails(d Discard) []DiscardDetail {
 	// addRich prefers the rich text (htmlKey) as Markdown over the plain text (key).
 	addRich := func(label, key, htmlKey string) {
 		if h := str(htmlKey); h != "" {
-			if md := strings.TrimSpace(richtext.ToEditableMarkdown(h)); md != "" {
+			if md := strings.TrimSpace(toMarkdown(h)); md != "" {
 				out = append(out, DiscardDetail{label + "（Markdown）", md})
 				return
 			}
