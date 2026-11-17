@@ -141,6 +141,9 @@ type htmlWriter struct {
 	// list's last item (see itemBlocks)
 	tail   []gast.Node
 	inHead bool // writing the text of a heading element: one line (#64)
+	// images are the offsets in b of the images written in plain text (which writes nothing
+	// of them), for trimPlainHeadingEdges
+	images []int
 }
 
 // sub returns a writer for a part of the output that is put together afterwards.
@@ -286,14 +289,16 @@ func (w *htmlWriter) block(n gast.Node) {
 		}
 		w.tag("<" + t + ">")
 		// the text without spaces at its ends (typed as character references): the editor
-		// writes a heading without them, so they would go on the next round trip (#24)
+		// writes a heading without them, so they would go on the next round trip (#24). In
+		// a link or emphasis at its ends they go too (the editor moves them out, see
+		// moveEdgeSpaceOutOfMarks), and so they do from the plain text (#26).
 		h := &htmlWriter{src: w.src, plain: w.plain, target: w.target, bold: w.bold,
 			quote: w.quote, item: w.item, text: w.text, inHead: true}
 		h.inlines(n)
 		if w.plain {
-			w.b.WriteString(h.b.String()) // (plain text is not opened again)
+			w.b.WriteString(trimPlainHeadingEdges(h.b.String(), h.images))
 		} else {
-			w.b.WriteString(strings.Trim(h.b.String(), " \t"))
+			w.b.WriteString(trimHeadingEdges(h.b.String()))
 		}
 		w.tag("</" + t + ">")
 		if w.plain {
@@ -368,6 +373,87 @@ func (w *htmlWriter) block(n gast.Node) {
 	default:
 		w.blocks(n)
 	}
+}
+
+// trimHeadingEdges removes the spaces and tabs at the start and the end of the text of a
+// heading as htmlWriter writes it, also those inside the links and emphasis that open or
+// close it ("<a href="u"> a</a>" is "<a href="u">a</a>"). Code keeps its spaces. Emphasis
+// left empty goes (the editor writes nothing of it), and the spaces it was between are then
+// at the edges too. (A link left empty stays: it has its href, and reads back as it is.)
+func trimHeadingEdges(s string) string {
+	for {
+		t := emptyMarks.Replace(trimHeadingEdgesOnce(s))
+		if t == s {
+			return t
+		}
+		s = t
+	}
+}
+
+// emptyMarks removes emphasis with nothing in it.
+var emptyMarks = strings.NewReplacer("<strong></strong>", "", "<em></em>", "", "<s></s>", "")
+
+func trimHeadingEdgesOnce(s string) string {
+	var head strings.Builder
+	for {
+		s = strings.TrimLeft(s, " \t")
+		t := edgeOpenTag(s)
+		if t == "" {
+			break
+		}
+		head.WriteString(t)
+		s = s[len(t):]
+	}
+	var tail []string
+	for {
+		s = strings.TrimRight(s, " \t")
+		t := edgeCloseTag(s)
+		if t == "" {
+			break
+		}
+		tail = append([]string{t}, tail...)
+		s = s[:len(s)-len(t)]
+	}
+	return head.String() + s + strings.Join(tail, "")
+}
+
+// trimPlainHeadingEdges is trimHeadingEdges for the plain text of a heading: images, which
+// it has no text of (they are at offsets images), are content as they are in the HTML, so
+// the spaces next to them stay.
+func trimPlainHeadingEdges(s string, images []int) string {
+	start, end := len(s)-len(strings.TrimLeft(s, " \t")), len(strings.TrimRight(s, " \t"))
+	if len(images) > 0 {
+		start, end = min(start, images[0]), max(end, images[len(images)-1])
+	}
+	if end < start {
+		return "" // only spaces
+	}
+	return s[start:end]
+}
+
+// edgeOpenTag returns the opening tag of a link or emphasis that s starts with, if any.
+func edgeOpenTag(s string) string {
+	if strings.HasPrefix(s, `<a href="`) {
+		if i := strings.IndexByte(s, '>'); i >= 0 {
+			return s[:i+1]
+		}
+	}
+	for _, t := range []string{"<strong>", "<em>", "<s>"} {
+		if strings.HasPrefix(s, t) {
+			return t
+		}
+	}
+	return ""
+}
+
+// edgeCloseTag returns the closing tag of a link or emphasis that s ends with, if any.
+func edgeCloseTag(s string) string {
+	for _, t := range []string{"</a>", "</strong>", "</em>", "</s>"} {
+		if strings.HasSuffix(s, t) {
+			return t
+		}
+	}
+	return ""
 }
 
 // itemBlocks writes the blocks of a list item. What comes after a nested list in it goes
@@ -744,6 +830,8 @@ func (w *htmlWriter) inline(n gast.Node) {
 			}
 			if !w.plain {
 				w.b.WriteString(`<img data-asana-gid="` + html.EscapeString(gid) + `"/>`)
+			} else {
+				w.images = append(w.images, w.b.Len())
 			}
 			return
 		}
@@ -885,6 +973,10 @@ func keepIndentation(src string) string {
 	// if none): after the quote, a line can go on with them (#24)
 	var parked []int
 	parkedDepth := -1
+	// afterQuote is set back from a quote in an item, until a blank line: the paragraph open
+	// is the quote's (its lazy lines go on it), not the item's, so an item line there starts
+	// a list, as goldmark reads it (#26)
+	afterQuote := false
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
 		depth := strings.Count(prefix, ">")
@@ -904,6 +996,7 @@ func keepIndentation(src string) string {
 		case depth == parkedDepth:
 			// back from the quote in the item
 			items, itemDepth, parked, parkedDepth = append(items[:0], parked...), depth, parked[:0], -1
+			afterQuote = true
 		case depth > itemDepth && len(items) > 0 && quoteColumn(l, itemDepth) >= items[len(items)-1]:
 			// a quote in the item: its lines are the quote's, the items wait for after it
 			parked, parkedDepth = append(parked[:0], items...), itemDepth
@@ -919,7 +1012,7 @@ func keepIndentation(src string) string {
 		}
 		if blank {
 			endPara(false)
-			inItem = false
+			inItem, afterQuote = false, false
 			if emptyItem && len(items) > 0 {
 				items = items[:len(items)-1] // an item starts with at most one blank line
 				closeLists = true
@@ -939,6 +1032,11 @@ func keepIndentation(src string) string {
 				items = items[:len(items)-1]
 			}
 		}
+		if n := len(items); n > 0 && strings.HasPrefix(trimmed, ">") && col >= items[n-1] && col < items[n-1]+4 {
+			// a quote in an item indented 4 columns or more (cutQuotePrefix does not take it
+			// as a quote: at the top it would be code): what follows is back from it
+			afterQuote = true
+		}
 		if inPara {
 			if depth == paraDepth && setextUnderline(rest) {
 				endPara(true)
@@ -957,8 +1055,8 @@ func keepIndentation(src string) string {
 			fence = f
 			continue
 		}
-		if inItem && len(items) > 0 && col >= items[len(items)-1] && listItemStart(trimmed) &&
-			!interruptsParagraph(trimmed) {
+		if inItem && !afterQuote && len(items) > 0 && col >= items[len(items)-1] &&
+			listItemStart(trimmed) && !interruptsParagraph(trimmed) {
 			// ("2.", or an empty item, as far as the text of an item, in its paragraph: it
 			// would start a list there, which it cannot; the paragraph goes on, or a setext
 			// underline makes it a heading. Further out it is the next item of a list.)
@@ -972,7 +1070,7 @@ func keepIndentation(src string) string {
 			}
 			items = append(items, itemContentColumn(rest))
 			emptyItem = strings.TrimSpace(itemText(trimmed)) == ""
-			inItem = true
+			inItem, afterQuote = true, false
 			continue
 		}
 		if inItem || len(items) > 0 {
