@@ -19,7 +19,14 @@ func (f *fakeSearchFile) LoadSearches() ([]readmodel.SavedSearch, error) {
 	return append([]readmodel.SavedSearch(nil), f.ss...), f.loadErr
 }
 
-func (f *fakeSearchFile) SaveSearches(ss []readmodel.SavedSearch) error {
+func (f *fakeSearchFile) UpdateSearches(change func([]readmodel.SavedSearch) ([]readmodel.SavedSearch, error)) error {
+	ss, err := f.LoadSearches()
+	if err != nil {
+		return err
+	}
+	if ss, err = change(ss); err != nil {
+		return err
+	}
 	f.saves++
 	f.ss = append([]readmodel.SavedSearch(nil), ss...)
 	return nil

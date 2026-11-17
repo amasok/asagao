@@ -19,9 +19,10 @@ type SearchFile interface {
 	// LoadSearches reads every saved search, in the file's order (none when there is no
 	// file). A file that cannot be read as saved searches is an error.
 	LoadSearches() ([]readmodel.SavedSearch, error)
-	// SaveSearches replaces the file with ss, at once (a crash leaves the old file or the
-	// new one, never a part of it).
-	SaveSearches(ss []readmodel.SavedSearch) error
+	// UpdateSearches replaces the saved searches with what change makes of them, at once
+	// (a crash leaves the old file or the new one, never a part of it). Changes run one at
+	// a time, also across processes: none is lost. An error from change saves nothing.
+	UpdateSearches(change func([]readmodel.SavedSearch) ([]readmodel.SavedSearch, error)) error
 }
 
 // ErrSearchNotFound is returned for a saved search that is not in the file.
@@ -67,17 +68,35 @@ func (s Searches) List() ([]readmodel.SavedSearch, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ss, validateAll(ss)
+}
+
+// validateAll checks every search and that no name is used twice.
+func validateAll(ss []readmodel.SavedSearch) error {
 	seen := map[string]bool{}
 	for _, x := range ss {
 		if err := ValidateSearch(x); err != nil {
-			return nil, err
+			return err
 		}
 		if seen[x.Name] {
-			return nil, &SearchError{Name: x.Name, Err: errors.New("the name is used twice")}
+			return &SearchError{Name: x.Name, Err: errors.New("the name is used twice")}
 		}
 		seen[x.Name] = true
 	}
-	return ss, nil
+	return nil
+}
+
+// update changes the file's searches with change, after checking them as List does.
+func (s Searches) update(change func([]readmodel.SavedSearch) ([]readmodel.SavedSearch, error)) error {
+	if s.File == nil {
+		return errors.New("saved searches are not available")
+	}
+	return s.File.UpdateSearches(func(ss []readmodel.SavedSearch) ([]readmodel.SavedSearch, error) {
+		if err := validateAll(ss); err != nil {
+			return nil, err
+		}
+		return change(ss)
+	})
 }
 
 // Get returns the saved search named name (exactly).
@@ -95,43 +114,32 @@ func (s Searches) Get(name string) (readmodel.SavedSearch, error) {
 // Save adds x, or replaces the search of the same name when overwrite is set (in its
 // place in the file). Without overwrite a taken name is ErrSearchExists.
 func (s Searches) Save(x readmodel.SavedSearch, overwrite bool) error {
-	if s.File == nil {
-		return errors.New("saved searches are not available")
-	}
 	x.Name = strings.TrimSpace(x.Name)
 	if err := ValidateSearch(x); err != nil {
 		return err
 	}
-	ss, err := s.List()
-	if err != nil {
-		return err
-	}
-	if i := slices.IndexFunc(ss, func(y readmodel.SavedSearch) bool { return y.Name == x.Name }); i >= 0 {
-		if !overwrite {
-			return &SearchError{Name: x.Name, Err: ErrSearchExists}
+	return s.update(func(ss []readmodel.SavedSearch) ([]readmodel.SavedSearch, error) {
+		if i := slices.IndexFunc(ss, func(y readmodel.SavedSearch) bool { return y.Name == x.Name }); i >= 0 {
+			if !overwrite {
+				return nil, &SearchError{Name: x.Name, Err: ErrSearchExists}
+			}
+			ss[i] = x
+			return ss, nil
 		}
-		ss[i] = x
-	} else {
-		ss = append(ss, x)
-	}
-	return s.File.SaveSearches(ss)
+		return append(ss, x), nil
+	})
 }
 
 // Remove deletes the saved search named name. A name that is not saved is
 // ErrSearchNotFound (the file is left as it is).
 func (s Searches) Remove(name string) error {
-	if s.File == nil {
-		return errors.New("saved searches are not available")
-	}
-	ss, err := s.List()
-	if err != nil {
-		return err
-	}
-	i := slices.IndexFunc(ss, func(x readmodel.SavedSearch) bool { return x.Name == name })
-	if i < 0 {
-		return &SearchError{Name: name, Err: ErrSearchNotFound}
-	}
-	return s.File.SaveSearches(slices.Delete(ss, i, i+1))
+	return s.update(func(ss []readmodel.SavedSearch) ([]readmodel.SavedSearch, error) {
+		i := slices.IndexFunc(ss, func(x readmodel.SavedSearch) bool { return x.Name == name })
+		if i < 0 {
+			return nil, &SearchError{Name: name, Err: ErrSearchNotFound}
+		}
+		return slices.Delete(ss, i, i+1), nil
+	})
 }
 
 // spellingDay is the day ValidateSearch reads relative dates from: only their spelling is
@@ -156,7 +164,7 @@ func ValidateSearch(x readmodel.SavedSearch) error {
 		{"query", x.Query}, {"assignee", x.Assignee}, {"project", x.Project}, {"section", x.Section},
 		{"tag", x.Tag}, {"field", x.Field}, {"due_before", x.DueBefore}, {"due_after", x.DueAfter},
 	} {
-		if !utf8.ValidString(f.v) || !termsafe.Safe(f.v) {
+		if !utf8.ValidString(f.v) || !termsafe.Safe(f.v) || strings.ContainsAny(f.v, "\t\n\r") {
 			return bad(f.key, errors.New("must not contain control characters"))
 		}
 	}
