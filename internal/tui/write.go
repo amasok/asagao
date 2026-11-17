@@ -154,6 +154,9 @@ func (m *Model) afterWrite() tea.Cmd {
 }
 
 func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if cmd, ok := m.updateBulk(msg); ok {
+		return m, cmd, true
+	}
 	if cmd, ok := m.updateFields(msg); ok {
 		return m, cmd, true
 	}
@@ -320,6 +323,7 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.promptMode = promptNone
 		m.prompt.Blur()
+		m.bulkDueTasks = nil // a bulk date prompt is cancelled too
 		return m, nil
 	case "enter":
 		value := strings.TrimSpace(m.prompt.Value())

@@ -102,14 +102,14 @@ func (m *Model) toggleGroup() tea.Cmd {
 	}
 	if m.collapsed[key] {
 		delete(m.collapsed, key)
-		m.rows = m.visibleRows()
+		m.showRows()
 		m.listCursor = m.nextTaskRow(h+1, 1)
 		if m.listCursor < 0 || m.groupAt(m.listCursor) != h {
 			m.listCursor = h
 		}
 	} else {
 		m.collapsed[key] = true
-		m.rows = m.visibleRows()
+		m.showRows()
 		m.listCursor = h
 	}
 	m.ensureListVisible()
@@ -137,7 +137,7 @@ func (m *Model) setAllGroups(collapse bool) tea.Cmd {
 			}
 		}
 	}
-	m.rows = m.visibleRows()
+	m.showRows()
 	m.selectInList(prev)
 	return m.saveCollapsed()
 }

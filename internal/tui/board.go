@@ -286,6 +286,8 @@ type picker struct {
 	field   readmodel.CustomFieldView // pickField, pickFieldMulti
 	// pickDepAction, pickDepTarget: the chosen task waits for p.task (else p.task waits for it)
 	dependents bool
+	// bulk: the marked tasks the choice is for (pickSection, pickAssignee, pickDue; bulk.go)
+	bulk []readmodel.TaskSummary
 }
 
 type tagsLoadedMsg struct {
@@ -394,6 +396,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.picker = nil
+		if p.bulk != nil {
+			return m, m.bulkPicked(p, item)
+		}
 		if cmd, ok := m.handleDepPicker(p, item); ok {
 			return m, cmd
 		}

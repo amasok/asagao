@@ -57,6 +57,7 @@ type action struct {
 	needTask    bool // needs a selected (or shown) task
 	needProject bool // needs a project to be open
 	needInbox   bool // only in the inbox (notifications)
+	bulk        bool // also acts on the marked tasks (bulk.go), so usable with them and no selection
 	run         func(m *Model) tea.Cmd
 }
 
@@ -74,12 +75,12 @@ func (m *Model) actions() []action {
 		// task
 		{id: "add_task", key: "a", shortcut: []string{"a"}, group: groupTask, label: "タスクを追加", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.writeKey("a") }},
 		{id: "add_subtask", key: "s", shortcut: []string{"S"}, group: groupTask, label: "サブタスクを追加", ctx: ctxTask, needTask: true, run: (*Model).startSubtask},
-		{id: "complete", key: "x", shortcut: []string{"x"}, group: groupTask, label: "完了 / 未完了", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("x") }},
+		{id: "complete", key: "x", shortcut: []string{"x"}, group: groupTask, label: "完了 / 未完了", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkComplete, func(m *Model) tea.Cmd { return m.writeKey("x") })},
 		{id: "edit", key: "e", shortcut: []string{"e"}, group: groupTask, label: "名前・説明をエディタで編集", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("e") }},
-		{id: "due", key: "d", group: groupTask, label: "期日を変更", ctx: ctxTask, needTask: true, run: (*Model).openDuePicker},
-		{id: "assignee", key: "u", shortcut: []string{"@"}, group: groupTask, label: "担当者を変更", ctx: ctxTask, needTask: true, run: (*Model).openAssigneePicker},
+		{id: "due", key: "d", group: groupTask, label: "期日を変更", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkDue, (*Model).openDuePicker)},
+		{id: "assignee", key: "u", shortcut: []string{"@"}, group: groupTask, label: "担当者を変更", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkAssignee, (*Model).openAssigneePicker)},
 		{id: "tags", key: "t", group: groupTask, label: "タグを付ける / 外す", ctx: ctxTask, needTask: true, run: (*Model).openTagEditor},
-		{id: "move", key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { m.openSectionPicker(); return nil }},
+		{id: "move", key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkMove, func(m *Model) tea.Cmd { m.openSectionPicker(); return nil })},
 		{id: "comment", key: "c", shortcut: []string{"c"}, group: groupTask, label: "コメント（1 行）", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("c") }},
 		{id: "comment_editor", key: "C", shortcut: []string{"C"}, group: groupTask, label: "コメントをエディタで書く", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("C") }},
 		{id: "like", key: "L", group: groupTask, label: "いいね / 取り消し", ctx: ctxTask, needTask: true, run: (*Model).toggleLike},
@@ -101,6 +102,8 @@ func (m *Model) actions() []action {
 		{id: "sidebar", key: "b", shortcut: []string{"b"}, group: groupView, label: "プロジェクト一覧を隠す / 出す", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("b") }},
 		{id: "wider", key: ">", shortcut: []string{">"}, group: groupView, label: "詳細を広く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey(">") }},
 		{id: "narrower", key: "<", shortcut: []string{"<"}, group: groupView, label: "詳細を狭く", ctx: ctxAll, run: func(m *Model) tea.Cmd { return m.layoutKey("<") }},
+		{id: "mark", key: "V", shortcut: []string{"V"}, group: groupView, label: "印を付ける / 外す（まとめて操作）", ctx: ctxList, run: (*Model).toggleMark},
+		{id: "mark_all", key: "*", shortcut: []string{"*"}, group: groupView, label: "表示中のタスクすべてに印 / 外す", ctx: ctxList, run: (*Model).toggleMarkAll},
 		{id: "inbox_read", key: "R", shortcut: []string{"R"}, group: groupView, label: "通知を既読 / 未読にする", ctx: ctxList, needInbox: true, run: (*Model).toggleNotificationRead},
 		{id: "inbox_read_all", key: "Y", group: groupView, label: "通知をすべて既読にする", ctx: ctxList, needInbox: true, run: (*Model).markAllNotificationsRead},
 		// project
@@ -142,9 +145,10 @@ func ActionIDs() []string {
 func (m *Model) available() []action {
 	ctx := m.keyContext()
 	hasTask := m.actionTask() != nil
+	hasMarked := len(m.markedTasks()) > 0
 	var out []action
 	for _, a := range m.withBindings(m.actions()) {
-		if a.ctx&ctx == 0 || (a.needTask && !hasTask) || (a.needProject && m.currentProject() == "") ||
+		if a.ctx&ctx == 0 || (a.needTask && !hasTask && !(a.bulk && hasMarked)) || (a.needProject && m.currentProject() == "") ||
 			(a.needInbox && m.currentScope().kind != scopeInbox) {
 			continue
 		}
@@ -296,6 +300,10 @@ func (m *Model) footerHints() [][2]string {
 		return append([][2]string{{"j/k", "選ぶ"}, {"enter", "開く"}, {"/", "検索"}}, common...)
 	case ctxCalendar:
 		return append([][2]string{{"h/l", "日"}, {"j/k", "週"}, {"n/p", "月"}, {".", "今日"}, {"enter", "その日のタスク"}, {"a", "追加"}, {"v", "表示"}}, common...)
+	}
+	if n := len(m.markedTasks()); n > 0 {
+		return append([][2]string{{fmt.Sprintf("印 %d 件:", n), ""}, {m.actionKey("complete"), "完了"}, {m.actionKey("move"), "移動"},
+			{m.actionKey("assignee"), "担当"}, {m.actionKey("due"), "期日"}, {m.actionKey("mark"), "印"}, {"esc", "印を外す"}}, common...)
 	}
 	return append([][2]string{{"j/k", "移動"}, {"l/h", "サブタスク"}, {"enter", "詳細"}, {"x", "完了"}, {"a", "追加"}, {"e", "編集"}, {"/", "検索"}}, common...)
 }
