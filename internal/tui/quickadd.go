@@ -37,7 +37,8 @@ func (m *Model) quickCreate(line string, now time.Time, in app.CreateHereInput, 
 		if err != nil && gid == "" {
 			return writeDoneMsg{err: err}
 		}
-		status := done + q.Name + q.Summary()
+		// the name may be pasted with control characters
+		status := done + termsafe.String(q.Name) + q.Summary()
 		if err != nil { // created, but the tags could not be added
 			status += " エラー: タグを付けられませんでした: " + termsafe.String(err.Error())
 		}

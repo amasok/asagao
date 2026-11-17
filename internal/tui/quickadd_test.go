@@ -158,3 +158,12 @@ func TestCreateTaskQuickAddTagError(t *testing.T) {
 		t.Errorf("status %q", h.m.status)
 	}
 }
+
+// A name pasted with control characters does not reach the terminal through the status line.
+func TestCreateTaskQuickAddStatusNameIsTerminalSafe(t *testing.T) {
+	h := projectHarness(t, quickAddStore(t), nil)
+	h.run(h.m.createTask("カーテン\x1b]0;pwned\x07を買う #買い物"))
+	if !strings.Contains(h.m.status, "タスクを作成しました: カーテン") || strings.ContainsAny(h.m.status, "\x1b\x07") {
+		t.Errorf("status %q", h.m.status)
+	}
+}
