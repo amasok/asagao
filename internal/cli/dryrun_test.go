@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/store"
@@ -263,6 +264,38 @@ func TestWriteCommandsHaveDryRun(t *testing.T) {
 		}
 		if cmd.Flags().Lookup("dry-run") == nil {
 			t.Errorf("%s has no --dry-run", path)
+		}
+	}
+}
+
+// A copy left behind by a dry run that was stopped (Ctrl-C) is removed by the next dry run
+// once it is old; a recent one (another dry run running now) is left alone.
+func TestDryRunRemovesStaleCopies(t *testing.T) {
+	_, _, run := dryRunEnv(t)
+	tmp := os.Getenv("TMPDIR")
+	old := filepath.Join(tmp, dryRunPrefix+"old")
+	recent := filepath.Join(tmp, dryRunPrefix+"recent")
+	other := filepath.Join(tmp, "keep-me")
+	for _, d := range []string{old, recent, other} {
+		if err := os.MkdirAll(filepath.Join(d, "x"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	long := time.Now().Add(-2 * staleDryRun)
+	for _, d := range []string{old, other} {
+		if err := os.Chtimes(d, long, long); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, errOut, err := run("task", "complete", "t1", "--dry-run"); err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("the old copy is still there: %v", err)
+	}
+	for _, d := range []string{recent, other} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s was removed: %v", d, err)
 		}
 	}
 }

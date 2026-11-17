@@ -3,6 +3,7 @@
 package repoctx
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -18,5 +19,20 @@ func TestLoadRefusesFIFO(t *testing.T) {
 	}
 	if _, err := Load(fifo); err == nil || !strings.Contains(err.Error(), "通常のファイル") {
 		t.Errorf("fifo: %v", err)
+	}
+}
+
+type statInfo struct {
+	os.FileInfo
+	st *syscall.Stat_t
+}
+
+func (s statInfo) Sys() any { return s.st }
+
+// Someone else's file is refused (it could be in a shared folder such as /tmp).
+func TestOwnedByMe(t *testing.T) {
+	me := uint32(os.Getuid())
+	if !ownedByMe(statInfo{st: &syscall.Stat_t{Uid: me}}) || ownedByMe(statInfo{st: &syscall.Stat_t{Uid: me + 1}}) {
+		t.Error("ownedByMe")
 	}
 }

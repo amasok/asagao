@@ -1,23 +1,23 @@
 ## ADDED Requirements
 
 ### Requirement: .asana.json を探す
-`.asana.json` は、カレントディレクトリ (MCP ではサーバーを起動したフォルダ) から上に向かって探し、最初に見つかったものを使う (MUST)。`.git` (フォルダでもファイルでも) のあるフォルダより上は探さない。リポジトリの外では、ファイルシステムのルートまで探す。`--no-context` (`asagao mcp --no-context` も) では探さない。
-根拠: internal/repoctx/repoctx.go (Find); internal/cli/context.go (repoContext); internal/cli/mcp.go; TestFind, TestFindNoRepository
+`.asana.json` は、カレントディレクトリ (MCP ではサーバーを起動したフォルダ) から上に向かって探し、最初に見つかったものを使う (MUST)。`.git` (フォルダでもファイルでも) のあるフォルダと、ホームフォルダより上は探さない。`--no-context` (`asagao mcp --no-context` も) では探さない。
+根拠: internal/repoctx/repoctx.go (Find); internal/cli/context.go (repoContext); internal/cli/mcp.go; TestFind, TestFindStopsAtHome, TestFindNoRepository
 
 #### Scenario: リポジトリの下のフォルダから
 - **WHEN** リポジトリのルートに `.asana.json` があり、その下のフォルダで `asagao context` を実行する
 - **THEN** ルートの `.asana.json` の内容を、キャッシュで引いた名前と gid つきで表示する
 
 ### Requirement: .asana.json の検査
-`.asana.json` のキーは `project` (gid か名前)・`section` (gid か名前。`project` と一緒に)・`task` (gid) で、どれも省略できる (MUST)。知らないキー・JSON として読めない内容・制御文字・通常のファイルでないもの・64KB を超えるものはエラーにし、ファイルの場所をエラーに入れる。使うコマンドはそこで止まり、何も積まない。
-根拠: internal/repoctx/repoctx.go (Load, Parse); TestInvalid, TestLoadRefusesOddFiles, TestLoadRefusesFIFO, TestContextInvalid
+`.asana.json` のキーは `project` (gid か名前)・`section` (gid か名前。`project` と一緒に)・`task` (数字の gid) で、どれも省略できる (MUST)。知らないキー・JSON として読めない内容・制御文字・数字でない task・通常のファイルでないもの・ほかのユーザーのファイル・64KB を超えるものはエラーにし、ファイルの場所をエラーに入れる。使うコマンドはそこで止まり、何も積まない。
+根拠: internal/repoctx/repoctx.go (Load, Parse); internal/repoctx/owner_unix.go; TestInvalid, TestLoadRefusesOddFiles, TestLoadRefusesFIFO, TestOwnedByMe, TestContextInvalid
 
 #### Scenario: 書き間違い
 - **WHEN** `.asana.json` が `{"projet": "新居"}` のとき `task create x` を実行する
 - **THEN** `.asana.json` の場所と `projet` を含むエラーになり、何も積まない
 
 ### Requirement: CLI の既定に .asana.json を使う
-`task create` は `--project` と `--parent` がないとき、`.asana.json` のプロジェクトに作り、`--section` がなければ `.asana.json` のセクションに入れる (MUST)。`task list` は `--project` を指定しないとき、`.asana.json` のプロジェクトで絞る (`--project ""` で全体)。`task show` は gid を省くと `.asana.json` のタスクを表示する。使ったときは、そのファイルの場所をエラー出力に書く (`--json` の出力は変えない)。
+`task create` は `--project` (`--project ""` も含む) と `--parent` を指定しないとき、`.asana.json` のプロジェクトに作り、`--section` がなければ `.asana.json` のセクションに入れる (MUST)。`task list` は `--project` を指定しないとき、`.asana.json` のプロジェクトで絞る (`--project ""` で全体)。`task show` は gid を省くと `.asana.json` のタスクを表示する。使ったときは、そのファイルの場所をエラー出力に書く (`--json` の出力は変えない)。
 根拠: internal/cli/write.go (taskCreateCmd); internal/cli/task.go (taskListCmd, taskShowCmd); TestContextTaskCreate, TestContextTaskList, TestContextShowAndContextCommand
 
 #### Scenario: プロジェクトを指定せずに作る

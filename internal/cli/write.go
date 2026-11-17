@@ -242,7 +242,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 			}
 			defer st.Close()
 			o.name = strings.Join(args, " ")
-			if o.project == "" && o.parent == "" {
+			if !cmd.Flags().Changed("project") && o.parent == "" {
 				c, err := a.repoContext()
 				if err != nil {
 					return err

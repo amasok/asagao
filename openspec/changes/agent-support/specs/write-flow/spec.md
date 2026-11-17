@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
 ### Requirement: CLI の --dry-run は写しの上で実行する
-CLI の書き込み系コマンドは `--dry-run` を受け付ける (MUST)。ストアを一時フォルダに写し (`VACUUM INTO`)、写しの上で同じ処理をして、写しの outbox で増えた・変わった・消えた変更を表示し、写しを消す。Asana には何も送らず、本物のストア・outbox・添付ファイルのキャッシュに何も書かない。
-根拠: internal/store/copy.go; internal/cli/dryrun.go; internal/cli/write.go:84-104; internal/cli/project.go:53-59; TestCopyToIsIndependent, TestDryRunChangesNothing, TestDryRunCancelled, TestWriteCommandsHaveDryRun
+CLI の書き込み系コマンドは `--dry-run` を受け付ける (MUST)。ストアを一時フォルダに写し (`VACUUM INTO`)、写しの上で同じ処理をして、写しの outbox で増えた・変わった・消えた変更を表示し、写しを消す。止められて残った写しは、1 時間たてば次の `--dry-run` が消す。Asana には何も送らず、本物のストア・outbox・添付ファイルのキャッシュに何も書かない。
+根拠: internal/store/copy.go; internal/cli/dryrun.go; internal/cli/write.go:84-104; internal/cli/project.go:53-59; TestCopyToIsIndependent, TestDryRunChangesNothing, TestDryRunCancelled, TestDryRunRemovesStaleCopies, TestWriteCommandsHaveDryRun
 
 #### Scenario: 完了を試す
 - **WHEN** `asagao task complete t1 --dry-run` を実行する (オンラインでも)

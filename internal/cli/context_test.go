@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -63,12 +65,19 @@ func TestContextTaskCreate(t *testing.T) {
 	if ops := cliOps(t, path); len(ops) != 3 || ops[2].Payload["project"] != nil && ops[2].Payload["project"] != "" {
 		t.Fatalf("--no-context: ops %+v", ops[2])
 	}
+	// --project "": as without the file
+	if out, err := runCLI(t, "task", "create", "鍵を買う", "--project", ""); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if ops := cliOps(t, path); len(ops) != 4 || ops[3].Payload["project"] != nil && ops[3].Payload["project"] != "" {
+		t.Fatalf("--project \"\": ops %+v", ops[3])
+	}
 	// --parent: a subtask, not in the project
 	if out, err := runCLI(t, "task", "create", "脚", "--parent", "t1"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if ops := cliOps(t, path); len(ops) != 4 || ops[3].Payload["parent"] != "t1" {
-		t.Fatalf("--parent: ops %+v", ops[3])
+	if ops := cliOps(t, path); len(ops) != 5 || ops[4].Payload["parent"] != "t1" {
+		t.Fatalf("--parent: ops %+v", ops[4])
 	}
 }
 
@@ -99,17 +108,25 @@ func TestContextTaskList(t *testing.T) {
 
 // task show without a gid shows .asana.json's task; context shows what the file names.
 func TestContextShowAndContextCommand(t *testing.T) {
-	writeCLIEnv(t)
-	file := inRepo(t, `{"project": "新居", "section": "家", "task": "t2"}`)
+	path := writeCLIEnv(t)
+	st, err := store.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertTasks(context.Background(), []asana.Task{{GID: "1002", Name: "照明を買う", Workspace: &asana.Ref{GID: "w1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	file := inRepo(t, `{"project": "新居", "section": "家", "task": "1002"}`)
 	out, err := runCLI(t, "task", "show", "--offline")
-	if err != nil || !strings.Contains(out, "カーテンを買う") {
+	if err != nil || !strings.Contains(out, "照明を買う") {
 		t.Fatalf("show: %v\n%s", err, out)
 	}
 	out, err = runCLI(t, "context")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{file, "プロジェクト: 新居 (p1)", "セクション: 家具 (s1)", "タスク: カーテンを買う (t2)  [未完了]"} {
+	for _, want := range []string{file, "プロジェクト: 新居 (p1)", "セクション: 家具 (s1)", "タスク: 照明を買う (1002)  [未完了]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("context lacks %q:\n%s", want, out)
 		}
@@ -127,7 +144,7 @@ func TestContextShowAndContextCommand(t *testing.T) {
 			Completed bool
 		}
 	}
-	if err := json.Unmarshal([]byte(stdout), &w); err != nil || !w.Found || w.Path != file || w.Project.GID != "p1" || w.Task.GID != "t2" {
+	if err := json.Unmarshal([]byte(stdout), &w); err != nil || !w.Found || w.Path != file || w.Project.GID != "p1" || w.Task.GID != "1002" {
 		t.Errorf("json %v %s", err, stdout)
 	}
 }
@@ -135,12 +152,12 @@ func TestContextShowAndContextCommand(t *testing.T) {
 // What the cache does not have is shown with the reason, not an error.
 func TestContextNotInCache(t *testing.T) {
 	writeCLIEnv(t)
-	inRepo(t, `{"project": "ない", "task": "t9"}`)
+	inRepo(t, `{"project": "ない", "task": "9999"}`)
 	out, err := runCLI(t, "context")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "プロジェクト: ない（") || !strings.Contains(out, "タスク: t9（") {
+	if !strings.Contains(out, "プロジェクト: ない（") || !strings.Contains(out, "タスク: 9999（") {
 		t.Errorf("context:\n%s", out)
 	}
 	// task create into a project that is not there fails, writing nothing

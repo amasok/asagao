@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // repoWith makes a repository folder with .asana.json holding content (none when empty)
@@ -31,15 +34,26 @@ func repoWith(t *testing.T, content string) (dir, file string) {
 	return dir, file
 }
 
+// seedNumeric is seed with a task whose gid is digits (as .asana.json's task must be).
+func seedNumeric(t *testing.T) *store.Store {
+	t.Helper()
+	st := seed(t)
+	if err := st.UpsertTasks(context.Background(), []asana.Task{{GID: "1002", Name: "住民票を移す", DueOn: "2026-11-10",
+		Workspace: &asana.Ref{GID: "w1"}, Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s2"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
 func TestGetContext(t *testing.T) {
-	dir, file := repoWith(t, `{"project": "新居", "section": "手続き", "task": "t2"}`)
-	cs := connect(t, &Server{Store: seed(t), ContextDir: dir})
+	dir, file := repoWith(t, `{"project": "新居", "section": "手続き", "task": "1002"}`)
+	cs := connect(t, &Server{Store: seedNumeric(t), ContextDir: dir})
 	var out ContextOutput
 	if res := call(t, cs, "get_context", nil, &out); res.IsError {
 		t.Fatalf("error: %s", toolError(res))
 	}
 	if !out.Found || out.Path != file || out.Project == nil || out.Project.GID != "p1" || out.Project.Name != "[家族]新居プロジェクト" ||
-		out.Section == nil || out.Section.GID != "s2" || out.Task == nil || out.Task.Name != "転居届を出す" || out.Task.DueOn != "2026-11-10" {
+		out.Section == nil || out.Section.GID != "s2" || out.Task == nil || out.Task.Name != "住民票を移す" || out.Task.DueOn != "2026-11-10" {
 		t.Fatalf("context %+v %+v %+v", out.Project, out.Section, out.Task)
 	}
 }
@@ -116,13 +130,13 @@ func TestPromptScope(t *testing.T) {
 		t.Error("an unknown project should be an error")
 	}
 
-	dir, file := repoWith(t, `{"project": "p1", "task": "t1"}`)
-	cs = connect(t, &Server{Store: seed(t), ContextDir: dir})
+	dir, file := repoWith(t, `{"project": "p1", "task": "1002"}`)
+	cs = connect(t, &Server{Store: seedNumeric(t), ContextDir: dir})
 	text, err = getPrompt(t, cs, "weekly_review", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`project: "p1"`, file, "「ソファを買う」（gid t1）", "create_status_update"} {
+	for _, want := range []string{`project: "p1"`, file, "「住民票を移す」（gid 1002）", "create_status_update"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("weekly review lacks %q:\n%s", want, text)
 		}

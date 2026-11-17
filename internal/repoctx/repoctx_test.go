@@ -55,7 +55,27 @@ func TestFind(t *testing.T) {
 	}
 }
 
-// Outside any repository the search goes up to the root of the file system.
+// The search does not go above the home folder.
+func TestFindStopsAtHome(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, FileName), `{"project": "p"}`)
+	home := filepath.Join(root, "home")
+	deep := filepath.Join(home, "work")
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	if c, err := Find(deep); err != nil || c != nil {
+		t.Errorf("found %+v %v above the home folder", c, err)
+	}
+	write(t, filepath.Join(home, FileName), `{"project": "h"}`)
+	if c, err := Find(deep); err != nil || c == nil || c.Project != "h" {
+		t.Errorf("the home folder's own: %+v %v", c, err)
+	}
+}
+
+// Outside any repository and the home folder the search goes up to the root of the file
+// system.
 func TestFindNoRepository(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, FileName), `{"project": "p"}`)
@@ -77,7 +97,10 @@ func TestInvalid(t *testing.T) {
 		{`not json`, "JSON"},
 		{`{"section": "家具"}`, `"project" と一緒に`},
 		{`{"project": "a\u001b[2Jb"}`, "制御文字"},
-		{`{"task": "1\u009b2"}`, "制御文字"},
+		{`{"project": "a\u009bb"}`, "制御文字"},
+		{`{"task": "t1"}`, "数字"},
+		{`{"task": "../users/me"}`, "数字"},
+		{`{"task": "123?opt_fields=x"}`, "数字"},
 	} {
 		dir := t.TempDir()
 		write(t, filepath.Join(dir, ".git", "HEAD"), "")

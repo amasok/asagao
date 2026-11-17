@@ -8,7 +8,7 @@ Claude Code などのエージェントに asagao を使わせるとき、(1) �
 
 ## 何を変えるか
 
-- `.asana.json` (`{"project": …, "section": …, "task": …}`、どれも省略可): カレントディレクトリから上に向かって探す。`.git` のあるフォルダ (リポジトリのルート) より上は探さない。知らないキーや読めない内容はエラーにする。
+- `.asana.json` (`{"project": …, "section": …, "task": …}`、どれも省略可): カレントディレクトリから上に向かって探す。`.git` のあるフォルダ (リポジトリのルート) とホームフォルダより上は探さない。知らないキー・読めない内容・数字でない task・ほかのユーザーのファイルはエラーにする。
   - CLI: `asagao context` で、書かれた内容をキャッシュで引いて表示。`task create` は `--project` と `--parent` がないとき `.asana.json` のプロジェクト (と、`--section` がなければセクション) に作る。`task list` は `--project` がないとき `.asana.json` のプロジェクトで絞る。`task show` は gid を省くと `.asana.json` のタスク。使ったときはエラー出力にファイルの場所を書く。`--no-context` で使わない。
   - MCP: ツール `get_context`。サーバーを起動したフォルダから探す (`asagao mcp --no-context` では使わない)。
 - 書き込み系の CLI すべてに `--dry-run`: ローカルストアを一時フォルダに写し (`VACUUM INTO`)、写しの上で同じ処理をして、写しの outbox に積まれたものを表示する。写しは終わったら消す。Asana に送らず、本物のストア・outbox・添付のキャッシュに書かない。オンラインだけの操作 (`project create` / `archive` / `members`) は、引数を引いたうえで行うはずの操作を表示する。`outbox resolve` / `retry` / `discard` は写しの上で解決して表示する。

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -47,7 +48,8 @@ func (d *dryRunStore) Close() error {
 // openDryRun copies st (which it closes) to a private temporary folder and opens the copy.
 func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	defer func() { err = errors.Join(err, st.Close()) }()
-	dir, err := os.MkdirTemp("", "asagao-dry-run-") // 0700
+	removeStaleDryRuns(time.Now())
+	dir, err := os.MkdirTemp("", dryRunPrefix) // 0700
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +67,26 @@ func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 		return fail(errors.Join(err, cp.Close()))
 	}
 	return &dryRunStore{Store: cp, dir: dir, before: before}, nil
+}
+
+// dryRunPrefix starts the name of a dry run's temporary folder.
+const dryRunPrefix = "asagao-dry-run-"
+
+// staleDryRun is how old a dry run's folder must be to be taken as left behind (by a dry
+// run stopped with Ctrl-C or killed, which could not remove it). A dry run takes seconds.
+const staleDryRun = time.Hour
+
+// removeStaleDryRuns removes the folders that earlier dry runs left behind. Folders of
+// other users (in a shared /tmp) cannot be removed and are left alone.
+func removeStaleDryRuns(now time.Time) {
+	dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), dryRunPrefix+"*"))
+	for _, d := range dirs {
+		fi, err := os.Lstat(d)
+		if err != nil || !fi.IsDir() || now.Sub(fi.ModTime()) < staleDryRun {
+			continue
+		}
+		_ = os.RemoveAll(d)
+	}
 }
 
 // plannedChange is one change a dry run would make.

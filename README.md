@@ -337,10 +337,10 @@ Claude Code などの AI エージェントに、リポジトリの作業と Asa
 {"project": "新居", "section": "家具", "task": "1203455468597469"}
 ```
 
-- `project` と `section` は gid か名前（`--project` / `--section` と同じ）、`task` はタスクの gid。どれも省略できます（`section` は `project` と一緒に）。
-- カレントディレクトリから上に向かって探し、最初に見つかったものを使います。リポジトリのルート（`.git` のあるフォルダ）より上は探しません。リポジトリの外では、ファイルシステムのルートまで探します。
+- `project` と `section` は gid か名前（`--project` / `--section` と同じ）、`task` はタスクの gid（数字）。どれも省略できます（`section` は `project` と一緒に）。
+- カレントディレクトリから上に向かって探し、最初に見つかったものを使います。リポジトリのルート（`.git` のあるフォルダ）とホームフォルダより上は探しません。ほかのユーザーのファイル（共有の `/tmp` に置かれたものなど）は使いません。
 - `asagao context` で、書かれた内容をキャッシュで引いて表示します（`--json` も可）。MCP では `get_context` です。
-- `task create` は `--project`（と `--parent`）がないとき、`.asana.json` のプロジェクト（と、`--section` がなければセクション）に作ります。
+- `task create` は `--project`（と `--parent`）がないとき、`.asana.json` のプロジェクト（と、`--section` がなければセクション）に作ります。`--project ""` なら使いません。
 - `task list` は `--project` がないとき、`.asana.json` のプロジェクトの未完了タスク（全員の）を表示します。全体を見るには `--project ""` です。
 - `task show` は gid を省くと、`.asana.json` のタスクを表示します。
 - `.asana.json` を使ったときは、エラー出力にそのファイルを書きます（`--json` の出力は変わりません）。`--no-context` を付けると `.asana.json` を使いません（`asagao mcp --no-context` も同じ）。

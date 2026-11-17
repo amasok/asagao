@@ -36,8 +36,8 @@ type Context struct {
 }
 
 // Find looks for .asana.json in dir, then in each parent folder up to the root of the
-// repository dir is in (the first folder that has a .git), or up to the root of the file
-// system when dir is in no repository. It returns nil (and no error) when there is none.
+// repository dir is in (the first folder that has a .git), the home folder, or the root of
+// the file system, whichever comes first. It returns nil (and no error) when there is none.
 // A file that is there but cannot be read or is invalid is an error: silently working on
 // another project than the one written down would be worse.
 func Find(dir string) (*Context, error) {
@@ -45,6 +45,7 @@ func Find(dir string) (*Context, error) {
 	if err != nil {
 		return nil, err
 	}
+	home, _ := os.UserHomeDir()
 	for {
 		path := filepath.Join(dir, FileName)
 		if _, err := os.Lstat(path); err == nil {
@@ -54,6 +55,9 @@ func Find(dir string) (*Context, error) {
 		}
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
 			return nil, nil // the root of the repository: do not look outside it
+		}
+		if home != "" && dir == filepath.Clean(home) {
+			return nil, nil // not above the home folder
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -72,6 +76,10 @@ func Load(path string) (*Context, error) {
 	}
 	if !fi.Mode().IsRegular() { // a FIFO would block the read
 		return fail(errors.New("通常のファイルではありません"))
+	}
+	// Someone else's file (in a shared folder such as /tmp) must not choose the project.
+	if !ownedByMe(fi) {
+		return fail(errors.New("ほかのユーザーのファイルです"))
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -108,6 +116,10 @@ func Parse(b []byte) (*Context, error) {
 	c.Project = strings.TrimSpace(c.Project)
 	c.Section = strings.TrimSpace(c.Section)
 	c.Task = strings.TrimSpace(c.Task)
+	if c.Task != "" && strings.Trim(c.Task, "0123456789") != "" {
+		// it goes into Asana's URL (/tasks/<gid>): a gid is digits only
+		return nil, errors.New(`"task" はタスクの gid（数字）で指定してください`)
+	}
 	if c.Section != "" && c.Project == "" {
 		return nil, errors.New(`"section" は "project" と一緒に指定してください`)
 	}
