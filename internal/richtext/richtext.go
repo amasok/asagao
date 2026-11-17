@@ -849,7 +849,8 @@ func (c *converter) link(n *html.Node) {
 		c.token("**", true, true)
 		c.write(escape(text, false))
 		c.token("**", false, true)
-	case (href == "" || text == href) && autolinkSafe(text):
+	case (href == "" || text == href && !styledLink(n)) && autolinkSafe(text):
+		// (a URL with emphasis in it is written as a link of its text, which keeps it, #24)
 		c.write("<" + text + ">")
 	case href == "":
 		c.write(escape(text, false)) // not a link
