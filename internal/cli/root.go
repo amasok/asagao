@@ -105,9 +105,14 @@ func (a *app) newClient(ctx context.Context, src oauth2.TokenSource) *asana.Clie
 	return c
 }
 
-// syncer is the Syncer for api and st, with the [sync] settings.
+// syncer is the Syncer for api and st, with the [sync] settings. A nil api leaves
+// Syncer.API unset (offline): a nil *asana.Client in the interface would not be nil.
 func (a *app) syncer(api *asana.Client, st *store.Store) *sync.Syncer {
-	return &sync.Syncer{API: api, Store: st, Cfg: sync.Config(a.cfg.Sync)}
+	s := &sync.Syncer{Store: st, Cfg: sync.Config(a.cfg.Sync)}
+	if api != nil {
+		s.API = api
+	}
+	return s
 }
 
 func (a *app) storePath() string { return filepath.Join(config.DataDir(), "store.db") }
