@@ -118,7 +118,9 @@
 ### c2 の中身
 
 - 最初の PR (読み取りの型の移動、その 1): タスクとプロジェクトの表示の型を `internal/readmodel` に移した。`tasks.go` に `TaskSummary`・`TaskDetail`・`MembershipView`・`StoryView`・`TaskRef`・`AttachmentView`・`DependencyView`・`TagCount`・`FieldOption` と、一覧の条件 `TaskFilter` (読み取りのポートの引数になるため)。`projects.go` に `ProjectView`・`SectionView`・`StatusUpdateView`・`Stats`。中身はそのまま (JSON の形を `readmodel/views_test.go` で押さえた)。store には型の別名を残したので、store の関数の形も、入り口も変わらない。
-- 次の PR: 通知の型 (`Notification`・`InboxState` はメソッドを持つので、メソッドごと移す)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、エラーの値 (`ErrNotFound` など)。outbox の型 (`Op` など) は b2 で `domain/outbox` に移るので、ここでは扱わない。そのあと読み取りのポート (`app.TaskQuery` ほか)。
+- 2 つ目 (その 2): 通知の型 (`Notification`・`InboxState`・`NotificationFilter` と、そのメソッド、`Inbox*` の値、`NotificationLabel`) を `readmodel/inbox.go` に、一覧の条件 `FilterSpec` (と `FilterError`・`MaxModifiedWithinDays`) を `filter.go` に、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrAmbiguous`・`ErrPushBusy`・`ErrUnsentChanges`・`ErrSectionWithoutProject`) を `errors.go` に移した。store には別名 (エラーは同じ値の変数、関数は呼ぶだけのもの) を残した。`FilterError` を別のパッケージの型にしたので、store の中の書き方をキーつきにした (`go vet` の composites)。
+- 3 つ目 (その 3): 表示の文言 (`store/describe.go` のすべて: `OpLabel`・`OpNote`・`DescribeOp`・`DescribeChange`・`ConflictLines`・`FieldLabel`・`DiscardLine`・`DiscardDetails`・`AccountChangedHelp`・`TaskBadges` ほか、と `StatusLabel`・`StatusTypes`)、破棄した変更の型 `Discard` と `ResetReason` を `readmodel/describe.go` に移した。`Op` は b2 で `domain/outbox` に移ったので、文言の関数は `outbox.Op` を受ける (readmodel は domain を import してよい)。store には呼ぶだけの関数を残した。`DiscardDetail` だけは、store のテストがキーなしで書いているので (別名にすると `go vet` の composites に引っかかる)、store に同じ形の型を残して変換する。
+- 次の PR: 読み取りのポート (`app.TaskQuery` ほか)。入り口ごとに、読み取りを app 経由にする。
 
 ## 段階 d: ポート (Asana と認証)
 

@@ -1,13 +1,13 @@
 package store
 
 import (
-	"errors"
 	"os"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// ErrPushBusy is returned by TryLockPush when another process (or goroutine) is sending
-// the outbox.
-var ErrPushBusy = errors.New("別のプロセスが未送信の変更を送信中です")
+// ErrPushBusy is readmodel.ErrPushBusy.
+var ErrPushBusy = readmodel.ErrPushBusy
 
 // TryLockPush takes the push lock: a lock file next to the database, so only one process
 // (TUI, CLI, MCP server) sends the outbox at a time. It does not wait: if the lock is held

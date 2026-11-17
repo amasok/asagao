@@ -7,51 +7,20 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// FilterSpec is a task list query as the CLI flags and the MCP tool arguments give it.
-// BuildFilter turns it into a TaskFilter.
-type FilterSpec struct {
-	// Assignee: "me", "any"/"all" (everyone), a user gid, or a unique (partial) name.
-	// "" means DefaultAssignee, or "any" when Project is set.
-	Assignee        string
-	DefaultAssignee string
-	Project         string // gid or (partial) name
-	Section         string // gid or exact name; requires Project
-	Tag             string
-	DueBefore       string // inclusive; YYYY-MM-DD or relative (today, +7d, ...)
-	DueAfter        string // inclusive
-	// Completion: "open", "completed", "all", or "" for DefaultCompleted.
-	Completion       string
-	DefaultCompleted *bool
-	// Overdue keeps incomplete tasks due before today (today's are not overdue). It
-	// overrides DueBefore and Completion.
-	Overdue bool
-	// ModifiedWithinDays keeps tasks modified in the last N days, newest first. Without
-	// an explicit Completion it includes completed tasks (completing is a change).
-	ModifiedWithinDays int // at most MaxModifiedWithinDays
-	Limit              int
-	Query              string
-	// Field is a custom field filter: "name=value" (an option name or the value as text),
-	// or "name" for any value. The name may also be the field's gid.
-	Field string
-}
+// FilterSpec is readmodel.FilterSpec.
+type FilterSpec = readmodel.FilterSpec
 
-// FilterError is an invalid FilterSpec field. Field is the spec's input name in
-// snake_case (assignee, section, due_before, due_after, completion).
-type FilterError struct {
-	Field string
-	Err   error
-}
+// FilterError is readmodel.FilterError.
+type FilterError = readmodel.FilterError
 
-// MaxModifiedWithinDays caps FilterSpec.ModifiedWithinDays (about 100 years).
-const MaxModifiedWithinDays = 36500
+// MaxModifiedWithinDays is readmodel.MaxModifiedWithinDays.
+const MaxModifiedWithinDays = readmodel.MaxModifiedWithinDays
 
-func (e *FilterError) Error() string { return e.Field + ": " + e.Err.Error() }
-func (e *FilterError) Unwrap() error { return e.Err }
-
-// ErrSectionWithoutProject is returned (in a FilterError) for a section without a project.
-var ErrSectionWithoutProject = errors.New("section requires project")
+// ErrSectionWithoutProject is readmodel.ErrSectionWithoutProject.
+var ErrSectionWithoutProject = readmodel.ErrSectionWithoutProject
 
 // BuildFilter resolves names and relative dates in spec.
 func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time) (TaskFilter, error) {
@@ -68,11 +37,11 @@ func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time)
 	switch assignee {
 	case "", "any", "all":
 	case "none":
-		return f, &FilterError{"assignee", errors.New(`filtering unassigned tasks is not supported; use "any"`)}
+		return f, &FilterError{Field: "assignee", Err: errors.New(`filtering unassigned tasks is not supported; use "any"`)}
 	default:
 		gid, err := s.ResolveUser(ctx, assignee)
 		if err != nil {
-			return f, &FilterError{"assignee", err}
+			return f, &FilterError{Field: "assignee", Err: err}
 		}
 		f.AssigneeGID = gid
 	}
@@ -89,15 +58,15 @@ func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time)
 			}
 		}
 	} else if spec.Section != "" {
-		return f, &FilterError{"section", ErrSectionWithoutProject}
+		return f, &FilterError{Field: "section", Err: ErrSectionWithoutProject}
 	}
 
 	var err error
 	if f.DueBefore, err = dates.Parse(spec.DueBefore, now); err != nil {
-		return f, &FilterError{"due_before", err}
+		return f, &FilterError{Field: "due_before", Err: err}
 	}
 	if f.DueAfter, err = dates.Parse(spec.DueAfter, now); err != nil {
-		return f, &FilterError{"due_after", err}
+		return f, &FilterError{Field: "due_after", Err: err}
 	}
 
 	f.Completed = spec.DefaultCompleted
@@ -113,7 +82,7 @@ func (s *Store) BuildFilter(ctx context.Context, spec FilterSpec, now time.Time)
 	case "all":
 		f.Completed = nil
 	default:
-		return f, &FilterError{"completion", fmt.Errorf("must be open, completed or all (got %q)", spec.Completion)}
+		return f, &FilterError{Field: "completion", Err: fmt.Errorf("must be open, completed or all (got %q)", spec.Completion)}
 	}
 	if spec.Overdue {
 		f.DueBefore = now.AddDate(0, 0, -1).Format(time.DateOnly)
