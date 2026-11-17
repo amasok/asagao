@@ -9,6 +9,12 @@
 // the views and the errors come next.
 package readmodel
 
+import (
+	"errors"
+
+	"github.com/amasok/asagao/internal/domain/outbox"
+)
+
 // UserRef is a user as the CLI and MCP show it (keep the JSON stable), and the author of
 // a comment or a status update written locally.
 type UserRef struct {
@@ -42,4 +48,23 @@ type CustomFieldView struct {
 	Editable bool `json:"editable"`
 	// Options are the enabled choices of an enum / multi_enum field (task detail only).
 	Options []EnumOptionView `json:"options,omitempty"`
+}
+
+// ErrOpSending is returned when an outbox entry that is being sent is retried, resolved
+// or discarded.
+var ErrOpSending = errors.New("この変更は送信中です。送信が終わってからやり直してください")
+
+// OpStateLabel is the Japanese name of an outbox entry's state.
+func OpStateLabel(state string) string {
+	switch state {
+	case outbox.StatePending:
+		return "未送信"
+	case outbox.StateConflict:
+		return "競合"
+	case outbox.StateFailed:
+		return "失敗"
+	case outbox.StateSending:
+		return "送信中"
+	}
+	return state
 }

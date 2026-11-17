@@ -663,11 +663,11 @@ func (s *Server) dropSyncerOn(err error) {
 func ptr[T any](v T) *T { return &v }
 
 func (s *Server) resolveOutbox(ctx context.Context, _ *mcp.CallToolRequest, in ResolveOutboxInput) (*mcp.CallToolResult, WriteOutput, error) {
-	action, err := sync.ParseResolveAction(in.Action)
+	action, err := app.ParseResolveAction(in.Action)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	r, err := sync.Resolve(ctx, s.Store, in.ID, action)
+	r, err := (&app.Outbox{Store: s.Store}).Resolve(ctx, in.ID, action)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}

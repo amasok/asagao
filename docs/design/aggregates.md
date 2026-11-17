@@ -43,7 +43,7 @@
                              └──競合─────────▶ conflict ──keep_local──▶ pending
                                                        └──keep_remote / discard──▶ (削除)
    ```
-   `sending` のまま残った操作は、次の push の初めに `pending` に戻す (再送してよくないものは verify を付ける)。根拠: outbox_send.go:41-162; sync/resolve.go:72-106。
+   `sending` のまま残った操作は、次の push の初めに `pending` に戻す (再送してよくないものは verify を付ける)。根拠: outbox_send.go:41-162; app/outbox.go (Outbox.Resolve)。
 5. **再送してよくない操作** (作成 5 種と、記録のないローカルのタグへの `add_tag`) は、届いたか分からないまま再送しない。根拠: outbox_send.go:97-115。
 6. **試した回数**: 届いていないと分かったときは数えない。合わせて 5 回で `failed`。根拠: push.go:291-434; TestPushOfflineDoesNotCountAttempts。
 7. **完了の単位は、作成とそれ以外で違う**:

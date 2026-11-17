@@ -85,7 +85,7 @@
 
 | PR | 範囲 |
 |---|---|
-| b1 | `domain/gid`: ローカル gid の型・判定・作り方。`store.IsLocalGID` と `store.LocalPrefix` は、しばらく `domain/gid` を呼ぶ別名として残す |
+| b1 | `domain/gid`: ローカル gid の判定・作り方 (乱数は引数)。gid は今どこでも string なので、型は作らない (作ると署名が広く変わる)。`store.IsLocalGID` と `store.LocalPrefix` は、しばらく `domain/gid` を呼ぶ別名として残す |
 | b2 | `domain/outbox`: 操作の種類と状態の定数、`SafeToResend`。`store.safeToResend` は呼ぶだけになる。解決 (`sync.Resolve`) を app に移すのはここで (b1 の `domain/gid` のあと。a6 から回した) |
 | b3 | `domain/outbox`: 畳み込み (`Fold(op, cur, changes) (op, deleteOp bool)`)。`UpdateTaskLocal` は読む → `Fold` → 書く、になる |
 | b4 | `domain/task`: 欄の検証と承認の状態の決まり (`validateFields` と `UpdateTaskLocal` の承認の確認) |
