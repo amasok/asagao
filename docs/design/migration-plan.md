@@ -138,6 +138,8 @@
 | d4 | `internal/wire` (組み立て) を作り、`cli/root.go` の `apiClient`・`newClient`・`openStore` と、TUI・MCP の `sync.Syncer{...}` の組み立て (5 か所) を移す。cli から x/oauth2 の import がなくなる |
 
 - 段階 d が終わると、依存の向きのテストの許可リストが空になる。
+- d4 は 3 つに分けた: d4 (`internal/wire`。cmd/asagao が `cli.Wiring` で cli に渡す。入り口は wire を import しない)、d4b (入り口の store の名前を readmodel・domain/gid に、ストアを入り口ごとのポート `tui.Store`・`mcpserver.Store`・`cli.Store` に)、d4c (設定の型を `internal/settings` に、フォルダの場所を `internal/xdg` に、保存先の操作を auth に)。
+- 残る許可は sync → store の 1 行: sync が store から取る名前 (操作の種類 `OpX`、sync_state のキー、エラー、`IsLocalGID`、`TaskFieldValues`・`CustomFieldAPIValue` など) を domain・readmodel に移せば消える。
 
 ## 並行してよい作業
 

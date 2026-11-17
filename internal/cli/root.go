@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/settings"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/termsafe"
@@ -99,7 +99,7 @@ func Execute(w Wiring) {
 	}
 }
 
-func (a *app) tokenStore() (tokenstore.Store, error) { return tokenstore.New(a.cfg.Auth) }
+func (a *app) tokenStore() (auth.TokenStore, error) { return auth.OpenTokenStore(a.cfg.Auth) }
 
 // apiClient is the Asana client for the login (wire.APIClient).
 func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {

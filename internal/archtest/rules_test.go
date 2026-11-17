@@ -126,5 +126,4 @@ type violation struct {
 // entryToEntry let them through.
 var allowed = []violation{
 	{"internal/sync", "internal/store", "after d3 (the store is the LocalStore port now): the names sync still takes from the store, the outbox kinds, sync_state keys, errors and helpers (store.OpX, store.KeyX, store.ErrNotFound, store.TaskFieldValues, ...), move out of it"},
-	{"internal/cli", "internal/auth/tokenstore", "d4b: auth migrate moves to auth"},
 }

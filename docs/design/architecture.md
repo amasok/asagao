@@ -103,7 +103,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | cli → tui・mcpserver | 起動 | 許す (決まり 5) | — |
 | cli → asana | なし。クライアントは wire が作り (`wire.APIClient`・`wire.CheckPAT`)、cmd/asagao が `cli.Wiring` で渡す | 直した | d4 (済み) |
 | cli → config | なし。設定の型は `internal/settings` (共有の型)、読み込みとフォルダの移し替えは `Wiring.LoadSettings`・`MigrateLegacyDirs`、場所は `internal/xdg` | 直した | d4b (済み) |
-| cli → tokenstore | `auth login`・`status`・`logout`・`migrate` の保存先 | 直す | d4b (保存先の操作を auth へ) |
+| cli → tokenstore | なし。保存先は auth を通す (`auth.TokenStore`・`OpenTokenStore`・`MoveLogin` ほか) | 直した | d4b (済み) |
 | cli → termsafe、tui → termsafe ほか | 文字の除去 | 許す | — |
 
 外部ライブラリの「直す」: なし。cli → x/oauth2 は d4 で済んだ (HTTP クライアントは `auth.Source.Client`・`auth.PATClient`)。sync → x/oauth2 は d2 で済んだ。ほかは表のとおり許す。
