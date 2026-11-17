@@ -89,7 +89,7 @@ func (a *app) taskListCmd() *cobra.Command {
 	var f listFlags
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "タスクを一覧表示する（ローカルストアから。デフォルトは自分の未完了タスク）",
+		Short: "タスクを一覧表示する（ローカルストアから。デフォルトは自分の未完了タスク。.asana.json があればそのプロジェクトの未完了タスク）",
 		Example: `  asagao task list
   asagao task list --due-before +7d
   asagao task list --project 新居 --json`,
@@ -100,6 +100,16 @@ func (a *app) taskListCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
+			if !cmd.Flags().Changed("project") {
+				c, err := a.repoContext()
+				if err != nil {
+					return err
+				}
+				if c != nil && c.Project != "" {
+					f.project = c.Project
+					noteContext(cmd, c, "プロジェクトで絞っています（全体は --project \"\"）")
+				}
+			}
 			open := false
 			tf, err := f.filter(ctx, st, cmd, "me", &open, time.Now())
 			if err != nil {
@@ -157,12 +167,23 @@ func (a *app) searchCmd() *cobra.Command {
 func (a *app) taskShowCmd() *cobra.Command {
 	var offline bool
 	cmd := &cobra.Command{
-		Use:   "show <gid>",
+		Use:   "show [<gid>]",
 		Short: "タスクの詳細（サブタスク・コメント込み）を表示する",
 		Long: "オンラインなら Asana から最新の詳細を取得してローカルストアを更新してから表示します。\n" +
-			"取得できない場合や --offline のときはローカルストアの内容を表示します。",
-		Args: cobra.ExactArgs(1),
+			"取得できない場合や --offline のときはローカルストアの内容を表示します。\n" +
+			"gid を省くと .asana.json のタスクを表示します。",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				c, err := a.repoContext()
+				if err != nil {
+					return err
+				}
+				if c == nil || c.Task == "" {
+					return errors.New("gid を指定してください（.asana.json に task もありません）")
+				}
+				args = []string{c.Task}
+			}
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)
 			if err != nil {

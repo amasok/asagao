@@ -115,6 +115,36 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			return nil, err
 		}
 	}
+	rep, err := c.send(ctx, c.HTTP, method, u, payload, func(status int) bool {
+		return retryable(method, status) || (path == batchPath && status >= 500)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rep.status >= 400 {
+		return nil, c.newError(rep.status, rep.body)
+	}
+	var env envelope
+	if err := json.Unmarshal(rep.body, &env); err != nil {
+		return nil, fmt.Errorf("asana: decode response: %w", err)
+	}
+	if out != nil && len(env.Data) > 0 {
+		if err := json.Unmarshal(env.Data, out); err != nil {
+			return nil, fmt.Errorf("asana: decode data: %w", err)
+		}
+	}
+	return &env, nil
+}
+
+// reply is a response as it arrived: its status and body.
+type reply struct {
+	status int
+	body   []byte
+}
+
+// send sends one request to u through hc and returns the response, retrying (at most
+// MaxRetries times, after retryDelay) while retry says the status may be retried.
+func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, payload []byte, retry func(status int) bool) (*reply, error) {
 	for attempt := 0; ; attempt++ {
 		var rd io.Reader
 		if payload != nil {
@@ -128,7 +158,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := c.HTTP.Do(req)
+		resp, err := hc.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +169,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			return nil, err
 		}
 
-		if (retryable(method, resp.StatusCode) || (path == batchPath && resp.StatusCode >= 500)) && attempt < c.MaxRetries {
+		if retry(resp.StatusCode) && attempt < c.MaxRetries {
 			d := retryDelay(resp, attempt)
 			if c.MaxRetryDelay > 0 && d > c.MaxRetryDelay {
 				d = c.MaxRetryDelay
@@ -152,19 +182,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			}
 			continue
 		}
-		if resp.StatusCode >= 400 {
-			return nil, c.newError(resp.StatusCode, b)
-		}
-		var env envelope
-		if err := json.Unmarshal(b, &env); err != nil {
-			return nil, fmt.Errorf("asana: decode response: %w", err)
-		}
-		if out != nil && len(env.Data) > 0 {
-			if err := json.Unmarshal(env.Data, out); err != nil {
-				return nil, fmt.Errorf("asana: decode data: %w", err)
-			}
-		}
-		return &env, nil
+		return &reply{status: resp.StatusCode, body: b}, nil
 	}
 }
 

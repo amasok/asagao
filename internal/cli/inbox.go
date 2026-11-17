@@ -144,7 +144,7 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, map[bool]string{true: "すべての通知を既読にする", false: "すべての通知を未読に戻す"}[read])
-	return cmd
+	return a.addDryRunFlag(cmd)
 }
 
 // resolveNotifications turns the arguments (gids or unique suffixes) into gids; all
