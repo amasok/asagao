@@ -19,6 +19,7 @@ import (
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -200,8 +201,8 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 	if want, err := st.SyncState(ctx, store.KeyMeGID); err != nil || want == "" || want == gid {
 		return
 	}
-	n, _ := st.UnsentCount(ctx)
-	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+store.AccountChangedHelp(n, "asagao reset"))
+	n, _ := query(st).UnsentCount(ctx)
+	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+readmodel.AccountChangedHelp(n, "asagao reset"))
 }
 
 // clientSecret takes the secret from the environment, an existing login, or a hidden prompt.

@@ -15,6 +15,8 @@ import (
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
@@ -28,19 +30,19 @@ type writeResult struct {
 	Push      *sync.PushResult `json:"push,omitempty"`
 	// Discarded lists queued changes dropped because what they changed was deleted in Asana
 	// (by this push or an earlier one not shown yet).
-	Discarded []store.Discard `json:"discarded,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	Discarded []readmodel.Discard `json:"discarded,omitempty"`
+	Error     string              `json:"error,omitempty"`
 }
 
 // printDiscard prints a dropped change with what the user wrote in full, so it can be
 // recovered (copied back into Asana).
-func printDiscard(w io.Writer, d store.Discard) {
+func printDiscard(w io.Writer, d readmodel.Discard) {
 	when := ""
 	if t, err := time.Parse(time.RFC3339, d.DiscardedAt); err == nil {
 		when = "  (" + t.Local().Format("2006-01-02 15:04") + ")"
 	}
-	fmt.Fprintln(w, "  - "+store.DiscardLine(d)+when)
-	for _, dt := range store.DiscardDetails(d, richtext.ToEditableMarkdown) {
+	fmt.Fprintln(w, "  - "+readmodel.DiscardLine(d)+when)
+	for _, dt := range readmodel.DiscardDetails(d, richtext.ToEditableMarkdown) {
 		fmt.Fprintf(w, "      %s:\n", dt.Label)
 		for _, l := range strings.Split(strings.TrimRight(dt.Text, "\n"), "\n") {
 			fmt.Fprintln(w, "        "+l)
@@ -50,19 +52,19 @@ func printDiscard(w io.Writer, d store.Discard) {
 
 // takeDiscards returns the dropped changes not shown yet and marks them as shown. When
 // print is set they are printed to w first.
-func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool) []store.Discard {
-	ds, err := st.PendingDiscards(ctx)
+func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool) []readmodel.Discard {
+	ds, err := query(st).PendingDiscards(ctx)
 	if err != nil || len(ds) == 0 {
 		return nil
 	}
-	var announce []store.Discard // changes deleted by a reset were confirmed by the user
+	var announce []readmodel.Discard // changes deleted by a reset were confirmed by the user
 	for _, d := range ds {
-		if !store.IsResetDiscard(d) {
+		if !readmodel.IsResetDiscard(d) {
 			announce = append(announce, d)
 		}
 	}
 	if print && len(announce) > 0 {
-		fmt.Fprintln(w, store.DiscardNotice+"（Asana で削除されていたため）:")
+		fmt.Fprintln(w, readmodel.DiscardNotice+"（Asana で削除されていたため）:")
 		for _, d := range announce {
 			printDiscard(w, d)
 		}
@@ -177,6 +179,9 @@ func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Tim
 	}
 	return gid, err
 }
+
+// query reads the local cache (app.Query over the store).
+func query(st *store.Store) usecase.Query { return usecase.Query{Store: st} }
 
 // taskUseCases is the task use cases on st, reading the clock at each write.
 func taskUseCases(st *store.Store) *usecase.Tasks {
@@ -349,7 +354,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	field := a.writeCommand("field <gid> <フィールド> [値]", "カスタムフィールドを設定する（値なし / --clear で空に）", cobra.RangeArgs(2, 3),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
 			ctx := cmd.Context()
-			f, err := st.ResolveCustomField(ctx, args[0], args[1])
+			f, err := query(st).ResolveCustomField(ctx, args[0], args[1])
 			if err != nil {
 				return "", "", err
 			}
@@ -415,7 +420,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			if err != nil {
 				return "", "", fieldErr(err)
 			}
-			return args[0], "種類を「" + store.SubtypeLabel(*u.Subtype) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
+			return args[0], "種類を「" + task.SubtypeLabel(*u.Subtype) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
 
 	approve := a.writeCommand("approve <gid> [approved|rejected|changes_requested|pending]", "承認タスクの承認の状態を変える（省略時は承認）", cobra.RangeArgs(1, 2),
@@ -429,14 +434,14 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 					return "", "", fieldErr(err)
 				}
 			}
-			d, err := st.GetTask(cmd.Context(), args[0])
+			d, err := query(st).GetTask(cmd.Context(), args[0])
 			if err != nil {
 				return "", "", err
 			}
 			if d.ResourceSubtype != "approval" {
 				return "", "", fmt.Errorf("「%s」は承認タスクではありません（task type %s approval で変えられます）", d.Name, args[0])
 			}
-			return args[0], "承認の状態を「" + store.ApprovalLabel(*u.Approval) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
+			return args[0], "承認の状態を「" + task.ApprovalLabel(*u.Approval) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
 	return []*cobra.Command{like, follow, project, duplicate, attach, field, depend, kind, approve}
 }
@@ -529,7 +534,7 @@ func (a *app) tagCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			tags, err := st.ListTags(cmd.Context())
+			tags, err := query(st).ListTags(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -613,7 +618,7 @@ func (a *app) outboxCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			ops, err := st.ListOps(cmd.Context())
+			ops, err := query(st).ListOps(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -626,11 +631,11 @@ func (a *app) outboxCmd() *cobra.Command {
 				return nil
 			}
 			for _, op := range ops {
-				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, store.OpLabel(op), store.DescribeOp(op))
-				for _, c := range store.ConflictLines(op) {
+				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, readmodel.OpLabel(op), readmodel.DescribeOp(op))
+				for _, c := range readmodel.ConflictLines(op) {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s\n", c)
 				}
-				if heading, text := store.OpNote(op); text != "" {
+				if heading, text := readmodel.OpNote(op); text != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", heading, text)
 				}
 			}
@@ -663,7 +668,7 @@ func (a *app) outboxCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			ds, err := st.RecentDiscards(cmd.Context(), limit)
+			ds, err := query(st).RecentDiscards(cmd.Context(), limit)
 			if err != nil {
 				return err
 			}
