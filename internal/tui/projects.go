@@ -206,6 +206,9 @@ func (m *Model) updateProjects(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.toMyTasks {
 			m.scopeCursor = 0
 		}
+		if msg.selectProject != "" || msg.toMyTasks {
+			m.saved = nil // the sidebar moves: leave a saved search (searches.go)
+		}
 		return tea.Batch(m.loadScopes(), m.loadTasks()), true
 	case membersMsg:
 		if msg.err != nil {

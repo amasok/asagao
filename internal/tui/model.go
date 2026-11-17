@@ -50,6 +50,8 @@ type Deps struct {
 	RunEditor func(path string, done func(error) tea.Msg) tea.Cmd
 	// AuthScopes is config auth.scopes (to explain how to enable the inbox).
 	AuthScopes []string
+	// Searches is searches.toml, the saved searches (searches.go; nil: none).
+	Searches SearchFile
 }
 
 type pane int
@@ -188,6 +190,7 @@ type Model struct {
 	boardColOffset int
 	tagFilter      string
 	picker         *picker
+	saved          *readmodel.SavedSearch // the saved search shown (searches.go)
 
 	// collapsible groups (collapse.go)
 	allRows   []row           // every row; rows is allRows minus collapsed groups
@@ -358,7 +361,7 @@ func (m *Model) loadTasks() tea.Cmd {
 
 func (m *Model) loadList() tea.Cmd {
 	m.taskSeq++
-	seq, sc, query, filter, tag, field := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter
+	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.collapsedScope
 	expanded := make(map[string]bool, len(m.expanded))
@@ -374,7 +377,13 @@ func (m *Model) loadList() tea.Cmd {
 		subCompleted = boolPtr(false)
 	}
 	return func() tea.Msg {
-		rows, err := queryRows(m.ctx, st, sc, query, filter, tag, field, now)
+		var rows []row
+		var err error
+		if saved != nil {
+			rows, err = savedRows(m.ctx, st, *saved, query, filter, tag, field, now)
+		} else {
+			rows, err = queryRows(m.ctx, st, sc, query, filter, tag, field, now)
+		}
 		if err == nil {
 			rows, err = withSubtasks(m.ctx, st, rows, expanded, subCompleted)
 		}
@@ -484,6 +493,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if cmd, ok := m.updateProjects(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.updateSearches(msg); ok {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
@@ -880,6 +892,7 @@ func (m *Model) moveScope(delta int) tea.Cmd {
 		return nil
 	}
 	m.scopeCursor = next
+	m.saved = nil // the sidebar leaves a saved search
 	m.listCursor, m.listOffset = 0, 0
 	m.boardCol, m.boardRow, m.boardColOffset = 0, 0, 0
 	return m.loadTasks()

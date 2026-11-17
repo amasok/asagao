@@ -190,6 +190,9 @@ func (m *Model) renderHeader() string {
 	}
 	left := m.st.header.Render(" asagao ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
 		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
+	if l := m.savedSearchLabel(); l != "" {
+		left += "  " + m.st.headerFilter.Render(l)
+	}
 	if m.tagFilter != "" {
 		left += "  " + m.st.tag.Render("#"+m.tagFilter)
 	}
