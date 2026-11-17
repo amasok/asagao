@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // LegacyAppName is the tool's former name. Its folders are moved to the new ones on startup
@@ -17,14 +19,9 @@ const LegacyAppName = "asana-tui"
 type dirPair struct{ old, new string }
 
 func dirPairs() []dirPair {
-	bases := []struct{ env, fallback string }{
-		{"XDG_CONFIG_HOME", ".config"},
-		{"XDG_DATA_HOME", filepath.Join(".local", "share")},
-		{"XDG_CACHE_HOME", ".cache"},
-	}
+	bases := []string{xdg.ConfigHome(), xdg.DataHome(), xdg.CacheHome()}
 	pairs := make([]dirPair, 0, len(bases))
-	for _, b := range bases {
-		base := xdgBase(b.env, b.fallback)
+	for _, base := range bases {
 		pairs = append(pairs, dirPair{old: filepath.Join(base, LegacyAppName), new: filepath.Join(base, appName)})
 	}
 	return pairs

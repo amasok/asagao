@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // maxAttachmentSize guards against huge downloads (Asana's free plan limit is 100MB per file).
@@ -77,7 +77,7 @@ func (s *Syncer) cacheDir() string {
 	if s.CacheDir != "" {
 		return s.CacheDir
 	}
-	return filepath.Join(config.CacheDir(), "attachments")
+	return filepath.Join(xdg.CacheDir(), "attachments")
 }
 
 // saveDownload downloads url to path (through a temporary file).

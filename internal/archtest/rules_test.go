@@ -27,7 +27,7 @@ const (
 	layerEntry   layer = "entry"   // rules 4 and 5: app, domain, shared types, termsafe, entryAdapters
 	layerWire    layer = "wire"    // rule 6: anything
 	layerShared  layer = "shared"  // types only (asana/model, readmodel): the standard library
-	layerCommon  layer = "common"  // termsafe: the standard library only
+	layerCommon  layer = "common"  // termsafe, xdg: the standard library only
 	layerTest    layer = "test"    // packages with only tests: nothing may import them
 )
 
@@ -54,6 +54,7 @@ var layers = map[string]layer{
 	"internal/readmodel":   layerShared,
 
 	"internal/termsafe": layerCommon,
+	"internal/xdg":      layerCommon,
 
 	"internal/tui":       layerEntry,
 	"internal/cli":       layerEntry,
@@ -125,7 +126,6 @@ type violation struct {
 var allowed = []violation{
 	{"internal/store", "internal/richtext", "d3: outbox_richtext.go's Target.Fit comes through a port of sync.Push (c1 moved describe.go's ToEditableMarkdown to the caller)"},
 	{"internal/sync", "internal/store", "after d3 (the store is the LocalStore port now): the names sync still takes from the store, the outbox kinds, sync_state keys, errors and helpers (store.OpX, store.KeyX, store.ErrNotFound, store.TaskFieldValues, ...), move out of it"},
-	{"internal/sync", "internal/config", "d3: CacheDir's default, config.CacheDir() (attachments.go); SyncConfig is sync.Config now"},
 	{"internal/tui", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
 	{"internal/mcpserver", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
 	{"internal/cli", "internal/store", "a: writes go through app; c2: read types move to readmodel; d4: Open moves to wire"},
