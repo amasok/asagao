@@ -12,5 +12,6 @@ var (
 	_ app.CommentStore  = (*store.Store)(nil)
 	_ app.StatusStore   = (*store.Store)(nil)
 	_ app.RelationStore = (*store.Store)(nil)
+	_ app.SectionStore  = (*store.Store)(nil)
 	_ app.RichText      = richtext.Converter{}
 )

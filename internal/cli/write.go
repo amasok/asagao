@@ -474,11 +474,8 @@ func (a *app) taskMoveCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			projectGID, sectionGID, err := st.ResolveMove(ctx, args[0], project, section)
-			if err != nil {
-				return err
-			}
-			if err := st.MoveTaskLocal(ctx, args[0], projectGID, sectionGID, time.Now()); err != nil {
+			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			if err := sections.Move(ctx, args[0], project, section); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "移動しました: → "+section)
@@ -505,16 +502,9 @@ func (a *app) sectionCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			projectGID, err := st.ResolveProject(ctx, project)
-			if err != nil {
-				return err
-			}
-			gid, err := st.ResolveSection(ctx, projectGID, args[0])
-			if err != nil {
-				return err
-			}
 			name := strings.Join(args[1:], " ")
-			if err := st.RenameSectionLocal(ctx, gid, name, time.Now()); err != nil {
+			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			if err := sections.Rename(ctx, project, args[0], name); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{}, "セクション名を変更しました: "+name)

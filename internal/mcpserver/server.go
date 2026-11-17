@@ -534,26 +534,16 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 }
 
 func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	projectGID, sectionGID, err := s.Store.ResolveMove(ctx, in.GID, in.Project, in.Section)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	if err := s.Store.MoveTaskLocal(ctx, in.GID, projectGID, sectionGID, s.Now()); err != nil {
+	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	if err := sections.Move(ctx, in.GID, in.Project, in.Section); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
 }
 
 func (s *Server) renameSection(ctx context.Context, _ *mcp.CallToolRequest, in RenameSectionInput) (*mcp.CallToolResult, WriteOutput, error) {
-	projectGID, err := s.Store.ResolveProject(ctx, in.Project)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	gid, err := s.Store.ResolveSection(ctx, projectGID, in.Section)
-	if err != nil {
-		return nil, WriteOutput{}, err
-	}
-	if err := s.Store.RenameSectionLocal(ctx, gid, in.Name, s.Now()); err != nil {
+	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	if err := sections.Rename(ctx, in.Project, in.Section, in.Name); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	out := s.push(ctx, "")

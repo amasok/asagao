@@ -258,8 +258,8 @@ func (m *Model) applyEdit(msg editDoneMsg) tea.Cmd {
 	}
 	os.Remove(msg.path)
 	orig := msg.original
-	st, now, gid := m.deps.Store, m.deps.Now(), msg.gid
-	tasks := m.tasks(now)
+	now, gid := m.deps.Now(), msg.gid
+	tasks, sections := m.tasks(now), m.sections(now)
 	return func() tea.Msg {
 		ctx := m.ctx
 		var in app.UpdateTaskInput
@@ -285,11 +285,11 @@ func (m *Model) applyEdit(msg editDoneMsg) tea.Cmd {
 		}
 		moved := false
 		if doc.HasSection && orig.HasSection && doc.Section != orig.Section {
-			project, section, err := st.ResolveMove(ctx, gid, "", doc.Section)
+			project, section, err := sections.ResolveMove(ctx, gid, "", doc.Section)
 			if err != nil {
 				return writeDoneMsg{err: fmt.Errorf("section: %w", err)}
 			}
-			if err := st.MoveTaskLocal(ctx, gid, project, section, now); err != nil {
+			if err := sections.MoveHere(ctx, gid, project, section); err != nil {
 				return writeDoneMsg{err: err}
 			}
 			moved = true
