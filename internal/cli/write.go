@@ -574,7 +574,7 @@ func (a *app) commentCmd() *cobra.Command {
 func (a *app) outboxCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "outbox", Short: "未送信の変更（オフライン中の編集・競合）を確認・解決する"}
 
-	withOp := func(use, short string, action func() (sync.ResolveAction, error)) *cobra.Command {
+	withOp := func(use, short string, action func() (usecase.ResolveAction, error)) *cobra.Command {
 		return &cobra.Command{
 			Use:   use + " <id>",
 			Short: short,
@@ -640,12 +640,12 @@ func (a *app) outboxCmd() *cobra.Command {
 
 	var keep string
 	resolve := withOp("resolve", "競合を解決する（--keep local: こちらの値で上書き / remote: Asana の値を採用）",
-		func() (sync.ResolveAction, error) {
+		func() (usecase.ResolveAction, error) {
 			switch keep {
 			case "local":
-				return sync.KeepLocal, nil
+				return usecase.KeepLocal, nil
 			case "remote":
-				return sync.KeepRemote, nil
+				return usecase.KeepRemote, nil
 			}
 			return "", fmt.Errorf(`--keep は "local" か "remote" を指定してください`)
 		})
@@ -683,20 +683,20 @@ func (a *app) outboxCmd() *cobra.Command {
 	discarded.Flags().IntVar(&limit, "limit", 20, "表示する件数")
 	cmd.AddCommand(discarded)
 
-	fixed := func(act sync.ResolveAction) func() (sync.ResolveAction, error) {
-		return func() (sync.ResolveAction, error) { return act, nil }
+	fixed := func(act usecase.ResolveAction) func() (usecase.ResolveAction, error) {
+		return func() (usecase.ResolveAction, error) { return act, nil }
 	}
 	cmd.AddCommand(resolve,
-		withOp("retry", "送信に失敗した変更をもう一度送る", fixed(sync.Retry)),
-		withOp("discard", "未送信の変更を取り消す", fixed(sync.Discard)),
+		withOp("retry", "送信に失敗した変更をもう一度送る", fixed(usecase.Retry)),
+		withOp("discard", "未送信の変更を取り消す", fixed(usecase.Discard)),
 	)
 	return cmd
 }
 
-// resolve resolves an outbox entry (sync.Resolve), then sends it right away or refreshes
+// resolve resolves an outbox entry (usecase.Outbox.Resolve), then sends it right away or refreshes
 // the task from Asana as needed. Being offline is not an error: the next sync does it.
-func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id int64, act sync.ResolveAction) (string, error) {
-	r, err := sync.Resolve(ctx, st, id, act)
+func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id int64, act usecase.ResolveAction) (string, error) {
+	r, err := (&usecase.Outbox{Store: st}).Resolve(ctx, id, act)
 	if err != nil {
 		return "", err
 	}
@@ -718,7 +718,7 @@ func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id in
 			return fmt.Sprintf("#%d: 次の sync で送ります（オフライン: %v）", id, err), nil
 		case push.Remaining > 0 || push.Failed > 0 || push.Conflicts > 0:
 			return fmt.Sprintf("#%d: 送信できなかった変更があります。`asagao outbox list` で確認してください", id), nil
-		case act == sync.KeepLocal:
+		case act == usecase.KeepLocal:
 			return fmt.Sprintf("#%d: こちらの値で上書きしました", id), nil
 		}
 		return fmt.Sprintf("#%d: 送信しました", id), nil

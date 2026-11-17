@@ -15,5 +15,6 @@ var (
 	_ app.SectionStore      = (*store.Store)(nil)
 	_ app.CopyStore         = (*store.Store)(nil)
 	_ app.NotificationStore = (*store.Store)(nil)
+	_ app.OutboxStore       = (*store.Store)(nil)
 	_ app.RichText          = richtext.Converter{}
 )

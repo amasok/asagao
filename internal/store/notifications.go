@@ -9,16 +9,15 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // The inbox: the user's Asana notifications, cached by sync (see sync.Run) so they can be
 // read offline. Marking one read / unread is applied locally and queued in the outbox.
 
-// OpMarkNotification marks a notification read or unread. The outbox task_gid column holds
-// the notification gid. payload: read bool, workspace, name (what it is about, for the
-// outbox list); base: read (before the local change).
-const OpMarkNotification = "mark_notification"
+// OpMarkNotification marks a notification read or unread (outbox.KindMarkNotification).
+const OpMarkNotification = outbox.KindMarkNotification
 
 // Inbox availability, recorded by sync under KeyInboxStatus.
 const (

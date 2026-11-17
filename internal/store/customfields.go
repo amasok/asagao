@@ -14,6 +14,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -36,9 +37,8 @@ const (
 	CFDate      = "date"
 	CFPeople    = "people"
 
-	// OpSetCustomField sets one custom field of a task. payload: field, field_name, type,
-	// value, display; base / conflict: value, display.
-	OpSetCustomField = "set_custom_field"
+	// OpSetCustomField sets one custom field of a task (outbox.KindSetCustomField).
+	OpSetCustomField = outbox.KindSetCustomField
 )
 
 // editableCFTypes are the types whose values asagao can set.
