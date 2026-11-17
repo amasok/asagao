@@ -3,7 +3,7 @@
 ターミナルで Asana のタスクを確認・操作するための TUI / CLI / MCP サーバー。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
-- 現在の状態: v0.2 開発中（ボード表示・セクション移動/名前変更/折りたたみ・タグ絞り込み・詳細の全画面表示・画像表示）
+- 現在の状態: 最初のリリース v0.2.0 の準備中（ボード表示・セクション移動/名前変更/折りたたみ・タグ絞り込み・詳細の全画面表示・画像表示）
 
 ## 旧名 asana-tui から
 
@@ -28,7 +28,7 @@ brew install amasok/tap/asagao
 ### go install
 
 ```sh
-go install github.com/amasok/asagao/cmd/asagao@latest   # または @v0.1.0 のようにバージョンを指定
+go install github.com/amasok/asagao/cmd/asagao@latest   # または @v0.2.0 のようにバージョンを指定
 ```
 
 Go 1.27.4 以上が要ります。
