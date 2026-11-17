@@ -92,11 +92,11 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
 | mcpserver → store | `*Local` 13 種類と、読み取りの型 約 20 種類 | 直す | a、c2 |
 | cli → store | `*Local` 13 種類、`store.Open`、読み取りの型 約 40 種類 | 直す | a、c2、d4 (`Open` を wire へ) |
-| tui・mcpserver・cli → richtext | Markdown → html (11 か所) と、表示の変換 (tui/edit.go:118-125、tui/markdown.go:29-34、mcpserver/server.go:393-398 ほか) | Markdown → html は直す、表示の変換は許す | a1・a4・a5 |
+| tui・mcpserver・cli → richtext | Markdown → html (11 か所) と、表示の変換 (tui/edit.go:118-125、tui/markdown.go:29-34、mcpserver/server.go:393-398 ほか) | Markdown → html は直す (a5 で済み。archtest の関数の決まりで確かめる)、表示の変換は許す | a1・a4・a5 |
 | tui・mcpserver・cli → auth | `LoginHelp`・`ErrNotLoggedIn`・`ErrLoginReplaced`、cli のログインのコマンド | 許す (決まり 4) | — |
 | tui・mcpserver・cli → sync | `Syncer.Run`・`Push`・`Resolve`・`Result`・`ErrPushBusy` など | 許す (アプリ層)。ただし `sync.Syncer{...}` の組み立て (5 か所と cli) は直す | d4 |
 | tui・cli → imageview、cli → browser | 画像の表示、ブラウザ | 許す (決まり 4) | — |
-| tui・mcpserver・cli → dates | 期日の解釈 (6 か所) | import は許す (ドメイン)。呼び出しは app に移す | a1・a5 |
+| tui・mcpserver・cli → dates | 期日の解釈 (6 か所) | import は許す (ドメイン)。呼び出しは app に移した (`app.ParseDue`。archtest の関数の決まりで確かめる) | a1・a5 (済み) |
 | cli → tui・mcpserver | 起動 | 許す (決まり 5) | — |
 | cli → asana・config・tokenstore | `asana.NewClient`、設定の読み込み、`auth migrate` の保存先 | 直す | d4 (組み立てを wire へ、移す処理を auth へ) |
 | cli → termsafe、tui → termsafe ほか | 文字の除去 | 許す | — |

@@ -26,6 +26,7 @@ type TaskStore interface {
 	ResolveTagEdit(ctx context.Context, add, remove []string) (task.TagEdit, error)
 	CreateTaskLocal(ctx context.Context, nt task.NewTask, now time.Time) (string, error)
 	ApplyTagEdit(ctx context.Context, taskGID string, e task.TagEdit, now time.Time) error
+	UpdateTaskLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error
 }
 
 // CommentStore is the part of the local cache that the comment use case needs.
@@ -57,7 +58,8 @@ type RichText interface {
 // Clock returns the current time. Use cases take it instead of calling time.Now.
 type Clock func() time.Time
 
-// FieldError is an invalid input value. Field names the input ("due", "assignee"), so
+// FieldError is an invalid input value. Field names the input ("due", "assignee",
+// "resource_subtype", "approval_status"), so
 // that each entry point can report it in its own words (a CLI flag, an MCP argument).
 type FieldError struct {
 	Field string

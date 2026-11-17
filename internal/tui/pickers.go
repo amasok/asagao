@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -59,16 +59,11 @@ func (m *Model) openDuePicker() tea.Cmd {
 }
 
 func (m *Model) setDue(t store.TaskSummary, due string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
-	return func() tea.Msg {
-		if err := st.UpdateTaskLocal(m.ctx, t.GID, map[string]any{"due_on": due}, now); err != nil {
-			return writeDoneMsg{err: err}
-		}
-		if due == "" {
-			return writeDoneMsg{status: "期日をなしにしました: " + t.Name}
-		}
-		return writeDoneMsg{status: "期日を " + longDue(due, "") + " にしました"}
+	status := "期日を " + longDue(due, "") + " にしました"
+	if due == "" {
+		status = "期日をなしにしました: " + t.Name
 	}
+	return m.updateTask(t, app.TaskUpdate{Due: &due}, status)
 }
 
 func (m *Model) startDuePrompt(t store.TaskSummary) tea.Cmd {
@@ -80,7 +75,7 @@ func (m *Model) startDuePrompt(t store.TaskSummary) tea.Cmd {
 }
 
 func (m *Model) submitDue(input string) tea.Cmd {
-	due, err := dates.Parse(input, m.deps.Now())
+	due, err := app.ParseDue(input, m.deps.Now())
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
 	}

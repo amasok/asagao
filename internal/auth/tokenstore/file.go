@@ -21,8 +21,10 @@ func defaultFilePath() string { return filepath.Join(config.ConfigDir(), "token.
 func (f *File) Name() string            { return "file" }
 func (f *File) CachesAccessToken() bool { return true }
 
+// Load reads the credentials. A token file that is not a regular file, or a symbolic link
+// to a file someone else could have written, is refused (readPrivate).
 func (f *File) Load(context.Context) (*Credentials, error) {
-	b, err := os.ReadFile(f.Path)
+	b, err := readPrivate(f.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrNotFound
 	}
@@ -38,7 +40,8 @@ func (f *File) Load(context.Context) (*Credentials, error) {
 
 // Save writes the credentials to a new temporary file in the same folder (a random name,
 // created exclusively, so neither a leftover file nor a symbolic link is reused), makes it
-// 0600, syncs it and renames it over the token file. The folder is made 0700 as well.
+// 0600, syncs it and renames it over the token file. The folder is made 0700 as well
+// (privateDir; a folder that is a symbolic link is checked instead, see file_unix.go).
 func (f *File) Save(_ context.Context, c *Credentials) error {
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
@@ -89,20 +92,4 @@ func (f *File) Delete(context.Context) error {
 		return nil
 	}
 	return err
-}
-
-// privateDir creates dir (0700) if needed and makes sure only the owner can read it: an
-// existing folder that others can read or enter (e.g. 0755) is made 0700.
-func privateDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	fi, err := os.Stat(dir)
-	if err != nil {
-		return err
-	}
-	if fi.Mode().Perm() != 0o700 {
-		return os.Chmod(dir, 0o700)
-	}
-	return nil
 }

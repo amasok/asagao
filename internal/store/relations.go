@@ -58,7 +58,11 @@ func (s *Store) queueRelation(ctx context.Context, kind, taskGID string, payload
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n > 0 {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("cancel unsent %s: %w", opposite(kind), err)
+		}
+		if n > 0 {
 			return nil
 		}
 		if IsLocalGID(taskGID) && (kind == OpAddProject || kind == OpRemoveProject) {

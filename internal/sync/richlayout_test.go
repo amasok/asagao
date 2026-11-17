@@ -29,6 +29,7 @@ type layoutAsana struct {
 	mu       gosync.Mutex
 	sent     map[string]string // "POST /tasks/t1/stories html_text" -> the rich text
 	rejected []string
+	created  int // gids of what it creates: s1, su2, ...
 }
 
 func (f *layoutAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,11 +58,12 @@ func (f *layoutAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	f.created++
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/stories"):
-		fmt.Fprintf(w, `{"data":{"gid":"s1","type":"comment","text":"x","html_text":%q}}`, body.Data["html_text"])
+		fmt.Fprintf(w, `{"data":{"gid":"s%d","type":"comment","text":"x","html_text":%q}}`, f.created, body.Data["html_text"])
 	case r.URL.Path == "/status_updates":
-		fmt.Fprintf(w, `{"data":{"gid":"su1","status_type":"on_track","title":"t","text":"x","html_text":%q,"author":{"gid":"me"},"created_at":"2026-11-16T00:00:00Z"}}`, body.Data["html_text"])
+		fmt.Fprintf(w, `{"data":{"gid":"su%d","status_type":"on_track","title":"t","text":"x","html_text":%q,"author":{"gid":"me"},"created_at":"2026-11-16T00:00:00Z"}}`, f.created, body.Data["html_text"])
 	default:
 		fmt.Fprintf(w, `{"data":{"gid":"t1","name":"T","notes":"x","html_notes":%q}}`, body.Data["html_notes"])
 	}

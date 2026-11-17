@@ -137,3 +137,42 @@ func TestConverterTaskNotes(t *testing.T) {
 		t.Errorf("html and plain are the same: %q", html)
 	}
 }
+
+// Rich text queued for a comment or a status update before #63 is fitted to what Asana
+// accepts there, as FromMarkdown writes it now; task notes and rich text without layout tags
+// are kept (#71).
+func TestFitLayoutTags(t *testing.T) {
+	md := "# 予定\n\n明日やる\n\n---\n\n## 準備\n\n![図](asana:42)"
+	old := TaskNotes.FromMarkdown(md)
+	for _, target := range []Target{Comment, StatusUpdate} {
+		got, plain, changed := target.Fit(old)
+		want := target.FromMarkdown(ToEditableMarkdown(old))
+		if !changed || got != want || plain != target.PlainFromMarkdown(ToEditableMarkdown(old)) {
+			t.Errorf("%v: Fit = %q %q %v, want %q", target, got, plain, changed, want)
+		}
+		for _, tag := range []string{"<h1", "<h2", "<hr", "<img"} {
+			if strings.Contains(got, tag) {
+				t.Errorf("%v: %s left in %q", target, tag, got)
+			}
+		}
+	}
+	for _, c := range []struct {
+		target Target
+		html   string
+	}{
+		{TaskNotes, old},
+		{Comment, "<body><strong>a</strong> &lt;h1&gt; <code>&lt;hr/&gt;</code></body>"},
+		{Comment, ""},
+		{StatusUpdate, "plain text"},
+	} {
+		if got, _, changed := c.target.Fit(c.html); changed || got != c.html {
+			t.Errorf("%v: Fit(%q) = %q, %v; want it kept", c.target, c.html, got, changed)
+		}
+	}
+	// a table or an h3 (not written by FromMarkdown, but rejected all the same)
+	for _, h := range []string{"<body><h3>x</h3></body>", "<body><table><tr><td>x</td></tr></table></body>"} {
+		if got, _, changed := Comment.Fit(h); !changed || strings.Contains(got, "<h3") || strings.Contains(got, "<t") || !strings.Contains(got, "x") {
+			t.Errorf("Fit(%q) = %q, %v", h, got, changed)
+		}
+	}
+}

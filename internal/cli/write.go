@@ -147,8 +147,9 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 				return err
 			}
 			defer st.Close()
+			tasks := taskUseCases(st)
 			for _, gid := range args {
-				if err := st.UpdateTaskLocal(ctx, gid, map[string]any{"completed": completed}, time.Now()); err != nil {
+				if err := tasks.UpdateHere(ctx, gid, usecase.TaskUpdate{Completed: &completed}); err != nil {
 					return err
 				}
 			}
@@ -175,6 +176,21 @@ func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Tim
 		return "", fmt.Errorf("--%s: %w", fe.Field, fe.Err) // the field names are the flag names
 	}
 	return gid, err
+}
+
+// taskUseCases is the task use cases on st, reading the clock at each write.
+func taskUseCases(st *store.Store) *usecase.Tasks {
+	return &usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+}
+
+// fieldErr returns the error inside a *usecase.FieldError as it is: a positional argument
+// has no flag name to put before it.
+func fieldErr(err error) error {
+	var fe *usecase.FieldError
+	if errors.As(err, &fe) {
+		return fe.Err
+	}
+	return err
 }
 
 func (a *app) taskCreateCmd() *cobra.Command {
@@ -261,7 +277,9 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	like := a.writeCommand("like <gid>", "いいねする（--off で取り消し）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
 			off, _ := cmd.Flags().GetBool("off")
-			return args[0], "いいねを変更しました", st.UpdateTaskLocal(cmd.Context(), args[0], map[string]any{"liked": !off}, time.Now())
+			liked := !off
+			tasks := taskUseCases(st)
+			return args[0], "いいねを変更しました", tasks.UpdateHere(cmd.Context(), args[0], usecase.TaskUpdate{Liked: &liked})
 		})
 	like.Flags().Bool("off", false, "いいねを取り消す")
 
@@ -411,21 +429,23 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 
 	kind := a.writeCommand("type <gid> <task|milestone|approval>", "タスクの種類を変える（タスク / マイルストーン / 承認）", cobra.ExactArgs(2),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
-			v, err := store.ParseSubtype(args[1])
+			tasks := taskUseCases(st)
+			u, err := tasks.ResolveUpdate(cmd.Context(), usecase.UpdateTaskInput{Subtype: &args[1]})
 			if err != nil {
-				return "", "", err
+				return "", "", fieldErr(err)
 			}
-			return args[0], "種類を「" + store.SubtypeLabel(v) + "」にしました",
-				st.UpdateTaskLocal(cmd.Context(), args[0], map[string]any{"resource_subtype": v}, time.Now())
+			return args[0], "種類を「" + store.SubtypeLabel(*u.Subtype) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
 
 	approve := a.writeCommand("approve <gid> [approved|rejected|changes_requested|pending]", "承認タスクの承認の状態を変える（省略時は承認）", cobra.RangeArgs(1, 2),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
 			v := "approved"
+			tasks := taskUseCases(st)
+			u := usecase.TaskUpdate{Approval: &v}
 			if len(args) == 2 {
 				var err error
-				if v, err = store.ParseApprovalStatus(args[1]); err != nil {
-					return "", "", err
+				if u, err = tasks.ResolveUpdate(cmd.Context(), usecase.UpdateTaskInput{Approval: &args[1]}); err != nil {
+					return "", "", fieldErr(err)
 				}
 			}
 			d, err := st.GetTask(cmd.Context(), args[0])
@@ -435,8 +455,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			if d.ResourceSubtype != "approval" {
 				return "", "", fmt.Errorf("「%s」は承認タスクではありません（task type %s approval で変えられます）", d.Name, args[0])
 			}
-			return args[0], "承認の状態を「" + store.ApprovalLabel(v) + "」にしました",
-				st.UpdateTaskLocal(cmd.Context(), args[0], map[string]any{"approval_status": v}, time.Now())
+			return args[0], "承認の状態を「" + store.ApprovalLabel(*u.Approval) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
 	return []*cobra.Command{like, follow, project, duplicate, attach, field, depend, kind, approve}
 }
@@ -453,12 +472,9 @@ func (a *app) taskAssignCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := st.ResolveUser(ctx, args[1])
-			if err != nil {
-				return err
-			}
-			if err := st.UpdateTaskLocal(ctx, args[0], map[string]any{"assignee": gid}, time.Now()); err != nil {
-				return err
+			tasks := taskUseCases(st)
+			if _, err := tasks.Update(ctx, args[0], usecase.UpdateTaskInput{Assignee: &args[1]}); err != nil {
+				return fieldErr(err)
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "担当者を変更しました")
 		},

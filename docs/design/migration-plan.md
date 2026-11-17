@@ -53,6 +53,21 @@
 - `Comments.Add(ctx, taskGID, md)`: タスクはどの入り口も gid で渡すので、形は 1 つ。`Status.Create` (プロジェクトを名前か gid で受ける。CLI・MCP) と `Status.CreateHere` (gid をそのまま。TUI。ADR 0008 の 2 と同じ形)。
 - 呼ぶ順番は今と同じ (`ResolveProject` → `Me` → 変換 → 時計 → `*Local`)。エラーは store のものをそのまま返す (どの入り口も包んでいないため)。TUI はキーを押したときの時刻を返す `Clock` を渡す。
 
+### a5 の中身
+
+- 種類と承認の状態の読み方 (`ParseSubtype`・`ParseApprovalStatus` と、それが使う `SubtypeLabel`・`ApprovalLabel`、`TaskSubtypes`・`ApprovalStatuses`) を `internal/domain/task` に移す (中身はそのまま)。app が利用者の入力を読むのに要るため。store には呼ぶだけの関数と変数を残す (別名と同じ扱い。段階 a の終わりに消す)。
+- `TaskStore` に `UpdateTaskLocal` を足す (a4 のように別のポートにしないのは、`Tasks.Update` が `ResolveUser` も使い、作成と同じ `Tasks` に置くため)。a1 の偽の store には、新しいテストのファイルでメソッドを足す (既存のテストのファイルは変えない)。
+- `app.ParseDue(s, now)`: 期日の読み方の 1 か所。`Tasks.Create`・`Tasks.ResolveUpdate` と、TUI の作成の入力 (`parseCreateInput`)・期日の入力 (`submitDue`) がこれを呼ぶ。CLI の `parseDate` (テストだけが使っていた) は消した。入り口は `dates` を import しなくなる。
+- 入力は 2 つの形 (ADR 0008 の考えと同じ):
+  - `UpdateTaskInput` (利用者が打ったまま。nil の欄は変えない): `Due` は `ParseDue`、`Assignee` は `ResolveUser`、`Subtype`・`Approval` は domain/task の読み方で読む。
+  - `TaskUpdate` (解決済み): 期日は YYYY-MM-DD、担当は gid、種類と承認は Asana の値。TUI の選択肢 (期日・担当・種類・承認の chooser、完了の切り替え、いいね) と、CLI の完了・いいねはこちらを使う。
+- `Tasks.ResolveUpdate(ctx, in) (TaskUpdate, error)`: 書かずに読むだけ。読めない値は `*FieldError` (`resource_subtype` → `approval_status` → `due` → `assignee` の順に確かめ、最初の 1 つを返す。今の MCP と TUI の順番)。`Tasks.UpdateHere(ctx, gid, u)`: 説明文を変換して `UpdateTaskLocal` を 1 回呼ぶ (変える欄がなければ呼ばない)。`Tasks.Update` はこの 2 つを続けて呼ぶ。
+  - 2 つに分けたのは、入り口が読むことと書くことの間に、ほかの確認や書き込みを挟んでいるため: TUI のエディタでの編集は、読んだあとにセクションの移動を書いてから欄を書く。MCP は、読んだあとにタグ・フォロワー・プロジェクト・依存・カスタムフィールドを解決し、「変えるものがない」「タスクがない」を確かめてから書く。CLI の承認は、読んだあとに承認タスクかを確かめる。どれも順番とトランザクションの単位は今のまま。
+- いいね (`Liked`) も同じ欄の組に入れる (a6 の表にあるが、MCP では他の欄と同じ `UpdateTaskLocal` のトランザクションで送るため、分けられない)。TUI と CLI のいいねも `UpdateHere` にした。
+- エラーの包み方は入り口が今と同じにする: TUI は `*FieldError` のまま (`due: `・`assignee: ` がそのまま今の文字列)、MCP は `due_on: `・`resource_subtype: `・`approval_status: ` で包み、担当は中のエラーだけ、CLI (位置の引数) は中のエラーだけ (`fieldErr`)。
+- 時刻: MCP と TUI は 1 つの時刻を返す `Clock` を渡す (期日を読む時刻と書く時刻が、今と同じく同じになる)。CLI は `time.Now`。
+- 結果: 入り口から `dates.Parse` と Markdown → html の変換 (`richtext.*.FromMarkdown`・`PlainFromMarkdown`) がなくなったので、`dependency-rules.md` の「関数の決まり」の 2 つを `internal/archtest/calls_test.go` に入れた (許可リストは空)。import の許可リスト (`allowed`) から消せる行はない (入り口は読み取りでまだ store を使う)。
+
 ## 段階 b: ドメイン層 (`internal/domain/...`)
 
 ねらい: Asana と outbox の決まりを、SQL と外部ライブラリから離して、単体でテストできる関数にする。
