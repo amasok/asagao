@@ -80,9 +80,9 @@
 | 欄の検証、承認の状態の確認 | `validateFields`、`UpdateTaskLocal` | `domain/task` |
 | 畳み込み (base、元に戻したら外す、conflict を pending に) | `UpdateTaskLocal` の後半 | `domain/outbox` の `Fold` |
 | 未送信の作成かどうか | `findUnsentCreate` の WHERE | `domain/outbox` の `Op.NeverSent()` |
-| 再送してよいか | `safeToResend` | `domain/outbox` の `SafeToResend(op, tagRecorded bool)` |
-| 片付けてよいか | `PruneTasks` の WHERE | `domain/task` の規則を文書とテストにし、SQL は残す (migration-plan.md の c3) |
-| ローカル gid | `store.LocalPrefix`、`IsLocalGID` (sync 17 か所、tui 3、cli 1、store 17) と SQL の `LIKE 'local:%'` 5 か所 | `domain` の `LocalGID` 型と `IsLocal` |
+| 再送してよいか | `safeToResend` | `domain/outbox` の `SafeToResend(op, tagCreated func(localTag string) (bool, error))` (b2 で済み) |
+| 片付けてよいか | `PruneTasks` の WHERE | `domain/task` の `MayPrune`・`RememberRef` (c3 で済み)。SQL は残し、TestPruneTasksFollowsTaskRules で一致を確かめる |
+| ローカル gid | `store.LocalPrefix`、`IsLocalGID` (sync 17 か所、tui 3、cli 1、store 17) と SQL の `LIKE 'local:%'` 5 か所 | `domain/gid` の `IsLocal`・`NewLocal` (b1 で済み。型は作らない: gid はどこでも string) |
 | 送り先と許すタグ | `richtext.Target`、`layout()`、`isBlockElement` | `domain/rich` (名前は段階 b5 で決め直してよい) |
 | 照合で同じものとみなす条件 | `sameTaskFields`、`sameComment` | `domain/outbox` |
 
