@@ -48,6 +48,10 @@ func StatusLabel(t string) string {
 // VerifyNote tells the user that an entry being checked against Asana needs nothing from them.
 const VerifyNote = "操作は不要です。次の同期で自動的に確認します"
 
+// AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
+// has several candidates for what it created.
+const AmbiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+
 // OpLabel is OpStateLabel, except that a queued entry Asana may already have applied
 // (Verify: Push checks Asana by itself before sending it again) is "自動確認中".
 func OpLabel(op outbox.Op) string {

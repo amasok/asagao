@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Names of the local cache that the entry points use without importing the store (d4b).
-// The store keeps aliases for them.
+// Names of the local cache that the entry points (d4b) and sync (e1) use without importing
+// the store. The store keeps aliases for them.
 
 // Types of custom fields (CustomFieldView.Type) that asagao shows and edits.
 const (
@@ -27,6 +27,23 @@ const (
 	// KeyCollapsed + scope: the TUI's collapsed groups of a list ("my", "inbox", or a
 	// project gid).
 	KeyCollapsed = "ui:collapsed:"
+	// KeyLastSync is when the last sync finished (RFC 3339).
+	KeyLastSync = "last_sync"
+	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
+	KeyCustomFields = "custom_fields:"
+	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
+	KeyEvents = "events:"
+)
+
+// Prefixes of the sync_state keys that map a local gid to what Asana created for it (a
+// prefix + the local gid; the value is the Asana gid).
+const (
+	ResultTask       = "gid:"
+	ResultStory      = "story:"
+	ResultAttachment = "att:"
+	ResultStatus     = "status:"
+	// ResultTag maps a tag created offline to the tag Asana created.
+	ResultTag = "tag:"
 )
 
 // ResetResult says what a reset with a backup did.

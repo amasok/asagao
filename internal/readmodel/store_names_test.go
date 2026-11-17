@@ -45,6 +45,8 @@ func TestInlineAssets(t *testing.T) {
 func TestStoredNames(t *testing.T) {
 	for got, want := range map[string]string{
 		KeyMeGID: "me_gid", KeyCollapsed: "ui:collapsed:",
+		KeyLastSync: "last_sync", KeyEvents: "events:", KeyCustomFields: "custom_fields:",
+		ResultTask: "gid:", ResultStory: "story:", ResultAttachment: "att:", ResultStatus: "status:", ResultTag: "tag:",
 		CFText: "text", CFNumber: "number", CFEnum: "enum", CFMultiEnum: "multi_enum", CFDate: "date", CFPeople: "people",
 	} {
 		if got != want {

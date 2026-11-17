@@ -35,8 +35,8 @@ const OpSending = outbox.StateSending
 var ErrOpSending = readmodel.ErrOpSending
 
 // AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
-// has several candidates for what it created.
-const AmbiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+// has several candidates for what it created (readmodel's).
+const AmbiguousMessage = readmodel.AmbiguousMessage
 
 // BeginSend marks a pending entry as being sent at now. It returns false if the entry is no
 // longer pending (sent, discarded or resolved by someone else in the meantime). An entry

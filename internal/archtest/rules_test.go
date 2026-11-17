@@ -4,8 +4,8 @@
 //
 // This file holds the tables: which layer each package is in, which adapters and entry
 // points may import each other, where each external module may be used, and the
-// violations that exist today (allowed), each with the stage of Issue #69 that removes
-// it. deps_test.go reads the module with `go list` and checks it against these tables.
+// violations let through for now (allowed: none since the end of Issue #69's migration).
+// deps_test.go reads the module with `go list` and checks it against these tables.
 //
 // When a check fails:
 //   - A new package: add it to layers (architecture.md, "パッケージごとの置き場所").
@@ -14,7 +14,8 @@
 //   - A new import that breaks a rule: move the code instead of adding to allowed.
 //   - An unused external entry: the package no longer uses the module, so delete it.
 //   - A stale allowance: the violation is gone, so delete its line from allowed and mark
-//     the row in architecture.md ("今の import と、それぞれの扱い") as done.
+//     the row in architecture.md ("今の import と、それぞれの扱い") as done. (allowed is
+//     empty now; keep it so.)
 package archtest
 
 // layer is one of the layers of docs/design/architecture.md ("層").
@@ -117,13 +118,14 @@ type violation struct {
 	Why      string // the rule it breaks; in allowed, the stage that removes it and how
 }
 
-// allowed are the violations that exist today: the rows of architecture.md ("今の import
-// と、それぞれの扱い") marked "直す". Each stage removes some of them; by the end of stage d
-// the list is empty (ADR 0007). The check fails on a violation that is not listed here, and
-// on a line here that no longer happens, so that a fixed violation cannot come back.
+// allowed are the violations that are let through for now, each with the stage that
+// removes it. The migration of Issue #69 removed them all (the last one, sync → store, in
+// e1), so the list is empty, as ADR 0007 makes it the condition for the end of the
+// migration. Keep it so: move the code rather than add a line here. The check fails on a
+// violation that is not listed here, and on a line here that no longer happens, so that a
+// fixed violation cannot come back.
 //
-// The rows marked "許す" are not here: layers, adapterExceptions, entryAdapters and
+// The imports that the rules allow (the rows of architecture.md, "今の import と、それぞれの
+// 扱い", marked "許す") are not here: layers, adapterExceptions, entryAdapters and
 // entryToEntry let them through.
-var allowed = []violation{
-	{"internal/sync", "internal/store", "after d3 (the store is the LocalStore port now): the names sync still takes from the store, the outbox kinds, sync_state keys, errors and helpers (store.OpX, store.KeyX, store.ErrNotFound, store.TaskFieldValues, ...), move out of it"},
-}
+var allowed = []violation{}

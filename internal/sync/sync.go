@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/store"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 const (
@@ -131,7 +132,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
 	}
-	if want, err := s.Store.SyncState(ctx, store.KeyMeGID); err != nil {
+	if want, err := s.Store.SyncState(ctx, readmodel.KeyMeGID); err != nil {
 		return res, err
 	} else if want != "" && me.GID != want {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
@@ -141,7 +142,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	// The times recorded and compared below are by Asana's clock (measured from the Date
 	// header of the answer to Me), as modified_since is compared with Asana's modified_at.
 	stamp := started.Add(s.API.ClockOffset())
-	lastSync, err := s.stateTime(ctx, store.KeyLastSync)
+	lastSync, err := s.stateTime(ctx, readmodel.KeyLastSync)
 	if err != nil {
 		return res, err
 	}
@@ -212,7 +213,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if err := s.Store.UpsertUser(ctx, *me); err != nil {
 		return res, err
 	}
-	if err := s.Store.SetSyncState(ctx, store.KeyMeGID, me.GID); err != nil {
+	if err := s.Store.SetSyncState(ctx, readmodel.KeyMeGID, me.GID); err != nil {
 		return res, err
 	}
 	workspaces, err := s.API.Workspaces(ctx)
@@ -387,7 +388,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	// The events tokens are saved only now, after the subtasks of the tasks they reported:
 	// if anything failed, the next sync reads the same events again.
 	for gid, token := range tokens {
-		if err := s.Store.SetSyncState(ctx, store.KeyEvents+gid, token); err != nil {
+		if err := s.Store.SetSyncState(ctx, readmodel.KeyEvents+gid, token); err != nil {
 			return res, err
 		}
 	}
@@ -412,7 +413,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	} else if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
-	if err := s.Store.SetSyncState(ctx, store.KeyLastSync, stamp.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.Store.SetSyncState(ctx, readmodel.KeyLastSync, stamp.UTC().Format(time.RFC3339)); err != nil {
 		return res, err
 	}
 	// Mappings of things created offline to their Asana gids that nothing needs any more
@@ -428,7 +429,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 // or if they were never fetched. A workspace without custom fields (Asana answers e.g. 402
 // on a free plan) simply has none; any other failure is retried on the next sync.
 func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
-	key := store.KeyCustomFields + projectGID
+	key := readmodel.KeyCustomFields + projectGID
 	if !full {
 		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
 			return err
@@ -458,7 +459,7 @@ func isForbidden(err error) bool {
 // FetchDetails refreshes one task with its subtasks and stories (comments and activity).
 // Comments do not change a task's modified_at, so they are fetched on demand rather than by Run.
 func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
-	if store.IsLocalGID(taskGID) {
+	if localgid.IsLocal(taskGID) {
 		return nil // created offline; nothing on the server yet
 	}
 	t, err := s.API.TaskDetail(ctx, taskGID)

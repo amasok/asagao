@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // MaxNotifications is how many notifications per workspace sync keeps (newest first).
@@ -35,7 +36,7 @@ func (s *Syncer) syncInbox(ctx context.Context, workspaceGID string) error {
 // fetch; Asana having trouble (5xx, 429) keeps the cached notifications.
 func (s *Syncer) syncInboxes(ctx context.Context, workspaces []model.Workspace) error {
 	ok := false
-	var refused store.InboxState
+	var refused readmodel.InboxState
 	for _, w := range workspaces {
 		s.progress("ワークスペース %s: 受信トレイ", w.Name)
 		err := s.syncInbox(ctx, w.GID)
@@ -55,7 +56,7 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []model.Workspace) 
 	}
 	switch {
 	case ok:
-		if err := s.Store.SetInboxState(ctx, store.InboxState{Status: store.InboxOK}); err != nil {
+		if err := s.Store.SetInboxState(ctx, readmodel.InboxState{Status: readmodel.InboxOK}); err != nil {
 			return err
 		}
 	case refused.Status != "":
@@ -65,15 +66,15 @@ func (s *Syncer) syncInboxes(ctx context.Context, workspaces []model.Workspace) 
 }
 
 // inboxStateFor classifies why Asana refused to list notifications.
-func inboxStateFor(err error) store.InboxState {
+func inboxStateFor(err error) readmodel.InboxState {
 	var apiErr *model.Error
-	st := store.InboxState{Status: store.InboxError, Error: err.Error()}
+	st := readmodel.InboxState{Status: readmodel.InboxError, Error: err.Error()}
 	if errors.As(err, &apiErr) {
 		switch apiErr.Status {
 		case http.StatusForbidden:
-			st.Status = store.InboxForbidden
+			st.Status = readmodel.InboxForbidden
 		case http.StatusPaymentRequired:
-			st.Status = store.InboxPayment
+			st.Status = readmodel.InboxPayment
 		}
 	}
 	return st
@@ -81,13 +82,13 @@ func inboxStateFor(err error) store.InboxState {
 
 // InboxUnavailableMessage explains (in Japanese) why the inbox shows recent updates
 // instead, and what to do about it. scopes is config auth.scopes (empty: full permissions).
-func InboxUnavailableMessage(st store.InboxState, scopes []string) string {
+func InboxUnavailableMessage(st readmodel.InboxState, scopes []string) string {
 	switch st.Status {
-	case store.InboxOK:
+	case readmodel.InboxOK:
 		return ""
 	case "":
 		return "受信トレイ（Asana の通知）は次の同期で取得します。それまでは最近の更新を表示します"
-	case store.InboxForbidden:
+	case readmodel.InboxForbidden:
 		if len(scopes) > 0 && !slices.Contains(scopes, "notifications:read") {
 			return "受信トレイ（Asana の通知）を見るには、config.toml の auth.scopes と Asana のアプリ設定に " +
 				"notifications:read と notifications:write を追加し、asagao auth login でログインし直してください。" +
@@ -95,7 +96,7 @@ func InboxUnavailableMessage(st store.InboxState, scopes []string) string {
 		}
 		return "受信トレイ（Asana の通知）を見る権限がありません。asagao auth login でログインし直してください" +
 			"（Asana のアプリ設定で通知の権限 notifications:read / notifications:write も許可してください）。それまでは最近の更新を表示します"
-	case store.InboxPayment:
+	case readmodel.InboxPayment:
 		return "このワークスペースのプランでは Asana の通知を API で取得できません。最近の更新を表示します"
 	}
 	return "Asana の通知を取得できませんでした（" + st.Error + "）。最近の更新を表示します"
@@ -138,7 +139,7 @@ func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]b
 		if !full && !recent[gid] {
 			if _, err := s.Store.GetTask(ctx, gid); err == nil {
 				continue
-			} else if !errors.Is(err, store.ErrNotFound) {
+			} else if !errors.Is(err, readmodel.ErrNotFound) {
 				return err
 			}
 		}
@@ -167,14 +168,14 @@ func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]b
 // what the user asks for is tried again). A change Asana accepts, or logging in again,
 // clears it. batched is how many other
 // entries were sent along.
-func (s *Syncer) pushMarkNotification(ctx context.Context, op store.Op) (out outcome, batched int, err error) {
+func (s *Syncer) pushMarkNotification(ctx context.Context, op outbox.Op) (out outcome, batched int, err error) {
 	ws, _ := op.Payload["workspace"].(string)
 	read, _ := op.Payload["read"].(bool)
 	peers, err := s.Store.PendingNotificationMarks(ctx, op, model.MaxNotificationGIDs-1)
 	if err != nil {
 		return sent, batched, err
 	}
-	var batch []store.Op
+	var batch []outbox.Op
 	gids := []string{op.TaskGID}
 	for _, p := range peers {
 		if ok, err := s.Store.BeginSend(ctx, p.ID, s.clock()); err != nil {

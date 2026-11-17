@@ -91,99 +91,22 @@ func (d fieldDef) enabledOptions(current any) []EnumOptionView {
 
 // --- values ---
 
-// CustomFieldValue returns the value of a custom field from Asana in the stored form.
-func CustomFieldValue(f model.CustomField) any {
-	switch f.Subtype() {
-	case CFText:
-		if f.TextValue != nil && *f.TextValue != "" {
-			return *f.TextValue
-		}
-	case CFNumber:
-		if f.NumberValue != nil {
-			return *f.NumberValue
-		}
-	case CFEnum:
-		if f.EnumValue != nil && f.EnumValue.GID != "" {
-			return f.EnumValue.GID
-		}
-	case CFMultiEnum:
-		var gids []string
-		for _, o := range f.MultiEnumValues {
-			gids = append(gids, o.GID)
-		}
-		return gidList(gids)
-	case CFDate:
-		if f.DateValue != nil && f.DateValue.Date != "" {
-			return f.DateValue.Date
-		}
-	case CFPeople:
-		var gids []string
-		for _, u := range f.PeopleValue {
-			gids = append(gids, u.GID)
-		}
-		return gidList(gids)
-	}
-	return nil
-}
+// The stored form of values from Asana is readmodel's (e1), so that sync can use it
+// without importing the store.
+var (
+	// CustomFieldValue returns the value of a custom field from Asana in the stored form.
+	CustomFieldValue = readmodel.CustomFieldValue
+	// CustomFieldAPIValue is a stored value as PUT /tasks sends it.
+	CustomFieldAPIValue = readmodel.CustomFieldAPIValue
+	// ServerCustomField finds a field on a task fetched from Asana.
+	ServerCustomField = readmodel.ServerCustomField
+)
 
 // gidList sorts gids; nil when there are none.
-func gidList(gids []string) any {
-	if len(gids) == 0 {
-		return nil
-	}
-	gids = slices.Clone(gids)
-	slices.Sort(gids)
-	return slices.Compact(gids)
-}
+func gidList(gids []string) any { return readmodel.GIDList(gids) }
 
 // normalizeCFValue turns a value decoded from JSON into the stored form.
-func normalizeCFValue(v any) any {
-	switch x := v.(type) {
-	case string:
-		if x == "" {
-			return nil
-		}
-	case []string:
-		return gidList(x)
-	case []any:
-		var gids []string
-		for _, e := range x {
-			if s, ok := e.(string); ok {
-				gids = append(gids, s)
-			}
-		}
-		return gidList(gids)
-	case int:
-		return float64(x)
-	}
-	return v
-}
-
-// CustomFieldAPIValue is a stored value as PUT /tasks sends it: the same, except that a
-// date goes as {"date": "YYYY-MM-DD"} (Asana rejects a plain string for date fields,
-// although its reference shows one; see the custom fields guide and forum). nil clears.
-func CustomFieldAPIValue(fieldType string, v any) any {
-	v = normalizeCFValue(v)
-	if s, ok := v.(string); ok && fieldType == CFDate {
-		return map[string]any{"date": s}
-	}
-	return v
-}
-
-// ServerCustomField finds a field on a task fetched from Asana: its value (stored form)
-// and display text. found is false if the task does not have the field (any more).
-func ServerCustomField(t *model.Task, fieldGID string) (value any, display string, found bool) {
-	for _, f := range t.CustomFields {
-		if f.GID == fieldGID {
-			display := ""
-			if f.DisplayValue != nil {
-				display = *f.DisplayValue
-			}
-			return CustomFieldValue(f), display, true
-		}
-	}
-	return nil, "", false
-}
+func normalizeCFValue(v any) any { return readmodel.NormalizeCustomFieldValue(v) }
 
 // formatNumber formats a number field value with the field's precision.
 func formatNumber(v float64, precision int) string {
