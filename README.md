@@ -222,6 +222,7 @@ due = ["D", "ctrl+t"]
 | `section rename <セクション> <新しい名前> --project <プロジェクト>` | セクションの名前を変更 |
 | `tag list` | タグと、そのタグが付いたタスクの数 |
 | `comment add <gid> <コメント>` | コメントする |
+| `git scan [<コミット>\|<範囲>...]` / `git install-hook` | コミットメッセージのタスク ID でコメント・完了（[git 連携](#git-連携)） |
 | `outbox list` | 未送信の変更・競合・失敗を一覧表示 |
 | `outbox resolve <id> --keep local\|remote` | 競合を解決（こちらの値で上書き / Asana の値を採用） |
 | `inbox [--unread] [--limit N]` | 受信トレイ（Asana の通知）を新しい順に表示（`●` が未読。取得できないときは理由と最近の更新を表示） |
@@ -261,6 +262,23 @@ asagao searches rm 今週
 - 期日の相対指定（`+7d` など）はそのまま保存し、実行した日から数えます。プロジェクト名や担当者は実行するときに探します。
 - `--query` のない検索は `task list` と同じく自分の未完了のタスク（`--project` なら全員の）を、ある検索は `search` と同じく全員の・完了済みも含むタスクを探します。`--assignee`・`--open`・`--completed`・`--all` で変えられます。
 - searches.toml は手で書き換えてもかまいません（`[[search]]` の表を並べ、キーは `name`・`query`・`assignee`・`project`・`section`・`tag`・`field`・`due_before`・`due_after`・`completion`・`overdue`・`modified_within_days`・`limit`）。読めない内容や知らないキーがあるとエラーになり、ファイルは書き換えません。保存すると書き直すので、コメントは残りません。
+
+### git 連携
+
+コミットメッセージに `#<タスクID>` があればそのタスクにコメントし、`fixes #<タスクID>` なら完了にします。
+
+```sh
+asagao git scan                    # HEAD のコミットを読む
+asagao git scan main..HEAD         # 範囲（古い順）。--dry-run で何をするかだけ表示、--offline で outbox に積むだけ
+asagao git install-hook            # コミットのたびに読む post-commit hook を入れる（-C <フォルダ> で別のリポジトリ）
+asagao git uninstall-hook          # 入れた hook を外す
+```
+
+- **タスク ID と読む条件**: `#` のあとに **10 桁以上**の数字（Asana のタスク ID は 16 桁ほど）。`#123` のような短い番号は GitHub の Issue・PR 番号として読みません。短い ID は `asana#<タスクID>` と書きます。`#` の直前が英数字・`_`・`&`・`/`・`#` のとき（`abc#…`、`&#…;`、`owner/repo#…`）と、数字のすぐあとに英字が続くときは読みません。
+- **完了にするキーワード**: `fix` `fixes` `fixed` `close` `closes` `closed` `resolve` `resolves` `resolved`（大文字小文字は問わない）のあと、同じ行の空白か `:` に続く ID。GitHub と同じく、キーワードはすぐあとの 1 つにだけ効きます（`fixes #A, #B` は A を完了、B はコメントだけ）。`Revert "…"` のコミットはコメントだけで、完了にはしません。
+- コメントには、コミットの短い ID、リポジトリ名、メッセージ全文と、末尾に `asagao-git: <コミットの ID>` が入ります。**同じコミットを何度読んでも**、この行があるタスクには何もしません（コメントが二重にならず、あとで未完了に戻したタスクをまた完了にもしません）。オンラインなら、判断の前にタスクを Asana から取り直します。
+- 変更はほかの書き込みと同じく outbox に積み、オンラインならすぐ送ります。ローカルストアにないタスクは「見つかりません」と表示します（`asagao sync` のあとでもう一度）。
+- **hook**: `install-hook` はすでにある post-commit hook を上書きしません（足す 1 行を表示します）。`core.hooksPath` に従います。hook は `git commit`（`--amend` を含む）で作られたコミットだけを読み、rebase・cherry-pick・revert で作られたコミットは飛ばします。amend では、amend 前のメッセージになかった参照だけを扱います。失敗してもコミットは止めず、理由を表示します。
 
 すべてのコマンドで `--json` を付けると JSON で出力します。
 
