@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Sending outbox entries (used by sync.Push).
@@ -29,8 +30,9 @@ import (
 // OpSending is the state of an entry while Push is sending it (outbox.StateSending).
 const OpSending = outbox.StateSending
 
-// ErrOpSending is returned when an entry that is being sent is retried or discarded.
-var ErrOpSending = errors.New("この変更は送信中です。送信が終わってからやり直してください")
+// ErrOpSending is returned when an entry that is being sent is retried or discarded (an
+// alias of readmodel.ErrOpSending, so that internal/app can match it).
+var ErrOpSending = readmodel.ErrOpSending
 
 // AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
 // has several candidates for what it created.
