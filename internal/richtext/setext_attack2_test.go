@@ -68,3 +68,12 @@ func TestSetextHTMLBlockEndersAttack(t *testing.T) {
 		}
 	}
 }
+
+func TestSetextLowercaseDeclarationAttack(t *testing.T) {
+	for _, src := range []string{"  a\n<!x\n---", "  a\n<!X\n---", "  a\n<!-x\n---"} {
+		h1 := FromMarkdown(src)
+		if h2 := FromMarkdown(ToEditableMarkdown(h1)); h1 != h2 {
+			t.Errorf("src %q: %q vs %q", src, h1, h2)
+		}
+	}
+}
