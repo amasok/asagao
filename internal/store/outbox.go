@@ -61,7 +61,7 @@ type NewTask = task.NewTask
 // Consecutive edits of the same task are merged into one outbox entry (outbox.Fold); an
 // edit that reverts every field to its original value removes the entry.
 func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error {
-	if err := validateFields(changes); err != nil {
+	if err := task.ValidateFields(changes); err != nil {
 		return err
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
@@ -69,14 +69,9 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		if err != nil {
 			return err
 		}
-		if _, ok := changes["approval_status"]; ok {
-			subtype, _ := cur["resource_subtype"].(string)
-			if v, ok := changes["resource_subtype"].(string); ok {
-				subtype = v
-			}
-			if subtype != "approval" {
-				return errors.New("承認タスクではないため、承認の状態は設定できません（種類を「承認」にすると設定できます）")
-			}
+		subtype, _ := cur["resource_subtype"].(string)
+		if err := task.CheckApproval(subtype, changes); err != nil {
+			return err
 		}
 		if IsLocalGID(gid) {
 			// Not on the server yet: fold the change into the pending create.
@@ -662,45 +657,11 @@ func (s *Store) RecordedResults(ctx context.Context, prefix string) (map[string]
 
 // --- helpers ---
 
-var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true, "liked": true,
-	"resource_subtype": true, "approval_status": true}
-
 // Task types (resource_subtype) and approval statuses that can be set.
 var (
 	TaskSubtypes     = task.Subtypes
 	ApprovalStatuses = task.ApprovalStatuses
 )
-
-func validateFields(changes map[string]any) error {
-	if len(changes) == 0 {
-		return errors.New("変更がありません")
-	}
-	for k, v := range changes {
-		if !updatableFields[k] {
-			return fmt.Errorf("unsupported field %q", k)
-		}
-		switch k {
-		case "completed", "liked":
-			if _, ok := v.(bool); !ok {
-				return fmt.Errorf("%s must be bool", k)
-			}
-		default:
-			if _, ok := v.(string); !ok {
-				return fmt.Errorf("%s must be string", k)
-			}
-		}
-	}
-	if name, ok := changes["name"].(string); ok && strings.TrimSpace(name) == "" {
-		return errors.New("タスク名が空です")
-	}
-	if v, ok := changes["resource_subtype"].(string); ok && !slices.Contains(TaskSubtypes, v) {
-		return fmt.Errorf("タスクの種類は %s のどれかです: %q", strings.Join(TaskSubtypes, " / "), v)
-	}
-	if v, ok := changes["approval_status"].(string); ok && !slices.Contains(ApprovalStatuses, v) {
-		return fmt.Errorf("承認の状態は %s のどれかです: %q", strings.Join(ApprovalStatuses, " / "), v)
-	}
-	return nil
-}
 
 // TaskFieldValues extracts update_task fields from an API task (for conflict checks).
 func TaskFieldValues(t *asana.Task) map[string]any {
