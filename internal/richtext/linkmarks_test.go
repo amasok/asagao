@@ -59,8 +59,13 @@ func TestLinkTextBlankLine(t *testing.T) {
 		{"<body><a href=\"https://e.com\">a\n\n# b</a></body>", "[a\n\\\n\\# b](https://e.com)", ""},
 		// spaces on the blank line go, as in a list item
 		{"<body><a href=\"https://e.com\">a\n \t\nb</a></body>", "[a  \n\\\nb](https://e.com)", "<body><a href=\"https://e.com\">a\n\nb</a></body>"},
-		// one line break: as before
-		{"<body><a href=\"https://e.com\">a\nb</a></body>", "[a\nb](https://e.com)", ""},
+		// a line break is a hard break, and spaces at the end of a line stay (as in text)
+		{"<body><a href=\"https://e.com\">a\nb</a></body>", "[a  \nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\">a\nx\t\nb</a></body>", "[a  \nx&#9;  \nb](https://e.com)", ""},
+		// (a quote in a list item is text: a line of "> " and a tab in the link)
+		{"<body><ul><li><blockquote><a href=\"https://e.com\">a\n\t\nb</a></blockquote></li></ul></body>",
+			"- \\> [a  \n\\> &#9;  \n\\> b](https://e.com)",
+			"<body><ul><li>&gt; <a href=\"https://e.com\">a\n&gt; \t\n&gt; b</a></li></ul></body>"},
 	}
 	for _, tc := range cases {
 		out := tc.out

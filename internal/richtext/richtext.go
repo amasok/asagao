@@ -860,7 +860,8 @@ func (c *converter) link(n *html.Node) {
 		c.token("[", true, false)
 		if styledLink(n) {
 			// its emphasis and code, which FromMarkdown keeps in the link (#15), and its
-			// blank lines, which keepBlankLineInItem keeps from ending the paragraph (#22)
+			// lines as text() writes them: keepBlankLineInItem keeps a blank line from
+			// ending the paragraph (#22)
 			c.inLink++
 			c.children(n)
 			c.inLink--
@@ -872,10 +873,10 @@ func (c *converter) link(n *html.Node) {
 	}
 }
 
-// styledLink reports whether the text of link n has emphasis, code or a blank line in it,
+// styledLink reports whether the text of link n has emphasis, code or line breaks in it,
 // and nothing else but text and elements written only as their children: written by walk,
-// the link text keeps them. (Images, line breaks and other links in it are written as the
-// text.)
+// the link text keeps them, and the spaces at the end of its lines and its blank lines
+// (#22). (Images, <br> and other links in it are written as the text.)
 func styledLink(n *html.Node) bool {
 	styled := false
 	var rec func(*html.Node) bool
@@ -898,11 +899,8 @@ func styledLink(n *html.Node) bool {
 		}
 		return true
 	}
-	return rec(n) && (styled || blankLineRe.MatchString(textOf(n)))
+	return rec(n) && (styled || strings.Contains(textOf(n), "\n"))
 }
-
-// blankLineRe matches a blank line in text (which would end a paragraph in Markdown).
-var blankLineRe = regexp.MustCompile(`\n[ \t]*\n`)
 
 // autolinkSafe reports whether u can be written as an autolink (<u>): a URL with a scheme
 // and nothing that would end the autolink early or make it raw HTML instead.
