@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -303,5 +304,15 @@ func TestBulkQuestionFollowsTheList(t *testing.T) {
 	h.dropFromList("t2")
 	if h.m.picker != nil {
 		t.Fatal("the picker should close when none of its tasks is shown")
+	}
+}
+
+// A list that fails to load shows nothing, so the marks go (they do not come back later).
+func TestBulkMarksDroppedWhenListFails(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.markRows("t2", "t3")
+	h.send(tasksLoadedMsg{seq: h.m.taskSeq, err: errors.New("読めません")})
+	if len(h.m.marked) != 0 {
+		t.Fatalf("marks should be dropped: %v", h.m.marked)
 	}
 }

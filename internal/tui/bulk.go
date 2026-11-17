@@ -326,9 +326,9 @@ func (m *Model) bulkMove(tasks []readmodel.TaskSummary) tea.Cmd {
 
 // bulkAssignee loads the members to choose the assignee of the marked tasks.
 func (m *Model) bulkAssignee(tasks []readmodel.TaskSummary) tea.Cmd {
-	st := m.deps.Store
+	st, ctx := m.deps.Store, m.ctx
 	return func() tea.Msg {
-		users, err := queryOf(st).ListUsers(m.ctx)
+		users, err := queryOf(st).ListUsers(ctx)
 		return bulkUsersMsg{tasks: tasks, users: users, err: err}
 	}
 }
@@ -428,7 +428,7 @@ func sectionIn(t readmodel.TaskSummary, project string) string {
 func (m *Model) updateBulk(msg tea.Msg) (tea.Cmd, bool) {
 	if msg, ok := msg.(bulkUsersMsg); ok {
 		if msg.err != nil {
-			m.status = "メンバーを読み込めませんでした: " + msg.err.Error()
+			m.status = "メンバーを読み込めませんでした: " + termsafe.String(msg.err.Error())
 		} else {
 			m.showBulkAssignee(msg)
 		}

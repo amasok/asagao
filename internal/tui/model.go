@@ -535,6 +535,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.rows, m.allRows = nil, nil
+			m.pruneMarks()
 			m.status = msg.err.Error()
 			return m, nil
 		}
