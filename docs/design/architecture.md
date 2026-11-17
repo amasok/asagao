@@ -109,5 +109,5 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 
 - 読み取り (一覧、検索、詳細) は、段階 a では今のまま入り口から `store` を呼んでよい。書き込みと違って、同じ手順が入り口ごとに重なっている量が少なく、振る舞いの違いの原因にもなっていない。
 - 入り口が読む型は、`asana/model` の型ではなく、**store が定義した表示用の型** (`store.TaskSummary`・`store.TaskDetail`・`store.CustomFieldView`・`store.ProjectView` など) と、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp`・`AccountChangedHelp` など) と、エラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など)。tui だけで約 50 種類ある。
-- 段階 c2 で、これらを標準ライブラリだけの `internal/readmodel` に移す。store は readmodel の型を作って返し、エラーも readmodel の値を返す。store には型の別名をしばらく残し、入り口を少しずつ移す。そのあと `app` に読み取りのポート (例: `TaskQuery`) を置き、入り口は `app` を通して読む。これで入り口から `store` の import がなくなる。
+- 段階 c2 で、これらを標準ライブラリだけの `internal/readmodel` に移す。store は readmodel の型を作って返し、エラーも readmodel の値を返す。store には型の別名をしばらく残し、入り口を少しずつ移す。そのあと `app` に読み取りのユースケース `Query` とポート `QueryStore` を置き (ADR 0009)、入り口は `app` を通して読む。これで入り口から `store` の import がなくなる。
 - `asana/model` の型 (ADR 0005) は、キャッシュと同期が Asana の応答を扱うための型で、入り口の表示には readmodel を使う。
