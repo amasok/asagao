@@ -63,12 +63,12 @@ func (q Query) ListTasks(ctx context.Context, f readmodel.TaskFilter) ([]readmod
 	return q.Store.ListTasks(ctx, f)
 }
 
-// BuildFilter resolves the names and relative dates of a task list query, at now.
+// BuildFilter resolves names and relative dates in spec (relative to now).
 func (q Query) BuildFilter(ctx context.Context, spec readmodel.FilterSpec, now time.Time) (readmodel.TaskFilter, error) {
 	return q.Store.BuildFilter(ctx, spec, now)
 }
 
-// GetTask returns a task's detail.
+// GetTask returns a task with notes, subtasks and stories from the store.
 func (q Query) GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error) {
 	return q.Store.GetTask(ctx, gid)
 }
@@ -78,7 +78,7 @@ func (q Query) TaskSummaries(ctx context.Context, gids []string) (map[string]rea
 	return q.Store.TaskSummaries(ctx, gids)
 }
 
-// TaskFollowers returns a task's followers.
+// TaskFollowers returns who follows a task.
 func (q Query) TaskFollowers(ctx context.Context, taskGID string) ([]readmodel.UserRef, error) {
 	return q.Store.TaskFollowers(ctx, taskGID)
 }
@@ -94,22 +94,23 @@ func (q Query) RealGID(ctx context.Context, gid string) (string, error) {
 	return q.Store.RealGID(ctx, gid)
 }
 
-// ListTags returns the workspace's tags, with how many tasks have them.
+// ListTags returns the workspace tags (with how many tasks use them), ordered by name.
 func (q Query) ListTags(ctx context.Context) ([]readmodel.TagCount, error) {
 	return q.Store.ListTags(ctx)
 }
 
-// ListFieldOptions returns the enum options that incomplete tasks use, by field.
+// ListFieldOptions returns the enum options in use by incomplete tasks, by field.
 func (q Query) ListFieldOptions(ctx context.Context) ([]readmodel.FieldOption, error) {
 	return q.Store.ListFieldOptions(ctx)
 }
 
-// ResolveCustomField finds a custom field of a task by gid or name.
+// ResolveCustomField finds a custom field of a task by gid or name (exact, ignoring case,
+// or a unique part of it).
 func (q Query) ResolveCustomField(ctx context.Context, taskGID, arg string) (readmodel.CustomFieldView, error) {
 	return q.Store.ResolveCustomField(ctx, taskGID, arg)
 }
 
-// ListUsers returns the cached users.
+// ListUsers returns known users (workspace members and people seen on tasks), me first.
 func (q Query) ListUsers(ctx context.Context) ([]readmodel.UserRef, error) {
 	return q.Store.ListUsers(ctx)
 }
@@ -120,12 +121,14 @@ func (q Query) MeGID(ctx context.Context) (string, error) {
 }
 
 // ResolveUser turns "me", "none"/"" (unassigned), a gid, or a unique (partial) name or
-// email into a user gid ("" for unassigned).
+// email into a user gid ("" for unassigned). A numeric gid of a user not in the store yet
+// is passed through as is.
 func (q Query) ResolveUser(ctx context.Context, arg string) (string, error) {
 	return q.Store.ResolveUser(ctx, arg)
 }
 
-// ResolveUsers resolves several users as ResolveUser does.
+// ResolveUsers resolves each of "me", a gid, or a unique (partial) name or email to a
+// user gid. "none" and "" are not users here and are an error (unlike ResolveUser).
 func (q Query) ResolveUsers(ctx context.Context, args []string) ([]string, error) {
 	return q.Store.ResolveUsers(ctx, args)
 }
@@ -146,7 +149,7 @@ func (q Query) ProjectMembers(ctx context.Context, projectGID string) ([]readmod
 	return q.Store.ProjectMembers(ctx, projectGID)
 }
 
-// StatusUpdates returns a project's status updates.
+// StatusUpdates returns a project's status updates, newest first.
 func (q Query) StatusUpdates(ctx context.Context, projectGID string) ([]readmodel.StatusUpdateView, error) {
 	return q.Store.StatusUpdates(ctx, projectGID)
 }
@@ -156,12 +159,12 @@ func (q Query) InboxState(ctx context.Context) (readmodel.InboxState, error) {
 	return q.Store.InboxState(ctx)
 }
 
-// ListNotifications returns the cached notifications f selects.
+// ListNotifications returns cached notifications f selects, newest first.
 func (q Query) ListNotifications(ctx context.Context, f readmodel.NotificationFilter) ([]readmodel.Notification, error) {
 	return q.Store.ListNotifications(ctx, f)
 }
 
-// UnreadNotifications counts the unread notifications.
+// UnreadNotifications counts the cached unread notifications.
 func (q Query) UnreadNotifications(ctx context.Context) (int, error) {
 	return q.Store.UnreadNotifications(ctx)
 }
@@ -171,12 +174,13 @@ func (q Query) Stats(ctx context.Context) (readmodel.Stats, error) {
 	return q.Store.Stats(ctx)
 }
 
-// OutboxCounts counts the outbox entries by state.
+// OutboxCounts returns the number of entries per state. Entries being sent count as
+// pending (they have not reached Asana yet).
 func (q Query) OutboxCounts(ctx context.Context) (pending, conflict, failed int, err error) {
 	return q.Store.OutboxCounts(ctx)
 }
 
-// ListOps returns the outbox entries.
+// ListOps returns every outbox entry.
 func (q Query) ListOps(ctx context.Context) ([]outbox.Op, error) {
 	return q.Store.ListOps(ctx)
 }

@@ -105,7 +105,7 @@
 | PR | 範囲 |
 |---|---|
 | c1 | `store/describe.go` の表示用の変換 (`richtext.ToEditableMarkdown`) を、呼ぶ側 (app か入り口) に移す。store から richtext の import がなくなる |
-| c2 | 表示用の読み取りの型 (`store.TaskSummary`・`TaskDetail`・`CustomFieldView` など約 50 種類)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など) を `internal/readmodel` に移す。store には別名を残す。そのあと読み取りのポート (`app.TaskQuery` ほか) を作り、入り口の読み取りを app 経由にする (型の移動で 1〜2 PR、入り口ごとに 1 PR) |
+| c2 | 表示用の読み取りの型 (`store.TaskSummary`・`TaskDetail`・`CustomFieldView` など約 50 種類)、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp` など)、入り口が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など) を `internal/readmodel` に移す。store には別名を残す。そのあと読み取りのユースケース `app.Query` とポート `app.QueryStore` を作り (ADR 0009)、入り口の読み取りを app 経由にする (型の移動で 1〜2 PR、入り口ごとに 1 PR) |
 | c3 | `PruneTasks` の「消してはいけない」条件を、`domain/task` の文書とテストにする。SQL の WHERE は残す (1 回の DELETE で行うことが、途中で止まっても壊れないことの前提のため) |
 
 - トランザクションの単位 (`Store.tx`、`UpsertTasks` の 500ms ごとの分け方、`PruneResults` の読み取りの計画) は変えない。TestUpsertTasksLetsOtherWritersIn、TestFullSyncFailingWhileWritingTasksKeepsTheCache、TestPruneResultsWithNothingToChangeTakesNoWriteLock が、そのまま通ること。
@@ -122,7 +122,7 @@
 - 3 つ目 (その 3): 表示の文言 (`store/describe.go` のすべて: `OpLabel`・`OpNote`・`DescribeOp`・`DescribeChange`・`ConflictLines`・`FieldLabel`・`DiscardLine`・`DiscardDetails`・`AccountChangedHelp`・`TaskBadges` ほか、と `StatusLabel`・`StatusTypes`)、破棄した変更の型 `Discard` と `ResetReason` を `readmodel/describe.go` に移した。`Op` は b2 で `domain/outbox` に移ったので、文言の関数は `outbox.Op` を受ける (readmodel は domain を import してよい)。store には呼ぶだけの関数を残した。`DiscardDetail` だけは、store のテストがキーなしで書いているので (別名にすると `go vet` の composites に引っかかる)、store に同じ形の型を残して変換する。
 - 4 つ目 (その 4): 読み取りのポート。`app.Query` (各メソッドは store の同じ名前のものを呼ぶだけ) と、そのポート `app.QueryStore` を置いた (ADR 0009)。入り口はまだ変えない。
 - 5 つ目 (MCP): MCP の読み取りを `app.Query` 経由にした (`Server.query()`)。表示の型・一覧の条件・エラー・文言も、store の別名ではなく readmodel (と `outbox.Op`) を使う。MCP に残る store は、`*store.Store` (書き込みのユースケースと `sync.Syncer` に渡す。d3・d4)、`ReplaceInlineAssets`・`IsImageName` (表示の手伝い。readmodel に移すかは CLI・TUI の単位で決める) だけ。
-- 次の PR: CLI → TUI。読み取りを `app.Query` 経由にする。TUI の単位で、`TaskTags` (d1 のあと) と画面の状態の保存 (`SyncState`) の形を決める。
+- 次の PR: CLI → TUI。読み取りを `app.Query` 経由にする。`SyncState` の形は CLI と TUI の単位で、`TaskTags` は d1 のあと TUI の単位で決める。
 
 ## 段階 d: ポート (Asana と認証)
 
