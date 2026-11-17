@@ -114,7 +114,7 @@ func TestPushNestedMarkdownIsAccepted(t *testing.T) {
 	}
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
-	res, err := (&Syncer{API: api, Store: st}).Push(ctx)
+	res, err := (&Syncer{API: api, Store: st, RichText: richtext.Converter{}}).Push(ctx)
 	if len(rejected) > 0 {
 		t.Fatalf("Asana would reject: %v\nsent %q", rejected, sent)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/termsafe"
@@ -105,10 +106,11 @@ func (a *app) newClient(ctx context.Context, src oauth2.TokenSource) *asana.Clie
 	return c
 }
 
-// syncer is the Syncer for api and st, with the [sync] settings. A nil api leaves
+// syncer is the Syncer for api and st, with the [sync] settings and the rich text
+// conversion. A nil api leaves
 // Syncer.API unset (offline): a nil *asana.Client in the interface would not be nil.
 func (a *app) syncer(api *asana.Client, st *store.Store) *sync.Syncer {
-	s := &sync.Syncer{Store: st, Cfg: sync.Config(a.cfg.Sync)}
+	s := &sync.Syncer{Store: st, Cfg: sync.Config(a.cfg.Sync), RichText: richtext.Converter{}}
 	if api != nil {
 		s.API = api
 	}

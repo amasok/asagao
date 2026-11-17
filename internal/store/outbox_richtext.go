@@ -3,24 +3,29 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 
-	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/domain/rich"
 )
 
 // richTextTarget is the destination of the html_text of an entry of kind (false if it has
 // none that FitQueuedRichText fixes).
-func richTextTarget(kind string) (richtext.Target, bool) {
+func richTextTarget(kind string) (rich.Target, bool) {
 	switch kind {
 	case OpAddComment:
-		return richtext.Comment, true
+		return rich.Comment, true
 	case OpCreateStatus:
-		return richtext.StatusUpdate, true
+		return rich.StatusUpdate, true
 	}
 	return 0, false
 }
 
+// ErrNoFit is returned by FitQueuedRichText when there is an entry to check but no fit
+// function to check it with (the Syncer was built without RichText).
+var ErrNoFit = errors.New("送り待ちのコメントと status update を今の形に直す変換が渡されていません (Syncer.RichText)")
+
 // FitQueuedRichText rewrites the html_text (and text) of queued comments and status updates
-// as they are converted now (richtext.Target.Fit), and returns how many it rewrote. Before
+// as they are converted now (fit, richtext.Converter.Fit), and returns how many it rewrote. Before
 // #63 they were converted like task notes, with headings, rules and images, which Asana
 // rejects there with 400, so they could never be sent (#71). sync.Push calls it before
 // sending, so such an entry is sent as it would be written now, whenever it was queued.
@@ -30,7 +35,12 @@ func richTextTarget(kind string) (richtext.Target, bool) {
 // its html_text held those tags, Asana could not have created it, so sending it again
 // cannot duplicate it. If it fails again for another reason it stays failed, and is not put
 // back again, since its html_text no longer changes. An entry being sent is left alone.
-func (s *Store) FitQueuedRichText(ctx context.Context) (int, error) {
+//
+// Without fit, it changes nothing, and returns ErrNoFit if there is an entry to check.
+//
+// fit rewrites rich text html as it is written for target now, and reports whether it
+// changed (richtext.Converter.Fit); plain is the text for the new html.
+func (s *Store) FitQueuedRichText(ctx context.Context, fit func(target rich.Target, html string) (fitted, plain string, changed bool)) (int, error) {
 	fixed := 0
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		fixed = 0
@@ -63,8 +73,11 @@ func (s *Store) FitQueuedRichText(ctx context.Context) (int, error) {
 			if !ok {
 				continue
 			}
+			if fit == nil {
+				return ErrNoFit
+			}
 			htmlText, _ := op.Payload["html_text"].(string)
-			fitted, plain, changed := target.Fit(htmlText)
+			fitted, plain, changed := fit(target, htmlText)
 			if !changed {
 				continue
 			}

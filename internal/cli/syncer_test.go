@@ -15,7 +15,7 @@ func TestSyncerKeepsOfflineAndSettings(t *testing.T) {
 	}
 	c := asana.NewClient(nil)
 	s := a.syncer(c, nil)
-	if s.API != sync.AsanaAPI(c) || s.Cfg != (sync.Config{CompletedDays: 30, AllProjects: true}) {
+	if s.API != sync.AsanaAPI(c) || s.Cfg != (sync.Config{CompletedDays: 30, AllProjects: true}) || s.RichText == nil {
 		t.Fatalf("syncer = %+v", s)
 	}
 }
