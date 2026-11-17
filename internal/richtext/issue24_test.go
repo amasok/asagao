@@ -29,3 +29,22 @@ func TestStyledURLLink(t *testing.T) {
 		t.Errorf("plain URL link: %q", md)
 	}
 }
+
+// Spaces at the ends of a heading's text, typed as character references, go when it is
+// sent: the editor writes a heading without them, so they would go on the next round trip
+// (#24, 2).
+func TestHeadingEdgeSpacesGo(t *testing.T) {
+	for md, want := range map[string]string{
+		"## &#32;a":                  "<body><h2>a</h2></body>",
+		"  &#32;a\n---":              "<body><h2>a</h2></body>",
+		"# &#9; a &#32;":             "<body><h1>a</h1></body>",
+		"# &#32;**a**":               "<body><h1><strong>a</strong></h1></body>",
+		"## [@x](asana:user:9)&#32;": `<body><h2><a data-asana-gid="9"/></h2></body>`,
+		"# a &#32; b":                "<body><h1>a   b</h1></body>", // (inside, they stay)
+	} {
+		h1 := FromMarkdown(md)
+		if h2 := FromMarkdown(ToEditableMarkdown(h1)); h1 != want || h2 != h1 {
+			t.Errorf("md %q\nh1 %q (want %q)\nh2 %q", md, h1, want, h2)
+		}
+	}
+}

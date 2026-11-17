@@ -285,9 +285,16 @@ func (w *htmlWriter) block(n gast.Node) {
 			t = "h1"
 		}
 		w.tag("<" + t + ">")
-		w.inHead = true
-		w.inlines(n)
-		w.inHead = false
+		// the text without spaces at its ends (typed as character references): the editor
+		// writes a heading without them, so they would go on the next round trip (#24)
+		h := &htmlWriter{src: w.src, plain: w.plain, target: w.target, bold: w.bold,
+			quote: w.quote, item: w.item, text: w.text, inHead: true}
+		h.inlines(n)
+		if w.plain {
+			w.b.WriteString(h.b.String()) // (plain text is not opened again)
+		} else {
+			w.b.WriteString(strings.Trim(h.b.String(), " \t"))
+		}
 		w.tag("</" + t + ">")
 		if w.plain {
 			w.b.WriteString("\n")
