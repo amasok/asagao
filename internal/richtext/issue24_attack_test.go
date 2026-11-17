@@ -120,3 +120,28 @@ func TestIssue24EmptyMarkerAfterParagraphAttack(t *testing.T) {
 		t.Errorf("c left the list: %q", h)
 	}
 }
+
+// Only a marker indented to the item's content column continues the paragraph; a shallower
+// one is a sibling (empty) item.
+func TestIssue24SiblingEmptyItemAttack(t *testing.T) {
+	for _, src := range []string{
+		"- a\n-\n\n  c", "- a\n -\n\n  c", "- a\n  -\n\n  c", "- a\n   -\n\n  c", "1. a\n2.\n\n   c", "1. a\n   2.\n\n   c", "1. a\n  2.\n\n   c",
+		"- a\n  - b\n  -\n\n    c", "- a\n  - b\n -\n\n  c", "- a\n  - b\n-\n\n  c", "10. a\n    -\n\n    c", "10. a\n   -\n\n    c",
+		"-    a\n   -\n\n     c", "- a\n\t-\n\n  c", "- a\n-\n- b\n\n  c",
+	} {
+		stableMD(t, src)
+	}
+}
+
+func TestIssue24SiblingEmptyItemExact(t *testing.T) {
+	for src, want := range map[string]string{
+		"- a\n-\n\n  c":    "<body><ul><li>a</li><li></li></ul>  c</body>",
+		"- a\n  -\n\n  c":  "<body><ul><li>a\n-\nc</li></ul></body>",
+		"1. a\n2.\n\n   c": "<body><ol><li>a</li><li></li></ol>   c</body>",
+		"- a\n -\n\n  c":   "<body><ul><li>a</li><li></li></ul>  c</body>",
+	} {
+		if got := FromMarkdown(src); got != want {
+			t.Errorf("%q: got %q, want %q", src, got, want)
+		}
+	}
+}
