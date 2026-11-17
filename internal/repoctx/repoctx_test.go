@@ -79,6 +79,31 @@ func TestFindStopsAtHome(t *testing.T) {
 	}
 }
 
+// A $HOME that is a symbolic link stops the search at the folder it leads to, and so does
+// a folder reached through a link to the home folder.
+func TestFindStopsAtSymlinkedHome(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real", "me")
+	work := filepath.Join(real, "proj")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(base, ".git", "HEAD"), "")
+	write(t, filepath.Join(base, FileName), `{"task": "1"}`)
+	link := filepath.Join(base, "homelink")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", link) // $HOME is the link, the folder is the real path
+	if c, err := Find(work); err != nil || c != nil {
+		t.Errorf("symlinked $HOME did not stop the search: %+v %v", c, err)
+	}
+	t.Setenv("HOME", real) // $HOME is the real path, the folder is reached through the link
+	if c, err := Find(filepath.Join(link, "proj")); err != nil || c != nil {
+		t.Errorf("a folder under a link to $HOME did not stop the search: %+v %v", c, err)
+	}
+}
+
 // Outside a repository only the folder itself is looked at: a parent folder (a shared
 // /tmp, say) does not choose the project.
 func TestFindNoRepository(t *testing.T) {

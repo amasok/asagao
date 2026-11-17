@@ -71,17 +71,29 @@ func Find(dir string) (*Context, error) {
 // has a .git, not above the home folder.
 func repoRoot(dir string) (string, bool) {
 	home, _ := os.UserHomeDir()
+	isHome := func(string) bool { return false }
 	if home != "" {
-		home = filepath.Clean(home)
+		// $HOME may be a symbolic link to where dir really is, or the other way round:
+		// compare the folders the paths lead to.
+		home, realHome := filepath.Clean(home), realPath(home)
+		isHome = func(d string) bool { return d == home || realPath(d) == realHome }
 	}
 	for d := dir; ; d = filepath.Dir(d) {
 		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
 			return d, true
 		}
-		if d == home || filepath.Dir(d) == d {
+		if isHome(d) || filepath.Dir(d) == d {
 			return "", false
 		}
 	}
+}
+
+// realPath is path with symbolic links resolved (path itself when that fails).
+func realPath(path string) string {
+	if p, err := filepath.EvalSymlinks(path); err == nil {
+		return p
+	}
+	return filepath.Clean(path)
 }
 
 // Load reads the .asana.json at path.
