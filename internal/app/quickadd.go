@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -27,8 +26,7 @@ import (
 // A token that does not resolve (no match, several matches, a second assignee or due
 // date) also stops the reading: it stays in the name, and the result says why it was
 // not read, so nothing is dropped silently. The first word is always the name, so that
-// a task can be called "明日". `\@` and `\#` put the sign itself in the name. The
-// full-width ＠ and ＃ (as a Japanese IME types them) are read as @ and #.
+// a task can be called "明日". `\@` and `\#` put the sign itself in the name.
 
 // QuickAddStore is the part of the local cache that quick add reads. *store.Store
 // satisfies it.
@@ -60,23 +58,6 @@ type QuickAddResult struct {
 	// Unread is the token that stopped the reading because it did not resolve, and
 	// UnreadReason says why ("" both when reading stopped at an ordinary word).
 	Unread, UnreadReason string
-
-	// MidDue is set when the name has a due:<date> word that was not read because it is
-	// not at the end (the TUI used to read it anywhere).
-	MidDue bool
-}
-
-// minPrefix is the shortest "@name" matched as the start of a name ("@a" is not).
-const minPrefix = 2
-
-// halfWidthSign turns a word's leading full-width ＠ or ＃ (and \＠, \＃) into @ or #.
-func halfWidthSign(w string) string {
-	for _, p := range [][2]string{{"＠", "@"}, {"＃", "#"}, {`\＠`, `\@`}, {`\＃`, `\#`}} {
-		if rest, ok := strings.CutPrefix(w, p[0]); ok {
-			return p[1] + rest
-		}
-	}
-	return w
 }
 
 // LoadQuickAddCandidates reads the users, tags and the logged-in user from the cache.
@@ -114,7 +95,7 @@ func ParseQuickAdd(line string, now time.Time, c QuickAddCandidates) QuickAddRes
 	seen := map[string]bool{}
 scan:
 	for end > 1 {
-		w := halfWidthSign(line[words[end-1][0]:words[end-1][1]])
+		w := line[words[end-1][0]:words[end-1][1]]
 		switch {
 		case len(w) > 1 && w[0] == '@':
 			u, isMe, reason := matchUser(w[1:], c)
@@ -165,14 +146,7 @@ scan:
 	if end < len(words) {
 		name = strings.TrimSpace(line[:words[end-1][1]])
 	}
-	for _, sp := range words[:end] {
-		if v, ok := strings.CutPrefix(line[sp[0]:sp[1]], "due:"); ok {
-			if _, err := ParseDue(v, now); v != "" && err == nil {
-				r.MidDue = true
-			}
-		}
-	}
-	r.Name = strings.NewReplacer(`\@`, "@", `\#`, "#", `\＠`, "＠", `\＃`, "＃").Replace(name)
+	r.Name = strings.NewReplacer(`\@`, "@", `\#`, "#").Replace(name)
 	return r
 }
 
@@ -226,8 +200,7 @@ func userKeys(u readmodel.UserContact) []string {
 }
 
 // matchUser finds the user "@q" names: me, or the one user one of whose keys is q, or
-// failing that (and when q is at least minPrefix long), the one user one of whose keys
-// starts with q. reason is why there is none.
+// failing that, the one user one of whose keys starts with q. reason is why there is none.
 func matchUser(q string, c QuickAddCandidates) (u readmodel.UserRef, isMe bool, reason string) {
 	if strings.EqualFold(q, "me") {
 		if c.MeGID == "" {
@@ -244,7 +217,7 @@ func matchUser(q string, c QuickAddCandidates) (u readmodel.UserRef, isMe bool, 
 	key := matchKey(q)
 	for _, match := range []func(k string) bool{
 		func(k string) bool { return k == key },
-		func(k string) bool { return utf8.RuneCountInString(key) >= minPrefix && strings.HasPrefix(k, key) },
+		func(k string) bool { return strings.HasPrefix(k, key) },
 	} {
 		var found []readmodel.UserContact
 		for _, cu := range c.Users {
@@ -333,18 +306,13 @@ func (r QuickAddResult) Read() string {
 }
 
 // Problem says which token was not read and why ("" when every token was read), as
-// "「@ta」は読めませんでした（2 人に一致します: …）。名前に残しました", and that a due:
-// in the middle of the name is not read.
+// "「@ta」は読めませんでした（2 人に一致します: …）。名前に残しました".
 func (r QuickAddResult) Problem() string {
-	var parts []string
-	if r.Unread != "" {
-		parts = append(parts, fmt.Sprintf("「%s」は読めませんでした（%s）。名前に残しました",
-			termsafe.String(r.Unread), termsafe.String(r.UnreadReason)))
+	if r.Unread == "" {
+		return ""
 	}
-	if r.MidDue {
-		parts = append(parts, "名前の途中の due: は読みません（末尾に書いてください）")
-	}
-	return strings.Join(parts, "。")
+	return fmt.Sprintf("「%s」は読めませんでした（%s）。名前に残しました",
+		termsafe.String(r.Unread), termsafe.String(r.UnreadReason))
 }
 
 // Summary is Read and Problem together, in parentheses after a message ("" when both are
