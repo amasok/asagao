@@ -8,15 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
 
-	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
-	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/termsafe"
@@ -72,7 +70,25 @@ func newRoot(a *app) *cobra.Command {
 	return root
 }
 
-func Execute() {
+// Wiring is what the commands get from internal/wire: the entry point does not build the
+// adapters (the store, the Asana client) itself (architecture.md, 依存の決まり 4 and 6).
+// cmd/asagao fills it with wire's functions; the package's tests do the same.
+type Wiring struct {
+	// APIClient is the Asana client for the login of cfg; baseURL overrides Asana's URL.
+	APIClient func(ctx context.Context, cfg config.Config, baseURL string) (sync.AsanaAPI, error)
+	// Syncer is the Syncer for api (nil: offline) and st, with the settings of cfg.
+	Syncer func(api sync.AsanaAPI, st *store.Store, cfg config.Config) *sync.Syncer
+	// OpenStore opens the local store at path.
+	OpenStore func(ctx context.Context, path string) (*store.Store, error)
+	// CheckPAT asks Asana whose a Personal Access Token is, retrying once after retryDelay.
+	CheckPAT func(ctx context.Context, token, baseURL string, retryDelay time.Duration, onRetry func(status int, wait time.Duration)) (*model.User, error)
+}
+
+// wiring is set by Execute (and by the tests' init).
+var wiring Wiring
+
+func Execute(w Wiring) {
+	wiring = w
 	if err := NewRoot().ExecuteContext(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", termsafe.String(err.Error()))
 		os.Exit(1)
@@ -81,46 +97,20 @@ func Execute() {
 
 func (a *app) tokenStore() (tokenstore.Store, error) { return tokenstore.New(a.cfg.Auth) }
 
-func (a *app) apiClient(ctx context.Context) (*asana.Client, error) {
-	ts, err := a.tokenStore()
-	if err != nil {
-		return nil, err
-	}
-	src, err := auth.TokenSource(ctx, a.cfg.Auth, ts)
-	if err != nil {
-		return nil, err
-	}
-	c := a.newClient(ctx, src)
-	c.AuthHint = src.UnauthorizedHint()
-	return c, nil
+// apiClient is the Asana client for the login (wire.APIClient).
+func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {
+	return wiring.APIClient(ctx, a.cfg, a.baseURL)
 }
 
-// newClient builds the Asana client. For a login, src must be the *auth.Source itself (not
-// its embedded TokenSource): its Token marks a request without a token (*auth.TokenError),
-// which is how sync knows it was not sent.
-func (a *app) newClient(ctx context.Context, src oauth2.TokenSource) *asana.Client {
-	c := asana.NewClient(oauth2.NewClient(ctx, src))
-	if a.baseURL != "" {
-		c.BaseURL = a.baseURL
-	}
-	return c
-}
-
-// syncer is the Syncer for api and st, with the [sync] settings and the rich text
-// conversion. A nil api leaves Syncer.API unset (offline): a nil *asana.Client in the
-// interface would not be nil.
-func (a *app) syncer(api *asana.Client, st *store.Store) *sync.Syncer {
-	s := &sync.Syncer{Store: st, Cfg: sync.Config(a.cfg.Sync), RichText: richtext.Converter{}}
-	if api != nil {
-		s.API = api
-	}
-	return s
+// syncer is the Syncer for api and st (wire.Syncer).
+func (a *app) syncer(api sync.AsanaAPI, st *store.Store) *sync.Syncer {
+	return wiring.Syncer(api, st, a.cfg)
 }
 
 func (a *app) storePath() string { return filepath.Join(config.DataDir(), "store.db") }
 
 func (a *app) openStore(ctx context.Context) (*store.Store, error) {
-	return store.Open(ctx, a.storePath())
+	return wiring.OpenStore(ctx, a.storePath())
 }
 
 // printJSON writes v as indented JSON to the command's output (#25).

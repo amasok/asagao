@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
 	"golang.org/x/term"
 
-	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
@@ -118,18 +117,15 @@ func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, loginTimeout)
 	defer cancel()
-	c := a.newClient(checkCtx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token, TokenType: "Bearer"}))
 	// The user is waiting: retry a busy or failing Asana once, briefly and saying so, not
 	// with the backoff of a sync (about 30 s in all, #24).
-	c.MaxRetries, c.MaxRetryDelay = 1, loginRetryDelay
-	c.OnRetry = func(status int, wait time.Duration) {
+	me, err := wiring.CheckPAT(checkCtx, token, a.baseURL, loginRetryDelay, func(status int, wait time.Duration) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s。%s後にもう一度確かめます…\n", busyMessage(status), wait.Round(time.Second))
-	}
-	me, err := c.Me(checkCtx)
-	if asana.IsUnauthorized(err) {
+	})
+	if model.IsUnauthorized(err) {
 		return fmt.Errorf("Asana がこのトークンを受け付けませんでした。貼り付け間違いがないか確かめるか、%s で作り直してください", auth.PATConsoleURL)
 	}
-	var ae *asana.Error
+	var ae *model.Error
 	if errors.As(err, &ae) && (ae.Status >= 500 || ae.Status == http.StatusTooManyRequests) {
 		return fmt.Errorf("%s。トークンは保存していません。少し待ってから、もう一度 asagao auth login --pat を実行してください", busyMessage(ae.Status))
 	}

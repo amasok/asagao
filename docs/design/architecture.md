@@ -53,7 +53,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi | 画面 |
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
 | `internal/cli` | 入り口 | 同じ | cobra、bubbletea、MCP go-sdk、x/term、go-runewidth | コマンド |
-| `internal/wire` | 組み立て | (`internal/cli/root.go` の一部) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |
+| `internal/wire` | 組み立て | 同じ (d4 で `internal/cli/root.go` から移した。cmd/asagao が `cli.Wiring` で cli に渡す) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |
 
 `domain/rich` などの名前は、その段階の PR で決め直してよい (ADR にする)。
 
@@ -93,17 +93,18 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | sync → xdg、config → xdg | 添付の既定の場所、ツールのフォルダ | 許す | — |
 | tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
 | mcpserver → store | `*Local` 13 種類と、読み取りの型 約 20 種類 | 直す | a、c2 |
-| cli → store | `*Local` 13 種類、`store.Open`、読み取りの型 約 40 種類 | 直す | a、c2、d4 (`Open` を wire へ) |
+| cli → store | `*store.Store` (コマンドが持つ型)、`AnyUnsent`・`IsLocalGID`・`KeyMeGID` などの名前。`store.Open` は d4 で wire に移した | 直す | d4b |
 | tui・mcpserver・cli → richtext | Markdown → html (11 か所) と、表示の変換 (tui/edit.go:118-125、tui/markdown.go:29-34、mcpserver/server.go:393-398 ほか) | Markdown → html は直す (a5 で済み。archtest の関数の決まりで確かめる)、表示の変換は許す | a1・a4・a5 |
 | tui・mcpserver・cli → auth | `LoginHelp`・`ErrNotLoggedIn`・`ErrLoginReplaced`、cli のログインのコマンド | 許す (決まり 4) | — |
 | tui・mcpserver・cli → sync | `Syncer.Run`・`Push`・`Resolve`・`Result`・`ErrPushBusy` など | 許す (アプリ層)。ただし `sync.Syncer{...}` の組み立て (5 か所と cli) は直す | d4 |
 | tui・cli → imageview、cli → browser | 画像の表示、ブラウザ | 許す (決まり 4) | — |
 | tui・mcpserver・cli → dates | 期日の解釈 (6 か所) | import は許す (ドメイン)。呼び出しは app に移した (`app.ParseDue`。archtest の関数の決まりで確かめる) | a1・a5 (済み) |
 | cli → tui・mcpserver | 起動 | 許す (決まり 5) | — |
-| cli → asana・config・tokenstore | `asana.NewClient`、設定の読み込み、`auth migrate` の保存先 | 直す | d4 (組み立てを wire へ、移す処理を auth へ) |
+| cli → asana | なし。クライアントは wire が作り (`wire.APIClient`・`wire.CheckPAT`)、cmd/asagao が `cli.Wiring` で渡す | 直した | d4 (済み) |
+| cli → config・tokenstore | 設定の読み込み、`auth migrate` の保存先 | 直す | d4b (設定の読み込みを wire へ、移す処理を auth へ) |
 | cli → termsafe、tui → termsafe ほか | 文字の除去 | 許す | — |
 
-外部ライブラリの「直す」: cli → x/oauth2 (d4)。sync → x/oauth2 は d2 で済んだ。ほかは表のとおり許す。
+外部ライブラリの「直す」: なし。cli → x/oauth2 は d4 で済んだ (HTTP クライアントは `auth.Source.Client`・`auth.PATClient`)。sync → x/oauth2 は d2 で済んだ。ほかは表のとおり許す。
 
 段階 d が終わると「直す」の行がなくなる。これを #69 の終わりの条件の 1 つにする (ADR 0007)。
 

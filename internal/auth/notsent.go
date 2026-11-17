@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"net/http"
 
 	"golang.org/x/oauth2"
 )
@@ -34,4 +36,15 @@ func (s *Source) Token() (*oauth2.Token, error) {
 		return nil, err
 	}
 	return tok, nil
+}
+
+// Client returns an HTTP client that sends the login's token with each request. It goes
+// through s itself (not its embedded TokenSource), so a request without a token fails with
+// a *TokenError.
+func (s *Source) Client(ctx context.Context) *http.Client { return oauth2.NewClient(ctx, s) }
+
+// PATClient returns an HTTP client that sends a Personal Access Token, to check it before
+// it is saved.
+func PATClient(ctx context.Context, token string) *http.Client {
+	return oauth2.NewClient(ctx, patSource(token))
 }
