@@ -93,6 +93,11 @@ func TestItemAfterQuoteAndEmptyItem(t *testing.T) {
 		"- a\n  2.\n\n  c":           "<body><ul><li>a\n2.\nc</li></ul></body>",
 		"1. a\n   1.\n\n   c":        "<body><ol><li>a\n1.\nc</li></ol></body>",
 		"- a\n  - b\n    -\n\n    c": "<body><ul><li>a<ul><li>b\n-\nc</li></ul></li></ul></body>",
+		// further out: the next item of a list (an empty one: the lists end after it)
+		"- a\n-\n\n  c":          "<body><ul><li>a</li><li></li></ul>  c</body>",
+		"1. a\n2.\n\n   c":       "<body><ol><li>a</li><li></li></ol>   c</body>",
+		"- a\n- \n\n  c":         "<body><ul><li>a</li><li></li></ul>  c</body>",
+		"- a\n  - b\n  -\n\n  c": "<body><ul><li>a<ul><li>b</li><li></li></ul></li></ul>  c</body>",
 	} {
 		h1 := FromMarkdown(md)
 		md2 := ToEditableMarkdown(h1)
