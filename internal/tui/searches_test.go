@@ -90,6 +90,18 @@ func TestSavedSearchPicker(t *testing.T) {
 	if h.m.saved != nil {
 		t.Fatal("moving in the sidebar should leave the saved search")
 	}
+
+	// A project made or archived moves the sidebar too.
+	for _, msg := range []projectDoneMsg{{selectProject: "p1"}, {toMyTasks: true}} {
+		h.key("space", "/", "enter")
+		if h.m.saved == nil {
+			t.Fatal("not shown")
+		}
+		h.send(msg)
+		if h.m.saved != nil || strings.Contains(h.screen(), "保存:") {
+			t.Fatalf("%+v should leave the saved search:\n%s", msg, h.screen())
+		}
+	}
 }
 
 // No file: a note instead of an empty picker. A broken file (control characters in a name):
