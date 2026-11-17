@@ -1,10 +1,15 @@
 name: Release
 
-# A v* tag (v0.1.0 and so on) builds the binaries with goreleaser (.goreleaser.yaml), makes
+# A v* tag (v0.2.0 and so on) builds the binaries with goreleaser (.goreleaser.yaml), makes
 # the GitHub release, and writes the cask to amasok/homebrew-tap.
 #
-# Secrets: HOMEBREW_TAP_GITHUB_TOKEN, a token that may write to amasok/homebrew-tap only
-# (GITHUB_TOKEN reaches this repository only).
+# Needed before the first tag: the repository amasok/homebrew-tap, and the secret
+# HOMEBREW_TAP_GITHUB_TOKEN, a fine-grained token with Contents: write on that repository
+# only (GITHUB_TOKEN reaches this repository only). Without them the GitHub release is
+# made, and writing the cask fails.
+#
+# The actions are pinned by commit, not by tag as in ci.yml: this job holds a token that
+# writes the cask people install, so a moved tag must not run here.
 on:
   push:
     tags:
@@ -13,18 +18,24 @@ on:
 permissions:
   contents: write
 
+# Two tags pushed one after the other must not write the tap at the same time.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # the changelog is the commits since the previous tag
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          cache: false # build the release from nothing restored from other runs
       - run: go test ./...
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           # The same version as in .goreleaser.yaml's comment; change both together.
