@@ -63,12 +63,7 @@ func (m *Model) pruneMarks() {
 	if len(m.marked) == 0 && m.bulkAsk == nil && m.bulkDueTasks == nil && (m.picker == nil || m.picker.bulk == nil) {
 		return
 	}
-	shown := map[string]readmodel.TaskSummary{}
-	for _, r := range m.rows {
-		if markable(r) {
-			shown[r.task.GID] = *r.task
-		}
-	}
+	shown := m.shownTasks()
 	for gid := range m.marked {
 		if _, ok := shown[gid]; !ok {
 			delete(m.marked, gid)
@@ -97,6 +92,17 @@ func (m *Model) pruneMarks() {
 			}
 		}
 	}
+}
+
+// shownTasks are the markable tasks in the list, by gid.
+func (m *Model) shownTasks() map[string]readmodel.TaskSummary {
+	shown := map[string]readmodel.TaskSummary{}
+	for _, r := range m.rows {
+		if markable(r) {
+			shown[r.task.GID] = *r.task
+		}
+	}
+	return shown
 }
 
 // stillShown keeps the tasks that are shown, as they are shown now; never nil.
@@ -326,14 +332,19 @@ func (m *Model) bulkMove(tasks []readmodel.TaskSummary) tea.Cmd {
 
 // bulkAssignee loads the members to choose the assignee of the marked tasks.
 func (m *Model) bulkAssignee(tasks []readmodel.TaskSummary) tea.Cmd {
-	st := m.deps.Store
+	st, ctx := m.deps.Store, m.ctx
 	return func() tea.Msg {
-		users, err := queryOf(st).ListUsers(m.ctx)
+		users, err := queryOf(st).ListUsers(ctx)
 		return bulkUsersMsg{tasks: tasks, users: users, err: err}
 	}
 }
 
 func (m *Model) showBulkAssignee(msg bulkUsersMsg) {
+	// the list may have been reloaded while the members were read
+	if msg.tasks = stillShown(msg.tasks, m.shownTasks()); len(msg.tasks) == 0 {
+		m.status = "対象のタスクが一覧から見えなくなったので取り消しました"
+		return
+	}
 	me, _ := queryOf(m.deps.Store).MeGID(m.ctx)
 	p := &picker{kind: pickAssignee, title: fmt.Sprintf("%d 件の担当者", len(msg.tasks)), bulk: msg.tasks}
 	for _, u := range msg.users {
@@ -428,7 +439,7 @@ func sectionIn(t readmodel.TaskSummary, project string) string {
 func (m *Model) updateBulk(msg tea.Msg) (tea.Cmd, bool) {
 	if msg, ok := msg.(bulkUsersMsg); ok {
 		if msg.err != nil {
-			m.status = "メンバーを読み込めませんでした: " + msg.err.Error()
+			m.status = "メンバーを読み込めませんでした: " + termsafe.String(msg.err.Error())
 		} else {
 			m.showBulkAssignee(msg)
 		}

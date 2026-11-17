@@ -323,6 +323,7 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.promptMode = promptNone
 		m.prompt.Blur()
+		m.bulkDueTasks = nil // a bulk date prompt is cancelled too
 		return m, nil
 	case "enter":
 		value := strings.TrimSpace(m.prompt.Value())
