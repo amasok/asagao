@@ -14,6 +14,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
@@ -43,31 +44,12 @@ const (
 // editableCFTypes are the types whose values asagao can set.
 var editableCFTypes = []string{CFText, CFNumber, CFEnum, CFMultiEnum, CFDate, CFPeople}
 
-// EnumOptionView is a choice of an enum / multi_enum field.
-type EnumOptionView struct {
-	GID     string `json:"gid"`
-	Name    string `json:"name"`
-	Color   string `json:"color,omitempty"`
-	Enabled bool   `json:"enabled"`
-}
-
-// CustomFieldView is a custom field of a task with its value.
-type CustomFieldView struct {
-	GID  string `json:"gid"`
-	Name string `json:"name"`
-	Type string `json:"type"`
-	// Value is in the form described above (nil when empty); Display is it as text.
-	Value   any    `json:"value"`
-	Display string `json:"display"`
-	// Color is the color of the chosen enum option.
-	Color string `json:"color,omitempty"`
-	// Important: a project shows this field prominently (Asana's is_important).
-	Important bool `json:"important,omitempty"`
-	// Editable: asagao can change the value (not a formula, read-only or unknown type).
-	Editable bool `json:"editable"`
-	// Options are the enabled choices of an enum / multi_enum field (task detail only).
-	Options []EnumOptionView `json:"options,omitempty"`
-}
+// EnumOptionView and CustomFieldView are readmodel's (aliases, so that internal/app can
+// use them without importing the store). A CustomFieldView's Value is in the form above.
+type (
+	EnumOptionView  = readmodel.EnumOptionView
+	CustomFieldView = readmodel.CustomFieldView
+)
 
 // fieldDef is a custom field definition from the store.
 type fieldDef struct {

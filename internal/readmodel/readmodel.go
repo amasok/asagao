@@ -13,3 +13,31 @@ type UserRef struct {
 	GID  string `json:"gid"`
 	Name string `json:"name"`
 }
+
+// EnumOptionView is a choice of an enum / multi_enum field.
+type EnumOptionView struct {
+	GID     string `json:"gid"`
+	Name    string `json:"name"`
+	Color   string `json:"color,omitempty"`
+	Enabled bool   `json:"enabled"`
+}
+
+// CustomFieldView is a custom field of a task with its value.
+type CustomFieldView struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	// Value is in the form Asana accepts when setting it (nil when empty): text: string,
+	// number: float64, enum: option gid, multi_enum / people: sorted []string of gids,
+	// date: "YYYY-MM-DD". Display is it as text.
+	Value   any    `json:"value"`
+	Display string `json:"display"`
+	// Color is the color of the chosen enum option.
+	Color string `json:"color,omitempty"`
+	// Important: a project shows this field prominently (Asana's is_important).
+	Important bool `json:"important,omitempty"`
+	// Editable: asagao can change the value (not a formula, read-only or unknown type).
+	Editable bool `json:"editable"`
+	// Options are the enabled choices of an enum / multi_enum field (task detail only).
+	Options []EnumOptionView `json:"options,omitempty"`
+}

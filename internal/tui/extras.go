@@ -83,9 +83,9 @@ type relationToggledMsg struct {
 }
 
 func (m *Model) toggleFollower(t store.TaskSummary, item pickerItem) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.SetFollowerLocal(m.ctx, t.GID, item.value, !item.checked, now); err != nil {
+		if err := relations.SetFollower(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return relationToggledMsg{task: t, kind: pickFollowers}
@@ -135,9 +135,9 @@ func (m *Model) showProjects(task store.TaskSummary) {
 }
 
 func (m *Model) toggleProject(t store.TaskSummary, item pickerItem) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	st, relations := m.deps.Store, m.relations(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.SetProjectLocal(m.ctx, t.GID, item.value, "", !item.checked, now); err != nil {
+		if err := relations.SetProject(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		d, err := st.GetTask(m.ctx, t.GID)

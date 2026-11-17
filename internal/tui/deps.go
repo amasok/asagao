@@ -85,13 +85,13 @@ func (m *Model) runDependencyAction(p *picker, value string) tea.Cmd {
 // setDependency links (or unlinks) task t and other: t waits for other, or with
 // dependents other waits for t.
 func (m *Model) setDependency(t store.TaskSummary, other string, dependents, add bool) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
 		waiting, blocker := t.GID, other
 		if dependents {
 			waiting, blocker = other, t.GID
 		}
-		if err := st.SetDependencyLocal(m.ctx, waiting, blocker, add, now); err != nil {
+		if err := relations.SetDependency(m.ctx, waiting, blocker, add); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		if add {

@@ -30,10 +30,35 @@ var entryForbiddenCalls = map[string][]string{
 	},
 }
 
-// allowedCalls are the uses that exist today, as "internal/tui/edit.go: richtext.TaskNotes.FromMarkdown".
-// Stage a5 removed the last of them; a stage that adds a rule (a6: the store's *Local
-// writes) lists its uses here and removes them as it goes.
-var allowedCalls = []string{}
+// storeWrites says whether a method name is one of the store's local writes, which an
+// entry point leaves to the use cases: the names that end in "Local" (CreateTaskLocal, …;
+// only the store has them) and ApplyTagEdit. Only method calls are checked (x.Name where x
+// is not an imported package), so a package's constant such as sync.KeepLocal is not one.
+func storeWrites(name string) bool {
+	return name == "ApplyTagEdit" || (strings.HasSuffix(name, "Local") && name != "Local" && ast.IsExported(name))
+}
+
+// allowedCalls are the uses that exist today, as "internal/tui/edit.go: richtext.TaskNotes.FromMarkdown"
+// or "internal/tui/board.go: .MoveTaskLocal" (a store write). Stage a5 removed the last
+// conversion; stage a6 removes the store writes as it moves them to internal/app.
+var allowedCalls = []string{
+	"internal/cli/inbox.go: .MarkNotificationsLocal",
+	"internal/cli/write.go: .DuplicateTaskLocal",
+	"internal/cli/write.go: .MoveTaskLocal",
+	"internal/cli/write.go: .RenameSectionLocal",
+	"internal/cli/write.go: .UploadAttachmentLocal",
+	"internal/mcpserver/inbox.go: .MarkNotificationsLocal",
+	"internal/mcpserver/server.go: .DuplicateTaskLocal",
+	"internal/mcpserver/server.go: .MoveTaskLocal",
+	"internal/mcpserver/server.go: .RenameSectionLocal",
+	"internal/mcpserver/server.go: .UploadAttachmentLocal",
+	"internal/tui/board.go: .MoveTaskLocal",
+	"internal/tui/collapse.go: .RenameSectionLocal",
+	"internal/tui/edit.go: .MoveTaskLocal",
+	"internal/tui/extras.go: .DuplicateTaskLocal",
+	"internal/tui/extras.go: .UploadAttachmentLocal",
+	"internal/tui/inbox.go: .MarkNotificationsLocal",
+}
 
 func TestEntryPointsLeaveConversionsToApp(t *testing.T) {
 	g := loadModule(t)
@@ -50,7 +75,7 @@ func TestEntryPointsLeaveConversionsToApp(t *testing.T) {
 		}
 	}
 	t.Run("calls", func(t *testing.T) {
-		report(t, news, "entry points that convert Markdown or read a due date themselves (dependency-rules.md, 関数の決まり: call the use case in internal/app):")
+		report(t, news, "entry points that convert Markdown, read a due date or call a store write themselves (dependency-rules.md, 関数の決まり: call the use case in internal/app):")
 	})
 	t.Run("stale", func(t *testing.T) {
 		report(t, stale, "allowedCalls that no longer happen (delete them from allowedCalls in calls_test.go):")
@@ -85,13 +110,20 @@ func entryCalls(t *testing.T, g *graph) []string {
 }
 
 // forbiddenCalls returns "file:line: dates.Parse" for each use of an entryForbiddenCalls
-// selector in f, whatever name f gives the package. A dot import of one of the packages is
-// reported too, since its uses cannot be told apart by name.
+// selector in f, whatever name f gives the package, and "file:line: .MoveTaskLocal" for
+// each use of a store write (storeWrites) as a method. A dot import of one of the packages
+// is reported too, since its uses cannot be told apart by name.
 func forbiddenCalls(fset *token.FileSet, f *ast.File) []string {
 	var out []string
-	pkgOf := map[string]string{} // the name in f → "internal/dates"
+	pkgOf := map[string]string{}  // the name in f → "internal/dates"
+	imported := map[string]bool{} // every package name in f
 	for _, imp := range f.Imports {
 		path, _ := strconv.Unquote(imp.Path.Value)
+		if imp.Name != nil {
+			imported[imp.Name.Name] = true
+		} else {
+			imported[filepath.Base(path)] = true
+		}
 		rel, ok := strings.CutPrefix(path, modulePath)
 		if _, banned := entryForbiddenCalls[rel]; !ok || !banned {
 			continue
@@ -110,6 +142,13 @@ func forbiddenCalls(fset *token.FileSet, f *ast.File) []string {
 		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
+		}
+		if storeWrites(sel.Sel.Name) {
+			if id, ok := sel.X.(*ast.Ident); !ok || !imported[id.Name] {
+				pos := fset.Position(sel.Sel.Pos())
+				out = append(out, fmt.Sprintf("%s:%d: .%s", filepath.Base(pos.Filename), pos.Line, sel.Sel.Name))
+				return true
+			}
 		}
 		// sel is pkg.Name or pkg.Target.Name
 		name, x := sel.Sel.Name, sel.X
@@ -138,6 +177,7 @@ import (
 	d "github.com/amasok/asagao/internal/dates"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 func f(now time.Time) {
@@ -150,6 +190,12 @@ func f(now time.Time) {
 	_, _ = time.Parse(time.DateOnly, "x") // another package's Parse
 	_, _ = app.ParseDue("today", now)
 	_ = richtext.TaskNotes // the target alone
+	_ = st.MoveTaskLocal(ctx)
+	_ = s.Store.ApplyTagEdit(ctx)
+	w := m.deps.Store.SetProjectLocal
+	_ = sync.KeepLocal       // a package's name: not a store write
+	_ = st.isLocal()         // unexported: not the store's
+	_ = st.ReplaceLocalGID() // does not end in Local
 }
 `
 	fset := token.NewFileSet()
@@ -158,7 +204,8 @@ func f(now time.Time) {
 		t.Fatal(err)
 	}
 	got := forbiddenCalls(fset, f)
-	want := []string{"x.go:12: dates.Parse", "x.go:13: richtext.TaskNotes.FromMarkdown", "x.go:14: richtext.Comment.PlainFromMarkdown", "x.go:15: richtext.StatusUpdate.FromMarkdown"}
+	want := []string{"x.go:13: dates.Parse", "x.go:14: richtext.TaskNotes.FromMarkdown", "x.go:15: richtext.Comment.PlainFromMarkdown", "x.go:16: richtext.StatusUpdate.FromMarkdown",
+		"x.go:22: .MoveTaskLocal", "x.go:23: .ApplyTagEdit", "x.go:24: .SetProjectLocal"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}

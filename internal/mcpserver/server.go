@@ -9,11 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -503,108 +501,34 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	tags, err := s.Store.ResolveTagEdit(ctx, in.AddTags, in.RemoveTags)
+	relations := app.Relations{Store: s.Store, Clock: func() time.Time { return now }}
+	edit, err := relations.Resolve(ctx, in.GID, app.RelationsInput{
+		AddTags: in.AddTags, RemoveTags: in.RemoveTags,
+		AddFollowers: in.AddFollowers, RemoveFollowers: in.RemoveFollowers,
+		AddProjects: in.AddProjects, RemoveProjects: in.RemoveProjects,
+		AddDependencies: in.AddDependencies, RemoveDependencies: in.RemoveDependencies,
+		AddDependents: in.AddDependents, RemoveDependents: in.RemoveDependents,
+	})
 	if err != nil {
-		return nil, WriteOutput{}, err
+		return nil, WriteOutput{}, err // a *app.FieldError reads "add_followers: …", the argument's name
 	}
-	addFollowers, err := s.Store.ResolveUsers(ctx, in.AddFollowers)
-	if err != nil {
-		return nil, WriteOutput{}, fmt.Errorf("add_followers: %w", err)
-	}
-	removeFollowers, err := s.Store.ResolveUsers(ctx, in.RemoveFollowers)
-	if err != nil {
-		return nil, WriteOutput{}, fmt.Errorf("remove_followers: %w", err)
-	}
-	addProjects, err := s.Store.ResolveProjects(ctx, in.AddProjects)
-	if err != nil {
-		return nil, WriteOutput{}, fmt.Errorf("add_projects: %w", err)
-	}
-	removeProjects, err := s.Store.ResolveProjects(ctx, in.RemoveProjects)
-	if err != nil {
-		return nil, WriteOutput{}, fmt.Errorf("remove_projects: %w", err)
-	}
-	type depChange struct {
-		task, dep string
-		add       bool
-	}
-	var deps []depChange
-	for _, d := range []struct {
-		name    string
-		gids    []string
-		add, of bool // of: the given tasks wait for this one
-	}{{"add_dependencies", in.AddDependencies, true, false}, {"remove_dependencies", in.RemoveDependencies, false, false},
-		{"add_dependents", in.AddDependents, true, true}, {"remove_dependents", in.RemoveDependents, false, true}} {
-		for _, g := range d.gids {
-			other, err := s.Store.ResolveTaskGID(ctx, g)
-			if err != nil {
-				return nil, WriteOutput{}, fmt.Errorf("%s: %w", d.name, err)
-			}
-			c := depChange{in.GID, other, d.add}
-			if d.of {
-				c.task, c.dep = other, in.GID
-			}
-			deps = append(deps, c)
-		}
-	}
-	if changes.Count() == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields)+len(deps) == 0 {
+	if changes.Count() == 0 && edit.Empty() && len(in.CustomFields) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
 	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	// Resolve every custom field value before changing anything.
-	type fieldValue struct {
-		gid   string
-		value any
-	}
-	var fields []fieldValue
-	for _, name := range slices.Sorted(maps.Keys(in.CustomFields)) {
-		f, err := s.Store.ResolveCustomField(ctx, in.GID, name)
-		if err != nil {
-			return nil, WriteOutput{}, fmt.Errorf("custom_fields: %w", err)
-		}
-		v, err := s.Store.ParseCustomFieldValue(ctx, f.GID, in.CustomFields[name], now)
-		if err != nil {
-			return nil, WriteOutput{}, fmt.Errorf("custom_fields: %w", err)
-		}
-		fields = append(fields, fieldValue{f.GID, v})
+	fields, err := relations.ResolveFields(ctx, in.GID, in.CustomFields)
+	if err != nil {
+		return nil, WriteOutput{}, err // "custom_fields: …"
 	}
 
 	if err := tasks.UpdateHere(ctx, in.GID, changes); err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if err := s.Store.ApplyTagEdit(ctx, in.GID, tags, now); err != nil {
+	if err := relations.Apply(ctx, in.GID, edit, fields); err != nil {
 		return nil, WriteOutput{}, err
-	}
-	for _, f := range fields {
-		if _, err := s.Store.SetCustomFieldLocal(ctx, in.GID, f.gid, f.value, now); err != nil {
-			return nil, WriteOutput{}, err
-		}
-	}
-	for _, d := range deps {
-		if err := s.Store.SetDependencyLocal(ctx, d.task, d.dep, d.add, now); err != nil {
-			return nil, WriteOutput{}, err
-		}
-	}
-	for _, f := range []struct {
-		users  []string
-		follow bool
-	}{{addFollowers, true}, {removeFollowers, false}} {
-		for _, u := range f.users {
-			if err := s.Store.SetFollowerLocal(ctx, in.GID, u, f.follow, now); err != nil {
-				return nil, WriteOutput{}, err
-			}
-		}
-	}
-	for _, p := range []struct {
-		projects []string
-		add      bool
-	}{{addProjects, true}, {removeProjects, false}} {
-		for _, gid := range p.projects {
-			if err := s.Store.SetProjectLocal(ctx, in.GID, gid, "", p.add, now); err != nil {
-				return nil, WriteOutput{}, err
-			}
-		}
 	}
 	return nil, s.push(ctx, in.GID), nil
 }

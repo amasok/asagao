@@ -193,6 +193,24 @@ func fieldErr(err error) error {
 	return err
 }
 
+// relationUseCases is the use cases on a task's relations on st, reading the clock at
+// each write.
+func relationUseCases(st *store.Store) *usecase.Relations {
+	return &usecase.Relations{Store: st, Clock: time.Now}
+}
+
+// flagErr puts the command's flag before the error inside a *usecase.FieldError, as
+// "--add: …"; flags maps the use case's field names to the flags.
+func flagErr(err error, flags map[string]string) error {
+	var fe *usecase.FieldError
+	if errors.As(err, &fe) {
+		if f, ok := flags[fe.Field]; ok {
+			return fmt.Errorf("--%s: %w", f, fe.Err)
+		}
+	}
+	return err
+}
+
 func (a *app) taskCreateCmd() *cobra.Command {
 	var o createOpts
 	cmd := &cobra.Command{
@@ -239,11 +257,12 @@ func (a *app) taskTagCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			edit, err := st.ResolveTagEdit(ctx, add, remove)
+			relations := relationUseCases(st)
+			edit, err := relations.Resolve(ctx, args[0], usecase.RelationsInput{AddTags: add, RemoveTags: remove})
 			if err != nil {
 				return err
 			}
-			if err := st.ApplyTagEdit(ctx, args[0], edit, time.Now()); err != nil {
+			if err := relations.Apply(ctx, args[0], edit, nil); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "タグを変更しました")
@@ -288,25 +307,12 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			// resolve every name before changing anything
 			addNames, _ := cmd.Flags().GetStringSlice("add")
 			removeNames, _ := cmd.Flags().GetStringSlice("remove")
-			add, err := st.ResolveUsers(cmd.Context(), addNames)
+			relations := relationUseCases(st)
+			edit, err := relations.Resolve(cmd.Context(), args[0], usecase.RelationsInput{AddFollowers: addNames, RemoveFollowers: removeNames})
 			if err != nil {
-				return "", "", fmt.Errorf("--add: %w", err)
+				return "", "", flagErr(err, map[string]string{"add_followers": "add", "remove_followers": "remove"})
 			}
-			remove, err := st.ResolveUsers(cmd.Context(), removeNames)
-			if err != nil {
-				return "", "", fmt.Errorf("--remove: %w", err)
-			}
-			for _, f := range []struct {
-				users  []string
-				follow bool
-			}{{add, true}, {remove, false}} {
-				for _, gid := range f.users {
-					if err := st.SetFollowerLocal(cmd.Context(), args[0], gid, f.follow, time.Now()); err != nil {
-						return "", "", err
-					}
-				}
-			}
-			return args[0], "フォロワーを変更しました", nil
+			return args[0], "フォロワーを変更しました", relations.Apply(cmd.Context(), args[0], edit, nil)
 		})
 	follow.Flags().StringSlice("add", nil, "追加するユーザー")
 	follow.Flags().StringSlice("remove", nil, "外すユーザー")
@@ -315,25 +321,12 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
 			addNames, _ := cmd.Flags().GetStringSlice("add")
 			removeNames, _ := cmd.Flags().GetStringSlice("remove")
-			add, err := st.ResolveProjects(cmd.Context(), addNames)
+			relations := relationUseCases(st)
+			edit, err := relations.Resolve(cmd.Context(), args[0], usecase.RelationsInput{AddProjects: addNames, RemoveProjects: removeNames})
 			if err != nil {
-				return "", "", fmt.Errorf("--add: %w", err)
+				return "", "", flagErr(err, map[string]string{"add_projects": "add", "remove_projects": "remove"})
 			}
-			remove, err := st.ResolveProjects(cmd.Context(), removeNames)
-			if err != nil {
-				return "", "", fmt.Errorf("--remove: %w", err)
-			}
-			for _, p := range []struct {
-				projects []string
-				add      bool
-			}{{add, true}, {remove, false}} {
-				for _, gid := range p.projects {
-					if err := st.SetProjectLocal(cmd.Context(), args[0], gid, "", p.add, time.Now()); err != nil {
-						return "", "", err
-					}
-				}
-			}
-			return args[0], "プロジェクトを変更しました", nil
+			return args[0], "プロジェクトを変更しました", relations.Apply(cmd.Context(), args[0], edit, nil)
 		})
 	project.Flags().StringSlice("add", nil, "追加するプロジェクト（名前または gid）")
 	project.Flags().StringSlice("remove", nil, "外すプロジェクト")
@@ -367,11 +360,12 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			} else if input == nil {
 				return "", "", fmt.Errorf("値を指定してください（空にするなら --clear）")
 			}
-			value, err := st.ParseCustomFieldValue(ctx, f.GID, input, time.Now())
+			relations := relationUseCases(st)
+			value, err := relations.ParseFieldValue(ctx, f.GID, input)
 			if err != nil {
 				return "", "", err
 			}
-			display, err := st.SetCustomFieldLocal(ctx, args[0], f.GID, value, time.Now())
+			display, err := relations.SetFieldHere(ctx, args[0], f.GID, value)
 			if err != nil {
 				return "", "", err
 			}
@@ -390,37 +384,22 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 		"依存関係を追加 / 解除する（待つタスク・待たれるタスクを gid で）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
 			ctx := cmd.Context()
-			type change struct {
-				task, dep string
-				add       bool
+			gids := func(flag string) []string { v, _ := cmd.Flags().GetStringSlice(flag); return v }
+			relations := relationUseCases(st)
+			edit, err := relations.Resolve(ctx, args[0], usecase.RelationsInput{
+				AddDependencies: gids("add"), RemoveDependencies: gids("remove"),
+				AddDependents: gids("add-dependent"), RemoveDependents: gids("remove-dependent"),
+			})
+			if err != nil {
+				return "", "", flagErr(err, map[string]string{
+					"add_dependencies": "add", "remove_dependencies": "remove",
+					"add_dependents": "add-dependent", "remove_dependents": "remove-dependent",
+				})
 			}
-			var changes []change
-			for _, f := range []struct {
-				flag       string
-				add, swapd bool
-			}{{"add", true, false}, {"remove", false, false}, {"add-dependent", true, true}, {"remove-dependent", false, true}} {
-				gids, _ := cmd.Flags().GetStringSlice(f.flag)
-				for _, g := range gids {
-					other, err := st.ResolveTaskGID(ctx, g)
-					if err != nil {
-						return "", "", fmt.Errorf("--%s: %w", f.flag, err)
-					}
-					c := change{args[0], other, f.add}
-					if f.swapd {
-						c.task, c.dep = other, args[0]
-					}
-					changes = append(changes, c)
-				}
-			}
-			if len(changes) == 0 {
+			if len(edit.Dependencies) == 0 {
 				return "", "", errors.New("--add / --remove / --add-dependent / --remove-dependent のどれかを指定してください")
 			}
-			for _, c := range changes {
-				if err := st.SetDependencyLocal(ctx, c.task, c.dep, c.add, time.Now()); err != nil {
-					return "", "", err
-				}
-			}
-			return args[0], "依存関係を変更しました", nil
+			return args[0], "依存関係を変更しました", relations.Apply(ctx, args[0], edit, nil)
 		})
 	depend.Flags().StringSlice("add", nil, "このタスクが待つタスク（gid）を追加")
 	depend.Flags().StringSlice("remove", nil, "このタスクが待つタスク（gid）を外す")
