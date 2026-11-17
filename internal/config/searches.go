@@ -67,14 +67,63 @@ func (f SearchFile) LoadSearches() ([]readmodel.SavedSearch, error) {
 	return doc.Search, nil
 }
 
+// UpdateSearches changes the saved searches: change gets them as LoadSearches reads them
+// and returns what to save (an error saves nothing). Changes run one at a time, also
+// across processes (a lock file next to searches.toml), so two saves at once keep both.
+func (f SearchFile) UpdateSearches(change func([]readmodel.SavedSearch) ([]readmodel.SavedSearch, error)) error {
+	path := f.path()
+	unlock, err := lockSearches(filepath.Join(filepath.Dir(path), ".searches.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	ss, err := f.LoadSearches()
+	if err != nil {
+		return err
+	}
+	ss, err = change(ss)
+	if err != nil {
+		return err
+	}
+	return f.SaveSearches(ss)
+}
+
+// maxLinkHops is how many symbolic links SaveSearches follows to the file.
+const maxLinkHops = 40
+
+// linkTarget is the file path names, following symbolic links (also one that points to a
+// file not made yet).
+func linkTarget(path string) (string, error) {
+	for range maxLinkHops {
+		fi, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return path, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&fs.ModeSymlink == 0 {
+			return path, nil
+		}
+		to, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(filepath.Dir(path), to)
+		}
+		path = to
+	}
+	return "", fmt.Errorf("%s: too many symbolic links", path)
+}
+
 // SaveSearches replaces the file with ss: it writes a temporary file (0600) in the same
 // folder, syncs it, and renames it over the file, so a crash leaves the old file or the
-// new one. A symbolic link is followed: the file it points to is replaced.
+// new one. A symbolic link is followed: the file it points to is replaced (or made). It
+// does not take the lock: changes go through UpdateSearches.
 func (f SearchFile) SaveSearches(ss []readmodel.SavedSearch) error {
-	path := f.path()
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		path = target
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	path, err := linkTarget(f.path())
+	if err != nil {
 		return err
 	}
 	body, err := toml.Marshal(searchesDoc{Search: ss})
