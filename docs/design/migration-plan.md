@@ -94,6 +94,12 @@
 
 - 移した関数には、表の形の単体テストを足す。今の store と sync のテストは変えない。
 
+### b5 の中身
+
+- `internal/domain/rich` に、送り先 (`Target`: `TaskNotes`・`Comment`・`StatusUpdate`) と、置き場所が決まっている要素 (`Element`: 見出し・区切り線・画像・表・リスト・引用・コード) を置いた。決まりは 3 つ: 送り先ごとに受け付けるか (`Target.Accepts`、`Target.Layout`、`Element.Layout`)、html のタグがどの要素か (`TagElement`)、入れ子にしてよいか (`Nests`: 引用の中のリスト、リストの項目の中の引用・見出し・コード・区切り線は書かない。#60・#80)。
+- `richtext.Target` は `rich.Target` を元にした型にして (`type Target rich.Target`)、`FromMarkdown`・`PlainFromMarkdown`・`Fit` はそのまま。呼び出し元は変わらない。`layout()` はなくなり、Markdown から書くとき (見出し・区切り線・画像を要素にするか、文字にするか) と `Fit` の判定 (`hasLayoutTag`) は domain/rich を読む。
+- a1 にある `Convert(md, rich.Target)` へのまとめは、しなかった。`app.RichText` の形を変えると、既存のテストにある偽の変換を書き直すことになるため。要るときに別の PR で行う。
+
 ## 段階 c: リポジトリ (store を SQL だけに)
 
 | PR | 範囲 |
