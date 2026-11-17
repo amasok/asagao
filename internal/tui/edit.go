@@ -9,10 +9,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Editing in $EDITOR: e writes the task as a Markdown file with front matter, opens the
@@ -31,7 +31,7 @@ type taskDoc struct {
 	Body       string // editable Markdown
 }
 
-const editHelp = `# asana-tui: 保存してエディタを閉じると Asana に反映します（変えた項目だけ）。
+const editHelp = `# asagao: 保存してエディタを閉じると Asana に反映します（変えた項目だけ）。
 # due: YYYY-MM-DD / today / tomorrow / +3d、空欄で期日なし
 # assignee: me / メンバーの名前、空欄で未割り当て
 # completed: true / false
@@ -186,7 +186,7 @@ func (m *Model) editTask(gid string) tea.Cmd {
 			}
 		}
 		doc := docFor(m.ctx, st, d, func(img string) string { return paths[img] })
-		path, err := writeTemp("asana-tui-task-*.md", doc.String())
+		path, err := writeTemp("asagao-task-*.md", doc.String())
 		return editReadyMsg{gid: gid, path: path, original: doc, err: err}
 	}
 }
@@ -197,12 +197,12 @@ func (m *Model) editComment(gid string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		path, err := writeTemp("asana-tui-comment-*.md", commentTemplate)
+		path, err := writeTemp("asagao-comment-*.md", commentTemplate)
 		return commentReadyMsg{gid: gid, path: path, err: err}
 	}
 }
 
-const commentTemplate = "<!-- asana-tui: コメントをマークダウンで書いて保存してください。空のまま閉じると取り消します。 -->\n\n"
+const commentTemplate = "<!-- asagao: コメントをマークダウンで書いて保存してください。空のまま閉じると取り消します。 -->\n\n"
 
 func writeTemp(pattern, content string) (string, error) {
 	f, err := os.CreateTemp("", pattern)

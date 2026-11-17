@@ -8,15 +8,15 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Verifying entries whose result is unknown (see store/outbox_send.go).
 //
 // Asana has no idempotency keys (and a task's external.gid can only be set by OAuth apps,
-// while asana-tui also supports personal access tokens), so reconcile looks for what the
+// while asagao also supports personal access tokens), so reconcile looks for what the
 // entry would have created: same name/text (and, for tasks, the same due date, assignee
 // and notes), created at or after the entry was first sent (minus clockSkew), by us where Asana says who created it, and not already
 // recorded as the result of another entry. One candidate is taken as the entry's result;

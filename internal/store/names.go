@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 // Name resolution shared by the CLI and the MCP server. Resolving is separate from

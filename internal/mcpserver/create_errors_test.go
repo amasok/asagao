@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asagao/internal/dates"
 )
 
 // create_task reports a bad input in the words it always has: a due date as "due_on: …",

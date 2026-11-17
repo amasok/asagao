@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Awkward spellings of headings, rules and images are all accepted by a fake Asana that
@@ -22,7 +22,7 @@ import (
 func TestPushNastyLayoutInputsNeverRejected(t *testing.T) {
 	inputs := []string{
 		"# 見出し", "#", "# ", "見出し\n===", "見出し\n---", "   ## 字下げ", "# **太** [l](https://x.jp) [@u](asana:user:9)",
-		"# ![a](asana:1)", "![a\\]b [c]](asana:2)", "![](asana:3)", "![x](/home/u/.cache/asana-tui/attachments/55-a.png)",
+		"# ![a](asana:1)", "![a\\]b [c]](asana:2)", "![](asana:3)", "![x](/home/u/.cache/asagao/attachments/55-a.png)",
 		"---", "***", "___", "- - -", "* * *", "> # 引用の見出し\n> ---\n> ![i](asana:4)",
 		"- # 項目\n- ---\n- ![i](asana:5)", "1. ## 番号\n   ***", "```\n# コード\n---\n```", "<h1>生の</h1><hr/><img src=x>",
 		"# a & b < c > d", "\\# 文字", "# 長い " + string(make([]byte, 0)) + "見出し見出し見出し見出し見出し見出し",

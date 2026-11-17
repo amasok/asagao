@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	usecase "github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	usecase "github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // legacyCreateTask is the CLI's createTask as it was on main before a1 (copied verbatim),

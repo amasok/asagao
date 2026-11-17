@@ -19,7 +19,7 @@ func TestMarkQuarantine(t *testing.T) {
 	}
 	buf := make([]byte, 256)
 	n, err := unix.Getxattr(p, quarantineAttr, buf)
-	if err != nil || !strings.HasPrefix(string(buf[:n]), "0081;") || !strings.Contains(string(buf[:n]), ";asana-tui;") {
+	if err != nil || !strings.HasPrefix(string(buf[:n]), "0081;") || !strings.Contains(string(buf[:n]), ";asagao;") {
 		t.Fatalf("quarantine attribute = %q, %v", buf[:n], err)
 	}
 	// An existing attribute (e.g. approved by the user) is kept.

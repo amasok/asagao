@@ -84,7 +84,7 @@ func TestFileSaveFailureCleansUp(t *testing.T) {
 // An existing config folder that others can read (0755) is made 0700 when the token is
 // saved. (#38)
 func TestFileSaveMakesExistingFolderPrivate(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "asana-tui")
+	dir := filepath.Join(t.TempDir(), "asagao")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

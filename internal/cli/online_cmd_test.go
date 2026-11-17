@@ -12,8 +12,8 @@ import (
 	gosync "sync"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // fakePushAsana is a fake Asana for the write commands of writeCLIEnv: it accepts their

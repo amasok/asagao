@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Dependencies, task types and approvals in the detail view: the tasks a task waits for

@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // A task name, notes or comment with escape sequences in it must not reach the terminal as

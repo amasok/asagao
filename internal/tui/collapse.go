@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Collapsible groups in the list view. The collapsed groups of each scope (project or

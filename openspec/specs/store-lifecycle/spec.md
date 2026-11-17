@@ -14,6 +14,26 @@
 - **WHEN** 2 つの Store が同じファイルで同時に書き込みのトランザクションを始める
 - **THEN** 片方は待ち、どちらも busy で失敗しない
 
+### Requirement: 旧名 asana-tui のフォルダを移す
+コマンドは最初に、設定・データ・キャッシュのそれぞれについて、旧名のフォルダ (`$XDG_*_HOME/asana-tui`) を新しいフォルダ (`asagao`) に移す (MUST)。新しいフォルダがなく、旧名が本当のフォルダなら `os.Rename` で移し、元の場所に新しいフォルダへの (相対の) リンクを残す。古いバイナリが動いても同じストアと outbox を使い、outbox が 2 つに分かれない。新しいフォルダがあれば、それを使い、旧名のフォルダはそのままにする。
+根拠: internal/config/migrate.go; internal/cli/root.go; TestMigrateLegacyDirsMovesAndLeavesLink, TestMigrateLegacyDirsBothExist, TestCommandsMigrateLegacyDirs, TestFileStoreAfterLegacyDirMigration
+
+#### Scenario: 旧名のフォルダだけがある
+- **WHEN** `~/.local/share/asana-tui` があり、`~/.local/share/asagao` がない
+- **THEN** フォルダを移し、`asana-tui` は `asagao` へのリンクになる。古いバイナリがそこに書いたものは新しいフォルダに入る
+
+### Requirement: 旧名のフォルダを移せなくても起動する
+同時に起動して移すのに負けたら (新しいフォルダができていたら)、それを使う (MUST)。旧名がファイルのときや、権限がなくて移せないときは何も消さず、注意を出して起動を続ける。旧名がほかの場所のフォルダへのリンクなら、新しい名前も同じ場所へのリンクにする。MCP サーバーは旧名のフォルダのファイルも送らない。
+根拠: internal/config/migrate.go; internal/cli/mcp.go (config.OwnDirs); TestMigrateLegacyDirsConcurrent, TestMigrateLegacyDirsOldIsFile, TestMigrateLegacyDirsPermissionDenied, TestMigrateLegacyDirsOldIsLink, TestCommandsWarnWhenLegacyDirCannotMove, TestOwnDirsIncludesLegacy
+
+#### Scenario: 2 つのプロセスが同時に起動する
+- **WHEN** TUI と MCP サーバーが同時に移そうとする
+- **THEN** 片方が移し、もう片方は新しいフォルダを使う。どちらも失敗しない
+
+#### Scenario: 旧名の場所がファイル
+- **WHEN** `~/.local/share/asana-tui` がファイル
+- **THEN** ファイルはそのままで、注意を出してコマンドを続ける
+
 ### Requirement: 移行は末尾に足し、1 回だけ当てる
 スキーマの移行は `migrations` の順に、1 つずつ別のトランザクションで当て、`PRAGMA user_version` に当てた数を記録する (MUST)。版は書き込みのロックを取ってから読み直すので、同時に開いても 1 回だけ当たる。busy のときは 5 秒の中で 20ms ごとに試し直す。今の移行は 15 個。
 根拠: internal/store/schema.go; store.go:67-161; TestConcurrentOpenMigratesOnce, TestBusyAttackProcessesOpenFreshAndWrite, TestRetryBusyStaysWithinBudget, TestMigrateStoreFromBeforeInboxAndFields

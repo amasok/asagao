@@ -16,7 +16,7 @@ func TestPATRoundTripAndSwitch(t *testing.T) {
 	ctx := context.Background()
 	for _, s := range []Store{
 		&File{Path: filepath.Join(t.TempDir(), "token.json")},
-		&Keychain{Service: "asana-tui-test", User: "pat"},
+		&Keychain{Service: "asagao-test", User: "pat"},
 	} {
 		t.Run(s.Name(), func(t *testing.T) {
 			oauth := &Credentials{ClientSecret: "cs", RefreshToken: "rt", AccessToken: "at", UserGID: "1"}

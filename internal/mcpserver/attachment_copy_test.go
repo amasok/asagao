@@ -11,7 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/config"
 )
 
 // get_attachment shows an image that is not recorded under any task (copied from a task

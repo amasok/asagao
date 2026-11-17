@@ -1,14 +1,22 @@
-# asana-tui
+# asagao
 
 ターミナルで Asana のタスクを確認・操作するための TUI / CLI / MCP サーバー。
 
 - 要件定義: [docs/requirements.md](docs/requirements.md)
 - 現在の状態: v0.2 開発中（ボード表示・セクション移動/名前変更/折りたたみ・タグ絞り込み・詳細の全画面表示・画像表示）
 
+## 旧名 asana-tui から
+
+asana-tui から asagao に名前を変えました。手で移すものはありません。
+
+- 起動すると、設定・データ・キャッシュのフォルダ（`~/.config/asana-tui` など）を `asagao` に移し、元の場所には新しいフォルダへのリンクを残します。古い `asana-tui` が MCP サーバーとして登録されたままでも、同じローカルストアと未送信の変更を使います。`asagao` のフォルダがすでにあれば、そちらを使い、古いフォルダはそのまま残します。
+- キーチェーン（サービス `asana-tui`）と 1Password（設定で項目名を変えていなければ項目 `asana-tui`）に保存したログインは、`asagao` の名前で保存し直して使います。古い方は残します（`auth logout` では両方を消します）。
+- MCP サーバーは、都合のよいときに `claude mcp add asana -- asagao mcp` で登録し直してください。
+
 ## インストール（開発版）
 
 ```sh
-go install github.com/amasok/asana-tui/cmd/asana-tui@latest
+go install github.com/amasok/asagao/cmd/asagao@latest
 ```
 
 ## セットアップ
@@ -26,14 +34,14 @@ go install github.com/amasok/asana-tui/cmd/asana-tui@latest
 2. ログインして同期する
 
 ```sh
-asana-tui auth login --pat   # トークンを貼り付ける（入力は表示されません）
-asana-tui sync
+asagao auth login --pat   # トークンを貼り付ける（入力は表示されません）
+asagao sync
 ```
 
-- 標準入力からも渡せます: `pbpaste | asana-tui auth login --pat`、`op read "op://Private/Asana/token" | asana-tui auth login --pat`。トークンはシェルの履歴に残らないよう、コマンドの引数では受け付けません。
+- 標準入力からも渡せます: `pbpaste | asagao auth login --pat`、`op read "op://Private/Asana/token" | asagao auth login --pat`。トークンはシェルの履歴に残らないよう、コマンドの引数では受け付けません。
 - `auth.client_id` が設定されていなければ、`--pat` を付けなくても PAT でのログインになります。
 - ログイン時に `/users/me` で確かめてから、OAuth と同じ保存先（`auth.token_store`。既定はキーチェーン）に保存します。保存先を変えるときだけ下の設定ファイルを作ってください。
-- トークンを取り消した・失効した場合は、TUI / CLI / MCP にその旨と `asana-tui auth login --pat` が表示されます。新しいトークンでログインし直せば、未送信の変更はそのまま送られます（TUI と MCP サーバーは再起動不要）。
+- トークンを取り消した・失効した場合は、TUI / CLI / MCP にその旨と `asagao auth login --pat` が表示されます。新しいトークンでログインし直せば、未送信の変更はそのまま送られます（TUI と MCP サーバーは再起動不要）。
 - OAuth と PAT はいつでも乗り換えられます（あとからログインした方に置き換わります）。前と違うアカウントでログインすると、ローカルのデータを守るため同期を止めて案内を出します。
 
 ### OAuth でログインする
@@ -49,7 +57,7 @@ asana-tui sync
 
 #### 2. 設定ファイルを作る
 
-`~/.config/asana-tui/config.toml`:
+`~/.config/asagao/config.toml`:
 
 ```toml
 [auth]
@@ -60,7 +68,7 @@ token_store = "keychain"   # keychain / 1password / file
 # token_store = "1password" のとき
 [auth.onepassword]
 vault = "Private"
-item = "asana-tui"
+item = "asagao"
 # account = "my.1password.com"   # 複数アカウントがある場合
 
 [sync]
@@ -75,16 +83,16 @@ PAT だけで使う場合は `[auth]` の `client_id` は不要です（保存�
 #### 3. ログインして同期する
 
 ```sh
-asana-tui auth login     # ブラウザが開く。Client secret を聞かれたら入力
-asana-tui sync           # ローカルストアに同期
-asana-tui sync status
+asagao auth login     # ブラウザが開く。Client secret を聞かれたら入力
+asagao sync           # ローカルストアに同期
+asagao sync status
 ```
 
 ## TUI
 
 ```sh
-asana-tui            # TUI を起動（バックグラウンドで同期。5 分ごとに自動同期）
-asana-tui --offline  # 同期せず、ローカルストアだけで起動
+asagao            # TUI を起動（バックグラウンドで同期。5 分ごとに自動同期）
+asagao --offline  # 同期せず、ローカルストアだけで起動
 ```
 
 左から「プロジェクト / タスク一覧 / 詳細」の 3 ペイン。幅が 100 桁未満の端末では 1 ペインずつ表示します。
@@ -132,7 +140,7 @@ asana-tui --offline  # 同期せず、ローカルストアだけで起動
 - **ボード**（`v`）: `h/l` で列、`j/k` でカード、`H/L` でカードを左右の列へ移します。
 - **カレンダー**（`v` をもう一度。My Tasks では 1 回）: 期日のあるタスクを月表示します。`h/l` で日、`j/k` で週、`n/p` で月、`.` で今日、`enter` でその日のタスク一覧（選ぶと詳細）、`a` でその日が期日のタスクを追加します。
 - **受信トレイ**（プロジェクト一覧の 2 番目）: Asana の通知（コメント・担当・メンションなど）を新しい順・日付ごとに表示します。`●` が未読、`↑` は既読・未読の変更がまだ送られていない印です。カーソルを合わせると詳細ペインに対象のタスクが出ます。`enter` でそのタスクを開き、通知を既読にします（プロジェクトの通知はそのプロジェクトへ移ります）。`R` で既読 / 未読を切り替え、`space Y` ですべて既読にします。通知は同期のたびに最新 100 件（ワークスペースごと）を保存するので、オフラインでも見られます。既読・未読の変更はほかの変更と同じく未送信の変更として送ります（同じ向きの変更は 50 件ずつまとめて送ります）。Asana が既読の変更を受け付けないとき（ログインに `notifications:write` がない）は、変更を元に戻して案内を一覧の先頭に出し、開いただけでは既読にしなくなります（`R` などで自分で既読にすると、もう一度送ってみます）。ログインし直すか、送った変更が受け付けられれば元に戻ります。
-- **最近の更新**: 通知を取得できないとき（ログインに通知の権限 `notifications:read` がない、プランで使えないなど）は、受信トレイの代わりに直近 7 日に変更されたタスクを表示し、理由と対処を一覧の先頭に出します。`config.toml` で `auth.scopes` を指定していない（Full permissions の）場合は、`asana-tui auth login` でログインし直せば次の同期から受信トレイになります。
+- **最近の更新**: 通知を取得できないとき（ログインに通知の権限 `notifications:read` がない、プランで使えないなど）は、受信トレイの代わりに直近 7 日に変更されたタスクを表示し、理由と対処を一覧の先頭に出します。`config.toml` で `auth.scopes` を指定していない（Full permissions の）場合は、`asagao auth login` でログインし直せば次の同期から受信トレイになります。
 - **詳細**: `j/k` で項目（担当・期日・プロジェクト/セクション・タグ・フォロワー・いいね・状態・親タスク・説明・添付ファイル・サブタスク・「＋追加」）を選び、`enter` で変更します。添付ファイルは `enter` で開きます（画像はビューア、それ以外は OS のアプリ）。macOS ではダウンロードしたファイルとして印（quarantine）を付けてから開くので、Gatekeeper が確認します。アプリ・スクリプト・`.terminal`・`.webloc`・`.jar` など開くとプログラムが動く種類のファイルは、開かずに Finder（Linux ではファイルマネージャー）で場所を表示します。担当・期日・セクション・タグは一覧から選びます（期日は「日付を入力…」で自由入力も可）。名前と説明はエディタで編集します。サブタスクは `enter` で開き、`backspace` で戻ります。
 - 折りたたんだセクション、詳細ペインの幅、プロジェクト一覧の表示状態は記憶します。
 
@@ -143,7 +151,7 @@ asana-tui --offline  # 同期せず、ローカルストアだけで起動
 theme = "auto"       # auto（端末の背景に合わせる）/ dark / light
 accent = "#7aa2f7"   # 強調色（省略で既定のピンク）
 
-[keys]               # 直接押すキーを変える（操作名は `asana-tui keys` で確認）
+[keys]               # 直接押すキーを変える（操作名は `asagao keys` で確認）
 complete = "d"
 due = ["D", "ctrl+t"]
 ```
@@ -191,11 +199,11 @@ due = ["D", "ctrl+t"]
 `task list` と `search` の絞り込み:
 
 ```sh
-asana-tui task list --due-before +7d          # 7 日以内に期限
-asana-tui task list --overdue                 # 期限切れ
-asana-tui task list --project 新居 --section 家具 --assignee any
-asana-tui task list --tag 日用品 --all        # 完了済みも含む
-asana-tui search 転居 届 --json               # 複数語は AND
+asagao task list --due-before +7d          # 7 日以内に期限
+asagao task list --overdue                 # 期限切れ
+asagao task list --project 新居 --section 家具 --assignee any
+asagao task list --tag 日用品 --all        # 完了済みも含む
+asagao search 転居 届 --json               # 複数語は AND
 ```
 
 日付は `YYYY-MM-DD` / `today` / `tomorrow` / `yesterday` / `+Nd` / `-Nd` で指定できます。
@@ -207,8 +215,8 @@ asana-tui search 転居 届 --json               # 複数語は AND
 Claude Code などの MCP クライアントから、ローカルストアの検索や、タスクの作成・完了・コメントができます。
 
 ```sh
-claude mcp add asana -- asana-tui mcp               # 読み書き
-claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
+claude mcp add asana -- asagao mcp               # 読み書き
+claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 ```
 
 | ツール | 内容 |
@@ -244,7 +252,7 @@ claude mcp add asana -- asana-tui mcp --read-only   # 読み取りだけ
   - MCP サーバーを起動したフォルダ（`/`、ホームフォルダ、ホームの隠しフォルダの中のときは除く）
   - `~/Downloads`、`~/Desktop`
   - `config.toml` の `[mcp] upload_dirs` に書いたフォルダ
-  - ただし、隠しファイル・隠しフォルダ（名前が `.` で始まる）の中、asana-tui 自身の設定・データ・キャッシュのフォルダ、ハードリンクが複数あるファイルは送れません。
+  - ただし、隠しファイル・隠しフォルダ（名前が `.` で始まる）の中、asagao 自身の設定・データ・キャッシュのフォルダ、ハードリンクが複数あるファイルは送れません。
 
 ```toml
 [mcp]
@@ -288,7 +296,7 @@ section: 家具
 
 - 対応している端末では、ターミナルの中に表示します: iTerm2・WezTerm（iTerm2 方式）、kitty・Ghostty（kitty 方式）
 - それ以外の端末や、tmux・zellij などのマルチプレクサの中では、OS の画像ビューア（macOS ならプレビュー）で開きます（マルチプレクサは画像データを通さないことが多いため。herdr は kitty 方式を通すので端末内に表示します）
-- 一度表示した画像は `~/.cache/asana-tui/attachments/` に保存し、オフラインでも表示できます
+- 一度表示した画像は `~/.cache/asagao/attachments/` に保存し、オフラインでも表示できます
 - 自動判定がうまくいかない場合は `config.toml` で指定できます:
 
 ```toml
@@ -320,12 +328,12 @@ inline_images = "auto"     # 本文中に画像を表示するか: auto / on / o
 
 ## データの置き場所
 
-- 設定: `~/.config/asana-tui/config.toml`
-- ローカルストア: `~/.local/share/asana-tui/store.db`（SQLite、権限 600）
+- 設定: `~/.config/asagao/config.toml`
+- ローカルストア: `~/.local/share/asagao/store.db`（SQLite、権限 600）
 
 ## 開発
 
 ```sh
 go test ./...
-go run ./cmd/asana-tui --help
+go run ./cmd/asagao --help
 ```

@@ -80,7 +80,7 @@ func (spaceRefParser) Parse(_ gast.Node, block text.Reader, _ parser.Context) ga
 var spaceRefs = []struct{ ref, text []byte }{{[]byte("&#32;"), []byte(" ")}, {[]byte("&#9;"), []byte("\t")}}
 
 // ruleAttr is the attribute a rule (thematic break) keeps its line in, as written ("***").
-var ruleAttr = []byte("asana-tui-rule")
+var ruleAttr = []byte("asagao-rule")
 
 // ruleSource is a thematic break parser that keeps the line of the rule (see ruleText).
 type ruleSource struct{ parser.BlockParser }
@@ -798,7 +798,7 @@ func decodeText(src []byte) string {
 	})
 }
 
-// cachedAttachment matches files downloaded by asana-tui (".../attachments/<gid>-name").
+// cachedAttachment matches files downloaded by asagao (".../attachments/<gid>-name").
 var cachedAttachment = regexp.MustCompile(`(?:^|/)attachments/(\d+)-[^/]*$`)
 
 // ImageGID returns the attachment gid an editable image link refers to.

@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // A write to a task deleted in Asana is dropped, and the tool says so.

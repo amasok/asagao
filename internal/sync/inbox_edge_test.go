@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // edgeInbox is a stateful fake of the notification endpoints: it pages like Asana (limit /

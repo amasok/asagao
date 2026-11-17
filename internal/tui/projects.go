@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Project-level actions: status updates (view / write in the editor, offline too),
@@ -116,7 +116,7 @@ func (m *Model) statusBadge(t string) string {
 	return label
 }
 
-const statusHelp = `# asana-tui: プロジェクトのステータス更新です。保存してエディタを閉じると投稿します（空のまま閉じると取り消し）。
+const statusHelp = `# asagao: プロジェクトのステータス更新です。保存してエディタを閉じると投稿します（空のまま閉じると取り消し）。
 # status: on_track（順調）/ at_risk（要注意）/ off_track（遅れ）/ on_hold（保留）/ complete（完了）
 # 本文はマークダウンで書けます。`
 
@@ -142,7 +142,7 @@ func (m *Model) writeStatus() tea.Cmd {
 	}
 	title := m.deps.Now().Format("1/2") + " の状況"
 	return func() tea.Msg {
-		path, err := writeTemp("asana-tui-status-*.md", "---\n"+statusHelp+"\nstatus: "+last+"\ntitle: "+title+"\n---\n\n")
+		path, err := writeTemp("asagao-status-*.md", "---\n"+statusHelp+"\nstatus: "+last+"\ntitle: "+title+"\n---\n\n")
 		return statusEditReadyMsg{project: project, path: path, err: err}
 	}
 }

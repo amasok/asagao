@@ -11,9 +11,9 @@ import (
 	stdsync "sync"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // depServer is a fake Asana with tasks t1 and t2; gone lists tasks deleted in Asana.

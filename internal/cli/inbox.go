@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // inboxOutput is the JSON output of `inbox`.
@@ -36,10 +36,10 @@ func (a *app) inboxCmd() *cobra.Command {
 		Short: "受信トレイ（Asana の通知）を新しい順に表示する（ローカルストアから）",
 		Long: "同期で取得した Asana の通知を、新しい順に表示します。● が未読です。\n" +
 			"通知を取得できないとき（ログインに通知の権限がないなど）は、理由と、直近 7 日に更新されたタスクを表示します。",
-		Example: `  asana-tui inbox
-  asana-tui inbox --unread --json
-  asana-tui inbox read 1234          # ID（末尾の数桁でも可）の通知を既読に
-  asana-tui inbox read --all`,
+		Example: `  asagao inbox
+  asagao inbox --unread --json
+  asagao inbox read 1234          # ID（末尾の数桁でも可）の通知を既読に
+  asagao inbox read --all`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -102,7 +102,7 @@ func loadInbox(ctx context.Context, st *store.Store, unread bool, limit int, sco
 
 func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 	var all bool
-	short := "通知を既読にする（ID は `asana-tui inbox` の右端。末尾の数桁でも可）"
+	short := "通知を既読にする（ID は `asagao inbox` の右端。末尾の数桁でも可）"
 	if !read {
 		short = "通知を未読に戻す"
 	}

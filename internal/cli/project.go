@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	usecase "github.com/amasok/asana-tui/internal/app" // the cli package has its own type app
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 func (a *app) projectCmd() *cobra.Command {

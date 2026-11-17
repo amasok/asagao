@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Subtasks in the list view: l / → expands a task's subtasks under it (as a tree),

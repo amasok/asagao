@@ -8,8 +8,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 func seedInbox(t *testing.T, state store.InboxState) *store.Store {

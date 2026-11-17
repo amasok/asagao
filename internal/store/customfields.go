@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/dates"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Custom fields. Values are kept in the form Asana accepts when setting them (PUT
@@ -40,7 +40,7 @@ const (
 	OpSetCustomField = "set_custom_field"
 )
 
-// editableCFTypes are the types whose values asana-tui can set.
+// editableCFTypes are the types whose values asagao can set.
 var editableCFTypes = []string{CFText, CFNumber, CFEnum, CFMultiEnum, CFDate, CFPeople}
 
 // EnumOptionView is a choice of an enum / multi_enum field.
@@ -63,7 +63,7 @@ type CustomFieldView struct {
 	Color string `json:"color,omitempty"`
 	// Important: a project shows this field prominently (Asana's is_important).
 	Important bool `json:"important,omitempty"`
-	// Editable: asana-tui can change the value (not a formula, read-only or unknown type).
+	// Editable: asagao can change the value (not a formula, read-only or unknown type).
 	Editable bool `json:"editable"`
 	// Options are the enabled choices of an enum / multi_enum field (task detail only).
 	Options []EnumOptionView `json:"options,omitempty"`

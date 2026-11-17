@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // run executes the CLI with a private data and config directory.
@@ -104,7 +104,7 @@ func TestAccountChangedMessage(t *testing.T) {
 	_, _ = createTask(ctx, st, createOpts{name: "a"}, time.Now())
 	_, _ = createTask(ctx, st, createOpts{name: "b"}, time.Now())
 	err := accountChanged(ctx, st)
-	if !errors.Is(err, sync.ErrAccountChanged) || !strings.Contains(err.Error(), "2 件") || !strings.Contains(err.Error(), "asana-tui reset") {
+	if !errors.Is(err, sync.ErrAccountChanged) || !strings.Contains(err.Error(), "2 件") || !strings.Contains(err.Error(), "asagao reset") {
 		t.Fatalf("err = %v", err)
 	}
 }

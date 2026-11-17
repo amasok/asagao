@@ -210,3 +210,35 @@ func TestMCPUploadDirs(t *testing.T) {
 		t.Fatalf("a relative folder should be refused: %v", err)
 	}
 }
+
+// The default 1Password item falls back to the one of the former name; an item set in
+// config.toml (whatever its name) does not.
+func TestOnePasswordLegacyItem(t *testing.T) {
+	for _, tc := range []struct{ name, body, wantItem, wantLegacy string }{
+		{"no config", "", "asagao", LegacyAppName},
+		{"other settings", "[auth.onepassword]\nvault = \"Work\"\n", "asagao", LegacyAppName},
+		{"item set", "[auth.onepassword]\nitem = \"my-asana\"\n", "my-asana", ""},
+		{"item set to the new name", "[auth.onepassword]\nitem = \"asagao\"\n", "asagao", ""},
+		{"item set to the old name", "[auth.onepassword]\nitem = \"asana-tui\"\n", "asana-tui", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", dir)
+			if tc.body != "" {
+				if err := os.MkdirAll(filepath.Join(dir, appName), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(FilePath(), []byte(tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if op := cfg.Auth.OnePassword; op.Item != tc.wantItem || op.LegacyItem != tc.wantLegacy {
+				t.Errorf("item %q legacy %q, want %q %q", op.Item, op.LegacyItem, tc.wantItem, tc.wantLegacy)
+			}
+		})
+	}
+}

@@ -3,7 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // The detail view is a list of items: the task's fields, its subtasks and "add" rows.

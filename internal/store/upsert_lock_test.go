@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // bulkTasks builds n tasks of one project, each with a section, a tag and an assignee, as a

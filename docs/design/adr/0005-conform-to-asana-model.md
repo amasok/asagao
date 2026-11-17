@@ -12,11 +12,11 @@
 ## 決めたこと
 
 1. **キャッシュと同期が扱う型は、Asana の型に順応 (Conformist) する。** 自前の `Task` 型は作らない。
-   - asana-tui は Asana のクライアントで、持ち主は Asana。表示する欄は Asana の欄そのもので、写し替えても情報は増えない。
+   - asagao は Asana のクライアントで、持ち主は Asana。表示する欄は Asana の欄そのもので、写し替えても情報は増えない。
    - 写し替えると、欄を足すたびに 3 か所 (Asana の型、自前の型、写し替え) を直すことになる。#28〜#36 の機能は欄を足すものが多い。
 2. **型だけを `internal/asana/model` に分ける (段階 d1)。** 標準ライブラリだけを使う、JSON のタグ付きの型のパッケージにする。HTTP のクライアント (`asana.Client`) は `internal/asana` に残す。store・sync・auth は `asana/model` を import し、`internal/asana` は import しない (組み立てを除く)。入り口は今も `internal/asana` を import していない (cli の `asana.NewClient` を除く。これは段階 d4 で組み立てへ移す)。
    - 401 などの判定に使う `asana.Error` も、Asana の応答の型として `asana/model` に入れる。
-3. **書き込みの側 (outbox の操作、畳み込み、再送してよいか) は、自前の型と関数にする (段階 b)。** ここが asana-tui の決まりで、Asana の型には現れないため。
+3. **書き込みの側 (outbox の操作、畳み込み、再送してよいか) は、自前の型と関数にする (段階 b)。** ここが asagao の決まりで、Asana の型には現れないため。
 4. **入り口が読む表示用の型は、Asana の型ではなく、今も store が定義している型** (`store.TaskSummary`・`store.TaskDetail` など、tui だけで約 50 種類) である。これは順応ではなく、store が作る読み取りのモデル。段階 c2 で、標準ライブラリだけの `internal/readmodel` に移す (architecture.md の「読み取りの扱い」)。
 5. 移すときは、`internal/asana` に型の別名 (`type Task = model.Task`) をしばらく残し、使う側を何回かの PR で移す。最後の PR で別名を消す。
 

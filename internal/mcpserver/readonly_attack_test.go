@@ -10,10 +10,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // With every kind of change queued, no tool of a read-only server (called with any

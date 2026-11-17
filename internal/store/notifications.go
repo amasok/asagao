@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // The inbox: the user's Asana notifications, cached by sync (see sync.Run) so they can be

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // Tag operations. payload: tag (gid, "local:..." for a tag created offline), tag_name, workspace.

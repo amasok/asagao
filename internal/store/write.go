@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 func (s *Store) UpsertUser(ctx context.Context, u asana.User) error {

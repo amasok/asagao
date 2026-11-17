@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // This file holds the v0.2 views: the board (sections as columns), the zoomed detail view,

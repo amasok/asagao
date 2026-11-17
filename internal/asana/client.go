@@ -1,4 +1,4 @@
-// Package asana is a thin client for the Asana REST API (only the endpoints asana-tui uses).
+// Package asana is a thin client for the Asana REST API (only the endpoints asagao uses).
 package asana
 
 import (
@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
@@ -49,7 +49,7 @@ const minClockOffset = 5 * time.Second
 // ClockOffset returns how far Asana's clock is ahead of this machine's (negative when it
 // is behind), measured from the Date header of the latest response. Times compared with
 // Asana's timestamps (created_at, modified_since) are corrected by it, so a wrong PC clock
-// does not make asana-tui miss what it created or changed. It is 0 before any response.
+// does not make asagao miss what it created or changed. It is 0 before any response.
 func (c *Client) ClockOffset() time.Duration {
 	return time.Duration(c.clockOffset.Load())
 }

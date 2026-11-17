@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 func inboxHarness(t *testing.T, state store.InboxState) (*harness, *store.Store) {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Resolving outbox entries (changes that could not be sent) is shared by the TUI, the CLI

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // The comment and status update use cases write what the entry points wrote before them
@@ -173,7 +173,7 @@ func TestStatusCreateWritesWhatMainWrote(t *testing.T) {
 	type input struct{ project, status, title string }
 	inputs := []input{
 		{"新居プロジェクト", "on_track", "週報"},
-		{"新居", "at_risk", ""}, // part of the name
+		{"新居", "at_risk", ""},    // part of the name
 		{"p1", "complete", "完了"}, // the gid of p1 and the name of p2
 		{"p2", "on_hold", ""},
 		{"旧居", "on_track", ""}, // no such project

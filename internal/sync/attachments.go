@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // maxAttachmentSize guards against huge downloads (Asana's free plan limit is 100MB per file).

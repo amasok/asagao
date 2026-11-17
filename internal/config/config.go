@@ -1,4 +1,4 @@
-// Package config loads asana-tui settings from ~/.config/asana-tui/config.toml.
+// Package config loads asagao settings from ~/.config/asagao/config.toml.
 package config
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const appName = "asana-tui"
+const appName = "asagao"
 
 // Token store backends.
 const (
@@ -27,7 +27,7 @@ type Config struct {
 	Sync SyncConfig `toml:"sync"`
 	UI   UIConfig   `toml:"ui"`
 	MCP  MCPConfig  `toml:"mcp"`
-	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asana-tui keys`).
+	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asagao keys`).
 	Keys map[string]any `toml:"keys"`
 }
 
@@ -104,9 +104,12 @@ type AuthConfig struct {
 }
 
 type OnePasswordConfig struct {
-	Vault   string `toml:"vault"`
-	Item    string `toml:"item"`
-	Account string `toml:"account"` // optional, for multiple 1Password accounts
+	Vault string `toml:"vault"`
+	Item  string `toml:"item"`
+	// LegacyItem is the item read when Item has nothing yet: the default item name before
+	// the rename (asana-tui). Empty when config.toml sets item (a name chosen is kept).
+	LegacyItem string `toml:"-"`
+	Account    string `toml:"account"` // optional, for multiple 1Password accounts
 }
 
 type SyncConfig struct {
@@ -121,7 +124,7 @@ func Default() Config {
 		Auth: AuthConfig{
 			RedirectPort: 8976,
 			TokenStore:   TokenStoreKeychain,
-			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName},
+			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName, LegacyItem: LegacyAppName},
 		},
 		Sync: SyncConfig{CompletedDays: 14},
 		UI:   UIConfig{ImageProtocol: "auto", InlineImages: "auto"},
@@ -159,6 +162,11 @@ func parse(b []byte, cfg *Config) error {
 	if a, ok := raw["auth"].(map[string]any); ok {
 		if n, ok := a["client_id"].(int64); ok {
 			a["client_id"] = strconv.FormatInt(n, 10)
+		}
+		if op, ok := a["onepassword"].(map[string]any); ok {
+			if _, ok := op["item"]; ok {
+				cfg.Auth.OnePassword.LegacyItem = ""
+			}
 		}
 	}
 	normalized, err := toml.Marshal(raw)
@@ -203,24 +211,27 @@ func (c Config) validate() error {
 	return nil
 }
 
-// ConfigDir follows XDG: $XDG_CONFIG_HOME/asana-tui or ~/.config/asana-tui (also on macOS).
+// ConfigDir follows XDG: $XDG_CONFIG_HOME/asagao or ~/.config/asagao (also on macOS).
 func ConfigDir() string { return xdgDir("XDG_CONFIG_HOME", ".config") }
 
-// DataDir follows XDG: $XDG_DATA_HOME/asana-tui or ~/.local/share/asana-tui.
+// DataDir follows XDG: $XDG_DATA_HOME/asagao or ~/.local/share/asagao.
 func DataDir() string { return xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share")) }
 
-// CacheDir follows XDG: $XDG_CACHE_HOME/asana-tui or ~/.cache/asana-tui (downloaded attachments).
+// CacheDir follows XDG: $XDG_CACHE_HOME/asagao or ~/.cache/asagao (downloaded attachments).
 func CacheDir() string { return xdgDir("XDG_CACHE_HOME", ".cache") }
 
 func FilePath() string { return filepath.Join(ConfigDir(), "config.toml") }
 
-func xdgDir(env, fallback string) string {
+func xdgDir(env, fallback string) string { return filepath.Join(xdgBase(env, fallback), appName) }
+
+// xdgBase is the folder the tool's own folder is made in: $env, or fallback in the home folder.
+func xdgBase(env, fallback string) string {
 	if v := os.Getenv(env); v != "" {
-		return filepath.Join(v, appName)
+		return v
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, fallback, appName)
+	return filepath.Join(home, fallback)
 }

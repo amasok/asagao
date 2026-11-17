@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	usecase "github.com/amasok/asana-tui/internal/app"
+	usecase "github.com/amasok/asagao/internal/app"
 )
 
 func TestParseDate(t *testing.T) {

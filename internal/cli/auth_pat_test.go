@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
 )
 
 // `auth migrate` moves a PAT login between stores without losing it or turning it into
@@ -26,7 +26,7 @@ func TestAuthMigrateKeepsPAT(t *testing.T) {
 	if out, err := runAuthCLI(t, "", "", "auth", "migrate", "--to", "keychain"); err != nil {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
-	kc := &tokenstore.Keychain{Service: "asana-tui", User: "default"}
+	kc := &tokenstore.Keychain{Service: "asagao", User: "default"}
 	t.Cleanup(func() { _ = kc.Delete(ctx) }) // not left for other tests
 	got, err := kc.Load(ctx)
 	if err != nil || *got != *in || got.Method() != tokenstore.MethodPAT {

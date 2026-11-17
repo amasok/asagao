@@ -10,9 +10,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Not logged in, or a token Asana rejects: the TUI says how to log in, and the next sync

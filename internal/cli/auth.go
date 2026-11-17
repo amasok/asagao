@@ -15,11 +15,11 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/term"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // EnvClientSecret lets the client secret be passed non-interactively (e.g. `op run`).
@@ -40,8 +40,8 @@ func (a *app) authLoginCmd() *cobra.Command {
 
 Personal Access Token (PAT) を使う方法がいちばん手軽です（OAuth アプリの登録は要りません）:
   1. ` + auth.PATConsoleURL + ` の「Personal access tokens」でトークンを作る
-  2. asana-tui auth login --pat を実行し、トークンを貼り付ける（入力は表示されません）
-     標準入力からも渡せます: pbpaste | asana-tui auth login --pat
+  2. asagao auth login --pat を実行し、トークンを貼り付ける（入力は表示されません）
+     標準入力からも渡せます: pbpaste | asagao auth login --pat
      （トークンをコマンドの引数に書くとシェルの履歴に残るので、引数では受け付けません）
 
 auth.client_id が設定されていなければ、--pat を付けなくても PAT でのログインになります。
@@ -55,7 +55,7 @@ OAuth で使うなら、Asana に OAuth アプリを登録して config.toml の
 			}
 			if a.cfg.Auth.ClientID == "" && !pat && (manual || noBrowser) {
 				return fmt.Errorf("auth.client_id が未設定です。OAuth を使うなら %s に設定するか ASANA_CLIENT_ID を指定してください"+
-					"（OAuth アプリを登録しないなら asana-tui auth login --pat）", config.FilePath())
+					"（OAuth アプリを登録しないなら asagao auth login --pat）", config.FilePath())
 			}
 			if pat || a.cfg.Auth.ClientID == "" {
 				return a.loginPAT(cmd, ts)
@@ -130,10 +130,10 @@ func (a *app) loginPAT(cmd *cobra.Command, ts tokenstore.Store) error {
 	}
 	var ae *asana.Error
 	if errors.As(err, &ae) && (ae.Status >= 500 || ae.Status == http.StatusTooManyRequests) {
-		return fmt.Errorf("%s。トークンは保存していません。少し待ってから、もう一度 asana-tui auth login --pat を実行してください", busyMessage(ae.Status))
+		return fmt.Errorf("%s。トークンは保存していません。少し待ってから、もう一度 asagao auth login --pat を実行してください", busyMessage(ae.Status))
 	}
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
-		return fmt.Errorf("Asana から %s 以内に返事がありませんでした。トークンは保存していません。少し待ってから、もう一度 asana-tui auth login --pat を実行してください", loginTimeout)
+		return fmt.Errorf("Asana から %s 以内に返事がありませんでした。トークンは保存していません。少し待ってから、もう一度 asagao auth login --pat を実行してください", loginTimeout)
 	}
 	if err != nil {
 		return fmt.Errorf("トークンの確認 (/users/me): %w", err)
@@ -170,7 +170,7 @@ func readPAT(cmd *cobra.Command) (string, error) {
 	token := strings.TrimSpace(string(b))
 	switch {
 	case token == "":
-		return "", fmt.Errorf("Personal Access Token が空です。%s で作成し、貼り付けるか標準入力から渡してください（例: pbpaste | asana-tui auth login --pat）", auth.PATConsoleURL)
+		return "", fmt.Errorf("Personal Access Token が空です。%s で作成し、貼り付けるか標準入力から渡してください（例: pbpaste | asagao auth login --pat）", auth.PATConsoleURL)
 	case strings.ContainsAny(token, " \t\r\n"):
 		return "", errors.New("Personal Access Token に空白や改行が含まれています。トークンだけを 1 行で渡してください")
 	}
@@ -201,7 +201,7 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 		return
 	}
 	n, _ := st.UnsentCount(ctx)
-	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+store.AccountChangedHelp(n, "asana-tui reset"))
+	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+store.AccountChangedHelp(n, "asagao reset"))
 }
 
 // clientSecret takes the secret from the environment, an existing login, or a hidden prompt.

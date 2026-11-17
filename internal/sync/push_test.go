@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // serverTask is the fake server's state for one task.
@@ -100,7 +100,7 @@ func (w *writeServer) addStoryLocked(task, text string) string {
 // addRichStoryLocked stores a rich-text comment the way Asana does: mentions are filled in
 // with the user's name and profile link, and the plain text is Asana's own rendering
 // (links with their URL, mentions as profile URLs, list bullets), which differs from the
-// text asana-tui derives from Markdown.
+// text asagao derives from Markdown.
 func (w *writeServer) addRichStoryLocked(task, htmlText string) string {
 	mention := regexp.MustCompile(`<a data-asana-gid="([^"]+)"/>`)
 	full := mention.ReplaceAllString(htmlText, `<a href="https://app.asana.com/0/profile/$1" data-asana-gid="$1" data-asana-type="user">@Partner</a>`)

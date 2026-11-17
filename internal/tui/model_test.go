@@ -16,14 +16,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 var testNow = time.Date(2026, 11, 13, 10, 0, 0, 0, time.Local)
 
 // isolateDirs points the XDG cache and data directories at temporary ones, so tests never
-// write downloaded images (or anything else) into the real ~/.cache/asana-tui.
+// write downloaded images (or anything else) into the real ~/.cache/asagao.
 func isolateDirs(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())

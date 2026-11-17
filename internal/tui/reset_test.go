@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	_ "modernc.org/sqlite"
 
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 func resetHarness(t *testing.T) (*harness, string) {
@@ -119,7 +119,7 @@ func TestAccountChangedStatus(t *testing.T) {
 	}
 }
 
-// Another asana-tui syncing is not "offline": the last sync time stays and a retry is
+// Another asagao syncing is not "offline": the last sync time stays and a retry is
 // scheduled quietly.
 func TestSyncBusyIsNotOffline(t *testing.T) {
 	h, _ := resetHarness(t)
@@ -133,12 +133,12 @@ func TestSyncBusyIsNotOffline(t *testing.T) {
 		t.Fatalf("busy must not count as an error or a sync: err=%v last=%v", h.m.syncErr, h.m.lastSync)
 	}
 	s, ok := h.m.syncStatus()
-	if !ok || !strings.Contains(s, "別の asana-tui が同期中") || strings.Contains(s, "オフライン") {
+	if !ok || !strings.Contains(s, "別の asagao が同期中") || strings.Contains(s, "オフライン") {
 		t.Fatalf("header = %q", s)
 	}
 	// the next successful sync clears it
 	h.m.Update(syncDoneMsg{at: testNow.Add(2 * time.Minute)})
-	if s, _ := h.m.syncStatus(); strings.Contains(s, "別の asana-tui") {
+	if s, _ := h.m.syncStatus(); strings.Contains(s, "別の asagao") {
 		t.Fatalf("header after a sync = %q", s)
 	}
 }

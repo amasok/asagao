@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
-	"github.com/amasok/asana-tui/internal/richtext"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/richtext"
 )
 
 // Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
@@ -127,10 +127,10 @@ func DiscardDetails(d Discard) []DiscardDetail {
 // AccountChangedHelp explains a sync stopped because the logged-in Asana account is not
 // the one the local data belongs to (sync.ErrAccountChanged): what happened, how many
 // changes of the previous account are unsent, and the two ways out. resetHow says how to
-// reset in the caller's UI (e.g. "asana-tui reset").
+// reset in the caller's UI (e.g. "asagao reset").
 func AccountChangedHelp(unsent int, resetHow string) string {
 	return fmt.Sprintf("ログイン中の Asana アカウントが、ローカルのデータを同期したアカウントと違うため、同期を止めています"+
-		"（前のアカウントの未送信の変更: %d 件）。前のアカウントでログインし直せば、そのまま送られます（asana-tui auth login）。"+
+		"（前のアカウントの未送信の変更: %d 件）。前のアカウントでログインし直せば、そのまま送られます（asagao auth login）。"+
 		"新しいアカウントで使うなら、ローカルのデータを初期化してください（%s。未送信の変更は消す前に自動でバックアップします）", unsent, resetHow)
 }
 

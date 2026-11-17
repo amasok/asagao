@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asagao/internal/dates"
 )
 
 // FilterSpec is a task list query as the CLI flags and the MCP tool arguments give it.

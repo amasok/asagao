@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Keys are organised in three layers:

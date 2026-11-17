@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // #41 (tester): around the batch boundary every task gets its own tags and projects, not

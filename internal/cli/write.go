@@ -13,11 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	usecase "github.com/amasok/asana-tui/internal/app" // the cli package has its own type app
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // writeResult is the JSON output of write commands.
@@ -66,7 +66,7 @@ func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool)
 		for _, d := range announce {
 			printDiscard(w, d)
 		}
-		fmt.Fprintln(w, "  （あとで見るには `asana-tui outbox discarded`）")
+		fmt.Fprintln(w, "  （あとで見るには `asagao outbox discarded`）")
 	}
 	ids := make([]int64, len(ds))
 	for i, d := range ds {
@@ -120,11 +120,11 @@ func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, do
 	case dropped:
 		fmt.Fprintf(out, "%s。ただし対象のタスクが Asana で削除されていたため、変更は破棄されました\n", done)
 	case errors.Is(err, sync.ErrPushBusy):
-		fmt.Fprintf(out, "%s（別の asana-tui が送信中です。この変更もそちらで送られます）\n", done)
+		fmt.Fprintf(out, "%s（別の asagao が送信中です。この変更もそちらで送られます）\n", done)
 	case err != nil:
 		fmt.Fprintf(out, "%s（オフラインのため未送信。次の sync で送ります: %v）\n", done, err)
 	case !r.Sent:
-		fmt.Fprintf(out, "%s（送信できなかった変更があります。`asana-tui outbox list` で確認してください）\n", done)
+		fmt.Fprintf(out, "%s（送信できなかった変更があります。`asagao outbox list` で確認してください）\n", done)
 	default:
 		fmt.Fprintf(out, "%s（Asana に送信しました）\n", done)
 	}
@@ -198,8 +198,8 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <タスク名>",
 		Short: "タスクを作成する（プロジェクト未指定なら自分に割り当て）",
-		Example: `  asana-tui task create "牛乳を買う" --due tomorrow
-  asana-tui task create "ソファを買う" --project 新居 --section 家具`,
+		Example: `  asagao task create "牛乳を買う" --due tomorrow
+  asagao task create "ソファを買う" --project 新居 --section 家具`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -230,7 +230,7 @@ func (a *app) taskTagCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "tag <gid> [--add タグ]... [--remove タグ]...",
 		Short:   "タグを付ける / 外す（ないタグは作る）",
-		Example: `  asana-tui task tag 1203455468597469 --add 急ぎ --remove 買い物`,
+		Example: `  asagao task tag 1203455468597469 --add 急ぎ --remove 買い物`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -381,11 +381,11 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			return args[0], fmt.Sprintf("「%s」を「%s」にしました", f.Name, display), nil
 		})
 	field.Flags().Bool("clear", false, "値を空にする")
-	field.Example = `  asana-tui task field 1203455468597469 優先度 高
-  asana-tui task field 1203455468597469 見積もり 3.5
-  asana-tui task field 1203455468597469 ラベル "バグ,UI"     # 複数選択はカンマ区切り
-  asana-tui task field 1203455468597469 締切 +7d
-  asana-tui task field 1203455468597469 優先度 --clear`
+	field.Example = `  asagao task field 1203455468597469 優先度 高
+  asagao task field 1203455468597469 見積もり 3.5
+  asagao task field 1203455468597469 ラベル "バグ,UI"     # 複数選択はカンマ区切り
+  asagao task field 1203455468597469 締切 +7d
+  asagao task field 1203455468597469 優先度 --clear`
 	depend := a.writeCommand("depend <gid> [--add 待つタスク]... [--remove 待つタスク]... [--add-dependent タスク]... [--remove-dependent タスク]...",
 		"依存関係を追加 / 解除する（待つタスク・待たれるタスクを gid で）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
@@ -486,7 +486,7 @@ func (a *app) taskMoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "move <gid> --section <セクション>",
 		Short:   "タスクを別のセクションに移動する",
-		Example: `  asana-tui task move 1203455468597469 --section Done`,
+		Example: `  asagao task move 1203455468597469 --section Done`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -517,7 +517,7 @@ func (a *app) sectionCmd() *cobra.Command {
 	rename := &cobra.Command{
 		Use:     "rename <セクション> <新しい名前> --project <プロジェクト>",
 		Short:   "セクションの名前を変更する",
-		Example: `  asana-tui section rename "In Pregoress" "In Progress" --project 新居`,
+		Example: `  asagao section rename "In Pregoress" "In Progress" --project 新居`,
 		Args:    cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -742,11 +742,11 @@ func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id in
 		case errors.Is(err, sync.ErrAccountChanged):
 			return fmt.Sprintf("#%d: まだ送っていません。%v", id, accountChanged(ctx, st)), nil
 		case errors.Is(err, sync.ErrPushBusy):
-			return fmt.Sprintf("#%d: 別の asana-tui が送信中です。そちらで送られます", id), nil
+			return fmt.Sprintf("#%d: 別の asagao が送信中です。そちらで送られます", id), nil
 		case err != nil:
 			return fmt.Sprintf("#%d: 次の sync で送ります（オフライン: %v）", id, err), nil
 		case push.Remaining > 0 || push.Failed > 0 || push.Conflicts > 0:
-			return fmt.Sprintf("#%d: 送信できなかった変更があります。`asana-tui outbox list` で確認してください", id), nil
+			return fmt.Sprintf("#%d: 送信できなかった変更があります。`asagao outbox list` で確認してください", id), nil
 		case act == sync.KeepLocal:
 			return fmt.Sprintf("#%d: こちらの値で上書きしました", id), nil
 		}

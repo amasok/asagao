@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 type AttachmentView struct {

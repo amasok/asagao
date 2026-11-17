@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 func resolveStore(t *testing.T) *store.Store {

@@ -11,10 +11,10 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Not logged in, then a token Asana rejects (a revoked PAT), then a new login in a
@@ -24,7 +24,7 @@ func TestLoginProblemsAreExplainedAndNewLoginIsUsed(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
 	var mu stdsync.Mutex
-	valid, stored := "old-pat", "" // the token Asana accepts / the one asana-tui has stored
+	valid, stored := "old-pat", "" // the token Asana accepts / the one asagao has stored
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		ok := r.Header.Get("Authorization") == "Bearer "+valid

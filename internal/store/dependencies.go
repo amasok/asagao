@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // Dependencies: a task waits for its dependencies; its dependents wait for it. Each link is

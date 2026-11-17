@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 var errNotFound = errors.New("not found")

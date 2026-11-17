@@ -10,8 +10,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // --json must be exactly one JSON document on stdout, nothing on stderr from the command's

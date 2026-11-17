@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/dates"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // legacyCreate is the create_task body as it was on main before a1 (copied verbatim,

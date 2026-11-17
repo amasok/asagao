@@ -169,8 +169,8 @@ func TestResetDeletesOnlyConfirmedChanges(t *testing.T) {
 }
 
 func TestAccountChangedHelp(t *testing.T) {
-	got := AccountChangedHelp(3, "asana-tui reset")
-	for _, want := range []string{"アカウント", "3 件", "ログインし直せば", "asana-tui auth login", "初期化", "asana-tui reset", "バックアップ"} {
+	got := AccountChangedHelp(3, "asagao reset")
+	for _, want := range []string{"アカウント", "3 件", "ログインし直せば", "asagao auth login", "初期化", "asagao reset", "バックアップ"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)
 		}

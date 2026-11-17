@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/config"
 )
 
 func TestAuthCodeURLEncodesScopesWithPercent20(t *testing.T) {

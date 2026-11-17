@@ -9,7 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 func (m *Model) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	v.WindowTitle = "asana-tui"
+	v.WindowTitle = "asagao"
 	return v
 }
 
@@ -186,7 +186,7 @@ func (m *Model) renderHeader() string {
 	if sc := m.currentScope(); sc.status != "" {
 		badge = " " + m.statusBadge(sc.status) // latest project status
 	}
-	left := m.st.header.Render(" asana-tui ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
+	left := m.st.header.Render(" asagao ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
 		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
 	if m.tagFilter != "" {
 		left += "  " + m.st.tag.Render("#"+m.tagFilter)

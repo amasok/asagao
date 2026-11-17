@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/richtext"
+	"github.com/amasok/asagao/internal/richtext"
 )
 
 var fitNow = time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)

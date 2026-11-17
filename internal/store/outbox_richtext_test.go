@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/richtext"
+	"github.com/amasok/asagao/internal/richtext"
 )
 
 // A comment or a status update queued before #63 (converted like task notes) is rewritten as

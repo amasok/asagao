@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // openPair opens the same database file twice, as two processes (TUI, MCP server, CLI

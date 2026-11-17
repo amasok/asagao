@@ -11,10 +11,10 @@ import (
 	glamourstyles "charm.land/glamour/v2/styles"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asana-tui/internal/imageview"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/imageview"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Descriptions and comments are rendered as Markdown (converted from Asana's rich text).

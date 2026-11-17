@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Custom fields: shown in the detail view (enter changes one: a chooser for enum fields,

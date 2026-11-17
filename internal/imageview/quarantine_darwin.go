@@ -20,7 +20,7 @@ func markQuarantine(path string) error {
 		return fmt.Errorf("quarantine %s: %w", path, err)
 	}
 	// flags;time;agent;event id — 0081 is what Chrome writes for a download.
-	value := fmt.Sprintf("0081;%08x;asana-tui;", time.Now().Unix())
+	value := fmt.Sprintf("0081;%08x;asagao;", time.Now().Unix())
 	if err := unix.Setxattr(path, quarantineAttr, []byte(value), 0); err != nil {
 		return fmt.Errorf("quarantine %s: %w", path, err)
 	}

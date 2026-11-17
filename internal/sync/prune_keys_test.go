@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // #20: a full sync removes workspaces and projects Asana no longer returns, with their

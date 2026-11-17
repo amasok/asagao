@@ -15,9 +15,9 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // asanaNestingError is what this fake Asana says about rich text it rejects: lists inside

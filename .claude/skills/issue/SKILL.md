@@ -1,6 +1,6 @@
 ---
 name: issue
-description: asana-tui の GitHub Issue を決まった形で作る。作業中に見つけた「今回は扱わない」問題や、ユーザーに頼まれた残タスクを登録するときに使う。重複を確かめてから作る。
+description: asagao の GitHub Issue を決まった形で作る。作業中に見つけた「今回は扱わない」問題や、ユーザーに頼まれた残タスクを登録するときに使う。重複を確かめてから作る。
 ---
 
 # issue

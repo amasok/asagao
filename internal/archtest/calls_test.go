@@ -17,7 +17,7 @@ import (
 // due date are the use cases' (internal/app). The check reads the entry points' files with
 // go/parser and looks for these names; it does not resolve types.
 
-const modulePath = "github.com/amasok/asana-tui/"
+const modulePath = "github.com/amasok/asagao/"
 
 // entryForbiddenCalls are, for each package, the selectors an entry point may not use:
 // "Parse" is dates.Parse, "TaskNotes.FromMarkdown" is richtext.TaskNotes.FromMarkdown.
@@ -135,9 +135,9 @@ func TestForbiddenCallsFindsTheNames(t *testing.T) {
 import (
 	"time"
 
-	d "github.com/amasok/asana-tui/internal/dates"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/app"
+	d "github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/app"
 )
 
 func f(now time.Time) {
@@ -165,7 +165,7 @@ func f(now time.Time) {
 
 	dot := `package x
 
-import . "github.com/amasok/asana-tui/internal/dates"
+import . "github.com/amasok/asagao/internal/dates"
 
 var _, _ = Parse("today", Now())
 `

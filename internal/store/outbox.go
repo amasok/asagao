@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/domain/task"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Offline editing: every write is applied to the local tables immediately and recorded in

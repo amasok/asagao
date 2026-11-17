@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // #20: per-project sync_state keys go away with their project or workspace.

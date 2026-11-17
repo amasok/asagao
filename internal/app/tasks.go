@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 // Tasks is the task use cases.
