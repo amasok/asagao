@@ -19,6 +19,11 @@ func TestHeadingEdgeSpacesInLinkGo(t *testing.T) {
 		"[&#32;a](https://e.com)\n---":            `<body><h2><a href="https://e.com">a</a></h2></body>`,
 		"# `&#32;a`":                              "<body><h1><code>&amp;#32;a</code></h1></body>",
 		"# [&#32;a](https://e.com) ![b](asana:1)": `<body><h1><a href="https://e.com">a</a> <img data-asana-gid="1"/></h1></body>`,
+		// emphasis left empty goes, and the spaces around it then are at the edges
+		"# *&#32;*":                "<body><h1></h1></body>",
+		"# a *&#32;*":              "<body><h1>a</h1></body>",
+		"# **&#32;*&#32;*** a":     "<body><h1>a</h1></body>",
+		"# [&#32;](https://e.com)": `<body><h1><a href="https://e.com"></a></h1></body>`, // (a link stays)
 	} {
 		h1 := FromMarkdown(md)
 		if h2 := FromMarkdown(ToEditableMarkdown(h1)); h1 != want || h2 != h1 {
@@ -69,6 +74,11 @@ func TestEmptyItemAfterQuoteInItem(t *testing.T) {
 		// (as before: an item with text, and the next item further out)
 		"- a\n  > q\n  - b\n\n  c": "<body><ul><li>a\n&gt; q<ul><li>b\nc</li></ul></li></ul></body>",
 		"- a\n  > q\n -\n\n  c":    "<body><ul><li>a\n&gt; q</li><li></li></ul>  c</body>",
+		// a quote up to 3 columns further in than the item's text is in it; 4 or more is
+		// paragraph text, which an empty item there goes on (#24)
+		"- a\n   > q\n  -\n\n  c":              "<body><ul><li>a\n&gt; q<ul><li></li></ul></li></ul>  c</body>",
+		"- a\n      > q\n  -\n\n  c":           "<body><ul><li>a\n&gt; q\n-\nc</li></ul></body>",
+		"- x\n  - a\n       > q\n    -\n\n  c": "<body><ul><li>x<ul><li>a\n&gt; q<ul><li></li></ul></li></ul></li></ul>  c</body>",
 		// not back from a quote: an empty item in the item's paragraph is its text (#24)
 		"- a\n  -\n\n  c": "<body><ul><li>a\n-\nc</li></ul></body>",
 		// after a blank line, the quote's paragraph has ended (#24)

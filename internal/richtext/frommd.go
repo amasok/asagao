@@ -377,8 +377,23 @@ func (w *htmlWriter) block(n gast.Node) {
 
 // trimHeadingEdges removes the spaces and tabs at the start and the end of the text of a
 // heading as htmlWriter writes it, also those inside the links and emphasis that open or
-// close it ("<a href="u"> a</a>" is "<a href="u">a</a>"). Code keeps its spaces.
+// close it ("<a href="u"> a</a>" is "<a href="u">a</a>"). Code keeps its spaces. Emphasis
+// left empty goes (the editor writes nothing of it), and the spaces it was between are then
+// at the edges too. (A link left empty stays: it has its href, and reads back as it is.)
 func trimHeadingEdges(s string) string {
+	for {
+		t := emptyMarks.Replace(trimHeadingEdgesOnce(s))
+		if t == s {
+			return t
+		}
+		s = t
+	}
+}
+
+// emptyMarks removes emphasis with nothing in it.
+var emptyMarks = strings.NewReplacer("<strong></strong>", "", "<em></em>", "", "<s></s>", "")
+
+func trimHeadingEdgesOnce(s string) string {
 	var head strings.Builder
 	for {
 		s = strings.TrimLeft(s, " \t")
