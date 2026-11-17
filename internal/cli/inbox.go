@@ -12,7 +12,6 @@ import (
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -78,7 +77,7 @@ func (a *app) inboxCmd() *cobra.Command {
 	return cmd
 }
 
-func loadInbox(ctx context.Context, st *store.Store, unread bool, limit int, scopes []string, now time.Time) (inboxOutput, error) {
+func loadInbox(ctx context.Context, st Store, unread bool, limit int, scopes []string, now time.Time) (inboxOutput, error) {
 	state, err := query(st).InboxState(ctx)
 	if err != nil {
 		return inboxOutput{}, err
@@ -150,7 +149,7 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 
 // resolveNotifications turns the arguments (gids or unique suffixes) into gids; all
 // takes every cached notification not in the read state yet.
-func resolveNotifications(ctx context.Context, st *store.Store, args []string, all, read bool) ([]string, error) {
+func resolveNotifications(ctx context.Context, st Store, args []string, all, read bool) ([]string, error) {
 	if all {
 		ns, err := query(st).ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: read})
 		if err != nil {

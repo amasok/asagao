@@ -12,7 +12,7 @@ import (
 // chooser and saved after the first.
 func TestMultiEnumQuickTogglesKeepEachOther(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store, context.Background()
+	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
 	if err := st.ReplaceProjectCustomFields(ctx, "p1", []asana.CustomFieldSetting{{CustomField: asana.CustomField{
 		GID: "cf", Name: "ラベル", ResourceSubtype: store.CFMultiEnum,
 		EnumOptions: []asana.EnumOption{{GID: "a", Name: "A"}, {GID: "b", Name: "B"}}}}}); err != nil {
@@ -62,7 +62,7 @@ func TestFieldPromptStartsWithRawNumber(t *testing.T) {
 // A toggle queued for one field is kept when another field is toggled meanwhile.
 func TestQueuedTogglesOfDifferentFieldsAreKept(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store, context.Background()
+	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
 	opts := []asana.EnumOption{{GID: "a", Name: "A"}, {GID: "b", Name: "B"}}
 	if err := st.ReplaceProjectCustomFields(ctx, "p1", []asana.CustomFieldSetting{
 		{CustomField: asana.CustomField{GID: "cf", Name: "ラベル", ResourceSubtype: store.CFMultiEnum, EnumOptions: opts}},

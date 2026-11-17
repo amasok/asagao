@@ -8,7 +8,6 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Subtasks in the list view: l / → expands a task's subtasks under it (as a tree),
@@ -18,7 +17,7 @@ const maxSubtaskDepth = 5
 
 // withSubtasks inserts the subtasks of expanded tasks after them (recursively).
 // Subtasks follow the completion filter, except that "all" also shows completed ones.
-func withSubtasks(ctx context.Context, st *store.Store, rows []row, expanded map[string]bool, completed *bool) ([]row, error) {
+func withSubtasks(ctx context.Context, st Store, rows []row, expanded map[string]bool, completed *bool) ([]row, error) {
 	if len(expanded) == 0 {
 		return rows, nil
 	}

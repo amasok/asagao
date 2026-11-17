@@ -91,9 +91,9 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | sync → config | なし。`SyncConfig` は `sync.Config` に、`CacheDir` の既定値は `xdg.CacheDir()` に (d3) | 直した | d3 (済み) |
 | sync → termsafe | 比べる前の文字の除去 | 許す | — |
 | sync → xdg、config → xdg | 添付の既定の場所、ツールのフォルダ | 許す | — |
-| tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
-| mcpserver → store | `*Local` 13 種類と、読み取りの型 約 20 種類 | 直す | a、c2 |
-| cli → store | `*store.Store` (コマンドが持つ型)、`AnyUnsent`・`IsLocalGID`・`KeyMeGID` などの名前。`store.Open` は d4 で wire に移した | 直す | d4b |
+| tui → store | なし。ストアは `tui.Store` (app と sync のポートと、画面が書く状態) で受け、名前は readmodel・domain から | 直した | a・c2・d4b (済み) |
+| mcpserver → store | なし。ストアは `mcpserver.Store` (app と sync のポート) で受ける | 直した | a・c2・d4b (済み) |
+| cli → store | なし。ストアは `cli.Store` (tui.Store・mcpserver.Store と、コマンドが書くもの) で受け、`Wiring.OpenStore` (wire.OpenStore) で開く | 直した | a・c2・d4・d4b (済み) |
 | tui・mcpserver・cli → richtext | Markdown → html (11 か所) と、表示の変換 (tui/edit.go:118-125、tui/markdown.go:29-34、mcpserver/server.go:393-398 ほか) | Markdown → html は直す (a5 で済み。archtest の関数の決まりで確かめる)、表示の変換は許す | a1・a4・a5 |
 | tui・mcpserver・cli → auth | `LoginHelp`・`ErrNotLoggedIn`・`ErrLoginReplaced`、cli のログインのコマンド | 許す (決まり 4) | — |
 | tui・mcpserver・cli → sync | `Syncer.Run`・`Push`・`Resolve`・`Result`・`ErrPushBusy` など | 許す (アプリ層)。ただし `sync.Syncer{...}` の組み立て (5 か所と cli) は直す | d4 |

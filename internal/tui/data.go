@@ -6,14 +6,13 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // queryRows loads the tasks for the list pane and groups them:
 //   - search: one group with all hits (across every project)
 //   - My Tasks: by due date (期限切れ / 今日 / 7日以内 / それ以降 / 期日なし)
 //   - project: by section, in Asana's section order
-func queryRows(ctx context.Context, st *store.Store, sc scope, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
+func queryRows(ctx context.Context, st Store, sc scope, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
 	f := readmodel.TaskFilter{Query: query, Tag: tag, Field: field.field, FieldValue: field.value}
 	today := now.Format(time.DateOnly)
 	f.Completed = boolPtr(false)

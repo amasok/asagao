@@ -23,7 +23,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -41,7 +40,7 @@ const instructions = `Asana tasks from a local cache that asagao keeps in sync.
 
 // Server holds the dependencies of the MCP tools.
 type Server struct {
-	Store *store.Store
+	Store Store
 	// NewSyncer creates an authenticated syncer; nil means offline-only.
 	NewSyncer func(ctx context.Context) (*sync.Syncer, error)
 	// ReadOnly hides the write tools (create_task, update_task, add_comment, ...).

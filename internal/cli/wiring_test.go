@@ -7,7 +7,7 @@ func init() {
 	wiring = Wiring{
 		APIClient: wire.APIClient,
 		Syncer:    wire.Syncer,
-		OpenStore: wire.OpenStore,
+		OpenStore: StoreOpener(wire.OpenStore),
 		CheckPAT:  wire.CheckPAT,
 	}
 }

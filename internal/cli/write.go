@@ -19,7 +19,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -53,7 +52,7 @@ func printDiscard(w io.Writer, d readmodel.Discard) {
 
 // takeDiscards returns the dropped changes not shown yet and marks them as shown. When
 // print is set they are printed to w first.
-func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool) []readmodel.Discard {
+func takeDiscards(ctx context.Context, st Store, w io.Writer, print bool) []readmodel.Discard {
 	ds, err := query(st).PendingDiscards(ctx)
 	if err != nil || len(ds) == 0 {
 		return nil
@@ -81,7 +80,7 @@ func takeDiscards(ctx context.Context, st *store.Store, w io.Writer, print bool)
 
 // pushNow tries to send the outbox right away. Failure is not an error for the command:
 // the change is saved locally and will be sent by the next sync.
-func (a *app) pushNow(ctx context.Context, st *store.Store) (*sync.PushResult, error) {
+func (a *app) pushNow(ctx context.Context, st Store) (*sync.PushResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	api, err := a.apiClient(ctx)
@@ -92,7 +91,7 @@ func (a *app) pushNow(ctx context.Context, st *store.Store) (*sync.PushResult, e
 	return &res, err
 }
 
-func (a *app) reportWrite(cmd *cobra.Command, st *store.Store, r writeResult, done string) error {
+func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done string) error {
 	push, err := a.pushNow(cmd.Context(), st)
 	r.Push = push
 	if err != nil {
@@ -168,7 +167,7 @@ type createOpts struct {
 
 // createTask resolves every option and then creates the task locally. Nothing is written
 // when an option is invalid.
-func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Time) (string, error) {
+func createTask(ctx context.Context, st Store, o createOpts, now time.Time) (string, error) {
 	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
 	gid, err := tasks.Create(ctx, usecase.CreateTaskInput{
 		Name: o.name, Parent: o.parent, Project: o.project, Section: o.section,
@@ -182,10 +181,10 @@ func createTask(ctx context.Context, st *store.Store, o createOpts, now time.Tim
 }
 
 // query reads the local cache (app.Query over the store).
-func query(st *store.Store) usecase.Query { return usecase.Query{Store: st} }
+func query(st Store) usecase.Query { return usecase.Query{Store: st} }
 
 // taskUseCases is the task use cases on st, reading the clock at each write.
-func taskUseCases(st *store.Store) *usecase.Tasks {
+func taskUseCases(st Store) *usecase.Tasks {
 	return &usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: time.Now}
 }
 
@@ -201,7 +200,7 @@ func fieldErr(err error) error {
 
 // relationUseCases is the use cases on a task's relations on st, reading the clock at
 // each write.
-func relationUseCases(st *store.Store) *usecase.Relations {
+func relationUseCases(st Store) *usecase.Relations {
 	return &usecase.Relations{Store: st, Clock: time.Now}
 }
 
@@ -280,7 +279,7 @@ func (a *app) taskTagCmd() *cobra.Command {
 }
 
 // withStore opens the store for a write command and reports the result.
-func (a *app) writeCommand(use, short string, args cobra.PositionalArgs, run func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error)) *cobra.Command {
+func (a *app) writeCommand(use, short string, args cobra.PositionalArgs, run func(cmd *cobra.Command, st Store, args []string) (string, string, error)) *cobra.Command {
 	return &cobra.Command{
 		Use: use, Short: short, Args: args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
@@ -300,7 +299,7 @@ func (a *app) writeCommand(use, short string, args cobra.PositionalArgs, run fun
 
 func (a *app) taskExtraCmds() []*cobra.Command {
 	like := a.writeCommand("like <gid>", "いいねする（--off で取り消し）", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			off, _ := cmd.Flags().GetBool("off")
 			liked := !off
 			tasks := taskUseCases(st)
@@ -309,7 +308,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	like.Flags().Bool("off", false, "いいねを取り消す")
 
 	follow := a.writeCommand("follow <gid> [--add ユーザー]... [--remove ユーザー]...", "フォロワーを追加 / 外す（me・名前・gid）", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			// resolve every name before changing anything
 			addNames, _ := cmd.Flags().GetStringSlice("add")
 			removeNames, _ := cmd.Flags().GetStringSlice("remove")
@@ -324,7 +323,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	follow.Flags().StringSlice("remove", nil, "外すユーザー")
 
 	project := a.writeCommand("project <gid> [--add プロジェクト]... [--remove プロジェクト]...", "ほかのプロジェクトに追加 / 外す", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			addNames, _ := cmd.Flags().GetStringSlice("add")
 			removeNames, _ := cmd.Flags().GetStringSlice("remove")
 			relations := relationUseCases(st)
@@ -338,7 +337,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	project.Flags().StringSlice("remove", nil, "外すプロジェクト")
 
 	duplicate := a.writeCommand("duplicate <gid>", "タスクを複製する（サブタスク・添付・フォロワーも）", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			name, _ := cmd.Flags().GetString("name")
 			copies := &usecase.Copies{Store: st, Clock: time.Now}
 			gid, err := copies.Duplicate(cmd.Context(), args[0], name)
@@ -347,13 +346,13 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	duplicate.Flags().String("name", "", "複製したタスクの名前（省略時は「… のコピー」）")
 
 	attach := a.writeCommand("attach <gid> <ファイル>", "ファイルを添付する（100MB まで）", cobra.ExactArgs(2),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			copies := &usecase.Copies{Store: st, CacheDir: filepath.Join(config.CacheDir(), "attachments"), Clock: time.Now}
 			_, err := copies.Attach(cmd.Context(), args[0], args[1])
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})
 	field := a.writeCommand("field <gid> <フィールド> [値]", "カスタムフィールドを設定する（値なし / --clear で空に）", cobra.RangeArgs(2, 3),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			ctx := cmd.Context()
 			f, err := query(st).ResolveCustomField(ctx, args[0], args[1])
 			if err != nil {
@@ -390,7 +389,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
   asagao task field 1203455468597469 優先度 --clear`
 	depend := a.writeCommand("depend <gid> [--add 待つタスク]... [--remove 待つタスク]... [--add-dependent タスク]... [--remove-dependent タスク]...",
 		"依存関係を追加 / 解除する（待つタスク・待たれるタスクを gid で）", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			ctx := cmd.Context()
 			gids := func(flag string) []string { v, _ := cmd.Flags().GetStringSlice(flag); return v }
 			relations := relationUseCases(st)
@@ -415,7 +414,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	depend.Flags().StringSlice("remove-dependent", nil, "このタスクを待つタスク（gid）を外す")
 
 	kind := a.writeCommand("type <gid> <task|milestone|approval>", "タスクの種類を変える（タスク / マイルストーン / 承認）", cobra.ExactArgs(2),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			tasks := taskUseCases(st)
 			u, err := tasks.ResolveUpdate(cmd.Context(), usecase.UpdateTaskInput{Subtype: &args[1]})
 			if err != nil {
@@ -425,7 +424,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 		})
 
 	approve := a.writeCommand("approve <gid> [approved|rejected|changes_requested|pending]", "承認タスクの承認の状態を変える（省略時は承認）", cobra.RangeArgs(1, 2),
-		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			v := "approved"
 			tasks := taskUseCases(st)
 			u := usecase.TaskUpdate{Approval: &v}
@@ -701,7 +700,7 @@ func (a *app) outboxCmd() *cobra.Command {
 
 // resolve resolves an outbox entry (usecase.Outbox.Resolve), then sends it right away or refreshes
 // the task from Asana as needed. Being offline is not an error: the next sync does it.
-func (a *app) resolve(ctx context.Context, st *store.Store, out io.Writer, id int64, act usecase.ResolveAction) (string, error) {
+func (a *app) resolve(ctx context.Context, st Store, out io.Writer, id int64, act usecase.ResolveAction) (string, error) {
 	r, err := (&usecase.Outbox{Store: st}).Resolve(ctx, id, act)
 	if err != nil {
 		return "", err

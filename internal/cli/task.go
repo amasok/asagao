@@ -13,7 +13,6 @@ import (
 
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -73,7 +72,7 @@ func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultComp
 }
 
 // filter builds the store filter for the flags.
-func (f *listFlags) filter(ctx context.Context, st *store.Store, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (readmodel.TaskFilter, error) {
+func (f *listFlags) filter(ctx context.Context, st Store, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (readmodel.TaskFilter, error) {
 	tf, err := query(st).BuildFilter(ctx, f.spec(cmd, defaultAssignee, defaultCompleted), now)
 	var fe *readmodel.FilterError
 	if errors.As(err, &fe) {
@@ -200,7 +199,7 @@ func (a *app) taskShowCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) fetchDetails(ctx context.Context, st *store.Store, gid string) error {
+func (a *app) fetchDetails(ctx context.Context, st Store, gid string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	api, err := a.apiClient(ctx)

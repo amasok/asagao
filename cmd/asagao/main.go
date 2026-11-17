@@ -9,7 +9,7 @@ func main() {
 	cli.Execute(cli.Wiring{
 		APIClient: wire.APIClient,
 		Syncer:    wire.Syncer,
-		OpenStore: wire.OpenStore,
+		OpenStore: cli.StoreOpener(wire.OpenStore),
 		CheckPAT:  wire.CheckPAT,
 	})
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -77,9 +76,9 @@ type Wiring struct {
 	// APIClient is the Asana client for the login of cfg; baseURL overrides Asana's URL.
 	APIClient func(ctx context.Context, cfg config.Config, baseURL string) (sync.AsanaAPI, error)
 	// Syncer is the Syncer for api (nil: offline) and st, with the settings of cfg.
-	Syncer func(api sync.AsanaAPI, st *store.Store, cfg config.Config) *sync.Syncer
-	// OpenStore opens the local store at path.
-	OpenStore func(ctx context.Context, path string) (*store.Store, error)
+	Syncer func(api sync.AsanaAPI, st sync.LocalStore, cfg config.Config) *sync.Syncer
+	// OpenStore opens the local store at path (a nil Store with the error).
+	OpenStore func(ctx context.Context, path string) (Store, error)
 	// CheckPAT asks Asana whose a Personal Access Token is, retrying once after retryDelay.
 	CheckPAT func(ctx context.Context, token, baseURL string, retryDelay time.Duration, onRetry func(status int, wait time.Duration)) (*model.User, error)
 }
@@ -103,13 +102,13 @@ func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {
 }
 
 // syncer is the Syncer for api and st (wire.Syncer).
-func (a *app) syncer(api sync.AsanaAPI, st *store.Store) *sync.Syncer {
+func (a *app) syncer(api sync.AsanaAPI, st Store) *sync.Syncer {
 	return wiring.Syncer(api, st, a.cfg)
 }
 
 func (a *app) storePath() string { return filepath.Join(config.DataDir(), "store.db") }
 
-func (a *app) openStore(ctx context.Context) (*store.Store, error) {
+func (a *app) openStore(ctx context.Context) (Store, error) {
 	return wiring.OpenStore(ctx, a.storePath())
 }
 
