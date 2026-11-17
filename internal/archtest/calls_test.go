@@ -32,8 +32,10 @@ var entryForbiddenCalls = map[string][]string{
 
 // storeWrites says whether a method name is one of the store's local writes, which an
 // entry point leaves to the use cases: the names that end in "Local" (CreateTaskLocal, …;
-// only the store has them) and ApplyTagEdit. Only method calls are checked (x.Name where x
-// is not an imported package), so a package's constant such as sync.KeepLocal is not one.
+// only the store has them) and ApplyTagEdit. Only method calls are checked: x.Name where x
+// is not an imported package, so a package's constant such as sync.KeepLocal is not one.
+// A name the file also binds to something else (a parameter "sync *store.Store") is not
+// taken for the package anywhere in the file (see rebound).
 func storeWrites(name string) bool {
 	return name == "ApplyTagEdit" || (strings.HasSuffix(name, "Local") && name != "Local" && ast.IsExported(name))
 }
@@ -122,13 +124,14 @@ func forbiddenCalls(fset *token.FileSet, f *ast.File) []string {
 		}
 		pkgOf[name] = rel
 	}
+	shadowed := rebound(f)
 	ast.Inspect(f, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
 		if storeWrites(sel.Sel.Name) {
-			if id, ok := sel.X.(*ast.Ident); !ok || !imported[id.Name] {
+			if id, ok := sel.X.(*ast.Ident); !ok || !imported[id.Name] || shadowed[id.Name] {
 				pos := fset.Position(sel.Sel.Pos())
 				out = append(out, fmt.Sprintf("%s:%d: .%s", filepath.Base(pos.Filename), pos.Line, sel.Sel.Name))
 				return true
@@ -150,6 +153,94 @@ func forbiddenCalls(fset *token.FileSet, f *ast.File) []string {
 		return true
 	})
 	return out
+}
+
+// rebound returns the names that f declares as something other than an import: functions,
+// types, variables and constants, parameters, results and receivers, and the names that
+// := and range define. It does not follow scopes (the parser's object resolution may be
+// off): a name rebound anywhere in the file is not taken for the package in the whole file,
+// so a store write on it is never missed, at the cost of reporting a package's own
+// Local-named identifier in such a file (rename the variable then).
+func rebound(f *ast.File) map[string]bool {
+	names := map[string]bool{}
+	add := func(ids ...*ast.Ident) {
+		for _, id := range ids {
+			if id != nil {
+				names[id.Name] = true
+			}
+		}
+	}
+	fields := func(l *ast.FieldList) {
+		if l == nil {
+			return
+		}
+		for _, fld := range l.List {
+			add(fld.Names...)
+		}
+	}
+	idents := func(es ...ast.Expr) {
+		for _, e := range es {
+			if id, ok := e.(*ast.Ident); ok {
+				add(id)
+			}
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncDecl:
+			add(n.Name)
+			fields(n.Recv)
+		case *ast.FuncType:
+			fields(n.TypeParams)
+			fields(n.Params)
+			fields(n.Results)
+		case *ast.TypeSpec:
+			add(n.Name)
+		case *ast.ValueSpec:
+			add(n.Names...)
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				idents(n.Lhs...)
+			}
+		case *ast.RangeStmt:
+			if n.Tok == token.DEFINE {
+				idents(n.Key, n.Value)
+			}
+		case *ast.TypeSwitchStmt:
+			if a, ok := n.Assign.(*ast.AssignStmt); ok && a.Tok == token.DEFINE {
+				idents(a.Lhs...)
+			}
+		}
+		return true
+	})
+	return names
+}
+
+// A store write on a variable named like an import is still a store write, wherever the
+// name is rebound; the package's own names stay allowed where it is not.
+func TestForbiddenCallsSeeRebindingsOfImportNames(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want []string
+	}{
+		{"func f(sync *store.Store) { _ = sync.MoveTaskLocal(ctx) }", []string{"x.go:8: .MoveTaskLocal"}},
+		{"func f() { store := open(); _ = store.ApplyTagEdit(ctx) }", []string{"x.go:8: .ApplyTagEdit"}},
+		{"func f() { for _, sync := range all { sync.AddTagLocal(ctx) } }", []string{"x.go:8: .AddTagLocal"}},
+		{"var sync = open()\nfunc f() { sync.SetFollowerLocal(ctx) }", []string{"x.go:9: .SetFollowerLocal"}},
+		{"func (sync *T) f() { sync.SetProjectLocal(ctx) }", []string{"x.go:8: .SetProjectLocal"}},
+		{"func f() { switch sync := x.(type) { default: sync.MoveTaskLocal(ctx) } }", []string{"x.go:8: .MoveTaskLocal"}},
+		{"func f(s *store.Store) { _ = sync.KeepLocal; _ = s.MoveTaskLocal(ctx) }", []string{"x.go:8: .MoveTaskLocal"}},
+	} {
+		src := "package x\n\nimport (\n\t\"github.com/amasok/asagao/internal/store\"\n\t\"github.com/amasok/asagao/internal/sync\"\n)\n\n" + c.src + "\n"
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "x.go", src, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("%s: %v", c.src, err)
+		}
+		if got := forbiddenCalls(fset, f); !slices.Equal(got, c.want) {
+			t.Errorf("%s:\ngot  %v\nwant %v", c.src, got, c.want)
+		}
+	}
 }
 
 func TestForbiddenCallsFindsTheNames(t *testing.T) {
