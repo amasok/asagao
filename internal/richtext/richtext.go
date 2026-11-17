@@ -456,8 +456,8 @@ func (c *converter) nextOnLine(n *html.Node) byte {
 			case sib.DataAtom == atom.Br, blockAtoms[sib.DataAtom]:
 				return '\n'
 			case transparentAtoms[sib.DataAtom] && !markAtoms[sib.DataAtom]:
-				if t := textOf(sib); t != "" {
-					return t[0]
+				if b, ok := firstOnLine(sib); ok {
+					return b
 				}
 			default:
 				return 'x' // a delimiter, a link, code or an image
@@ -468,6 +468,29 @@ func (c *converter) nextOnLine(n *html.Node) byte {
 		}
 	}
 	return '\n'
+}
+
+// firstOnLine is nextOnLine for what element n (written as its children) writes first:
+// text, '\n' for a line break in it (#14), or a placeholder; ok is false if n writes nothing.
+func firstOnLine(n *html.Node) (b byte, ok bool) {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		switch {
+		case ch.Type == html.TextNode:
+			if ch.Data != "" {
+				return ch.Data[0], true
+			}
+		case ch.Type != html.ElementNode:
+		case ch.DataAtom == atom.Br, blockAtoms[ch.DataAtom]:
+			return '\n', true
+		case transparentAtoms[ch.DataAtom] && !markAtoms[ch.DataAtom]:
+			if b, ok := firstOnLine(ch); ok {
+				return b, true
+			}
+		default:
+			return 'x', true
+		}
+	}
+	return 0, false
 }
 
 // prevByte is the output byte before the next text, as Linkify sees it (see escapeInline):
@@ -575,11 +598,12 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 				return c.editable
 			default:
 				// an inline element: what it writes first
-				t := textOf(sib)
-				if line, _, nl := strings.Cut(t, "\n"); !asciiBlank(line) ||
-					attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib) {
+				if attr(sib, "data-asana-gid") != "" {
 					return true
-				} else if nl {
+				}
+				if content, ended := c.firstLineContent(sib); content {
+					return true
+				} else if ended {
 					return false
 				}
 			}
@@ -589,6 +613,36 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 		}
 	}
 	return false
+}
+
+// firstLineContent looks at what inline element n writes up to its first line break (a
+// newline in text, a <br> or a block in it, #14): whether there is inline content, and
+// whether the line ends in n.
+func (c *converter) firstLineContent(n *html.Node) (content, ended bool) {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		switch {
+		case ch.Type == html.TextNode:
+			line, _, nl := strings.Cut(ch.Data, "\n")
+			if !asciiBlank(line) {
+				return true, false
+			}
+			if nl {
+				return false, true
+			}
+		case ch.Type != html.ElementNode:
+		case ch.DataAtom == atom.Br, blockAtoms[ch.DataAtom]:
+			return false, true
+		case ch.DataAtom == atom.Img:
+			return c.editable, true
+		case attr(ch, "data-asana-gid") != "":
+			return true, false
+		default:
+			if content, ended := c.firstLineContent(ch); content || ended {
+				return content, ended
+			}
+		}
+	}
+	return false, false
 }
 
 // blockAtoms are the elements that start a block of their own (see walk).

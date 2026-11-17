@@ -226,13 +226,8 @@ func genMarkInline(r *rand.Rand, depth int) string {
 		switch k := r.Intn(9); {
 		case k < 3 && depth < 3:
 			tag := []string{"strong", "b", "em", "i", "s", "del", "u"}[r.Intn(7)]
-			inner := genMarkInline(r, depth+1)
-			if tag == "u" {
-				// (whitespace before an element starting with a line break, in a list item,
-				// is not stable on main either: not about emphasis, #83)
-				inner = "x" + inner
-			}
-			sb.WriteString("<" + tag + ">" + inner + "</" + tag + ">")
+			// (<u> may start with a line break too: whitespace before it in a list item, #14)
+			sb.WriteString("<" + tag + ">" + genMarkInline(r, depth+1) + "</" + tag + ">")
 		case k == 3:
 			sb.WriteString("<br>")
 		case k == 4:
