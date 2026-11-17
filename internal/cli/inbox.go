@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -123,7 +124,8 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			n, err := st.MarkNotificationsLocal(ctx, gids, read, time.Now())
+			notifications := &usecase.Notifications{Store: st, Clock: time.Now}
+			n, err := notifications.MarkHere(ctx, gids, read)
 			if err != nil {
 				return err
 			}
@@ -161,15 +163,7 @@ func resolveNotifications(ctx context.Context, st *store.Store, args []string, a
 		}
 		return gids, nil
 	}
-	gids := make([]string, 0, len(args))
-	for _, a := range args {
-		gid, err := st.ResolveNotification(ctx, a)
-		if err != nil {
-			return nil, err
-		}
-		gids = append(gids, gid)
-	}
-	return gids, nil
+	return (&usecase.Notifications{Store: st}).Resolve(ctx, args)
 }
 
 // printNotifications prints one line per notification: unread mark, when, who, what,

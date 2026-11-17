@@ -40,12 +40,9 @@ func storeWrites(name string) bool {
 
 // allowedCalls are the uses that exist today, as "internal/tui/edit.go: richtext.TaskNotes.FromMarkdown"
 // or "internal/tui/board.go: .MoveTaskLocal" (a store write). Stage a5 removed the last
-// conversion; stage a6 removes the store writes as it moves them to internal/app.
-var allowedCalls = []string{
-	"internal/cli/inbox.go: .MarkNotificationsLocal",
-	"internal/mcpserver/inbox.go: .MarkNotificationsLocal",
-	"internal/tui/inbox.go: .MarkNotificationsLocal",
-}
+// conversion and stage a6 the last store write; a stage that adds a rule lists its uses
+// here and removes them as it goes.
+var allowedCalls = []string{}
 
 func TestEntryPointsLeaveConversionsToApp(t *testing.T) {
 	g := loadModule(t)
