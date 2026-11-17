@@ -24,7 +24,7 @@ import (
 
 // bulkPlan is a change to several tasks, waiting for the y/n confirmation.
 type bulkPlan struct {
-	question string // "N 件を完了にします"
+	question string // after "N 件": "を完了にします"
 	done     string // "完了にしました" (for the result: "N 件を完了にしました")
 	tasks    []readmodel.TaskSummary
 	// apply makes the change to one task; now is when y was pressed.
@@ -56,22 +56,58 @@ func (m *Model) markedTasks() []readmodel.TaskSummary {
 	return out
 }
 
-// pruneMarks drops the marks of tasks no longer shown in the list.
+// pruneMarks drops the marks of tasks no longer shown in the list, and narrows a bulk
+// change that is being chosen or confirmed to the tasks still shown (as they are now):
+// what was marked when the key was pressed may have been hidden by a reload since.
 func (m *Model) pruneMarks() {
-	if len(m.marked) == 0 {
+	if len(m.marked) == 0 && m.bulkAsk == nil && m.bulkDueTasks == nil && (m.picker == nil || m.picker.bulk == nil) {
 		return
 	}
-	shown := map[string]bool{}
+	shown := map[string]readmodel.TaskSummary{}
 	for _, r := range m.rows {
 		if markable(r) {
-			shown[r.task.GID] = true
+			shown[r.task.GID] = *r.task
 		}
 	}
 	for gid := range m.marked {
-		if !shown[gid] {
+		if _, ok := shown[gid]; !ok {
 			delete(m.marked, gid)
 		}
 	}
+	const gone = "対象のタスクが一覧から見えなくなったので取り消しました"
+	if p := m.bulkAsk; p != nil {
+		if p.tasks = stillShown(p.tasks, shown); len(p.tasks) == 0 {
+			m.bulkAsk, m.status = nil, gone
+		}
+	}
+	if p := m.picker; p != nil && p.bulk != nil {
+		n := len(p.bulk)
+		if p.bulk = stillShown(p.bulk, shown); len(p.bulk) == 0 {
+			m.picker, m.status = nil, gone
+		} else {
+			p.title = strings.Replace(p.title, fmt.Sprintf("%d 件", n), fmt.Sprintf("%d 件", len(p.bulk)), 1)
+		}
+	}
+	if m.bulkDueTasks != nil {
+		if m.bulkDueTasks = stillShown(m.bulkDueTasks, shown); len(m.bulkDueTasks) == 0 {
+			m.bulkDueTasks, m.status = nil, gone
+			if m.promptMode == promptDue {
+				m.promptMode = promptNone
+				m.prompt.Blur()
+			}
+		}
+	}
+}
+
+// stillShown keeps the tasks that are shown, as they are shown now; never nil.
+func stillShown(tasks []readmodel.TaskSummary, shown map[string]readmodel.TaskSummary) []readmodel.TaskSummary {
+	out := []readmodel.TaskSummary{}
+	for _, t := range tasks {
+		if now, ok := shown[t.GID]; ok {
+			out = append(out, now)
+		}
+	}
+	return out
 }
 
 // showRows recomputes the shown rows (after a reload or a collapse) and drops the marks of
@@ -177,7 +213,7 @@ func (m *Model) bulkFooter() (string, bool) {
 	if m.bulkAsk == nil {
 		return "", false
 	}
-	return m.bulkAsk.question + " (y/n)", true
+	return fmt.Sprintf("%d 件%s (y/n)", len(m.bulkAsk.tasks), m.bulkAsk.question), true
 }
 
 // runBulk writes the change to each task of plan, one by one; a task that fails does not
@@ -232,10 +268,10 @@ func (m *Model) bulkComplete(tasks []readmodel.TaskSummary) tea.Cmd {
 		}
 	}
 	done := len(open) > 0
-	plan := &bulkPlan{tasks: open, question: fmt.Sprintf("%d 件を完了にします", len(open)), done: "完了にしました"}
+	plan := &bulkPlan{tasks: open, question: "を完了にします", done: "完了にしました"}
 	if !done {
 		plan.tasks = tasks
-		plan.question = fmt.Sprintf("%d 件を未完了に戻します", len(tasks))
+		plan.question = "を未完了に戻します"
 		plan.done = "未完了に戻しました"
 	}
 	plan.apply = updateAll(app.TaskUpdate{Completed: &done})
@@ -328,7 +364,7 @@ func (m *Model) bulkPicked(p *picker, item pickerItem) tea.Cmd {
 			}
 		}
 		project, section := p.project, item.value
-		return m.ask(&bulkPlan{tasks: move, question: fmt.Sprintf("%d 件を「%s」に移動します", len(move), item.label),
+		return m.ask(&bulkPlan{tasks: move, question: "を「" + item.label + "」に移動します",
 			done: "「" + item.label + "」に移動しました",
 			apply: func(m *Model, now time.Time) func(context.Context, readmodel.TaskSummary) error {
 				sections := m.sections(now)
@@ -349,7 +385,7 @@ func (m *Model) bulkPicked(p *picker, item pickerItem) tea.Cmd {
 			}
 		}
 		user := item.value
-		return m.ask(&bulkPlan{tasks: change, question: fmt.Sprintf("%d 件の担当者を %s にします", len(change), label),
+		return m.ask(&bulkPlan{tasks: change, question: "の担当者を " + label + " にします",
 			done: "担当者を " + label + " にしました", apply: updateAll(app.TaskUpdate{Assignee: &user})},
 			"すべてすでに担当者が "+label+" です")
 	case pickDue:
@@ -375,7 +411,7 @@ func (m *Model) askDue(tasks []readmodel.TaskSummary, due string) tea.Cmd {
 	if due == "" {
 		label, unchanged = "期日をなしに", "すべてすでに期日がありません"
 	}
-	return m.ask(&bulkPlan{tasks: change, question: fmt.Sprintf("%d 件の%sします", len(change), label),
+	return m.ask(&bulkPlan{tasks: change, question: "の" + label + "します",
 		done: label + "しました", apply: updateAll(app.TaskUpdate{Due: &due})}, unchanged)
 }
 

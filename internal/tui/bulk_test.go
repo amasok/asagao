@@ -272,3 +272,36 @@ func TestBulkOnlyInList(t *testing.T) {
 		t.Fatalf("the selected card %s should be completed", sel)
 	}
 }
+
+// When a reload hides every task of a waiting question, the question closes; when it hides
+// some, the count asked is the count that will be written.
+func TestBulkQuestionFollowsTheList(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	h.markRows("t1", "t2", "t3")
+	h.key("x")
+	h.dropFromList("t3")
+	if !strings.Contains(h.footer(), "2 件を完了にします (y/n)") {
+		t.Fatalf("the question should count the tasks still shown, footer=%q", h.footer())
+	}
+	h.dropFromList("t1")
+	h.dropFromList("t2")
+	if h.m.bulkAsk != nil || !strings.Contains(h.footer(), "見えなくなった") {
+		t.Fatalf("the question should close, footer=%q", h.footer())
+	}
+	h.key("y")
+	if ops := h.ops(); len(ops) != 0 {
+		t.Fatalf("nothing may be written: %+v", ops)
+	}
+
+	h = newHarness(t, 140, 30)
+	h.markRows("t2", "t3")
+	h.key("@")
+	h.dropFromList("t3")
+	if p := h.m.picker; p == nil || !strings.Contains(p.title, "1 件の担当者") {
+		t.Fatalf("picker title should count the tasks still shown: %+v", p)
+	}
+	h.dropFromList("t2")
+	if h.m.picker != nil {
+		t.Fatal("the picker should close when none of its tasks is shown")
+	}
+}
