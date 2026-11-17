@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/amasok/asana-tui/internal/domain/task"
 	"github.com/amasok/asana-tui/internal/richtext"
 )
 
@@ -291,49 +292,17 @@ func dependencyName(op Op) string {
 	return dep
 }
 
-// SubtypeLabel is the Japanese name of a task type (resource_subtype).
-func SubtypeLabel(s string) string {
-	if l, ok := map[string]string{"default_task": "タスク", "milestone": "マイルストーン", "approval": "承認"}[s]; ok {
-		return l
-	}
-	return s
-}
+// SubtypeLabel is task.SubtypeLabel (kept here until the entry points stop using store).
+func SubtypeLabel(s string) string { return task.SubtypeLabel(s) }
 
-// ApprovalLabel is the Japanese name of an approval status.
-func ApprovalLabel(s string) string {
-	if l, ok := map[string]string{"pending": "承認待ち", "approved": "承認済み", "rejected": "却下", "changes_requested": "要修正"}[s]; ok {
-		return l
-	}
-	return s
-}
+// ApprovalLabel is task.ApprovalLabel.
+func ApprovalLabel(s string) string { return task.ApprovalLabel(s) }
 
-// ParseSubtype accepts a task type as Asana names it or as SubtypeLabel shows it
-// ("default" and "task" mean default_task).
-func ParseSubtype(s string) (string, error) {
-	return parseChoice(s, TaskSubtypes, SubtypeLabel, map[string]string{"default": "default_task", "task": "default_task", "normal": "default_task"})
-}
+// ParseSubtype is task.ParseSubtype.
+func ParseSubtype(s string) (string, error) { return task.ParseSubtype(s) }
 
-// ParseApprovalStatus accepts an approval status as Asana names it or as ApprovalLabel
-// shows it (also "承認" / "approve" for approved, "reject" for rejected).
-func ParseApprovalStatus(s string) (string, error) {
-	return parseChoice(s, ApprovalStatuses, ApprovalLabel, map[string]string{"approve": "approved", "承認": "approved",
-		"reject": "rejected", "却下する": "rejected", "request_changes": "changes_requested", "修正依頼": "changes_requested"})
-}
-
-func parseChoice(s string, values []string, label func(string) string, aliases map[string]string) (string, error) {
-	s = strings.TrimSpace(s)
-	if v, ok := aliases[strings.ToLower(s)]; ok {
-		return v, nil
-	}
-	var labels []string
-	for _, v := range values {
-		if strings.EqualFold(s, v) || s == label(v) {
-			return v, nil
-		}
-		labels = append(labels, v+"（"+label(v)+"）")
-	}
-	return "", fmt.Errorf("%q は使えません。%s のどれかを指定してください", s, strings.Join(labels, " / "))
-}
+// ParseApprovalStatus is task.ParseApprovalStatus.
+func ParseApprovalStatus(s string) (string, error) { return task.ParseApprovalStatus(s) }
 
 // TaskBadges are short marks for a task in a list: ◆ for a milestone, the approval status
 // of an approval task, and how many incomplete tasks it waits for.

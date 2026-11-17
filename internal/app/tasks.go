@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 
-	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/domain/task"
 )
 
@@ -15,7 +14,7 @@ type Tasks struct {
 }
 
 // CreateTaskInput is what a user gives to create a task. Project, Section and Assignee
-// are names or gids; Due is a date as dates.Parse reads it; Notes is Markdown.
+// are names or gids; Due is a date as ParseDue reads it; Notes is Markdown.
 type CreateTaskInput struct {
 	Name, Parent, Project, Section, Due, Assignee, Notes string
 	Tags                                                 []string // names or gids to add
@@ -38,7 +37,7 @@ func (t *Tasks) Create(ctx context.Context, in CreateTaskInput) (string, error) 
 		nt.HTMLNotes, nt.Notes = t.Text.TaskNotes(in.Notes)
 	}
 	var err error
-	if nt.DueOn, err = dates.Parse(in.Due, now); err != nil {
+	if nt.DueOn, err = ParseDue(in.Due, now); err != nil {
 		return "", &FieldError{Field: "due", Err: err}
 	}
 	assignee := in.Assignee

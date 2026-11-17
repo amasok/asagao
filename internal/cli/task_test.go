@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 	"time"
+
+	usecase "github.com/amasok/asana-tui/internal/app"
 )
 
 func TestParseDate(t *testing.T) {
@@ -12,13 +14,13 @@ func TestParseDate(t *testing.T) {
 		"": "", "today": "2026-11-13", "tomorrow": "2026-11-14", "yesterday": "2026-11-12",
 		"+7d": "2026-11-20", "-3d": "2026-11-10", "2026-12-01": "2026-12-01",
 	} {
-		if got, err := parseDate(in, now); err != nil || got != want {
-			t.Errorf("parseDate(%q) = %q, %v; want %q", in, got, err, want)
+		if got, err := usecase.ParseDue(in, now); err != nil || got != want {
+			t.Errorf("ParseDue(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
 	for _, bad := range []string{"7d", "2026/12/01", "next week"} {
-		if _, err := parseDate(bad, now); err == nil {
-			t.Errorf("parseDate(%q) should fail", bad)
+		if _, err := usecase.ParseDue(bad, now); err == nil {
+			t.Errorf("ParseDue(%q) should fail", bad)
 		}
 	}
 }

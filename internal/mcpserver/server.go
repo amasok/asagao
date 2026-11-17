@@ -22,7 +22,6 @@ import (
 
 	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/dates"
 	"github.com/amasok/asana-tui/internal/richtext"
 	"github.com/amasok/asana-tui/internal/store"
 	"github.com/amasok/asana-tui/internal/sync"
@@ -486,47 +485,23 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 // name (tag, follower, project) does not leave half of the update saved.
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
-	changes := map[string]any{}
-	if in.Completed != nil {
-		changes["completed"] = *in.Completed
-	}
-	if in.Name != nil {
-		changes["name"] = *in.Name
-	}
-	if in.Notes != nil {
-		changes["notes"] = richtext.TaskNotes.PlainFromMarkdown(*in.Notes)
-		changes["html_notes"] = richtext.TaskNotes.FromMarkdown(*in.Notes)
-	}
-	if in.Liked != nil {
-		changes["liked"] = *in.Liked
-	}
-	if in.ResourceSubtype != nil {
-		v, err := store.ParseSubtype(*in.ResourceSubtype)
-		if err != nil {
-			return nil, WriteOutput{}, fmt.Errorf("resource_subtype: %w", err)
+	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	changes, err := tasks.ResolveUpdate(ctx, app.UpdateTaskInput{
+		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Assignee: in.Assignee,
+		Subtype: in.ResourceSubtype, Approval: in.ApprovalStatus, Completed: in.Completed, Liked: in.Liked,
+	})
+	if fe := (*app.FieldError)(nil); errors.As(err, &fe) {
+		switch fe.Field {
+		case "due":
+			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", fe.Err)
+		case "assignee":
+			return nil, WriteOutput{}, fe.Err // as the store says it
+		default: // resource_subtype, approval_status: the argument names
+			return nil, WriteOutput{}, fmt.Errorf("%s: %w", fe.Field, fe.Err)
 		}
-		changes["resource_subtype"] = v
 	}
-	if in.ApprovalStatus != nil {
-		v, err := store.ParseApprovalStatus(*in.ApprovalStatus)
-		if err != nil {
-			return nil, WriteOutput{}, fmt.Errorf("approval_status: %w", err)
-		}
-		changes["approval_status"] = v
-	}
-	if in.DueOn != nil {
-		due, err := dates.Parse(*in.DueOn, now)
-		if err != nil {
-			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", err)
-		}
-		changes["due_on"] = due
-	}
-	if in.Assignee != nil {
-		gid, err := s.Store.ResolveUser(ctx, *in.Assignee)
-		if err != nil {
-			return nil, WriteOutput{}, err
-		}
-		changes["assignee"] = gid
+	if err != nil {
+		return nil, WriteOutput{}, err
 	}
 	tags, err := s.Store.ResolveTagEdit(ctx, in.AddTags, in.RemoveTags)
 	if err != nil {
@@ -571,7 +546,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 			deps = append(deps, c)
 		}
 	}
-	if len(changes) == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields)+len(deps) == 0 {
+	if changes.Count() == 0 && tags.Empty() && len(addFollowers)+len(removeFollowers)+len(addProjects)+len(removeProjects)+len(in.CustomFields)+len(deps) == 0 {
 		return nil, WriteOutput{}, errors.New("nothing to update: pass at least one field to change")
 	}
 	if _, err := s.Store.GetTask(ctx, in.GID); err != nil {
@@ -595,10 +570,8 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		fields = append(fields, fieldValue{f.GID, v})
 	}
 
-	if len(changes) > 0 {
-		if err := s.Store.UpdateTaskLocal(ctx, in.GID, changes, now); err != nil {
-			return nil, WriteOutput{}, err
-		}
+	if err := tasks.UpdateHere(ctx, in.GID, changes); err != nil {
+		return nil, WriteOutput{}, err
 	}
 	if err := s.Store.ApplyTagEdit(ctx, in.GID, tags, now); err != nil {
 		return nil, WriteOutput{}, err

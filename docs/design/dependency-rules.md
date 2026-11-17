@@ -43,11 +43,11 @@
 
 | 決まり | 調べる名前 | 入れる時期 |
 |---|---|---|
-| 入り口は Markdown → html を呼ばない | `richtext.TaskNotes`・`richtext.Comment`・`richtext.StatusUpdate` の `FromMarkdown`・`PlainFromMarkdown` | a5 のあと (a1 からは、移した入り口のファイルごとに) |
+| 入り口は Markdown → html を呼ばない | `richtext.TaskNotes`・`richtext.Comment`・`richtext.StatusUpdate` の `FromMarkdown`・`PlainFromMarkdown` | a5 で入れた |
 | 入り口は store の書き込みを呼ばない | `Local` で終わるメソッド (`CreateTaskLocal` など。store にしかない) | a6 のあと |
-| 入り口は期日を解釈しない | `dates.Parse` | a5 のあと |
+| 入り口は期日を解釈しない | `dates.Parse` | a5 で入れた |
 
-これも許可リスト (ファイルと名前の組) を持ち、段階ごとに減らす。a2 ではまだ入れていない (入れる時期は上の表のとおり)。入れるときは `internal/archtest` に足す。
+これも許可リスト (ファイルと名前の組) を持ち、段階ごとに減らす。a5 で、上の 2 つを `internal/archtest/calls_test.go` に入れた (`entryForbiddenCalls`。違反がなくなったので許可リスト `allowedCalls` は空)。store の書き込みの決まり (`Local` で終わるメソッド) は a6 で同じテストに足す。
 
 ## ドメインの「時刻は引数」を守らせる
 

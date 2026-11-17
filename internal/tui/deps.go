@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asana-tui/internal/app"
 	"github.com/amasok/asana-tui/internal/store"
 )
 
@@ -47,11 +48,11 @@ func (m *Model) openApprovalPicker(t store.TaskSummary) tea.Cmd {
 	return nil
 }
 
-// updateTaskField changes one update_task field and reports status.
-func (m *Model) updateTaskField(t store.TaskSummary, key, value, status string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+// updateTask applies resolved changes to the task t and reports status.
+func (m *Model) updateTask(t store.TaskSummary, u app.TaskUpdate, status string) tea.Cmd {
+	tasks := m.tasks(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.UpdateTaskLocal(m.ctx, t.GID, map[string]any{key: value}, now); err != nil {
+		if err := tasks.UpdateHere(m.ctx, t.GID, u); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: status}
@@ -211,9 +212,9 @@ func (m *Model) updateDeps(msg tea.Msg) (tea.Cmd, bool) {
 func (m *Model) handleDepPicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 	switch p.kind {
 	case pickSubtype:
-		return m.updateTaskField(p.task, "resource_subtype", item.value, "種類を「"+item.label+"」にしました"), true
+		return m.updateTask(p.task, app.TaskUpdate{Subtype: &item.value}, "種類を「"+item.label+"」にしました"), true
 	case pickApproval:
-		return m.updateTaskField(p.task, "approval_status", item.value, "承認の状態を「"+item.label+"」にしました"), true
+		return m.updateTask(p.task, app.TaskUpdate{Approval: &item.value}, "承認の状態を「"+item.label+"」にしました"), true
 	case pickDepAction:
 		return m.runDependencyAction(p, item.value), true
 	case pickDepTarget:
