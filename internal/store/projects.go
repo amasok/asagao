@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// OpCreateStatus posts a project status update. task_gid holds the project gid;
-// payload: status (local gid), status_type, title, text, html_text.
-const OpCreateStatus = "create_status"
+// OpCreateStatus posts a project status update (outbox.KindCreateStatus).
+const OpCreateStatus = outbox.KindCreateStatus
 
 // StatusTypes are the status values of a project status update, with Japanese labels.
 var StatusTypes = []struct{ Value, Label string }{
@@ -87,7 +87,7 @@ func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, t
 	if strings.TrimSpace(text) == "" {
 		return "", errors.New("本文が空です")
 	}
-	gid := LocalPrefix + randomID()
+	gid := newLocalGID()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM projects WHERE gid = ?", projectGID).Scan(&n); err != nil {

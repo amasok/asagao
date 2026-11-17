@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
-// Tag operations. payload: tag (gid, "local:..." for a tag created offline), tag_name, workspace.
+// Tag operations (outbox.KindAddTag, outbox.KindRemoveTag).
 const (
-	OpAddTag    = "add_tag"
-	OpRemoveTag = "remove_tag"
+	OpAddTag    = outbox.KindAddTag
+	OpRemoveTag = outbox.KindRemoveTag
 )
 
 // UpsertTags stores the tags of a workspace (so unused tags can be picked too).
@@ -64,7 +65,7 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 			// reuse an existing tag with that name
 			err := tx.QueryRowContext(ctx, "SELECT gid FROM tags WHERE name = ?", tagName).Scan(&tagGID)
 			if errors.Is(err, sql.ErrNoRows) {
-				tagGID = LocalPrefix + randomID()
+				tagGID = newLocalGID()
 				if _, err := tx.ExecContext(ctx, "INSERT INTO tags(gid, name) VALUES(?, ?)", tagGID, tagName); err != nil {
 					return err
 				}

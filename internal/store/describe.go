@@ -8,24 +8,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
 
-// OpStateLabel is the label of an outbox entry state.
-func OpStateLabel(state string) string {
-	switch state {
-	case OpPending:
-		return "未送信"
-	case OpConflict:
-		return "競合"
-	case OpFailed:
-		return "失敗"
-	case OpSending:
-		return "送信中"
-	}
-	return state
-}
+// OpStateLabel is the label of an outbox entry state (readmodel.OpStateLabel).
+func OpStateLabel(state string) string { return readmodel.OpStateLabel(state) }
 
 // VerifyNote tells the user that an entry being checked against Asana needs nothing from them.
 const VerifyNote = "操作は不要です。次の同期で自動的に確認します"
