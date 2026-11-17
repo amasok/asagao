@@ -157,9 +157,9 @@ func (m *Model) markAllNotificationsRead() tea.Cmd {
 }
 
 func (m *Model) markNotifications(gids []string, read bool, status string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	notifications := m.notifications(m.deps.Now())
 	return func() tea.Msg {
-		if _, err := st.MarkNotificationsLocal(m.ctx, gids, read, now); err != nil {
+		if _, err := notifications.MarkHere(m.ctx, gids, read); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: status}

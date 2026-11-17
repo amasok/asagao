@@ -83,9 +83,9 @@ type relationToggledMsg struct {
 }
 
 func (m *Model) toggleFollower(t store.TaskSummary, item pickerItem) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.SetFollowerLocal(m.ctx, t.GID, item.value, !item.checked, now); err != nil {
+		if err := relations.SetFollower(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return relationToggledMsg{task: t, kind: pickFollowers}
@@ -135,9 +135,9 @@ func (m *Model) showProjects(task store.TaskSummary) {
 }
 
 func (m *Model) toggleProject(t store.TaskSummary, item pickerItem) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	st, relations := m.deps.Store, m.relations(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.SetProjectLocal(m.ctx, t.GID, item.value, "", !item.checked, now); err != nil {
+		if err := relations.SetProject(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		d, err := st.GetTask(m.ctx, t.GID)
@@ -163,9 +163,9 @@ func (m *Model) startDuplicate() tea.Cmd {
 }
 
 func (m *Model) duplicate(name string) tea.Cmd {
-	st, now, src := m.deps.Store, m.deps.Now(), m.dupSource
+	copies, src := m.copies(m.deps.Now()), m.dupSource
 	return func() tea.Msg {
-		gid, err := st.DuplicateTaskLocal(m.ctx, src, name, now)
+		gid, err := copies.Duplicate(m.ctx, src, name)
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}
@@ -195,10 +195,10 @@ func expandHome(p string) string {
 }
 
 func (m *Model) attach(path string) tea.Cmd {
-	st, now, task, dir := m.deps.Store, m.deps.Now(), m.attachTask, m.deps.CacheDir
+	copies, task := m.copies(m.deps.Now()), m.attachTask
 	path = expandHome(strings.Trim(path, `"'`))
 	return func() tea.Msg {
-		if _, err := st.UploadAttachmentLocal(m.ctx, task, path, dir, now); err != nil {
+		if _, err := copies.Attach(m.ctx, task, path); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "ファイルを添付しました: " + filepath.Base(path)}

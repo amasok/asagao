@@ -121,6 +121,26 @@ func (m *Model) statusUpdates(now time.Time) *app.Status {
 	return &app.Status{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
 }
 
+// relations is the use cases on a task's relations, with a clock that reads now (see tasks).
+func (m *Model) relations(now time.Time) *app.Relations {
+	return &app.Relations{Store: m.deps.Store, Clock: func() time.Time { return now }}
+}
+
+// sections is the use cases on sections, with a clock that reads now (see tasks).
+func (m *Model) sections(now time.Time) *app.Sections {
+	return &app.Sections{Store: m.deps.Store, Clock: func() time.Time { return now }}
+}
+
+// copies is the duplicate and attach use cases, with a clock that reads now (see tasks).
+func (m *Model) copies(now time.Time) *app.Copies {
+	return &app.Copies{Store: m.deps.Store, CacheDir: m.deps.CacheDir, Clock: func() time.Time { return now }}
+}
+
+// notifications is the inbox use cases, with a clock that reads now (see tasks).
+func (m *Model) notifications(now time.Time) *app.Notifications {
+	return &app.Notifications{Store: m.deps.Store, Clock: func() time.Time { return now }}
+}
+
 // afterWrite reloads everything a write can change and asks for a sync.
 func (m *Model) afterWrite() tea.Cmd {
 	cmds := []tea.Cmd{m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.requestSync()}
