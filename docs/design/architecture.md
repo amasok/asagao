@@ -86,7 +86,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
 | sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
 | sync → asana | `*asana.Client`、型 | 直す | d1 (型)、d3 (ポート) |
-| sync → auth | `ErrNotLoggedIn`・`ErrLoginReplaced` (push.go:616) | 直す | d2 |
+| sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |
 | sync → config | `SyncConfig`、`CacheDir` | 直す | d3 |
 | sync → termsafe | 比べる前の文字の除去 | 許す | — |
 | tui → store | `*Local` 15 種類と、読み取りの型・文言・エラー 約 50 種類 (`TaskSummary` 61 か所ほか) | 直す | a (書き込み)、c2 (読み取りの型を readmodel へ) |
@@ -101,7 +101,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | cli → asana・config・tokenstore | `asana.NewClient`、設定の読み込み、`auth migrate` の保存先 | 直す | d4 (組み立てを wire へ、移す処理を auth へ) |
 | cli → termsafe、tui → termsafe ほか | 文字の除去 | 許す | — |
 
-外部ライブラリの「直す」: sync → x/oauth2 (d2)、cli → x/oauth2 (d4)。ほかは表のとおり許す。
+外部ライブラリの「直す」: cli → x/oauth2 (d4)。sync → x/oauth2 は d2 で済んだ。ほかは表のとおり許す。
 
 段階 d が終わると「直す」の行がなくなる。これを #69 の終わりの条件の 1 つにする (ADR 0007)。
 

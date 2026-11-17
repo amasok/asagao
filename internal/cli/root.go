@@ -93,6 +93,9 @@ func (a *app) apiClient(ctx context.Context) (*asana.Client, error) {
 	return c, nil
 }
 
+// newClient builds the Asana client. For a login, src must be the *auth.Source itself (not
+// its embedded TokenSource): its Token marks a request without a token (*auth.TokenError),
+// which is how sync knows it was not sent.
 func (a *app) newClient(ctx context.Context, src oauth2.TokenSource) *asana.Client {
 	c := asana.NewClient(oauth2.NewClient(ctx, src))
 	if a.baseURL != "" {
