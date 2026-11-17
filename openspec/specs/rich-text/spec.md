@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80、#12。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -163,13 +163,17 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **WHEN** `a<a href="http://x.jp"> b c </a>d` をエディタで往復する
 - **THEN** `a <a href="http://x.jp">b c</a> d` になる
 
-### Requirement: 往復で安定しない既知の形
-次の形は、エディタの往復で 1 回では落ち着かない (MUST、今の振る舞いとして。テストは除いている): 先頭に空白がある見出し (字下げした setext の見出し、#78)。
-根拠: nesting_spec_test.go unstableOnMain
+### Requirement: 字下げした setext の見出しは、字下げを除いて送る
+下に setext の見出しの線 (`---`・`===`) が続く段落の行は、字下げを文字にせず除いて送る (MUST)。Markdown は見出しの文字の字下げを落とし、エディタも見出しを字下げなしで書くため、残すと往復の 2 回目で変わる (#12)。4 つ以上の字下げもコードにせず、見出しの行にする。線が続かない段落の字下げは、これまでどおり文字にする。段落のあとでリストを始められない項目 (`2.`、中身のない `-`) は段落の続き、印の少ない行は引用の段落の続き (lazy) として見る。
+根拠: frommd.go keepIndentation, setextUnderline, interruptsParagraph; setext_indent_test.go TestIndentedSetextHeading
 
 #### Scenario: 字下げした setext の見出し
 - **WHEN** `   a\n  ---` を変換して、エディタで往復する
-- **THEN** `<h2>   a</h2>` が `<h2>a</h2>` になる (#78 で直す)
+- **THEN** 1 回目から `<h2>a</h2>` になり、2 回目も変わらない
+
+#### Scenario: 線の続かない字下げした段落
+- **WHEN** `  a\nb` を変換する
+- **THEN** `<body>  a\nb</body>` になる (字下げは文字のまま)
 
 ### Requirement: 入れ子のリストのあとの文は、そのリストの最後の項目に入れる
 リスト項目の中で入れ子のリストのあとに続く文は、そのリストの最後の項目の新しい行にする (MUST)。Markdown はその行を最後の項目の続きと読むので、エディタはそこにしか書き戻せないため。`FromMarkdown` も送るときにそうし、html にあるときも読むときにそうする (間の改行は落とし、語はくっつけない)。そのあとに続くリストは、隣り合うリストになる (#59)。空行と字下げで打った外側の項目の続き (`- a\n  - b\n\n  c`) は、まだリストの外に出る (#82)。
