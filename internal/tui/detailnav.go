@@ -3,7 +3,7 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // The detail view is a list of items: the task's fields, its subtasks and "add" rows.
@@ -60,7 +60,7 @@ func (m *Model) inDetail() bool { return (m.focus == paneDetail || m.zoom) && m.
 
 // actionTask is the task that actions apply to: the task shown in the detail view while it
 // has focus, otherwise the list selection.
-func (m *Model) actionTask() *store.TaskSummary {
+func (m *Model) actionTask() *readmodel.TaskSummary {
 	if m.inDetail() {
 		return &m.detail.TaskSummary
 	}
@@ -75,7 +75,7 @@ func (m *Model) currentItem() *detailItem {
 }
 
 // selectedSubtask returns the subtask under the detail cursor, if any.
-func (m *Model) selectedSubtask() *store.TaskSummary {
+func (m *Model) selectedSubtask() *readmodel.TaskSummary {
 	it := m.currentItem()
 	if it == nil || it.kind != itemSubtask || it.sub >= len(m.detail.Subtasks) {
 		return nil

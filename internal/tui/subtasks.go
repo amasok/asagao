@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -28,7 +29,7 @@ func withSubtasks(ctx context.Context, st *store.Store, rows []row, expanded map
 		if r.task == nil || !expanded[r.task.GID] || r.depth >= maxSubtaskDepth {
 			return nil
 		}
-		subs, err := st.ListTasks(ctx, store.TaskFilter{ParentGID: r.task.GID, Completed: completed})
+		subs, err := queryOf(st).ListTasks(ctx, readmodel.TaskFilter{ParentGID: r.task.GID, Completed: completed})
 		if err != nil {
 			return err
 		}
@@ -146,7 +147,7 @@ func truncateRunes(s string, n int) string {
 // --- assignee ---
 
 type usersLoadedMsg struct {
-	users []store.UserRef
+	users []readmodel.UserRef
 	err   error
 }
 
@@ -156,17 +157,17 @@ func (m *Model) openAssigneePicker() tea.Cmd {
 	}
 	st := m.deps.Store
 	return func() tea.Msg {
-		users, err := st.ListUsers(m.ctx)
+		users, err := queryOf(st).ListUsers(m.ctx)
 		return usersLoadedMsg{users: users, err: err}
 	}
 }
 
-func (m *Model) showAssigneePicker(users []store.UserRef) {
+func (m *Model) showAssigneePicker(users []readmodel.UserRef) {
 	t := m.actionTask()
 	if t == nil {
 		return
 	}
-	me, _ := m.deps.Store.MeGID(m.ctx)
+	me, _ := queryOf(m.deps.Store).MeGID(m.ctx)
 	current := ""
 	if t.Assignee != nil {
 		current = t.Assignee.GID
@@ -193,7 +194,7 @@ func (m *Model) showAssigneePicker(users []store.UserRef) {
 	m.picker = p
 }
 
-func (m *Model) assign(t store.TaskSummary, userGID, label string) tea.Cmd {
+func (m *Model) assign(t readmodel.TaskSummary, userGID, label string) tea.Cmd {
 	label = strings.TrimSuffix(label, "（自分）")
 	return m.updateTask(t, app.TaskUpdate{Assignee: &userGID}, "担当者を変更しました: "+t.Name+" → "+label)
 }

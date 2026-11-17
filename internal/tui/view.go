@@ -9,6 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -361,7 +363,7 @@ func (m *Model) listLines(w, h int) []string {
 	return lines
 }
 
-func (m *Model) taskLine(t *store.TaskSummary, depth, w int, today string, selected bool) string {
+func (m *Model) taskLine(t *readmodel.TaskSummary, depth, w int, today string, selected bool) string {
 	check := "☐"
 	if t.Completed {
 		check = "☑"
@@ -371,7 +373,7 @@ func (m *Model) taskLine(t *store.TaskSummary, depth, w int, today string, selec
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	extra := fieldBadges(t)
-	if badges := store.TaskBadges(*t); badges != "" {
+	if badges := readmodel.TaskBadges(*t); badges != "" {
 		extra = " " + badges + extra
 	}
 	if t.Pending {
@@ -552,7 +554,7 @@ func (m *Model) renderDetail(w int) string {
 		field(itemCompleted, "状態", done, "")
 	}
 	if subtype := d.ResourceSubtype; active || (subtype != "" && subtype != "default_task") {
-		label := store.SubtypeLabel(subtype)
+		label := task.SubtypeLabel(subtype)
 		if subtype == "milestone" {
 			label = "◆ " + label
 		}
@@ -563,7 +565,7 @@ func (m *Model) renderDetail(w int) string {
 		if status == "" {
 			status = "pending"
 		}
-		field(itemApproval, "承認", store.ApprovalLabel(status), "")
+		field(itemApproval, "承認", task.ApprovalLabel(status), "")
 	}
 	if d.Parent != nil {
 		field(itemParent, "親タスク", d.Parent.Name, "")
@@ -648,7 +650,7 @@ func (m *Model) renderDetail(w int) string {
 	}
 	for _, sec := range []struct {
 		title     string
-		deps      []store.DependencyView
+		deps      []readmodel.DependencyView
 		kind, add itemKind
 		addLabel  string
 	}{
@@ -666,7 +668,7 @@ func (m *Model) renderDetail(w int) string {
 		}
 	}
 
-	var comments []store.StoryView
+	var comments []readmodel.StoryView
 	for _, s := range d.Stories {
 		if s.Type == "comment" {
 			comments = append(comments, s)

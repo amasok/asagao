@@ -9,7 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/imageview"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -30,8 +30,8 @@ func (m *Model) toggleLike() tea.Cmd {
 // --- followers (multi-select) ---
 
 type followersMsg struct {
-	task  store.TaskSummary
-	users []store.UserRef
+	task  readmodel.TaskSummary
+	users []readmodel.UserRef
 	has   map[string]bool
 	err   error
 }
@@ -44,14 +44,14 @@ func (m *Model) openFollowers() tea.Cmd {
 	return m.openFollowersFor(*t)
 }
 
-func (m *Model) openFollowersFor(task store.TaskSummary) tea.Cmd {
+func (m *Model) openFollowersFor(task readmodel.TaskSummary) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
-		users, err := st.ListUsers(m.ctx)
+		users, err := queryOf(st).ListUsers(m.ctx)
 		if err != nil {
 			return followersMsg{err: err}
 		}
-		cur, err := st.TaskFollowers(m.ctx, task.GID)
+		cur, err := queryOf(st).TaskFollowers(m.ctx, task.GID)
 		has := map[string]bool{}
 		for _, u := range cur {
 			has[u.GID] = true
@@ -78,11 +78,11 @@ func (m *Model) showFollowers(msg followersMsg) {
 }
 
 type relationToggledMsg struct {
-	task store.TaskSummary
+	task readmodel.TaskSummary
 	kind pickerKind
 }
 
-func (m *Model) toggleFollower(t store.TaskSummary, item pickerItem) tea.Cmd {
+func (m *Model) toggleFollower(t readmodel.TaskSummary, item pickerItem) tea.Cmd {
 	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
 		if err := relations.SetFollower(m.ctx, t.GID, item.value, !item.checked); err != nil {
@@ -103,7 +103,7 @@ func (m *Model) openProjects() tea.Cmd {
 	return nil
 }
 
-func (m *Model) showProjects(task store.TaskSummary) {
+func (m *Model) showProjects(task readmodel.TaskSummary) {
 	cursor := 0
 	if m.picker != nil && m.picker.kind == pickProjects {
 		cursor = m.picker.cursor
@@ -134,13 +134,13 @@ func (m *Model) showProjects(task store.TaskSummary) {
 	m.picker = p
 }
 
-func (m *Model) toggleProject(t store.TaskSummary, item pickerItem) tea.Cmd {
+func (m *Model) toggleProject(t readmodel.TaskSummary, item pickerItem) tea.Cmd {
 	st, relations := m.deps.Store, m.relations(m.deps.Now())
 	return func() tea.Msg {
 		if err := relations.SetProject(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
-		d, err := st.GetTask(m.ctx, t.GID)
+		d, err := queryOf(st).GetTask(m.ctx, t.GID)
 		if err == nil {
 			t = d.TaskSummary
 		}
@@ -206,7 +206,7 @@ func (m *Model) attach(path string) tea.Cmd {
 }
 
 // openAttachment shows an image, or opens other files in the OS (downloading first).
-func (m *Model) openAttachment(a store.AttachmentView) tea.Cmd {
+func (m *Model) openAttachment(a readmodel.AttachmentView) tea.Cmd {
 	if a.IsImage {
 		return m.viewImages()
 	}

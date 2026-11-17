@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Calendar view: a month grid of tasks by due date, for My Tasks or a project.
@@ -22,7 +22,7 @@ func (m *Model) calendarActive() bool {
 
 type calendarLoadedMsg struct {
 	month time.Time
-	tasks map[string][]store.TaskSummary // by due date (YYYY-MM-DD)
+	tasks map[string][]readmodel.TaskSummary // by due date (YYYY-MM-DD)
 	err   error
 }
 
@@ -48,7 +48,7 @@ func (m *Model) loadCalendar() tea.Cmd {
 	}
 	month := monthStart(m.calDay)
 	start, end := calendarRange(month)
-	f := store.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter, Field: m.fieldFilter.field, FieldValue: m.fieldFilter.value}
+	f := readmodel.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter, Field: m.fieldFilter.field, FieldValue: m.fieldFilter.value}
 	switch m.filter {
 	case filterCompleted:
 		f.Completed = boolPtr(true)
@@ -61,14 +61,14 @@ func (m *Model) loadCalendar() tea.Cmd {
 		if sc.kind == scopeProject {
 			f.ProjectGID = sc.project
 		} else {
-			me, err := st.MeGID(m.ctx)
+			me, err := queryOf(st).MeGID(m.ctx)
 			if err != nil {
 				return calendarLoadedMsg{err: err}
 			}
 			f.AssigneeGID = me
 		}
-		tasks, err := st.ListTasks(m.ctx, f)
-		byDay := map[string][]store.TaskSummary{}
+		tasks, err := queryOf(st).ListTasks(m.ctx, f)
+		byDay := map[string][]readmodel.TaskSummary{}
 		for _, t := range tasks {
 			byDay[t.DueOn] = append(byDay[t.DueOn], t)
 		}

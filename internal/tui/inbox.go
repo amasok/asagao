@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -44,11 +45,11 @@ func (m *Model) inboxScope() scope {
 // detail pane shows it, task actions apply to it); enter on one about a task not cached
 // yet fetches it. notice (if any) is shown above the list.
 func inboxRows(ctx context.Context, st *store.Store, now time.Time, notice string) ([]row, error) {
-	ns, err := st.ListNotifications(ctx, store.NotificationFilter{})
+	ns, err := queryOf(st).ListNotifications(ctx, readmodel.NotificationFilter{})
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := st.TaskSummaries(ctx, notificationTaskGIDs(ns))
+	tasks, err := queryOf(st).TaskSummaries(ctx, notificationTaskGIDs(ns))
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func inboxRows(ctx context.Context, st *store.Store, now time.Time, notice strin
 	return rows, nil
 }
 
-func notificationTaskGIDs(ns []store.Notification) []string {
+func notificationTaskGIDs(ns []readmodel.Notification) []string {
 	var gids []string
 	for _, n := range ns {
 		if n.IsTask() {
@@ -91,7 +92,7 @@ func notificationTaskGIDs(ns []store.Notification) []string {
 }
 
 // selectedNotification returns the notification under the list cursor (inbox only).
-func (m *Model) selectedNotification() *store.Notification {
+func (m *Model) selectedNotification() *readmodel.Notification {
 	if m.currentScope().kind != scopeInbox || m.listCursor < 0 || m.listCursor >= len(m.rows) {
 		return nil
 	}
@@ -167,7 +168,7 @@ func (m *Model) markNotifications(gids []string, read bool, status string) tea.C
 }
 
 // notificationLine draws one notification: unread mark, who, what, the task, and when.
-func (m *Model) notificationLine(n *store.Notification, w int, selected bool) string {
+func (m *Model) notificationLine(n *readmodel.Notification, w int, selected bool) string {
 	dot, sent := " ", " "
 	if !n.Read {
 		dot = "●"
@@ -180,7 +181,7 @@ func (m *Model) notificationLine(n *store.Notification, w int, selected bool) st
 	if t, err := time.Parse(time.RFC3339, n.CreatedAt); err == nil {
 		when = t.In(m.deps.Now().Location()).Format("15:04")
 	}
-	what := store.NotificationLabel(n.Subtype)
+	what := readmodel.NotificationLabel(n.Subtype)
 	who := n.ActorName
 	if what != "" {
 		who += " " + what

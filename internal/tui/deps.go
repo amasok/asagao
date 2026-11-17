@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -18,10 +20,10 @@ import (
 
 // --- type and approval ---
 
-func (m *Model) openSubtypePicker(t store.TaskSummary) tea.Cmd {
+func (m *Model) openSubtypePicker(t readmodel.TaskSummary) tea.Cmd {
 	p := &picker{kind: pickSubtype, title: "種類（" + truncateRunes(t.Name, 30) + "）", task: t}
-	for i, v := range store.TaskSubtypes {
-		item := pickerItem{label: store.SubtypeLabel(v), value: v}
+	for i, v := range task.Subtypes {
+		item := pickerItem{label: task.SubtypeLabel(v), value: v}
 		if v == t.ResourceSubtype || (t.ResourceSubtype == "" && v == "default_task") {
 			item.hint, p.cursor = "現在", i
 		}
@@ -31,14 +33,14 @@ func (m *Model) openSubtypePicker(t store.TaskSummary) tea.Cmd {
 	return nil
 }
 
-func (m *Model) openApprovalPicker(t store.TaskSummary) tea.Cmd {
+func (m *Model) openApprovalPicker(t readmodel.TaskSummary) tea.Cmd {
 	current := t.ApprovalStatus
 	if current == "" {
 		current = "pending"
 	}
 	p := &picker{kind: pickApproval, title: "承認（" + truncateRunes(t.Name, 30) + "）", task: t}
 	for i, v := range []string{"approved", "changes_requested", "rejected", "pending"} {
-		item := pickerItem{label: store.ApprovalLabel(v), value: v}
+		item := pickerItem{label: task.ApprovalLabel(v), value: v}
 		if v == current {
 			item.hint, p.cursor = "現在", i
 		}
@@ -49,7 +51,7 @@ func (m *Model) openApprovalPicker(t store.TaskSummary) tea.Cmd {
 }
 
 // updateTask applies resolved changes to the task t and reports status.
-func (m *Model) updateTask(t store.TaskSummary, u app.TaskUpdate, status string) tea.Cmd {
+func (m *Model) updateTask(t readmodel.TaskSummary, u app.TaskUpdate, status string) tea.Cmd {
 	tasks := m.tasks(m.deps.Now())
 	return func() tea.Msg {
 		if err := tasks.UpdateHere(m.ctx, t.GID, u); err != nil {
@@ -62,7 +64,7 @@ func (m *Model) updateTask(t store.TaskSummary, u app.TaskUpdate, status string)
 // --- dependencies ---
 
 // openDependencyActions offers what can be done with a linked task.
-func (m *Model) openDependencyActions(t store.TaskSummary, dep store.DependencyView, dependents bool) tea.Cmd {
+func (m *Model) openDependencyActions(t readmodel.TaskSummary, dep readmodel.DependencyView, dependents bool) tea.Cmd {
 	p := &picker{kind: pickDepAction, title: truncateRunes(dep.Name, 40), task: t, dependents: dependents}
 	p.items = []pickerItem{{label: "開く", value: "open\x00" + dep.GID}}
 	remove := "このタスクを待つのをやめる（依存を外す）"
@@ -84,7 +86,7 @@ func (m *Model) runDependencyAction(p *picker, value string) tea.Cmd {
 
 // setDependency links (or unlinks) task t and other: t waits for other, or with
 // dependents other waits for t.
-func (m *Model) setDependency(t store.TaskSummary, other string, dependents, add bool) tea.Cmd {
+func (m *Model) setDependency(t readmodel.TaskSummary, other string, dependents, add bool) tea.Cmd {
 	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
 		waiting, blocker := t.GID, other
@@ -102,45 +104,45 @@ func (m *Model) setDependency(t store.TaskSummary, other string, dependents, add
 }
 
 type depCandidatesMsg struct {
-	task       store.TaskSummary
+	task       readmodel.TaskSummary
 	dependents bool
 	query      string
-	tasks      []store.TaskSummary
+	tasks      []readmodel.TaskSummary
 	err        error
 }
 
 // openDependencyTargets lists tasks to link: with query, the search hits; otherwise the
 // incomplete tasks of the task's projects (or my incomplete tasks).
-func (m *Model) openDependencyTargets(t store.TaskSummary, dependents bool, query string) tea.Cmd {
+func (m *Model) openDependencyTargets(t readmodel.TaskSummary, dependents bool, query string) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		open := false
-		var tasks []store.TaskSummary
+		var tasks []readmodel.TaskSummary
 		switch {
 		case query != "":
-			found, err := st.ListTasks(m.ctx, store.TaskFilter{Query: query, Limit: 100})
+			found, err := queryOf(st).ListTasks(m.ctx, readmodel.TaskFilter{Query: query, Limit: 100})
 			if err != nil {
 				return depCandidatesMsg{err: err}
 			}
 			tasks = found
 		case len(t.Memberships) > 0:
 			for _, ms := range t.Memberships {
-				found, err := st.ListTasks(m.ctx, store.TaskFilter{ProjectGID: ms.ProjectGID, Completed: &open, Limit: 200})
+				found, err := queryOf(st).ListTasks(m.ctx, readmodel.TaskFilter{ProjectGID: ms.ProjectGID, Completed: &open, Limit: 200})
 				if err != nil {
 					return depCandidatesMsg{err: err}
 				}
 				tasks = append(tasks, found...)
 			}
 		default:
-			me, err := st.MeGID(m.ctx)
+			me, err := queryOf(st).MeGID(m.ctx)
 			if err != nil {
 				return depCandidatesMsg{err: err}
 			}
-			if tasks, err = st.ListTasks(m.ctx, store.TaskFilter{AssigneeGID: me, Completed: &open, Limit: 200}); err != nil {
+			if tasks, err = queryOf(st).ListTasks(m.ctx, readmodel.TaskFilter{AssigneeGID: me, Completed: &open, Limit: 200}); err != nil {
 				return depCandidatesMsg{err: err}
 			}
 		}
-		d, err := st.GetTask(m.ctx, t.GID)
+		d, err := queryOf(st).GetTask(m.ctx, t.GID)
 		if err != nil {
 			return depCandidatesMsg{err: err}
 		}
@@ -148,7 +150,7 @@ func (m *Model) openDependencyTargets(t store.TaskSummary, dependents bool, quer
 		for _, l := range slices.Concat(d.Dependencies, d.Dependents) {
 			linked[l.GID] = true
 		}
-		var out []store.TaskSummary
+		var out []readmodel.TaskSummary
 		for _, c := range tasks {
 			if !linked[c.GID] && !store.IsLocalGID(c.GID) {
 				linked[c.GID] = true
@@ -171,7 +173,7 @@ func (m *Model) showDependencyTargets(msg depCandidatesMsg) {
 	p.items = append(p.items, pickerItem{label: "＋ タスク名で検索…", value: "?"})
 	for _, c := range msg.tasks {
 		label := c.Name
-		if b := store.TaskBadges(c); b != "" {
+		if b := readmodel.TaskBadges(c); b != "" {
 			label += " " + b
 		}
 		item := pickerItem{label: label, value: c.GID}
@@ -188,7 +190,7 @@ func (m *Model) showDependencyTargets(msg depCandidatesMsg) {
 	m.picker = p
 }
 
-func (m *Model) startDependencySearch(t store.TaskSummary, dependents bool) tea.Cmd {
+func (m *Model) startDependencySearch(t readmodel.TaskSummary, dependents bool) tea.Cmd {
 	m.openPrompt(promptDepSearch)
 	m.depTask, m.depDependents = t, dependents
 	return m.prompt.Focus()
@@ -227,7 +229,7 @@ func (m *Model) handleDepPicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 }
 
 // dependencyLine is a linked task in the detail view.
-func (m *Model) dependencyLine(d store.DependencyView) string {
+func (m *Model) dependencyLine(d readmodel.DependencyView) string {
 	check := "☐"
 	if d.Completed {
 		check = "☑"

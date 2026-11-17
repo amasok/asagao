@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -28,6 +29,7 @@ var (
 	qByGID   = map[string]readmodel.TaskSummary{"t1": {GID: "t1"}}
 	qUsers   = []readmodel.UserRef{{GID: "u1"}}
 	qAtt     = &readmodel.AttachmentView{GID: "a1"}
+	qRefs    = []model.Ref{{GID: "g1", Name: "急ぎ"}}
 	qTags    = []readmodel.TagCount{{GID: "g1"}}
 	qOptions = []readmodel.FieldOption{{FieldGID: "f1"}}
 	qField   = readmodel.CustomFieldView{GID: "f1"}
@@ -59,6 +61,10 @@ func (f *fakeQueryStore) TaskSummaries(_ context.Context, gids []string) (map[st
 func (f *fakeQueryStore) TaskFollowers(_ context.Context, gid string) ([]readmodel.UserRef, error) {
 	f.rec("TaskFollowers", gid)
 	return qUsers, f.err
+}
+func (f *fakeQueryStore) TaskTags(_ context.Context, gid string) ([]model.Ref, error) {
+	f.rec("TaskTags", gid)
+	return qRefs, f.err
 }
 func (f *fakeQueryStore) GetAttachment(_ context.Context, gid string) (*readmodel.AttachmentView, error) {
 	f.rec("GetAttachment", gid)
@@ -171,6 +177,7 @@ func TestQueryCallsTheStore(t *testing.T) {
 		{"GetTask", func(q Query) ([]any, error) { v, err := q.GetTask(ctx, "t1"); return []any{v}, err }, []any{"t1"}, []any{qDetail}},
 		{"TaskSummaries", func(q Query) ([]any, error) { v, err := q.TaskSummaries(ctx, []string{"t1"}); return []any{v}, err }, []any{[]string{"t1"}}, []any{qByGID}},
 		{"TaskFollowers", func(q Query) ([]any, error) { v, err := q.TaskFollowers(ctx, "t1"); return []any{v}, err }, []any{"t1"}, []any{qUsers}},
+		{"TaskTags", func(q Query) ([]any, error) { v, err := q.TaskTags(ctx, "t1"); return []any{v}, err }, []any{"t1"}, []any{qRefs}},
 		{"GetAttachment", func(q Query) ([]any, error) { v, err := q.GetAttachment(ctx, "a1"); return []any{v}, err }, []any{"a1"}, []any{qAtt}},
 		{"RealGID", func(q Query) ([]any, error) { v, err := q.RealGID(ctx, "local:1"); return []any{v}, err }, []any{"local:1"}, []any{"real"}},
 		{"ListTags", func(q Query) ([]any, error) { v, err := q.ListTags(ctx); return []any{v}, err }, nil, []any{qTags}},
