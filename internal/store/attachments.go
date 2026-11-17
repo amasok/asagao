@@ -10,19 +10,11 @@ import (
 	"strings"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
-type AttachmentView struct {
-	GID       string `json:"gid"`
-	Name      string `json:"name"`
-	Host      string `json:"host"`
-	ViewURL   string `json:"view_url,omitempty"`
-	Size      int64  `json:"size"`
-	CreatedAt string `json:"created_at"`
-	IsImage   bool   `json:"is_image"`
-	// LocalPath is set once the file has been downloaded (viewable offline).
-	LocalPath string `json:"local_path,omitempty"`
-}
+// AttachmentView is readmodel.AttachmentView.
+type AttachmentView = readmodel.AttachmentView
 
 var imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".heic": true, ".bmp": true}
 

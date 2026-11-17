@@ -10,6 +10,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // OpCreateStatus posts a project status update (outbox.KindCreateStatus).
@@ -30,16 +31,8 @@ func StatusLabel(t string) string {
 	return t
 }
 
-type StatusUpdateView struct {
-	GID        string `json:"gid"`
-	StatusType string `json:"status_type"`
-	Title      string `json:"title"`
-	Text       string `json:"text"`
-	HTMLText   string `json:"html_text,omitempty"`
-	Author     string `json:"author"`
-	CreatedAt  string `json:"created_at"`
-	Pending    bool   `json:"pending"`
-}
+// StatusUpdateView is readmodel.StatusUpdateView.
+type StatusUpdateView = readmodel.StatusUpdateView
 
 // ReplaceStatusUpdates stores a project's status updates (keeping unsent local ones).
 func (s *Store) ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []asana.StatusUpdate) error {

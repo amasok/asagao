@@ -35,122 +35,22 @@ const KeyMeGID = "me_gid"
 // importing the store).
 type UserRef = readmodel.UserRef
 
-type MembershipView struct {
-	ProjectGID  string `json:"project_gid"`
-	ProjectName string `json:"project_name"`
-	SectionGID  string `json:"section_gid,omitempty"`
-	SectionName string `json:"section_name,omitempty"`
-}
-
-type TaskSummary struct {
-	GID             string           `json:"gid"`
-	Name            string           `json:"name"`
-	ResourceSubtype string           `json:"resource_subtype"`
-	Completed       bool             `json:"completed"`
-	CompletedAt     string           `json:"completed_at,omitempty"`
-	DueOn           string           `json:"due_on,omitempty"`
-	DueAt           string           `json:"due_at,omitempty"`
-	StartOn         string           `json:"start_on,omitempty"`
-	Assignee        *UserRef         `json:"assignee"`
-	Memberships     []MembershipView `json:"memberships"`
-	Tags            []string         `json:"tags"`
-	ParentGID       string           `json:"parent_gid,omitempty"`
-	ParentName      string           `json:"parent_name,omitempty"`
-	NumSubtasks     int              `json:"num_subtasks"`
-	PermalinkURL    string           `json:"permalink_url"`
-	ModifiedAt      string           `json:"modified_at"`
-	// Pending is true while local changes to this task have not been sent to Asana.
-	Pending  bool `json:"pending"`
-	Liked    bool `json:"liked"`
-	NumLikes int  `json:"num_likes"`
-	// ApprovalStatus of an approval task: pending, approved, rejected or changes_requested.
-	ApprovalStatus string `json:"approval_status,omitempty"`
-	// OpenDependencies is how many incomplete tasks this task waits for.
-	OpenDependencies int `json:"open_dependencies,omitempty"`
-	// CustomFields: in lists, the fields that have a value; in a task's detail, every field
-	// of the task (and of its projects), with the choices of enum fields.
-	CustomFields []CustomFieldView `json:"custom_fields,omitempty"`
-}
-
-type StoryView struct {
-	GID             string   `json:"gid"`
-	Type            string   `json:"type"`
-	ResourceSubtype string   `json:"resource_subtype"`
-	Text            string   `json:"text"`
-	CreatedBy       *UserRef `json:"created_by"`
-	CreatedAt       string   `json:"created_at"`
-	Pending         bool     `json:"pending"`
-	// HTMLText is the comment as Asana rich text (empty for comments posted offline).
-	HTMLText string `json:"html_text,omitempty"`
-}
-
-type TaskDetail struct {
-	TaskSummary
-	Notes string `json:"notes"`
-	// HTMLNotes is the description as Asana rich text (HTML subset); empty if unknown.
-	HTMLNotes   string           `json:"html_notes,omitempty"`
-	CreatedAt   string           `json:"created_at"`
-	Parent      *TaskRef         `json:"parent"`
-	Subtasks    []TaskSummary    `json:"subtasks"`
-	Stories     []StoryView      `json:"stories"`
-	Attachments []AttachmentView `json:"attachments"`
-	Followers   []UserRef        `json:"followers"`
-	// Dependencies are the tasks this task waits for; Dependents the tasks waiting for it.
-	Dependencies []DependencyView `json:"dependencies"`
-	Dependents   []DependencyView `json:"dependents"`
-	// DetailsFetchedAt is when subtasks/stories were last fetched; empty if never.
-	DetailsFetchedAt string `json:"details_fetched_at,omitempty"`
-}
-
-type TaskRef struct {
-	GID  string `json:"gid"`
-	Name string `json:"name"`
-}
-
-type SectionView struct {
-	GID  string `json:"gid"`
-	Name string `json:"name"`
-}
-
-type ProjectView struct {
-	GID          string        `json:"gid"`
-	Name         string        `json:"name"`
-	WorkspaceGID string        `json:"workspace_gid"`
-	TeamName     string        `json:"team_name,omitempty"`
-	IsMember     bool          `json:"is_member"`
-	Archived     bool          `json:"archived"`
-	PermalinkURL string        `json:"permalink_url"`
-	Sections     []SectionView `json:"sections"`
-	// Status is the type of the latest status update ("" if none).
-	Status string `json:"status,omitempty"`
-}
+// The views below are readmodel's too (aliases, stage c2 of migration-plan.md), so that
+// the read ports of internal/app can use them without importing the store.
+type (
+	MembershipView = readmodel.MembershipView
+	TaskSummary    = readmodel.TaskSummary
+	StoryView      = readmodel.StoryView
+	TaskDetail     = readmodel.TaskDetail
+	TaskRef        = readmodel.TaskRef
+	SectionView    = readmodel.SectionView
+	ProjectView    = readmodel.ProjectView
+)
 
 // --- tasks ---
 
-// TaskFilter selects tasks from the store. Zero values mean "no filter".
-type TaskFilter struct {
-	WorkspaceGID string
-	AssigneeGID  string
-	ProjectGID   string
-	SectionGID   string
-	ParentGID    string
-	// Completed: nil = both, true = completed only, false = incomplete only.
-	Completed *bool
-	DueBefore string // inclusive, YYYY-MM-DD
-	DueAfter  string // inclusive, YYYY-MM-DD
-	// ModifiedAfter keeps tasks modified at or after this time (RFC 3339).
-	ModifiedAfter string
-	// SortByModified orders by last modification, newest first (instead of due date).
-	SortByModified bool
-	Tag            string // tag name or gid
-	// Field (a custom field's gid or name) keeps tasks whose field has FieldValue (its text,
-	// or one of its options); with FieldValue "" any value.
-	Field      string
-	FieldValue string
-	// Query is a full-text search over task name, notes and comments.
-	Query string
-	Limit int
-}
+// TaskFilter is readmodel.TaskFilter.
+type TaskFilter = readmodel.TaskFilter
 
 const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.completed_at, ''),
 	t.due_on, COALESCE(t.due_at, ''), t.start_on, t.assignee_gid, COALESCE(u.name, ''),
@@ -577,13 +477,8 @@ func (s *Store) ResolveUser(ctx context.Context, arg string) (string, error) {
 	return "", fmt.Errorf("user %q matches %s: %w", arg, strings.Join(names, ", "), ErrAmbiguous)
 }
 
-// TagCount is a tag with the number of incomplete tasks that have it.
-type TagCount struct {
-	GID   string `json:"gid"`
-	Name  string `json:"name"`
-	Open  int    `json:"open_tasks"`
-	Total int    `json:"tasks"`
-}
+// TagCount is readmodel.TagCount.
+type TagCount = readmodel.TagCount
 
 // ListTags returns the workspace tags (with how many tasks use them), ordered by name.
 func (s *Store) ListTags(ctx context.Context) ([]TagCount, error) {
