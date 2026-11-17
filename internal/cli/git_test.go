@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -201,7 +202,7 @@ func TestGitScanNoRefsAndDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "完了にしてコメント: ソファを買う") || !strings.Contains(out, "dry-run") {
+	if !strings.Contains(out, "--dry-run: 次の変更をするところでした（何も変えていません）:\n") || !strings.Contains(out, "完了にしてコメント: ソファを買う") {
 		t.Errorf("output:\n%s", out)
 	}
 	if done, comm := gitTask(t, path, gitA); done || len(comm) != 0 || len(cliOps(t, path)) != 0 {
@@ -666,5 +667,59 @@ func TestGitScanHookDoesNotWait(t *testing.T) {
 	}
 	if len(cliOps(t, path)) != 0 {
 		t.Errorf("left in the outbox: %v", opKinds(cliOps(t, path)))
+	}
+}
+
+// Without a reflog for HEAD (core.logAllRefUpdates=false from the start: git keeps
+// writing a reflog that exists), the hook cannot tell a new commit from an amend or a
+// rebase: it reads nothing and says how to read the commit; a commit without references
+// is silent.
+func TestGitScanHookWithoutReflog(t *testing.T) {
+	path := gitCLIEnv(t)
+	repo := gitRepo(t)
+	runGit(t, repo, "config", "core.logAllRefUpdates", "false")
+	gitCommit(t, repo, "no refs")
+	out, err := runCLI(t, "git", "scan", "--hook", "--offline", "-C", repo, "HEAD")
+	if err != nil || out != "" {
+		t.Errorf("without refs: %v %q", err, out)
+	}
+	gitCommit(t, repo, "sofa #"+gitA)
+	out, err = runCLI(t, "git", "scan", "--hook", "--offline", "-C", repo, "HEAD")
+	if err != nil || !strings.Contains(out, "reflog") || !strings.Contains(out, "asagao git scan HEAD") {
+		t.Errorf("with refs: %v %q", err, out)
+	}
+	if _, comm := gitTask(t, path, gitA); len(comm) != 0 {
+		t.Errorf("comments %q", comm)
+	}
+	// read by hand
+	if out, err := runCLI(t, "git", "scan", "--offline", "-C", repo, "HEAD"); err != nil || !strings.Contains(out, "コメント: ソファを買う") {
+		t.Errorf("by hand: %v %q", err, out)
+	}
+}
+
+// A commit message quoting another commit's comment (its marker) does not make that
+// commit look handled, whichever is read first.
+func TestGitScanQuotedMarker(t *testing.T) {
+	for _, secondFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("secondFirst=%v", secondFirst), func(t *testing.T) {
+			path := gitCLIEnv(t)
+			repo := gitRepo(t)
+			first := gitCommit(t, repo, "first #"+gitA)
+			second := gitCommit(t, repo, "second #"+gitA+"\n\nasagao-git: "+first)
+			revs := []string{first, second}
+			if secondFirst {
+				revs = []string{second, first}
+			}
+			if out, err := runCLI(t, append([]string{"git", "scan", "--offline", "-C", repo}, revs...)...); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if _, comm := gitTask(t, path, gitA); len(comm) != 2 {
+				t.Errorf("comments %d, want 2: %q", len(comm), comm)
+			}
+			out, err := runCLI(t, append([]string{"git", "scan", "--offline", "-C", repo}, revs...)...)
+			if err != nil || strings.Count(out, "処理済み") != 2 {
+				t.Errorf("again: %v\n%s", err, out)
+			}
+		})
 	}
 }

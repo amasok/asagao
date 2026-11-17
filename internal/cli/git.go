@@ -185,11 +185,16 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, dr
 	for _, w := range res.Warnings {
 		fmt.Fprintln(errOut, "注意:", w)
 	}
+	if dryRun { // the words of the other commands' --dry-run (#3)
+		if wrote {
+			fmt.Fprintln(out, "--dry-run: 次の変更をするところでした（何も変えていません）:")
+		} else {
+			fmt.Fprintln(out, "--dry-run: 変更はありません")
+		}
+	}
 	printGitScan(out, res, hook)
 	switch {
-	case !wrote:
-	case dryRun:
-		fmt.Fprintln(out, "（--dry-run のため、何も変更していません）")
+	case !wrote || dryRun:
 	case offline:
 		fmt.Fprintln(out, "（outbox に積みました。次の sync で送ります）")
 	case errors.Is(pushErr, sync.ErrAccountChanged):
@@ -332,16 +337,24 @@ func readCommits(ctx context.Context, dir string, revs []string) ([]usecase.GitC
 // `git commit` (HEAD's reflog says "commit", "commit (amend)", "commit (merge)"...).
 // Commits that rebase, cherry-pick or revert make run the hook too; they repeat messages
 // that were handled already, and are left out. An amend handles only the references the
-// amended commit did not have.
+// amended commit did not have. Without a reflog for HEAD (core.logAllRefUpdates=false, or
+// a reflog whose newest entry is not HEAD) a new commit cannot be told from an amend or a
+// rebase: a commit with references is left out with errNoReflog, which says how to read it.
 func hookCommits(ctx context.Context, dir string) ([]usecase.GitCommit, error) {
-	action, err := git(ctx, dir, "reflog", "-1", "--format=%gs", "HEAD")
-	action = strings.TrimSpace(action)
-	if err == nil && action != "" && !strings.HasPrefix(action, "commit") {
-		return nil, nil
-	}
 	commits, err := readCommits(ctx, dir, []string{"HEAD"})
 	if err != nil || len(commits) == 0 {
 		return commits, err
+	}
+	entry, err := git(ctx, dir, "reflog", "-1", "--format=%H%x00%gs", "HEAD", "--")
+	sha, action, _ := strings.Cut(strings.TrimSpace(entry), "\x00")
+	if err != nil || sha != commits[0].SHA {
+		if len(commits[0].Refs()) == 0 {
+			return nil, nil
+		}
+		return nil, errNoReflog
+	}
+	if !strings.HasPrefix(action, "commit") {
+		return nil, nil
 	}
 	if strings.HasPrefix(action, "commit (amend)") {
 		if prev, err := git(ctx, dir, "log", "-1", "--format=%B", "HEAD@{1}", "--"); err == nil {
@@ -350,6 +363,9 @@ func hookCommits(ctx context.Context, dir string) ([]usecase.GitCommit, error) {
 	}
 	return commits, nil
 }
+
+var errNoReflog = errors.New("HEAD の reflog がないため（core.logAllRefUpdates）、新しいコミットか amend・rebase かを見分けられません。" +
+	"このコミットは読みませんでした。読むには `asagao git scan HEAD` を実行してください")
 
 // repoName is the name of the repository's folder ("" if git does not say).
 func repoName(ctx context.Context, dir string) string {
