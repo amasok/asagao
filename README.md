@@ -232,6 +232,7 @@ due = ["D", "ctrl+t"]
 | `project status <プロジェクト>` / `project status post` | ステータス更新を見る / 投稿する |
 | `project create <名前>` / `project archive <プロジェクト> [--undo]` | プロジェクトを作る / アーカイブ（オンラインのみ） |
 | `project members <プロジェクト> [--add] [--remove]` | メンバーを表示 / 追加 / 外す（変更はオンラインのみ） |
+| `api <パス> [-X メソッド] [-f/-F key=value] [--input]` | Asana の API を直接呼ぶ（[API を直接呼ぶ](#api-を直接呼ぶ)）。キャッシュと outbox を通らない |
 
 `task list` と `search` の絞り込み:
 
@@ -263,6 +264,25 @@ asagao searches rm 今週
 - searches.toml は手で書き換えてもかまいません（`[[search]]` の表を並べ、キーは `name`・`query`・`assignee`・`project`・`section`・`tag`・`field`・`due_before`・`due_after`・`completion`・`overdue`・`modified_within_days`・`limit`）。読めない内容や知らないキーがあるとエラーになり、ファイルは書き換えません。保存すると書き直すので、コメントは残りません。
 
 すべてのコマンドで `--json` を付けると JSON で出力します。
+
+### API を直接呼ぶ
+
+asagao にまだ無い操作は、`gh api` のように Asana の API をログイン中の認証で直接呼べます。
+
+```sh
+asagao api /users/me
+asagao api /tasks/123 -f opt_fields=name,notes            # GET ではフィールドがクエリになる
+asagao api /projects/456/tasks --paginate                 # 全ページの data を 1 つの配列にまとめる
+asagao api -X PUT /tasks/123 -f name=新しい名前 -F completed=true
+asagao api -X POST /tasks -f name=買い物 -f projects[]=456 --dry-run   # 送らずに中身を見る
+asagao api -X POST /tasks --input task.json               # 本文の JSON をそのまま送る（- で標準入力）
+```
+
+- **キャッシュと outbox を通りません。** その場で Asana に送り、書き込み（`-X POST` / `PUT` / `DELETE`）はすぐ Asana を書き換えます。オフラインでの取り消しや同期の照合はありません。ローカルのキャッシュに反映するには、あとで `asagao sync` を実行してください。
+- メソッドは既定で GET です。フィールドは GET と DELETE ではクエリに、POST と PUT では本文の `data` に入ります。`-f` は文字列、`-F` は `true` / `false` / `null` / 数値をその型にします。`key[]=値` で配列に足し、`a[b]=値` で入れ子にします（例: `-f custom_fields[789]=高`）。
+- パスは API の中（`https://app.asana.com/api/1.0` の下）だけです。ほかのホストの URL や `..` は送らず、リダイレクトもたどりません（トークンがよそへ行かないように）。
+- 応答の JSON は整形して標準出力に出します。端末の制御文字は `\u` のエスケープにするので、`jq` にもそのまま渡せます。Asana がエラーを返したときも本文を出し、終了コードは 1 になります。
+- レート制限（429）は待って送り直します。5xx は GET / PUT / DELETE だけ送り直します（POST は二重に作らないように送り直しません）。
 
 ## MCP サーバー（AI から使う）
 
