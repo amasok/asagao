@@ -42,6 +42,8 @@
 
 ### 4.1 MVP（v0.1）
 
+v0.1 は機能の範囲の名前で、これだけをリリースすることはしない。最初のリリースは、4.2 まで含めた v0.2.0。
+
 | # | 機能 | 内容 |
 |---|------|------|
 | F1 | 認証 | Personal Access Token（`asagao auth login --pat`）または OAuth 2.0（`asagao auth login`）でログイン。トークンは OS のキーチェーンまたは 1Password に保存し、OAuth は自動で更新 |
@@ -239,7 +241,7 @@ asagao sync status     # 送信待ちキューの確認
 - **無料プランで動くこと**: 有料プラン限定の API・項目は使わない。
 - **セキュリティ**: トークンはログに出さない。ローカルストアの権限は 600。
 - **対応環境**: macOS / Linux のみ。
-- **配布**: シングルバイナリ（goreleaser）、Homebrew tap。
+- **配布**: シングルバイナリ（goreleaser）。`v*` のタグを push すると `.github/workflows/release.yml` が macOS / Linux × amd64 / arm64 の tar.gz・checksums・changelog を GitHub Releases に出し、Homebrew tap（`amasok/homebrew-tap` の cask）を更新する。`brew install amasok/tap/asagao` と `go install` で入れられる。バイナリは署名していないので、cask が入れるときに macOS の quarantine を外す。
 
 ## 11. 技術選定
 
@@ -307,5 +309,5 @@ asagao sync status     # 送信待ちキューの確認
 | M3 | TUI（一覧・詳細・検索・フィルタ） |
 | M4 | 書き込み（完了・作成・コメント）+ 送信待ちキュー + オフライン対応 |
 | M5 | MCP サーバー |
-| M6 | 配布（goreleaser / Homebrew）= v0.1 リリース |
-| M7 | v0.2: 4.2 の機能（ボード / カレンダー、添付、タグ、フォロワー、ステータス更新など） |
+| M6 | 配布（goreleaser / Homebrew）。M7 と合わせて v0.2.0 で最初にリリースする |
+| M7 | v0.2: 4.2 の機能（ボード / カレンダー、添付、タグ、フォロワー、ステータス更新など）= v0.2.0 リリース（最初のリリース） |
