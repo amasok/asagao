@@ -835,14 +835,39 @@ func ImageGID(dest string) (string, bool) {
 // and editable Markdown writes it as it is (ToEditableMarkdown). The first indentation
 // character of such a line becomes a character reference ("&#32;" / "&#9;"), which Markdown
 // keeps as text. Lines that are Markdown structure stay as they are: list items and the
-// lines that continue them, quotes, headings, fences and fenced code, rules.
+// lines that continue them, quotes, headings, fences and fenced code, rules. The lines of a
+// paragraph that a setext underline makes a heading lose their indentation, as Markdown
+// drops it from a heading's text (the editor writes a heading without it: kept, it would
+// change on the next round trip, #12); taken out, it cannot make the first line code or
+// the paragraph part of a list item either.
 func keepIndentation(src string) string {
 	lines := strings.Split(src, "\n")
 	var fence string // the fence of the open code block, "" outside one
 	inItem := false  // in the paragraph of a list item (where indentation is list structure)
+	// the paragraph being read: its quote depth, and its indented lines, which become text
+	// when it ends without a setext underline (each line is looked at once: linear)
+	inPara, paraDepth := false, 0
+	var indented []int
+	endPara := func(heading bool) {
+		for _, j := range indented {
+			prefix, rest := cutQuotePrefix(lines[j])
+			trimmed := strings.TrimLeft(rest, " \t")
+			if heading {
+				lines[j] = prefix + trimmed
+			} else {
+				indent := rest[:len(rest)-len(trimmed)]
+				lines[j] = prefix + indentRef[indent[0]] + indent[1:] + trimmed
+			}
+		}
+		inPara, indented = false, indented[:0]
+	}
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
+		depth := strings.Count(prefix, ">")
 		trimmed := strings.TrimLeft(rest, " \t")
+		if inPara && depth > paraDepth {
+			endPara(false) // a quote starts (with fewer markers, the line goes on lazily)
+		}
 		if fence != "" {
 			if closesFence(trimmed, fence) {
 				fence = ""
@@ -850,24 +875,67 @@ func keepIndentation(src string) string {
 			continue
 		}
 		if strings.TrimSpace(trimmed) == "" {
+			endPara(false)
 			inItem = false
 			continue
 		}
 		if f := openingFence(trimmed); f != "" {
+			endPara(false)
 			fence = f
 			continue
 		}
-		if listItemStart(trimmed) {
+		if inPara && depth == paraDepth && setextUnderline(rest) {
+			endPara(true)
+			continue
+		}
+		if listItemStart(trimmed) && (!inPara || interruptsParagraph(trimmed)) {
+			endPara(false)
 			inItem = true
 			continue
 		}
-		indent := rest[:len(rest)-len(trimmed)]
-		if indent == "" || inItem || blockStart(trimmed) {
+		if inItem {
 			continue
 		}
-		lines[i] = prefix + indentRef[indent[0]] + indent[1:] + trimmed
+		if blockStart(trimmed) {
+			endPara(false)
+			continue
+		}
+		if !inPara {
+			inPara, paraDepth = true, depth
+		}
+		if trimmed != rest {
+			indented = append(indented, i)
+		}
 	}
+	endPara(false)
 	return strings.Join(lines, "\n")
+}
+
+// interruptsParagraph reports whether list item start line (without indentation) starts a
+// list right after a paragraph line: an item with text, and if ordered, numbered 1. Any
+// other ("2. a", "-") goes on with the paragraph.
+func interruptsParagraph(line string) bool {
+	rest := ""
+	if m := orderedMarker.FindStringSubmatch(line); m != nil {
+		if strings.TrimLeft(m[1], "0") != "1" {
+			return false
+		}
+		rest = line[len(m[1])+1:]
+	} else {
+		rest = line[1:]
+	}
+	return strings.TrimSpace(rest) != ""
+}
+
+// setextUnderline reports whether line (after its quote prefixes) is a setext heading
+// underline: "=" or "-" characters only, indented by up to 3 spaces.
+func setextUnderline(line string) bool {
+	t := strings.TrimLeft(line, " ")
+	if len(line)-len(t) > 3 {
+		return false
+	}
+	t = strings.TrimRight(t, " \t")
+	return t != "" && (t[0] == '=' || t[0] == '-') && strings.Count(t, t[:1]) == len(t)
 }
 
 // cutQuotePrefix splits a line into its blockquote markers ("> > ") and the rest.

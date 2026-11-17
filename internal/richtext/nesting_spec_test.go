@@ -214,7 +214,7 @@ func genUserMarkdown(r *rand.Rand) (string, []string) {
 // and is stable through another trip (#60).
 func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 	r := rand.New(rand.NewSource(60))
-	fails, skipped := 0, 0
+	fails := 0
 	for i := 0; i < 30000 && fails < 8; i++ {
 		md, words := genUserMarkdown(r)
 		h1 := FromMarkdown(md)
@@ -235,26 +235,14 @@ func TestUserMarkdownFollowsNestingRules(t *testing.T) {
 				break
 			}
 		}
-		if unstableOnMain(h1) {
-			skipped++
-			continue
-		}
+		// (an indented setext heading too: its text loses the indentation, #12)
 		md2 := ToEditableMarkdown(h1)
 		if h2 := FromMarkdown(md2); h2 != h1 {
 			fails++
 			t.Errorf("not stable\nmd  %q\nh1  %q\nmd2 %q\nh2  %q", md, h1, md2, h2)
 		}
 	}
-	// what is skipped, so that a wider exclusion shows
-	t.Logf("skipped %d of 30000 as unstable on main too", skipped)
 }
-
-// unstableOnMain reports whether rich text has a shape that does not survive a trip on main
-// either, apart from nesting: a heading with a space at its start (an indented setext
-// heading's, #78).
-func unstableOnMain(h string) bool { return knownUnstable.MatchString(h) }
-
-var knownUnstable = regexp.MustCompile(`<h[12]>[ \t]`)
 
 // liRule matches a rule in a list item.
 var liRule = regexp.MustCompile(`<li>(?:[^<]|<[^/l]|</[^l])*<hr/>`)

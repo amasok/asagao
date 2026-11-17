@@ -239,7 +239,7 @@ func TestBatch1SendThenReopenSame(t *testing.T) {
 		}
 		md := sb.String()
 		h1 := FromMarkdown(md)
-		if unstableOnMain(h1) || strings.Contains(h1, "[l](https://x.jp/)") { // literal link text: #77
+		if strings.Contains(h1, "[l](https://x.jp/)") { // literal link text: #77
 			continue
 		}
 		h2 := FromMarkdown(ToEditableMarkdown(h1))
