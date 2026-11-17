@@ -28,6 +28,8 @@ type app struct {
 	// dryRun (--dry-run of a write command) makes openStore return a throwaway copy of the
 	// store and reportWrite show what would be queued instead of sending it (dryrun.go).
 	dryRun bool
+	// noContext (--no-context) ignores .asana.json (context.go).
+	noContext bool
 	// baseURL overrides the Asana API URL (tests).
 	baseURL string
 	// jsonOut is where --json output goes: the command's output before the termsafe
@@ -67,7 +69,9 @@ func newRoot(a *app) *cobra.Command {
 		},
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "結果を JSON で出力する")
+	root.PersistentFlags().BoolVar(&a.noContext, "no-context", false, ".asana.json（作業中のプロジェクト・タスク）を使わない")
 	root.Flags().BoolVar(&a.offline, "offline", false, "Asana と同期せず、ローカルストアだけで TUI を起動する")
+	root.AddCommand(a.contextCmd(), a.agentGuideCmd())
 	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.outboxCmd(), a.mcpCmd(), a.tagCmd(), a.sectionCmd(), a.imageViewCmd(), a.keysCmd(), a.resetCmd(), a.inboxCmd(), a.searchesCmd())
 	return root
 }

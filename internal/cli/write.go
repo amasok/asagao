@@ -229,7 +229,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	var quick bool
 	cmd := &cobra.Command{
 		Use:   "create <タスク名>",
-		Short: "タスクを作成する（プロジェクト未指定なら自分に割り当て）",
+		Short: "タスクを作成する（プロジェクト未指定なら .asana.json のプロジェクト、それもなければ自分に割り当て）",
 		Example: `  asagao task create "牛乳を買う" --due tomorrow
   asagao task create "ソファを買う" --project 新居 --section 家具
   asagao task create --quick "牛乳を買う @me 明日 #買い物"`,
@@ -242,6 +242,19 @@ func (a *app) taskCreateCmd() *cobra.Command {
 			}
 			defer st.Close()
 			o.name = strings.Join(args, " ")
+			if o.project == "" && o.parent == "" {
+				c, err := a.repoContext()
+				if err != nil {
+					return err
+				}
+				if c != nil && c.Project != "" {
+					o.project = c.Project
+					if !cmd.Flags().Changed("section") {
+						o.section = c.Section
+					}
+					noteContext(cmd, c, "プロジェクトに作ります")
+				}
+			}
 			now := time.Now()
 			var q *usecase.QuickAddResult
 			if quick {

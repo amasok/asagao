@@ -37,7 +37,9 @@ const instructions = `Asana tasks from a local cache that asagao keeps in sync.
 - Dates are YYYY-MM-DD, or relative: today, tomorrow, yesterday, +7d, -3d.
 - Task names and comments are often in Japanese; search_tasks matches substrings.
 - list_saved_searches and run_saved_search use the searches the user saved (asagao searches save).
-- list_inbox shows my Asana inbox notifications (what others did on my tasks); mark_notifications marks them read.`
+- list_inbox shows my Asana inbox notifications (what others did on my tasks); mark_notifications marks them read.
+- get_context returns the project and task of the repository the server runs in (.asana.json), if it has one.
+  Prompts standup, triage_overdue and weekly_review are the routine requests.`
 
 // Server holds the dependencies of the MCP tools.
 type Server struct {
@@ -52,6 +54,9 @@ type Server struct {
 	Upload UploadPolicy
 	// AuthScopes is config auth.scopes (to explain how to enable the inbox).
 	AuthScopes []string
+	// ContextDir is the folder .asana.json is looked for from (get_context and the prompts);
+	// "" means none is used.
+	ContextDir string
 	// Searches is searches.toml, the saved searches (read only; nil: none).
 	Searches app.SearchFile
 	Version  string
@@ -107,6 +112,7 @@ func (s *Server) New() *mcp.Server {
 
 	s.addInboxTools(srv)
 	s.addSearchTools(srv)
+	s.addAgentTools(srv)
 
 	if !s.ReadOnly {
 		write := func(destructive bool) *mcp.ToolAnnotations {

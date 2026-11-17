@@ -27,6 +27,7 @@ import (
 //     exported in the developer's shell is not used;
 //   - XDG_DATA_HOME, XDG_CONFIG_HOME, XDG_CACHE_HOME and XDG_STATE_HOME are a private
 //     temporary directory, so the user's store.db and config.toml are never opened;
+//   - .asana.json is looked for from an empty folder, not from the source tree;
 //   - requests may only go to this machine (httptest servers). One that goes elsewhere is
 //     blocked, and the run fails.
 //
@@ -69,6 +70,15 @@ func TestMain(m *testing.M) {
 		}
 		os.Setenv(k, dir)
 	}
+	// .asana.json is looked for from an empty folder of its own (a repository root, so the
+	// search stops there): one around the source tree must not change what the tests do.
+	// Tests of .asana.json point getwd at their own folder.
+	work := filepath.Join(tmp, "work")
+	if err := os.MkdirAll(filepath.Join(work, ".git"), 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	getwd = func() (string, error) { return work, nil }
 	keyring.MockInit()
 	keyringMocked = true
 	for _, k := range []string{auth.EnvToken, "ASANA_CLIENT_ID", EnvClientSecret} {

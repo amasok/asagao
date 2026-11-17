@@ -93,7 +93,7 @@ type dryRunResult struct {
 	// Cancelled are queued changes the command would drop (reopening a task whose
 	// completion is not sent yet, say).
 	Cancelled []cancelledChange `json:"cancelled,omitempty"`
-	Quick     *quickAddJSON `json:"quick,omitempty"`
+	Quick     *quickAddJSON     `json:"quick,omitempty"`
 }
 
 // queuedChanges compares the copy's outbox with what it was before the command: the
