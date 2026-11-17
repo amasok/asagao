@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
-// OpCreateStatus posts a project status update. task_gid holds the project gid;
-// payload: status (local gid), status_type, title, text, html_text.
-const OpCreateStatus = "create_status"
+// OpCreateStatus posts a project status update (outbox.KindCreateStatus).
+const OpCreateStatus = outbox.KindCreateStatus
 
 // StatusTypes are the status values of a project status update, with Japanese labels.
 var StatusTypes = []struct{ Value, Label string }{

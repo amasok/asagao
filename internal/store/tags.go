@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
-// Tag operations. payload: tag (gid, "local:..." for a tag created offline), tag_name, workspace.
+// Tag operations (outbox.KindAddTag, outbox.KindRemoveTag).
 const (
-	OpAddTag    = "add_tag"
-	OpRemoveTag = "remove_tag"
+	OpAddTag    = outbox.KindAddTag
+	OpRemoveTag = outbox.KindRemoveTag
 )
 
 // UpsertTags stores the tags of a workspace (so unused tags can be picked too).

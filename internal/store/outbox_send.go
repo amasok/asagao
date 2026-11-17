@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 // Sending outbox entries (used by sync.Push).
@@ -25,8 +26,8 @@ import (
 // that (no resend) or sends it again. Only when Asana cannot tell (e.g. several candidates)
 // is the entry marked failed for the user.
 
-// OpSending is the state of an entry while Push is sending it.
-const OpSending = "sending"
+// OpSending is the state of an entry while Push is sending it (outbox.StateSending).
+const OpSending = outbox.StateSending
 
 // ErrOpSending is returned when an entry that is being sent is retried or discarded.
 var ErrOpSending = errors.New("この変更は送信中です。送信が終わってからやり直してください")
@@ -94,24 +95,16 @@ type queryer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// safeToResend is outbox.SafeToResend, looking up whether a local tag was created.
 func safeToResend(ctx context.Context, q queryer, op Op) (bool, error) {
-	switch op.Kind {
-	case OpCreateTask, OpDuplicateTask, OpAddComment, OpUploadAttachment, OpCreateStatus:
-		return false, nil
-	case OpAddTag:
-		tag, _ := op.Payload["tag"].(string)
-		if !IsLocalGID(tag) {
-			return true, nil
-		}
-		// The tag is created first; once that is recorded only the (harmless) addTag remains.
+	return outbox.SafeToResend(op, func(tag string) (bool, error) {
 		var real string
 		err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", ResultTag+tag).Scan(&real)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return err == nil && real != "", err
-	}
-	return true, nil
+	})
 }
 
 // RecoverInterruptedOps handles entries left "sending" by a process that died while

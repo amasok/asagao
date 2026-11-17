@@ -10,17 +10,19 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 // Followers, extra projects, duplicates and uploads. Like the other local edits they are
 // applied to the store at once and queued in the outbox.
 const (
-	OpAddFollower      = "add_follower"    // payload: user, user_name
-	OpRemoveFollower   = "remove_follower" // payload: user, user_name
-	OpAddProject       = "add_project"     // payload: project, project_name, section
-	OpRemoveProject    = "remove_project"  // payload: project, project_name, section (to restore)
-	OpDuplicateTask    = "duplicate_task"  // task_gid: the local copy; payload: source, name
-	OpUploadAttachment = "upload_attachment"
+	OpAddFollower      = outbox.KindAddFollower
+	OpRemoveFollower   = outbox.KindRemoveFollower
+	OpAddProject       = outbox.KindAddProject
+	OpRemoveProject    = outbox.KindRemoveProject
+	OpDuplicateTask    = outbox.KindDuplicateTask
+	OpUploadAttachment = outbox.KindUploadAttachment
 )
 
 // opposite returns the op kind that cancels kind.

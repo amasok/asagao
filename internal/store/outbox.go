@@ -15,6 +15,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -28,15 +29,16 @@ import (
 //
 // "" means "clear" for due_on and assignee.
 
+// The kinds and states are aliases of domain/outbox's.
 const (
-	OpUpdateTask = "update_task"
-	OpCreateTask = "create_task"
-	OpAddComment = "add_comment"
-	OpMoveTask   = "move_task" // payload: project, section, section_name; base: section
+	OpUpdateTask = outbox.KindUpdateTask
+	OpCreateTask = outbox.KindCreateTask
+	OpAddComment = outbox.KindAddComment
+	OpMoveTask   = outbox.KindMoveTask
 
-	OpPending  = "pending"
-	OpConflict = "conflict"
-	OpFailed   = "failed"
+	OpPending  = outbox.StatePending
+	OpConflict = outbox.StateConflict
+	OpFailed   = outbox.StateFailed
 
 	// LocalPrefix marks gids of tasks/comments created offline and not yet sent (an alias
 	// of gid.Prefix, kept while the callers move to domain/gid).
@@ -47,25 +49,8 @@ const (
 // gid.IsLocal, which it calls).
 func IsLocalGID(g string) bool { return gid.IsLocal(g) }
 
-type Op struct {
-	ID             int64          `json:"id"`
-	Kind           string         `json:"kind"`
-	TaskGID        string         `json:"task_gid"`
-	TaskName       string         `json:"task_name"`
-	Payload        map[string]any `json:"payload"`
-	Base           map[string]any `json:"base,omitempty"`
-	BaseModifiedAt string         `json:"base_modified_at,omitempty"`
-	State          string         `json:"state"`
-	Conflict       map[string]any `json:"conflict,omitempty"`
-	LastError      string         `json:"last_error,omitempty"`
-	Attempts       int            `json:"attempts"`
-	CreatedAt      string         `json:"created_at"`
-	// SentAt is when the entry was (first) sent; Verify means Asana may already have
-	// applied it, so Push checks Asana before sending it again (see outbox_send.go).
-	SentAt     string `json:"sent_at,omitempty"`
-	LastSentAt string `json:"last_sent_at,omitempty"`
-	Verify     bool   `json:"verify,omitempty"`
-}
+// Op is an outbox entry (an alias of outbox.Op).
+type Op = outbox.Op
 
 // NewTask is the input for CreateTaskLocal (an alias of task.NewTask; see TagEdit).
 type NewTask = task.NewTask
