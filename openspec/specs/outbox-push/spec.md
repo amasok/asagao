@@ -195,12 +195,20 @@ TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と 
 - **THEN** その gid の対応は消さない
 
 ### Requirement: 送り先の制限は変換のときにかける
-push は `html_notes` と `html_text` を積んだとおりに送り、タグを絞らない (MUST)。送り先ごとのタグの制限は、Markdown から変換するとき (rich-text の仕様) にかける。カスタムフィールドは、編集できる型 (`text`・`number`・`enum`・`multi_enum`・`date`・`people`) で読み取り専用でないものだけを積み、Asana が 400 を返したら `failed` にする。
+送り先ごとのタグの制限は、Markdown から変換するとき (rich-text の仕様) にかける。push は `html_notes` を積んだとおりに送り、コメントと status update の `html_text` も、送り先が受け付けないタグがなければ積んだとおりに送る (MUST)。カスタムフィールドは、編集できる型 (`text`・`number`・`enum`・`multi_enum`・`date`・`people`) で読み取り専用でないものだけを積み、Asana が 400 を返したら `failed` にする。
 根拠: push.go:680-695, :787-789, :957-971; sync/projects.go:151-158; store/customfields.go:44-188, :685-797; TestPushHeadingsRulesImagesOnlyInTaskNotes, TestPushNastyLayoutInputsNeverRejected, TestPushCustomFieldErrors
 
 #### Scenario: コメントを送る
 - **WHEN** `Comment` で変換したコメントを送る
 - **THEN** 偽の Asana (レイアウトのタグで 400 を返す) が受け付ける
+
+### Requirement: 古い形のコメントと status update は送る前に直す
+コメントと status update の `html_text` に、送り先が受け付けないタグ (見出し・区切り線・画像・表) があれば、push は送る前に今の変換の決まりで直して積み直す (MUST。#63 より前に積まれたもの、#71)。エディタ用の Markdown に戻してから送り先の変換をかけ、`text` も合わせる。直したものが `failed` なら、利用者に聞かずに `pending` に戻し、試した回数と照合の印を消す (何で失敗したものでも、そのタグがある限り Asana は作らないので、送り直しても二重にならない)。送信中のものは触らない。直したあとはタグが残らないので、ほかの理由で失敗したものは 1 回しか戻らない。
+根拠: sync/push.go (pushPass), store/outbox_richtext.go, richtext/target.go (`Fit`); TestPushFitsRichTextQueuedBefore63, TestFitQueuedRichText, TestFitLayoutTags
+
+#### Scenario: #63 より前に積まれたコメントが失敗のまま残っている
+- **WHEN** 見出しや `<hr/>` を含む `html_text` のコメントが、400 で `failed` になっている
+- **THEN** 次の push で、見出しは太字、区切り線は書いた行の文字に直して送り、偽の Asana (レイアウトのタグで 400 を返す) が受け付ける
 
 ## 未確認
 

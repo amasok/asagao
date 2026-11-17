@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -80,7 +81,9 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 		if res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
 			AND json_extract(payload, '$.tag') = ?`, OpRemoveTag, taskGID, tagGID); err != nil {
 			return err
-		} else if n, _ := res.RowsAffected(); n > 0 {
+		} else if n, err := res.RowsAffected(); err != nil {
+			return fmt.Errorf("cancel unsent %s: %w", OpRemoveTag, err)
+		} else if n > 0 {
 			return nil
 		}
 		return saveOp(ctx, tx, &Op{Kind: OpAddTag, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now),
@@ -100,7 +103,9 @@ func (s *Store) RemoveTagLocal(ctx context.Context, taskGID, tagGID string, now 
 		if res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
 			AND json_extract(payload, '$.tag') = ?`, OpAddTag, taskGID, tagGID); err != nil {
 			return err
-		} else if n, _ := res.RowsAffected(); n > 0 {
+		} else if n, err := res.RowsAffected(); err != nil {
+			return fmt.Errorf("cancel unsent %s: %w", OpAddTag, err)
+		} else if n > 0 {
 			return nil // it was never sent
 		}
 		return saveOp(ctx, tx, &Op{Kind: OpRemoveTag, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now),
