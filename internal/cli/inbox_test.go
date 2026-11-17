@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -208,5 +209,46 @@ func TestInboxMarkCommandWithoutSending(t *testing.T) {
 	}
 	if n, _ := st.UnreadNotifications(ctx); n != 1 {
 		t.Fatalf("the mark should be applied locally and queued: unread %d", n)
+	}
+}
+
+// inbox read resolves every ID before marking anything, then queues one change for each
+// notification it marks (by the end of its gid, as the list shows it).
+func TestInboxMarkCommandQueues(t *testing.T) {
+	st, _ := inboxStore(t, store.InboxState{Status: store.InboxOK})
+	ctx := context.Background()
+	marks := func() []string {
+		ops, err := st.ListOps(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, op := range ops {
+			if op.Kind == store.OpMarkNotification {
+				out = append(out, op.TaskGID)
+			}
+		}
+		return out
+	}
+	if out, err := runCLI(t, "inbox", "read", "1300002", "9999"); err == nil {
+		t.Fatalf("an unknown ID was accepted:\n%s", out)
+	}
+	if got := marks(); len(got) != 0 {
+		t.Fatalf("marked before every ID resolved: %v", got)
+	}
+	if n, _ := st.UnreadNotifications(ctx); n != 2 {
+		t.Errorf("unread = %d, want 2", n)
+	}
+	if out, err := runCLI(t, "inbox", "read", "0001", "1300002"); err != nil || !strings.Contains(out, "未送信") {
+		t.Fatalf("read: %v\n%s", err, out)
+	}
+	if got := marks(); !slices.Equal(got, []string{"1200001", "1300002"}) {
+		t.Errorf("marks = %v", got)
+	}
+	if out, err := runCLI(t, "inbox", "unread", "0001"); err != nil {
+		t.Fatalf("unread: %v\n%s", err, out)
+	}
+	if got := marks(); !slices.Equal(got, []string{"1300002"}) {
+		t.Errorf("after unread: marks = %v, want the unsent read of 1200001 dropped", got)
 	}
 }

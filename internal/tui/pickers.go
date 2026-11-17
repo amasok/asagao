@@ -149,15 +149,9 @@ func (m *Model) showTagEditor(msg taskTagsMsg) {
 }
 
 func (m *Model) toggleTag(t store.TaskSummary, item pickerItem) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
-		var err error
-		if item.checked {
-			err = st.RemoveTagLocal(m.ctx, t.GID, item.value, now)
-		} else {
-			_, err = st.AddTagLocal(m.ctx, t.GID, item.value, "", now)
-		}
-		if err != nil {
+		if err := relations.SetTag(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return tagToggledMsg{task: t}
@@ -173,9 +167,9 @@ func (m *Model) startNewTag(t store.TaskSummary) tea.Cmd {
 }
 
 func (m *Model) submitNewTag(name string) tea.Cmd {
-	st, now, t := m.deps.Store, m.deps.Now(), m.tagTask
+	relations, t := m.relations(m.deps.Now()), m.tagTask
 	return func() tea.Msg {
-		if _, err := st.AddTagLocal(m.ctx, t.GID, "", name, now); err != nil {
+		if err := relations.AddNewTag(m.ctx, t.GID, name); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "タグを付けました: #" + name}

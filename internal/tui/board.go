@@ -453,9 +453,9 @@ func (m *Model) renderPicker(w, h int) string {
 }
 
 func (m *Model) moveTask(t store.TaskSummary, project, section, sectionName string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	sections := m.sections(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.MoveTaskLocal(m.ctx, t.GID, project, section, now); err != nil {
+		if err := sections.MoveHere(m.ctx, t.GID, project, section); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: fmt.Sprintf("移動しました: %s → %s", t.Name, sectionName), gid: t.GID}

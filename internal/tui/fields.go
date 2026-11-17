@@ -132,9 +132,9 @@ type fieldSetMsg struct {
 
 // setField sets field f of task t to value (stored form, nil clears).
 func (m *Model) setField(t store.TaskSummary, f store.CustomFieldView, value any, reopen bool) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	relations := m.relations(m.deps.Now())
 	return func() tea.Msg {
-		display, err := st.SetCustomFieldLocal(m.ctx, t.GID, f.GID, value, now)
+		display, err := relations.SetFieldHere(m.ctx, t.GID, f.GID, value)
 		if err != nil {
 			return fieldSetMsg{task: t, field: f.GID, reopen: reopen, err: err}
 		}
@@ -184,8 +184,8 @@ type queuedField struct {
 }
 
 func (m *Model) submitField(input string) tea.Cmd {
-	st, now, t, f := m.deps.Store, m.deps.Now(), m.fieldTask, m.fieldEdit
-	value, err := st.ParseCustomFieldValue(m.ctx, f.GID, input, now)
+	relations, t, f := m.relations(m.deps.Now()), m.fieldTask, m.fieldEdit
+	value, err := relations.ParseFieldValue(m.ctx, f.GID, input)
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
 	}

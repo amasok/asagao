@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -90,15 +91,8 @@ func (s *Server) markNotifications(ctx context.Context, _ *mcp.CallToolRequest, 
 	} else if len(gids) == 0 {
 		return nil, MarkNotificationsOutput{}, errors.New("pass gids or all=true")
 	}
-	resolved := make([]string, 0, len(gids))
-	for _, g := range gids {
-		gid, err := s.Store.ResolveNotification(ctx, g)
-		if err != nil {
-			return nil, MarkNotificationsOutput{}, err
-		}
-		resolved = append(resolved, gid)
-	}
-	n, err := s.Store.MarkNotificationsLocal(ctx, resolved, read, s.Now())
+	notifications := app.Notifications{Store: s.Store, Clock: s.Now}
+	n, err := notifications.Mark(ctx, gids, read)
 	if err != nil {
 		return nil, MarkNotificationsOutput{}, err
 	}

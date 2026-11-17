@@ -181,9 +181,9 @@ func (m *Model) startRenameSection() tea.Cmd {
 }
 
 func (m *Model) renameSection(gid, name string) tea.Cmd {
-	st, now := m.deps.Store, m.deps.Now()
+	sections := m.sections(m.deps.Now())
 	return func() tea.Msg {
-		if err := st.RenameSectionLocal(m.ctx, gid, name, now); err != nil {
+		if err := sections.RenameHere(m.ctx, gid, name); err != nil {
 			return writeDoneMsg{err: err}
 		}
 		return writeDoneMsg{status: "セクション名を変更しました: " + name}
