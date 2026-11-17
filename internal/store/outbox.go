@@ -58,8 +58,8 @@ type NewTask = task.NewTask
 // --- local writes ---
 
 // UpdateTaskLocal applies field changes to a task and queues them for Asana.
-// Consecutive edits of the same task are merged into one outbox entry; an edit that
-// reverts every field to its original value removes the entry.
+// Consecutive edits of the same task are merged into one outbox entry (outbox.Fold); an
+// edit that reverts every field to its original value removes the entry.
 func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error {
 	if err := validateFields(changes); err != nil {
 		return err
@@ -109,37 +109,18 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 			op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
 				BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
 		}
-		if _, ok := changes["approval_status"]; ok {
-			if _, ok := op.Base["completed"]; !ok {
-				// Deciding an approval completes the task locally: discarding restores it.
-				op.Base["completed"] = cur["completed"]
-			}
-		}
-		for k, v := range changes {
-			if _, ok := op.Base[k]; !ok {
-				op.Base[k] = cur[k]
-			}
-			if sameValue(op.Base[k], v) {
-				delete(op.Payload, k) // back to the original value
-				delete(op.Conflict, k)
-			} else {
-				op.Payload[k] = v
-			}
-		}
-		if op.State == OpConflict && len(op.Conflict) == 0 {
-			op.State = OpPending // no conflicting field left
-		}
+		folded, deleteOp := outbox.Fold(*op, cur, changes)
 		if err := applyFields(ctx, tx, gid, changes, now); err != nil {
 			return err
 		}
-		if len(op.Payload) == 0 {
-			if op.ID != 0 {
-				_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
+		if deleteOp {
+			if folded.ID != 0 {
+				_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", folded.ID)
 				return err
 			}
 			return nil
 		}
-		return saveOp(ctx, tx, op)
+		return saveOp(ctx, tx, &folded)
 	})
 }
 
@@ -978,7 +959,7 @@ func nonNil(m map[string]any) map[string]any {
 	return m
 }
 
-func sameValue(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
+func sameValue(a, b any) bool { return outbox.SameValue(a, b) }
 
 // newLocalGID makes a new local gid from a random id (gid.NewLocal).
 func newLocalGID() string { return gid.NewLocal(randomID()) }
