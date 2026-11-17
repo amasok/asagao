@@ -42,7 +42,7 @@ func TestViewsJSON(t *testing.T) {
 			TaskSummary: TaskSummary{GID: "t1", Name: "牛乳"}, Notes: "説明", HTMLNotes: "<body>説明</body>", CreatedAt: "2026-01-01T00:00:00Z",
 			Parent: &TaskRef{GID: "t0", Name: "買い物"}, Subtasks: []TaskSummary{}, Stories: []StoryView{},
 			Attachments: []AttachmentView{{GID: "a1", Name: "a.png", Host: "asana", Size: 10, IsImage: true}},
-			Followers: []UserRef{*user}, Dependencies: []DependencyView{{GID: "t2", Name: "先"}}, Dependents: []DependencyView{},
+			Followers:   []UserRef{*user}, Dependencies: []DependencyView{{GID: "t2", Name: "先"}}, Dependents: []DependencyView{},
 			DetailsFetchedAt: "2026-01-02T00:00:00Z",
 		},
 			`{"gid":"t1","name":"牛乳","resource_subtype":"","completed":false,"assignee":null,"memberships":null,"tags":null,"num_subtasks":0,"permalink_url":"","modified_at":"","pending":false,"liked":false,"num_likes":0,"notes":"説明","html_notes":"\u003cbody\u003e説明\u003c/body\u003e","created_at":"2026-01-01T00:00:00Z","parent":{"gid":"t0","name":"買い物"},"subtasks":[],"stories":[],"attachments":[{"gid":"a1","name":"a.png","host":"asana","size":10,"created_at":"","is_image":true}],"followers":[{"gid":"u1","name":"花子"}],"dependencies":[{"gid":"t2","name":"先","completed":false}],"dependents":[],"details_fetched_at":"2026-01-02T00:00:00Z"}`},
