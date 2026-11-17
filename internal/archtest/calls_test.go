@@ -43,13 +43,7 @@ func storeWrites(name string) bool {
 // conversion; stage a6 removes the store writes as it moves them to internal/app.
 var allowedCalls = []string{
 	"internal/cli/inbox.go: .MarkNotificationsLocal",
-	"internal/cli/write.go: .DuplicateTaskLocal",
-	"internal/cli/write.go: .UploadAttachmentLocal",
 	"internal/mcpserver/inbox.go: .MarkNotificationsLocal",
-	"internal/mcpserver/server.go: .DuplicateTaskLocal",
-	"internal/mcpserver/server.go: .UploadAttachmentLocal",
-	"internal/tui/extras.go: .DuplicateTaskLocal",
-	"internal/tui/extras.go: .UploadAttachmentLocal",
 	"internal/tui/inbox.go: .MarkNotificationsLocal",
 }
 

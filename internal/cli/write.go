@@ -334,14 +334,16 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	duplicate := a.writeCommand("duplicate <gid>", "タスクを複製する（サブタスク・添付・フォロワーも）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
 			name, _ := cmd.Flags().GetString("name")
-			gid, err := st.DuplicateTaskLocal(cmd.Context(), args[0], name, time.Now())
+			copies := &usecase.Copies{Store: st, Clock: time.Now}
+			gid, err := copies.Duplicate(cmd.Context(), args[0], name)
 			return gid, "複製しました", err
 		})
 	duplicate.Flags().String("name", "", "複製したタスクの名前（省略時は「… のコピー」）")
 
 	attach := a.writeCommand("attach <gid> <ファイル>", "ファイルを添付する（100MB まで）", cobra.ExactArgs(2),
 		func(cmd *cobra.Command, st *store.Store, args []string) (string, string, error) {
-			_, err := st.UploadAttachmentLocal(cmd.Context(), args[0], args[1], filepath.Join(config.CacheDir(), "attachments"), time.Now())
+			copies := &usecase.Copies{Store: st, CacheDir: filepath.Join(config.CacheDir(), "attachments"), Clock: time.Now}
+			_, err := copies.Attach(cmd.Context(), args[0], args[1])
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})
 	field := a.writeCommand("field <gid> <フィールド> [値]", "カスタムフィールドを設定する（値なし / --clear で空に）", cobra.RangeArgs(2, 3),

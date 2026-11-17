@@ -726,7 +726,8 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 }
 
 func (s *Server) duplicateTask(ctx context.Context, _ *mcp.CallToolRequest, in DuplicateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	gid, err := s.Store.DuplicateTaskLocal(ctx, in.GID, in.Name, s.Now())
+	copies := app.Copies{Store: s.Store, CacheDir: s.CacheDir, Clock: s.Now}
+	gid, err := copies.Duplicate(ctx, in.GID, in.Name)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -738,7 +739,8 @@ func (s *Server) uploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	if _, err := s.Store.UploadAttachmentLocal(ctx, in.TaskGID, path, s.CacheDir, s.Now()); err != nil {
+	copies := app.Copies{Store: s.Store, CacheDir: s.CacheDir, Clock: s.Now}
+	if _, err := copies.Attach(ctx, in.TaskGID, path); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.TaskGID), nil

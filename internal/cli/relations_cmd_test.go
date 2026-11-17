@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -100,5 +103,46 @@ func TestRelationCommandsNameTheFlag(t *testing.T) {
 				t.Errorf("queued %v", opKinds(ops))
 			}
 		})
+	}
+}
+
+// task duplicate queues a copy (a local task), and task attach queues the file on the
+// task, copied into the cache; a file that does not exist queues nothing.
+func TestDuplicateAndAttachCommandsQueue(t *testing.T) {
+	path := relationsCLIEnv(t)
+	if out, err := runCLI(t, "task", "attach", "t1", filepath.Join(t.TempDir(), "ない.pdf")); err == nil {
+		t.Fatalf("a missing file should be refused\n%s", out)
+	}
+	if ops := cliOps(t, path); len(ops) != 0 {
+		t.Fatalf("queued %v", opKinds(ops))
+	}
+	out, err := runCLI(t, "task", "duplicate", "t1", "--name", "ソファを買う (2)")
+	if err != nil || !strings.Contains(out, "未送信") {
+		t.Fatalf("duplicate: %v\n%s", err, out)
+	}
+	file := filepath.Join(t.TempDir(), "見積.pdf")
+	if err := os.WriteFile(file, []byte("pdf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runCLI(t, "task", "attach", "t1", file); err != nil || !strings.Contains(out, "見積.pdf") {
+		t.Fatalf("attach: %v\n%s", err, out)
+	}
+	ops := cliOps(t, path)
+	if len(ops) != 2 || ops[0].Kind != store.OpDuplicateTask || !store.IsLocalGID(ops[0].TaskGID) ||
+		ops[1].Kind != store.OpUploadAttachment || ops[1].TaskGID != "t1" {
+		t.Fatalf("ops = %v", opKinds(ops))
+	}
+	st, err := store.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c, err := st.GetTask(context.Background(), ops[0].TaskGID)
+	if err != nil || c.Name != "ソファを買う (2)" {
+		t.Errorf("copy = %+v, %v", c, err)
+	}
+	d, _ := st.GetTask(context.Background(), "t1")
+	if len(d.Attachments) != 1 || !strings.HasPrefix(d.Attachments[0].LocalPath, filepath.Join(config.CacheDir(), "attachments")) {
+		t.Errorf("attachments = %+v, want one copied under the cache", d.Attachments)
 	}
 }

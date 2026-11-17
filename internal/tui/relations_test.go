@@ -2,9 +2,14 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
@@ -117,5 +122,36 @@ func TestToggleFollowerAndTagQueue(t *testing.T) {
 	h.run(h.m.toggleTag(d.TaskSummary, pickerItem{value: "g1", checked: true}))
 	if got := opList(t, st); !slices.Equal(got, want[2:]) {
 		t.Errorf("after toggling back: ops = %v, want %v", got, want[2:])
+	}
+}
+
+// Duplicating and attaching from the TUI queue a copy and the file, copied into the
+// cache directory the TUI was given.
+func TestDuplicateAndAttachQueue(t *testing.T) {
+	cache := t.TempDir()
+	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }, CacheDir: cache})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	st, ctx := m.deps.Store, context.Background()
+	m.dupSource = "t1"
+	h.run(m.duplicate("ソファを買う (2)"))
+	file := filepath.Join(t.TempDir(), "図面.png")
+	if err := os.WriteFile(file, []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.attachTask = "t1"
+	h.run(m.attach(`"` + file + `"`))
+	ops := opsOf(t, st)
+	if len(ops) != 2 || ops[0].Kind != store.OpDuplicateTask || !store.IsLocalGID(ops[0].TaskGID) ||
+		ops[1].Kind != store.OpUploadAttachment || ops[1].TaskGID != "t1" {
+		t.Fatalf("ops = %v", opList(t, st))
+	}
+	if c, err := st.GetTask(ctx, ops[0].TaskGID); err != nil || c.Name != "ソファを買う (2)" {
+		t.Errorf("copy = %+v, %v", c, err)
+	}
+	d, _ := st.GetTask(ctx, "t1")
+	if len(d.Attachments) != 1 || !strings.HasPrefix(d.Attachments[0].LocalPath, cache) {
+		t.Errorf("attachments = %+v, want one under %s", d.Attachments, cache)
 	}
 }

@@ -13,5 +13,6 @@ var (
 	_ app.StatusStore   = (*store.Store)(nil)
 	_ app.RelationStore = (*store.Store)(nil)
 	_ app.SectionStore  = (*store.Store)(nil)
+	_ app.CopyStore     = (*store.Store)(nil)
 	_ app.RichText      = richtext.Converter{}
 )

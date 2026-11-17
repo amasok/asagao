@@ -131,6 +131,11 @@ func (m *Model) sections(now time.Time) *app.Sections {
 	return &app.Sections{Store: m.deps.Store, Clock: func() time.Time { return now }}
 }
 
+// copies is the duplicate and attach use cases, with a clock that reads now (see tasks).
+func (m *Model) copies(now time.Time) *app.Copies {
+	return &app.Copies{Store: m.deps.Store, CacheDir: m.deps.CacheDir, Clock: func() time.Time { return now }}
+}
+
 // afterWrite reloads everything a write can change and asks for a sync.
 func (m *Model) afterWrite() tea.Cmd {
 	cmds := []tea.Cmd{m.loadScopes(), m.loadTasks(), m.loadOutbox(), m.requestSync()}
