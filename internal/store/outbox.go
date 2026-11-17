@@ -17,6 +17,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
@@ -620,12 +621,13 @@ func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string
 	return recordResult(ctx, tx, ResultStory, localGID, st.GID)
 }
 
-// Prefixes of the sync_state keys that map a local gid to what Asana created for it.
+// Prefixes of the sync_state keys that map a local gid to what Asana created for it
+// (readmodel's, e1).
 const (
-	ResultTask       = "gid:"
-	ResultStory      = "story:"
-	ResultAttachment = "att:"
-	ResultStatus     = "status:"
+	ResultTask       = readmodel.ResultTask
+	ResultStory      = readmodel.ResultStory
+	ResultAttachment = readmodel.ResultAttachment
+	ResultStatus     = readmodel.ResultStatus
 )
 
 func recordResult(ctx context.Context, tx *sql.Tx, prefix, local, real string) error {
@@ -663,19 +665,9 @@ var (
 	ApprovalStatuses = task.ApprovalStatuses
 )
 
-// TaskFieldValues extracts update_task fields from an API task (for conflict checks).
-func TaskFieldValues(t *model.Task) map[string]any {
-	assignee := ""
-	if t.Assignee != nil {
-		assignee = t.Assignee.GID
-	}
-	values := map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked,
-		"resource_subtype": t.ResourceSubtype, "approval_status": t.ApprovalStatus}
-	if t.Partial {
-		delete(values, "approval_status") // not fetched
-	}
-	return values
-}
+// TaskFieldValues extracts update_task fields from an API task (for conflict checks;
+// readmodel's, e1).
+var TaskFieldValues = readmodel.TaskFieldValues
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
 	var completed, liked bool

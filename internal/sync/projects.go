@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 // Project operations that need Asana right away (creating, archiving, members). They are
@@ -148,7 +148,7 @@ func (s *Syncer) FetchStatusUpdates(ctx context.Context, projectGID string) erro
 	return s.Store.ReplaceStatusUpdates(ctx, projectGID, updates)
 }
 
-func (s *Syncer) pushStatus(ctx context.Context, op store.Op) error {
+func (s *Syncer) pushStatus(ctx context.Context, op outbox.Op) error {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	u, err := s.API.CreateStatusUpdate(ctx, op.TaskGID, str("status_type"), str("title"), str("text"), str("html_text"))
 	if err != nil {

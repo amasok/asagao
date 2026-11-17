@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 	"github.com/amasok/asagao/internal/xdg"
 )
@@ -27,7 +27,7 @@ const maxAttachmentSize = 100 << 20
 // downloadUnknown.
 func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (string, error) {
 	a, err := s.Store.GetAttachment(ctx, gid)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, readmodel.ErrNotFound) {
 		return s.downloadUnknown(ctx, gid)
 	} else if err != nil {
 		return "", err

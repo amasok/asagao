@@ -137,9 +137,20 @@
 | d3 | `sync.Syncer` の `API` と `Store` を、sync で定義したインターフェースにする。`config.SyncConfig` を sync 自身の型にする。outbox_richtext.go の `FitQueuedRichText` の変換 (`richtext.Target.Fit`) を sync のポートにし、store→richtext の許可リストの行を消す |
 | d4 | `internal/wire` (組み立て) を作り、`cli/root.go` の `apiClient`・`newClient`・`openStore` と、TUI・MCP の `sync.Syncer{...}` の組み立て (5 か所) を移す。cli から x/oauth2 の import がなくなる |
 
-- 段階 d が終わると、依存の向きのテストの許可リストが空になる。
+- 段階 d の終わりに、依存の向きのテストの許可リストは sync → store の 1 行になった (下)。
 - d4 は 3 つに分けた: d4 (`internal/wire`。cmd/asagao が `cli.Wiring` で cli に渡す。入り口は wire を import しない)、d4b (入り口の store の名前を readmodel・domain/gid に、ストアを入り口ごとのポート `tui.Store`・`mcpserver.Store`・`cli.Store` に)、d4c (設定の型を `internal/settings` に、フォルダの場所を `internal/xdg` に、保存先の操作を auth に)。
-- 残る許可は sync → store の 1 行: sync が store から取る名前 (操作の種類 `OpX`、sync_state のキー、エラー、`IsLocalGID`、`TaskFieldValues`・`CustomFieldAPIValue` など) を domain・readmodel に移せば消える。
+- 残る許可は sync → store の 1 行: sync が store から取る名前 (操作の種類 `OpX`、sync_state のキー、エラー、`IsLocalGID`、`TaskFieldValues`・`CustomFieldAPIValue` など) を domain・readmodel に移せば消える。段階 e で行った。
+
+## 段階 e: 仕上げ
+
+| PR | 範囲 |
+|---|---|
+| e1 | sync が store から取っていた名前を domain・readmodel に移し、sync から store の import をなくす。許可リストを空にする |
+
+- e1: sync は、操作の種類と状態・`Op`・`MoveTarget` を `domain/outbox` (`outbox.KindX`・`StatePending`)、ローカル gid の判定を `domain/gid` (`IsLocal`。入り口と同じく `localgid` の名前で import) から取る。readmodel に移したのは、sync_state のキー (`KeyLastSync`・`KeyEvents`・`KeyCustomFields`。`KeyMeGID` は d4b で済み)、送った記録の接頭辞 (`ResultTask`・`ResultStory`・`ResultAttachment`・`ResultStatus`・`ResultTag`)、`AmbiguousMessage`、Asana のタスクから保存の形の値を取る関数 (`TaskFieldValues`・`CustomFieldValue`・`CustomFieldAPIValue`・`ServerCustomField` と、store も使う `GIDList`・`NormalizeCustomFieldValue`)。エラー (`ErrNotFound`・`ErrPushBusy`)・受信箱の状態 (`Inbox*`)・`Discard` は、もとから readmodel のものだった。store には別名が残る。
+  - 値の関数は `asana/model` の型を受けるので、ドメイン (標準ライブラリとドメインだけ) には置けない。sync と store の両方が使うので、共有の型の readmodel に置いた (readmodel → asana/model は、共有の型どうしなので決まりに合う)。
+  - sync のテストは、今も store を使う (テストのファイルの import は見ない。偽のストアではなく本物の SQLite で確かめるため)。
+- これで依存の向きのテストの許可リスト (`allowed`) は空になり、移行は終わった。残った課題は、オフラインのときの `sync.Syncer{Store: ...}` の組み立て (tui 4 か所、mcpserver 1 か所。`architecture.md` の表)。
 
 ## 並行してよい作業
 

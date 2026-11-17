@@ -5,7 +5,7 @@
 ## 方針
 
 - **`go test ./...` の中で確かめる。** CI に新しい道具を足さない。開発者も手元の `go test` で気づける。Go 以外の道具 (depguard、go-arch-lint など) は使わない。依存を増やさずに、`go list` で足りるため。
-- **今の違反は許可リストに書き、段階ごとに減らす (ラチェット)。** 最初の PR で全部を直すことはしない。許可リストにない新しい違反は、テストが落ちる。許可リストに書いた違反がなくなったら、それもテストが落ちる (「古い許可が残っている」)。これで、直したあとに許可を消し忘れない。
+- **今の違反は許可リストに書き、段階ごとに減らす (ラチェット)。** 最初の PR で全部を直すことはしない。許可リストにない新しい違反は、テストが落ちる。許可リストに書いた違反がなくなったら、それもテストが落ちる (「古い許可が残っている」)。これで、直したあとに許可を消し忘れない。移行の終わり (e1) で許可リストは空になった。今からの違反は許可リストに足さず、コードを移して直す。
 - **外部ライブラリは、間接の依存まで見る。** ドメイン・アプリ・共有の型・termsafe から import をたどって、外部のモジュールに着いたら落ちる。たとえば app が `config` を import すると、go-toml が間接に入るので落ちる。ただし、たどるときに許可リストの import は通らない (下の「間接の依存」)。
 
 ## テストの形
@@ -14,7 +14,7 @@
 
 | ファイル | 中身 |
 |---|---|
-| `rules_test.go` | 表。段階ごとに直すのはここだけ。`layers` (パッケージ → 層)、`adapterExceptions` (決まり 3 の例外)、`entryAdapters` (決まり 4)、`entryToEntry` (決まり 5)、`external` (外部モジュール → 直接 import してよいパッケージ。ADR 0004)、`allowed` (今ある違反。`architecture.md` の表で「直す」にした行と、直す段階) |
+| `rules_test.go` | 表。段階ごとに直すのはここだけ。`layers` (パッケージ → 層)、`adapterExceptions` (決まり 3 の例外)、`entryAdapters` (決まり 4)、`entryToEntry` (決まり 5)、`external` (外部モジュール → 直接 import してよいパッケージ。ADR 0004)、`allowed` (今ある違反。`architecture.md` の表で「直す」にした行と、直す段階。e1 で空になった) |
 | `deps_test.go` | 確かめる処理。`TestDependencyDirection` と `TestTablesFollowTheRules` |
 | `checker_test.go` | 作り物の import のグラフで、それぞれの確かめ方が落ちるべきときに落ちることを確かめる (ドメインから adapter、app から sync、入り口から store、古い許可、間接の外部モジュール、層のないパッケージ、など)。自分用の許可リスト (`sampleAllowed`、a2 の時点の `allowed` の写し) を使うので、段階で `allowed` の行を消しても、このファイルは直さなくてよい |
 
@@ -24,7 +24,7 @@
 2. **import** (`architecture.md` の決まり 1〜7): パッケージ同士の import、外部モジュールの直接の import (`external` にない場所で使っていないか)、ドメインが `os`・`net`・`net/http`・`database/sql`・`syscall`・`crypto/rand`・`math/rand` (とその下) を import していないか。`allowed` にない違反があると落ちる。共有の型 (`asana/model`・`readmodel`) はドメイン・ほかの共有の型・termsafe だけを、termsafe は標準ライブラリだけを import する (`architecture.md` の層の図の「どこからでも」)。
 3. **使っていない外部の許可**: `external` の行のうち、そのパッケージがもうそのモジュールを import していないもの。外したら、その行を消し、`architecture.md` の「使ってよい外部ライブラリ」も直す。
 4. **古い許可**: `allowed` の行のうち、もう起きていないもの。直したら、その行を消し、`architecture.md` の表も直す。
-5. **間接の依存** (ADR 0004 の 1): ドメイン・アプリ・共有の型・termsafe のパッケージから import をたどり、外部のモジュールに着いたら、いちばん短い import の鎖を出して落ちる。`allowed` にある import は通らない。sync は今、store・auth・config を通して sqlite・oauth2・go-toml などに届くが、それはその import の許可として数えてあり、その許可を消す段階で一緒になくなるため。許可を消すと、その import もたどるようになる。間接のものは許可リストに入れられない。
+5. **間接の依存** (ADR 0004 の 1): ドメイン・アプリ・共有の型・termsafe のパッケージから import をたどり、外部のモジュールに着いたら、いちばん短い import の鎖を出して落ちる。`allowed` にある import は通らない。移行の間は、sync が store・auth・config を通して sqlite・oauth2・go-toml などに届いていたが、それはその import の許可として数え、許可を消す段階で一緒になくした。許可リストが空の今は、すべての import をたどる。間接のものは許可リストに入れられない。
 6. **ドメインの時計** (下の「ドメインの『時刻は引数』を守らせる」)。
 
 `TestTablesFollowTheRules` は、表そのものが決まりに反していないことを確かめる (表を書き換えるだけで決まりを緩められないように): `external` に出てくるのは adapter と入り口だけ、`entryAdapters` に store・asana・config・tokenstore がない、`allowed` に、決まりがもう許している import や、同じ行の重複や、段階の書いていない行がない、など。
