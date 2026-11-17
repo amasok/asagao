@@ -1,6 +1,6 @@
 ---
 name: mutation
-description: asana-tui で、追加したテストが本当に不具合を捕まえるかを、コードをわざと壊して確かめる (mutation テスト)。共有の worktree を壊さないよう、専用の一時 worktree だけで行う。テスト担当が仕上げに使う。
+description: asagao で、追加したテストが本当に不具合を捕まえるかを、コードをわざと壊して確かめる (mutation テスト)。共有の worktree を壊さないよう、専用の一時 worktree だけで行う。テスト担当が仕上げに使う。
 ---
 
 # mutation

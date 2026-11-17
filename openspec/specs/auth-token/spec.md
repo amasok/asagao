@@ -55,12 +55,32 @@ OAuth のトークンを更新したら、refresh token が変わったとき (�
 - **THEN** 保存せず `ErrLoginReplaced` を返す
 
 ### Requirement: 保存先の選び方
-保存先は `auth.token_store` で選ぶ (MUST): `keychain` (既定。サービス `asana-tui`、ユーザー `default`)、`1password` (`op` コマンド。秘密は標準入力で渡し、アクセストークンは保存しない)、`file` (`$XDG_CONFIG_HOME/asana-tui/token.json`)。ほかの値は拒む。
+保存先は `auth.token_store` で選ぶ (MUST): `keychain` (既定。サービス `asagao`、ユーザー `default`)、`1password` (`op` コマンド。秘密は標準入力で渡し、アクセストークンは保存しない)、`file` (`$XDG_CONFIG_HOME/asagao/token.json`)。ほかの値は拒む。
 根拠: internal/config/config.go:20-22,102-124,172-175; internal/auth/tokenstore/tokenstore.go:59-69; keychain.go; onepassword.go; TestNew, TestOnePasswordRoundTrip
 
 #### Scenario: 1Password に保存する
 - **WHEN** 保存先が `1password`
 - **THEN** refresh token・PAT・client secret・ユーザー情報だけを保存し、アクセストークンは空にする
+
+### Requirement: 旧名 asana-tui で保存したログインも使う
+`keychain` と、項目名を設定していない `1password` は、新しい名前 (`asagao`) に何もないとき、旧名 (`asana-tui`) で保存したログインを読み、新しい名前で保存し直して使う (MUST)。旧名の方は、古いバイナリのために残す。設定で 1Password の項目名を書いたときは、その名前だけを使う。保存し直せなかったときも、読めたログインは使い、次の起動でまた保存し直す。
+根拠: internal/auth/tokenstore/legacy.go; tokenstore.go; internal/config/config.go (OnePasswordConfig.LegacyItem); TestKeychainFallsBackToLegacyService, TestWithLegacyEdgeCases, TestOnePasswordFallsBackToLegacyItem, TestOnePasswordExplicitItemHasNoFallback, TestOnePasswordLegacyItem
+
+#### Scenario: キーチェーンに旧名のログインだけがある
+- **WHEN** サービス `asagao` に何もなく、`asana-tui` にログインがある
+- **THEN** そのログインを使い、`asagao` にも保存する。`asana-tui` の方は残す
+
+#### Scenario: 1Password の項目名を設定している
+- **WHEN** `auth.onepassword.item` を書いている
+- **THEN** その項目だけを読み、旧名の項目は見ない
+
+### Requirement: ログアウトは旧名のログインも消す
+旧名にも保存先がある `keychain` と `1password` では、`auth logout` と `auth migrate` は両方の名前からログインを消す (MUST)。旧名を残すと、次に読んだときに戻ってくるため。
+根拠: internal/auth/tokenstore/legacy.go (Delete); TestKeychainFallsBackToLegacyService
+
+#### Scenario: 旧名から読んだあとでログアウトする
+- **WHEN** 旧名から読んだログインで `auth logout` する
+- **THEN** 次に読むとき、どちらの名前にもログインがない
 
 ### Requirement: ファイルの保存先は自分だけが読める
 `file` の保存先は、排他で作った一時ファイルを 0600 にして fsync し、rename で置き換える (MUST)。トークンのファイル自体と古い `token.json.tmp` がシンボリックリンクでも、その先には書かない。フォルダは 0700 にする (シンボリックリンクのときは次の要件)。

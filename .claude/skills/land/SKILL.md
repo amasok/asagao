@@ -1,6 +1,6 @@
 ---
 name: land
-description: asana-tui の作業ブランチ (.worktrees/<branch>) を main に --no-ff で取り込み、build/vet/test -race で確かめて片付ける。ユーザーが PR を頼んだら、main を新しいブランチとして push して PR を作り、CI を待つ。「main に取り込んで」「PR 作って」のとき使う。
+description: asagao の作業ブランチ (.worktrees/<branch>) を main に --no-ff で取り込み、build/vet/test -race で確かめて片付ける。ユーザーが PR を頼んだら、main を新しいブランチとして push して PR を作り、CI を待つ。「main に取り込んで」「PR 作って」のとき使う。
 ---
 
 # land

@@ -1,4 +1,4 @@
-# asana-tui 要件定義（v1.0）
+# asagao 要件定義（v1.0）
 
 > ステータス: 確定（M0 完了）。`[要確認]` の項目は実装時に確認する。
 
@@ -19,11 +19,11 @@
 ## 3. 全体構成
 
 ```
-                ┌──────────── asana-tui (単一バイナリ) ────────────┐
+                ┌───────────── asagao (単一バイナリ) ──────────────┐
                 │                                                   │
   人間 ───────▶ │  TUI (Bubble Tea)                                 │
-  AI / スクリプト▶ │  CLI (`asana-tui task list --json` など)          │
-  AI エージェント ▶ │  MCP サーバー (`asana-tui mcp`, stdio)            │
+  AI / スクリプト▶ │  CLI (`asagao task list --json` など)             │
+  AI エージェント ▶ │  MCP サーバー (`asagao mcp`, stdio)               │
                 │        │                                          │
                 │        ▼                                          │
                 │  Core: ドメインモデル / 操作（全フロントエンド共通） │
@@ -44,7 +44,7 @@
 
 | # | 機能 | 内容 |
 |---|------|------|
-| F1 | 認証 | Personal Access Token（`asana-tui auth login --pat`）または OAuth 2.0（`asana-tui auth login`）でログイン。トークンは OS のキーチェーンまたは 1Password に保存し、OAuth は自動で更新 |
+| F1 | 認証 | Personal Access Token（`asagao auth login --pat`）または OAuth 2.0（`asagao auth login`）でログイン。トークンは OS のキーチェーンまたは 1Password に保存し、OAuth は自動で更新 |
 | F2 | ワークスペース選択 | 所属ワークスペース一覧を表示・切替 |
 | F3 | My Tasks 表示 | 自分にアサインされた未完了タスクを一覧表示（期日順） |
 | F4 | プロジェクト一覧 / タスク一覧 | プロジェクトを選択し、セクションごとにタスクを表示 |
@@ -56,7 +56,7 @@
 | F10 | 検索 / フィルタ | ローカルストアに対する全文検索。担当者・期日・タグ・完了状態で絞り込み |
 | F11 | オフライン対応 | ローカルキャッシュでの閲覧、オフライン中の編集を送信待ちキューに保存し、復帰時に同期 |
 | F12 | CLI（JSON 出力） | 主要操作をサブコマンドで提供し、`--json` で機械可読な出力 |
-| F13 | MCP サーバー | `asana-tui mcp` で stdio の MCP サーバーとして起動（詳細は 7 章） |
+| F13 | MCP サーバー | `asagao mcp` で stdio の MCP サーバーとして起動（詳細は 7 章） |
 
 ### 4.2 v0.2（無料プランの残りの機能を網羅する）
 
@@ -154,21 +154,21 @@
 ### 7.1 CLI
 
 ```sh
-asana-tui task list --assignee me --due-before 2026-11-20 --json
-asana-tui task show <gid> --json
-asana-tui task create --project <gid> --name "..." --due 2026-11-20
-asana-tui task complete <gid>
-asana-tui comment add <gid> --text "..."
-asana-tui search "キーワード" --json
-asana-tui sync            # 手動同期
-asana-tui sync status     # 送信待ちキューの確認
+asagao task list --assignee me --due-before 2026-11-20 --json
+asagao task show <gid> --json
+asagao task create --project <gid> --name "..." --due 2026-11-20
+asagao task complete <gid>
+asagao comment add <gid> --text "..."
+asagao search "キーワード" --json
+asagao sync            # 手動同期
+asagao sync status     # 送信待ちキューの確認
 ```
 
 - 出力は安定したスキーマの JSON。終了コードでエラー種別を区別する。
 
 ### 7.2 MCP サーバー
 
-- `asana-tui mcp` で stdio トランスポートの MCP サーバーとして起動。Claude Code などに登録して使う。
+- `asagao mcp` で stdio トランスポートの MCP サーバーとして起動。Claude Code などに登録して使う。
 - ツール（案）:
 
 | ツール | 種類 | 内容 |
@@ -190,7 +190,7 @@ asana-tui sync status     # 送信待ちキューの確認
 
 ## 8. オフライン・同期
 
-- **ローカルストア**: SQLite（`~/.local/share/asana-tui/store.db`）。タスク・プロジェクト・セクション・ユーザー・タグ・コメントを保存。全文検索に SQLite FTS5 を使う。
+- **ローカルストア**: SQLite（`~/.local/share/asagao/store.db`）。タスク・プロジェクト・セクション・ユーザー・タグ・コメントを保存。全文検索に SQLite FTS5 を使う。
 - **初回同期**: ワークスペース・自分の担当タスク・参加プロジェクトのタスクを取得。
 - **差分同期**:
   - プロジェクト: 毎回 Events API（`GET /events?resource=<プロジェクト>&sync=...`）で前回以降の変更だけを受け取り、変わったタスクだけを `POST /batch`（10 件ずつ）で取得する。トークンがない・切れた（412）ときは新しいトークンを保存して、そのプロジェクトを `modified_since` で取り直す（初回は全件）。429・5xx・接続断のときも同じく取り直しに戻り、同期は止めない。
@@ -206,7 +206,7 @@ asana-tui sync status     # 送信待ちキューの確認
 ## 9. 認証（OAuth 2.0）
 
 - 開発者（自分）が Asana の開発者コンソールでアプリを登録し、client ID を取得する。
-- `asana-tui auth login` の流れ:
+- `asagao auth login` の流れ:
   1. ローカルでコールバック用の HTTP サーバーを起動（`http://localhost:<port>/callback`）
   2. ブラウザで Asana の認可画面を開く（PKCE を使う）
   3. 受け取った認可コードをアクセストークン / リフレッシュトークンに交換
@@ -216,17 +216,17 @@ asana-tui sync status     # 送信待ちキューの確認
 | 値 | 保存先 | 備考 |
 |----|--------|------|
 | `keychain`（デフォルト） | macOS: Keychain、Linux: Secret Service | |
-| `1password` | 1Password（`op` CLI 経由） | 保管庫とアイテム名は設定で指定（デフォルト: `Private` / `asana-tui`）。1Password デスクトップアプリと CLI の連携を有効にしておく必要がある |
-| `file` | `~/.config/asana-tui/token.json`（権限 600） | キーチェーンも 1Password も使えない環境向け |
+| `1password` | 1Password（`op` CLI 経由） | 保管庫とアイテム名は設定で指定（デフォルト: `Private` / `asagao`）。1Password デスクトップアプリと CLI の連携を有効にしておく必要がある |
+| `file` | `~/.config/asagao/token.json`（権限 600） | キーチェーンも 1Password も使えない環境向け |
 
 - 1Password の場合:
   - リフレッシュトークン（と、必要なら client secret）をアイテムのフィールドとして保存する。書き込むのはログイン時だけ。
   - アクセストークンは保存せず、起動時にリフレッシュトークンから取得してメモリ上に持つ。そのため 1 時間ごとの更新で 1Password に書き込むことはない。
   - 起動時に `op read` を呼ぶため、1Password がロックされていれば Touch ID などで解除を求められる。
-  - `asana-tui auth migrate --to 1password` で保存先を移せるようにする。
+  - `asagao auth migrate --to 1password` で保存先を移せるようにする。
 - ブラウザがない環境（SSH 先の Linux など）では、認可 URL を表示し、ユーザーが手元のブラウザで開ける方式も用意する。
 - `[要確認]` 配布バイナリに client secret を含める必要があるか。PKCE だけでトークン交換できるかを実装前に確認する。
-- OAuth アプリを登録しなくても使えるよう、Personal Access Token (PAT) でもログインできる（`asana-tui auth login --pat`。`auth.client_id` が未設定なら `--pat` なしでも PAT）:
+- OAuth アプリを登録しなくても使えるよう、Personal Access Token (PAT) でもログインできる（`asagao auth login --pat`。`auth.client_id` が未設定なら `--pat` なしでも PAT）:
   - PAT は端末なら入力を隠して聞き、そうでなければ標準入力から読む。シェルの履歴に残らないよう、コマンドの引数では受け付けない。
   - `/users/me` で確かめてから、OAuth と同じ保存先に保存する（1Password では `personal_access_token` フィールド）。PAT は更新しない。
   - Asana が 401 を返したら、PAT を作り直して `auth login --pat` するよう案内する。未送信の変更は失敗にせず残す。
@@ -253,7 +253,7 @@ asana-tui sync status     # 送信待ちキューの確認
 | OAuth | golang.org/x/oauth2 | PKCE・トークン自動更新に対応 |
 | トークン保存 | zalando/go-keyring / 1Password CLI（`op`） | Keychain・Secret Service・1Password を同じインターフェースで切り替える |
 | API クライアント | 自前の薄いラッパー（net/http） | 公式 Go SDK がないため、必要なエンドポイントのみ実装 |
-| 設定 | `~/.config/asana-tui/config.toml` | XDG 準拠 |
+| 設定 | `~/.config/asagao/config.toml` | XDG 準拠 |
 
 ## 12. 使用する Asana API
 

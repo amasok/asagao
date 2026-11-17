@@ -1,6 +1,6 @@
 schema: spec-driven
 
-# asana-tui の仕様 (OpenSpec)。決まりは docs/design/adr/0002-openspec-tooling.md と
+# asagao の仕様 (OpenSpec)。決まりは docs/design/adr/0002-openspec-tooling.md と
 # docs/design/README.md に書いてある。ここには、道具 (と AI) がコードから読み取れない
 # 決まりだけを書く。
 context: |

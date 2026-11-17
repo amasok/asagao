@@ -67,7 +67,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
    - `imageview`・`browser`: 端末と OS (画像の表示、ブラウザを開く)。表示の一部なので。
    - `store`・`asana`・`config`・`tokenstore` は、入り口から import しない (組み立てだけ)。
 5. **入り口から入り口**: `cli` が `tui` と `mcpserver` を import するのはよい (`cli` は、TUI と MCP サーバーを起動するコマンドの入り口)。ほかの向きはない。
-6. **組み立て** (`internal/wire`、`cmd/asana-tui`) だけが、全部を import してよい。
+6. **組み立て** (`internal/wire`、`cmd/asagao`) だけが、全部を import してよい。
 7. 外部ライブラリは、上の表の「使ってよい外部ライブラリ」の場所でだけ使う。
 
 ## 今の import と、それぞれの扱い
@@ -76,7 +76,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 
 | import | 使っているもの | 扱い | 段階 |
 |---|---|---|---|
-| cmd/asana-tui → cli | `Execute` | 許す (組み立て) | — |
+| cmd/asagao → cli | `Execute` | 許す (組み立て) | — |
 | asana → termsafe | 文字の除去 | 許す | — |
 | auth → auth/tokenstore・config・browser | 保存先、設定、ログインでブラウザを開く | 許す (決まり 3 の例外) | — |
 | auth → asana | `*asana.Error` で 401 の判定 (tokensource.go:56) | 直す | d1 (`asana/model` へ) |
