@@ -86,6 +86,9 @@ func sentNotSaved(err error) error {
 // caller can treat it as offline; the entries stay queued. Other errors (e.g. the task was
 // deleted) mark the entry failed and Push continues. Changes to a task whose create has
 // not been sent yet wait for it.
+//
+// Changes to tasks that already exist in Asana, next to each other in the queue, go out
+// up to 10 per request (POST /batch); each is then handled as if sent alone (batch.go).
 func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 	if s.PullOnly {
 		return res, ErrPullOnly
@@ -195,141 +198,182 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 	// changes the stored account (KeyMeGID), and Run refuses to when Asana answers as
 	// another account, so the stored one stays the account the local data belongs to.
 	drops.res = &res // this pass's counts
-	for _, snapshot := range ops {
-		// An entry is handled a bounded number of times per push, whatever happens: send,
-		// check + send again, the follow-up move of a create, and that move's retry. What is
-		// left over waits for the next push.
-		for step, again := 0, true; again && step < maxStepsPerEntry; step++ {
-			again = false
-			if err := ctx.Err(); err != nil {
-				return res, last, err
-			}
-			// Re-read: sending an earlier entry may have rewritten this one (a create replaces
-			// the local gid that later comments/updates refer to).
-			op, err := s.Store.GetOp(ctx, snapshot.ID)
-			if errors.Is(err, readmodel.ErrNotFound) {
-				break
-			}
+	for i := 0; i < len(ops); {
+		if err := ctx.Err(); err != nil {
+			return res, last, err
+		}
+		// Updates to tasks that already exist in Asana, one after another in the queue, go
+		// out together (POST /batch, see batch.go).
+		group, err := s.batchGroup(ctx, ops[i:])
+		if err != nil {
+			return res, last, err
+		}
+		if len(group) >= 2 {
+			again, err := s.pushBatch(ctx, group, &res, drops)
 			if err != nil {
 				return res, last, err
 			}
-			if op.State != outbox.StatePending || (op.Verify && verified[op.ID]) {
-				break // sent again during this push already: verify on the next one
-			}
-			if wait, err := s.waitsForCreate(ctx, *op); err != nil {
-				return res, last, err
-			} else if wait {
-				break
-			}
-			if ok, err := s.Store.BeginSend(ctx, op.ID, s.clock()); err != nil {
-				return res, last, err
-			} else if !ok {
-				break
-			}
-			wasFollowUp := op.Kind != snapshot.Kind
-			var out outcome
-			sendIt := true
-			if op.Verify {
-				verified[op.ID] = true
-				var m match
-				out, m, err = s.reconcile(ctx, *op)
-				switch {
-				case isNotFound(err): // what it changes was deleted in Asana
-					if err := s.dropGone(ctx, *op, err, drops); err != nil {
-						return res, last, err
-					}
-					sendIt = false
-				case model.IsUnauthorized(err): // the token is rejected: keep it for after a new login
-					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
-						return res, last, rerr
-					}
-					return res, last, err
-				case isRejected(err): // e.g. not ours (403)
-					if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
-						return res, last, err
-					}
-					res.Failed++
-					sendIt = false
-				case err != nil: // could not check: try again on the next push
-					note := "Asana に届いたか確かめられませんでした: " + err.Error()
-					if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, note); rerr != nil {
-						return res, last, rerr
-					}
-					if isNetworkError(err) || isRateLimited(err) {
-						return res, last, err
-					}
-					sendIt = false
-				case m == tooEarly: // Asana may not list it yet: check again on the next push
-					if err := s.Store.MarkOpVerify(ctx, op.ID, "Asana への反映を待っています"); err != nil {
-						return res, last, err
-					}
-					sendIt = false
-				case m == ambiguous:
-					if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(readmodel.AmbiguousMessage)); err != nil {
-						return res, last, err
-					}
-					res.Failed++
-					sendIt = false
-				case m == matched: // Asana has it: recorded without sending it again
-					if !wasFollowUp {
-						res.Sent++
-					}
-					again = out == followUp
-					sendIt = false
-				default: // not in Asana: send it again
-					if err := s.Store.ClearVerify(ctx, op.ID); err != nil {
+			for _, b := range group {
+				if again[b.op.ID] { // e.g. check Asana right away after a 5xx, as for one entry
+					if err := s.pushEntry(ctx, b.op, 1, verified, &res, drops); err != nil {
 						return res, last, err
 					}
 				}
 			}
-			if !sendIt {
-				continue
-			}
-			if err := s.Store.CountAttempt(ctx, op.ID, s.clock()); err != nil {
-				return res, last, err
-			}
-			op.Attempts++
-			if op.Kind == outbox.KindMarkNotification {
-				var batched int // entries sent along with this one, whatever happened to it
-				out, batched, err = s.pushMarkNotification(ctx, *op)
-				res.Sent += batched
-			} else {
-				out, err = s.send(ctx, *op)
-			}
+			i += len(group)
+			continue
+		}
+		if err := s.pushEntry(ctx, ops[i], 0, verified, &res, drops); err != nil {
+			return res, last, err
+		}
+		i++
+	}
+	return res, last, nil
+}
+
+// pushEntry handles one entry (snapshot as listed when the pass began), from step first
+// on (a step already taken by pushBatch counts). An error stops the push.
+func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, verified map[int64]bool, res *PushResult, drops *dropState) error {
+	// An entry is handled a bounded number of times per push, whatever happens: send,
+	// check + send again, the follow-up move of a create, and that move's retry. What is
+	// left over waits for the next push.
+	for step, again := first, true; again && step < maxStepsPerEntry; step++ {
+		again = false
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Re-read: sending an earlier entry may have rewritten this one (a create replaces
+		// the local gid that later comments/updates refer to).
+		op, err := s.Store.GetOp(ctx, snapshot.ID)
+		if errors.Is(err, readmodel.ErrNotFound) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if op.State != outbox.StatePending || (op.Verify && verified[op.ID]) {
+			break // sent again during this push already: verify on the next one
+		}
+		if wait, err := s.waitsForCreate(ctx, *op); err != nil {
+			return err
+		} else if wait {
+			break
+		}
+		if ok, err := s.Store.BeginSend(ctx, op.ID, s.clock()); err != nil {
+			return err
+		} else if !ok {
+			break
+		}
+		wasFollowUp := op.Kind != snapshot.Kind
+		var out outcome
+		sendIt := true
+		if op.Verify {
+			verified[op.ID] = true
+			var m match
+			out, m, err = s.reconcile(ctx, *op)
 			switch {
-			case err == nil:
-				switch {
-				case out == conflicted:
-					res.Conflicts++
-				case out == dropped:
-					res.InboxReadOnly = true
-				case !wasFollowUp:
-					res.Sent++ // a follow-up is part of the change already counted
-				}
-				again = out == followUp
-			case isNetworkError(err) || isRateLimited(err) || model.IsUnauthorized(err):
-				if err := s.holdBack(ctx, *op, err); err != nil {
-					return res, last, err
-				}
-				return res, last, err // offline, cancelled or logged out: keep the rest for later
 			case isNotFound(err): // what it changes was deleted in Asana
 				if err := s.dropGone(ctx, *op, err, drops); err != nil {
-					return res, last, err
+					return err
 				}
-			default:
-				verify, ferr := s.handleError(ctx, *op, err)
-				if ferr != nil {
-					return res, last, ferr
+				sendIt = false
+			case model.IsUnauthorized(err): // the token is rejected: keep it for after a new login
+				if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
+					return rerr
 				}
-				if verify {
-					again = true // check Asana right away (once per push)
-				} else {
-					res.Failed++
+				return err
+			case isRejected(err): // e.g. not ours (403)
+				if err := s.Store.MarkOpFailed(ctx, op.ID, fmt.Errorf("Asana に届いたか確かめる先にアクセスできません: %w", err)); err != nil {
+					return err
+				}
+				res.Failed++
+				sendIt = false
+			case err != nil: // could not check: try again on the next push
+				note := "Asana に届いたか確かめられませんでした: " + err.Error()
+				if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, note); rerr != nil {
+					return rerr
+				}
+				if isNetworkError(err) || isRateLimited(err) {
+					return err
+				}
+				sendIt = false
+			case m == tooEarly: // Asana may not list it yet: check again on the next push
+				if err := s.Store.MarkOpVerify(ctx, op.ID, "Asana への反映を待っています"); err != nil {
+					return err
+				}
+				sendIt = false
+			case m == ambiguous:
+				if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(readmodel.AmbiguousMessage)); err != nil {
+					return err
+				}
+				res.Failed++
+				sendIt = false
+			case m == matched: // Asana has it: recorded without sending it again
+				if !wasFollowUp {
+					res.Sent++
+				}
+				again = out == followUp
+				sendIt = false
+			default: // not in Asana: send it again
+				if err := s.Store.ClearVerify(ctx, op.ID); err != nil {
+					return err
 				}
 			}
 		}
+		if !sendIt {
+			continue
+		}
+		if err := s.Store.CountAttempt(ctx, op.ID, s.clock()); err != nil {
+			return err
+		}
+		op.Attempts++
+		if op.Kind == outbox.KindMarkNotification {
+			var batched int // entries sent along with this one, whatever happened to it
+			out, batched, err = s.pushMarkNotification(ctx, *op)
+			res.Sent += batched
+		} else {
+			out, err = s.send(ctx, *op)
+		}
+		if again, err = s.handleOutcome(ctx, *op, out, err, wasFollowUp, res, drops); err != nil {
+			return err
+		}
 	}
-	return res, last, nil
+	return nil
+}
+
+// handleOutcome records what sending op (already marked "sending") gave: out, or the
+// error err. again: handle the entry once more right away (a follow-up, or a check of
+// Asana). An error stops the push (offline, logged out, the store failing); op has been
+// put back in the queue as it should then.
+func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, err error, wasFollowUp bool, res *PushResult, drops *dropState) (again bool, stop error) {
+	switch {
+	case err == nil:
+		switch {
+		case out == conflicted:
+			res.Conflicts++
+		case out == dropped:
+			res.InboxReadOnly = true
+		case !wasFollowUp:
+			res.Sent++ // a follow-up is part of the change already counted
+		}
+		return out == followUp, nil
+	case isNetworkError(err) || isRateLimited(err) || model.IsUnauthorized(err):
+		if err := s.holdBack(ctx, op, err); err != nil {
+			return false, err
+		}
+		return false, err // offline, cancelled or logged out: keep the rest for later
+	case isNotFound(err): // what it changes was deleted in Asana
+		return false, s.dropGone(ctx, op, err, drops)
+	default:
+		verify, ferr := s.handleError(ctx, op, err)
+		if ferr != nil {
+			return false, ferr
+		}
+		if !verify {
+			res.Failed++
+		}
+		return verify, nil // verify: check Asana right away (once per push)
+	}
 }
 
 // maxStepsPerEntry bounds how often Push handles one entry (see Push).
@@ -641,21 +685,7 @@ func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	if err != nil {
 		return sent, err
 	}
-	current := readmodel.TaskFieldValues(server)
-	conflicts := map[string]any{}
-	for k, local := range op.Payload {
-		if k == "html_notes" {
-			continue // the server normalizes HTML; "notes" (plain) is compared instead
-		}
-		sv, known := current[k]
-		if !known {
-			continue // not fetched (Task.Partial): nothing to compare with
-		}
-		if !same(sv, op.Base[k]) && !same(sv, local) {
-			conflicts[k] = sv
-		}
-	}
-	if len(conflicts) > 0 {
+	if conflicts := updateConflicts(op, server); conflicts != nil {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
 	t, err := s.API.UpdateTask(ctx, op.TaskGID, apiFields(op.Payload))
@@ -680,23 +710,16 @@ func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, er
 	if localgid.IsLocal(task) {
 		return sent, &model.Error{Status: 404} // its create failed
 	}
-	field, _ := op.Payload["field"].(string)
 	server, err := s.API.Task(ctx, task)
 	if err != nil {
 		return sent, err
 	}
-	local := op.Payload["value"]
-	if !server.Partial { // else Asana gave no custom fields to compare with: just send
-		sv, display, found := readmodel.ServerCustomField(server, field)
-		if !found {
-			return sent, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
-		}
-		if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(local)) {
-			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"value": sv, "display": display})
-		}
+	if conflicts, err := customFieldConflict(op, server); err != nil {
+		return sent, err
+	} else if conflicts != nil {
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
-	fieldType, _ := op.Payload["type"].(string)
-	t, err := s.API.UpdateTask(ctx, task, map[string]any{"custom_fields": map[string]any{field: readmodel.CustomFieldAPIValue(fieldType, local)}})
+	t, err := s.API.UpdateTask(ctx, task, customFieldUpdate(op))
 	var apiErr *model.Error
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
 		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
@@ -710,6 +733,54 @@ func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, er
 	}
 	s.refresh(ctx, *t)
 	return sent, nil
+}
+
+// updateConflicts compares an update with the task in Asana: the server's values of the
+// fields that were changed there too (nil if none).
+func updateConflicts(op outbox.Op, server *model.Task) map[string]any {
+	current := readmodel.TaskFieldValues(server)
+	conflicts := map[string]any{}
+	for k, local := range op.Payload {
+		if k == "html_notes" {
+			continue // the server normalizes HTML; "notes" (plain) is compared instead
+		}
+		sv, known := current[k]
+		if !known {
+			continue // not fetched (Task.Partial): nothing to compare with
+		}
+		if !same(sv, op.Base[k]) && !same(sv, local) {
+			conflicts[k] = sv
+		}
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	return conflicts
+}
+
+// customFieldConflict compares a custom field change with the task in Asana: the server's
+// value if it was changed there too (nil if not), or a 404 if the task no longer has the
+// field.
+func customFieldConflict(op outbox.Op, server *model.Task) (map[string]any, error) {
+	if server.Partial { // Asana gave no custom fields to compare with: just send
+		return nil, nil
+	}
+	field, _ := op.Payload["field"].(string)
+	sv, display, found := readmodel.ServerCustomField(server, field)
+	if !found {
+		return nil, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
+	}
+	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(op.Payload["value"])) {
+		return map[string]any{"value": sv, "display": display}, nil
+	}
+	return nil, nil
+}
+
+// customFieldUpdate is the task update that sets a custom field change.
+func customFieldUpdate(op outbox.Op) map[string]any {
+	field, _ := op.Payload["field"].(string)
+	fieldType, _ := op.Payload["type"].(string)
+	return map[string]any{"custom_fields": map[string]any{field: readmodel.CustomFieldAPIValue(fieldType, op.Payload["value"])}}
 }
 
 // normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
