@@ -32,7 +32,7 @@
 | 照合 (reconcile) | 自動確認中の作成について、Asana に既にできているかを探して決めること | `Syncer.reconcile` |
 | 再送してよい | 同じ操作を 2 回送っても結果が変わらないこと。作成は再送してよくない | `store.safeToResend` |
 | 競合 (conflict) | 送る前に Asana を見たら、base ともローカルの値とも違う値になっていたこと | `MarkOpConflict` |
-| 解決 (resolve) | 競合・失敗の操作に、利用者が `keep_local`・`keep_remote`・`retry`・`discard` を指示すること | `sync.Resolve` |
+| 解決 (resolve) | 競合・失敗の操作に、利用者が `keep_local`・`keep_remote`・`retry`・`discard` を指示すること | `app.Outbox.Resolve` (b2 までは `sync.Resolve`) |
 | 捨てた変更 (discard) | 自動または利用者の指示で捨てた操作の記録。payload ごと残す | `discarded_changes` 表 |
 | 送った記録 (result) | ローカル gid と本物の gid の対応。`gid:`・`story:`・`att:`・`status:`・`tag:` | `sync_state` 表, `RecordedResults` |
 

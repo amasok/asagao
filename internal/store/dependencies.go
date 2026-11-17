@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 // Dependencies: a task waits for its dependencies; its dependents wait for it. Each link is
@@ -17,8 +18,8 @@ import (
 // unsent change cancels it.
 
 const (
-	OpAddDependency    = "add_dependency"    // payload: dependency, dependency_name
-	OpRemoveDependency = "remove_dependency" // payload: dependency, dependency_name
+	OpAddDependency    = outbox.KindAddDependency
+	OpRemoveDependency = outbox.KindRemoveDependency
 
 	// MaxDependencies is Asana's limit of dependencies and dependents of one task, combined.
 	MaxDependencies = 30

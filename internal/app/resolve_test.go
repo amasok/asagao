@@ -1,4 +1,4 @@
-package sync
+package app_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -88,24 +89,24 @@ func setState(t *testing.T, st *store.Store, id int64, state string) {
 
 func TestResolveStateRules(t *testing.T) {
 	for _, tc := range []struct {
-		action  ResolveAction
+		action  app.ResolveAction
 		state   string
 		wantErr bool // ErrWrongState
 		push    bool
 		gone    bool // the entry is removed
 	}{
-		{KeepLocal, store.OpConflict, false, true, false},
-		{KeepLocal, store.OpPending, true, false, false},
-		{KeepLocal, store.OpFailed, true, false, false},
-		{KeepRemote, store.OpConflict, false, false, true},
-		{KeepRemote, store.OpPending, true, false, false},
-		{KeepRemote, store.OpFailed, true, false, false},
-		{Retry, store.OpFailed, false, true, false},
-		{Retry, store.OpPending, true, false, false},
-		{Retry, store.OpConflict, true, false, false},
-		{Discard, store.OpPending, false, false, true},
-		{Discard, store.OpConflict, false, false, true},
-		{Discard, store.OpFailed, false, false, true},
+		{app.KeepLocal, store.OpConflict, false, true, false},
+		{app.KeepLocal, store.OpPending, true, false, false},
+		{app.KeepLocal, store.OpFailed, true, false, false},
+		{app.KeepRemote, store.OpConflict, false, false, true},
+		{app.KeepRemote, store.OpPending, true, false, false},
+		{app.KeepRemote, store.OpFailed, true, false, false},
+		{app.Retry, store.OpFailed, false, true, false},
+		{app.Retry, store.OpPending, true, false, false},
+		{app.Retry, store.OpConflict, true, false, false},
+		{app.Discard, store.OpPending, false, false, true},
+		{app.Discard, store.OpConflict, false, false, true},
+		{app.Discard, store.OpFailed, false, false, true},
 	} {
 		t.Run(string(tc.action)+"/"+tc.state, func(t *testing.T) {
 			ctx := context.Background()
@@ -113,9 +114,9 @@ func TestResolveStateRules(t *testing.T) {
 			id := queue(t, st, store.OpUpdateTask)
 			setState(t, st, id, tc.state)
 
-			r, err := Resolve(ctx, st, id, tc.action)
+			r, err := (&app.Outbox{Store: st}).Resolve(ctx, id, tc.action)
 			if tc.wantErr {
-				if !errors.Is(err, ErrWrongState) {
+				if !errors.Is(err, app.ErrWrongState) {
 					t.Fatalf("err = %v, want ErrWrongState", err)
 				}
 				if op, _ := st.GetOp(ctx, id); op == nil || op.State != tc.state {
@@ -142,7 +143,7 @@ func TestResolveStateRules(t *testing.T) {
 			if err != nil || op.State != store.OpPending {
 				t.Fatalf("entry should be pending again: %+v, %v", op, err)
 			}
-			if tc.action == KeepLocal && op.Base["name"] != "サーバー" {
+			if tc.action == app.KeepLocal && op.Base["name"] != "サーバー" {
 				t.Fatalf("keep_local should take the server value as base: %+v", op.Base)
 			}
 		})
@@ -165,7 +166,7 @@ func TestResolveRefreshTarget(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			st := resolveStore(t)
 			id := queue(t, st, tc.kind)
-			r, err := Resolve(context.Background(), st, id, Discard)
+			r, err := (&app.Outbox{Store: st}).Resolve(context.Background(), id, app.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -179,29 +180,29 @@ func TestResolveRefreshTarget(t *testing.T) {
 func TestResolveBadInput(t *testing.T) {
 	ctx := context.Background()
 	st := resolveStore(t)
-	if _, err := Resolve(ctx, st, 999, Discard); !errors.Is(err, store.ErrNotFound) {
+	if _, err := (&app.Outbox{Store: st}).Resolve(ctx, 999, app.Discard); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown id: %v", err)
 	}
 	id := queue(t, st, store.OpUpdateTask)
-	if _, err := Resolve(ctx, st, id, "explode"); err == nil {
+	if _, err := (&app.Outbox{Store: st}).Resolve(ctx, id, "explode"); err == nil {
 		t.Fatal("unknown action should fail")
 	}
 	if op, _ := st.GetOp(ctx, id); op == nil {
 		t.Fatal("unknown action must not touch the entry")
 	}
 	for _, s := range []string{"keep_local", "keep_remote", "retry", "discard"} {
-		if a, err := ParseResolveAction(s); err != nil || string(a) != s {
+		if a, err := app.ParseResolveAction(s); err != nil || string(a) != s {
 			t.Errorf("ParseResolveAction(%q) = %q, %v", s, a, err)
 		}
 	}
-	if _, err := ParseResolveAction("local"); err == nil {
+	if _, err := app.ParseResolveAction("local"); err == nil {
 		t.Error(`ParseResolveAction("local") should fail`)
 	}
 }
 
 // An entry Push is sending cannot be resolved by anyone.
 func TestResolveRefusesSending(t *testing.T) {
-	for _, action := range []ResolveAction{KeepLocal, KeepRemote, Retry, Discard} {
+	for _, action := range []app.ResolveAction{app.KeepLocal, app.KeepRemote, app.Retry, app.Discard} {
 		t.Run(string(action), func(t *testing.T) {
 			ctx := context.Background()
 			st := resolveStore(t)
@@ -209,7 +210,7 @@ func TestResolveRefusesSending(t *testing.T) {
 			if ok, err := st.BeginSend(ctx, id, time.Now()); !ok || err != nil {
 				t.Fatalf("BeginSend = %v, %v", ok, err)
 			}
-			_, err := Resolve(ctx, st, id, action)
+			_, err := (&app.Outbox{Store: st}).Resolve(ctx, id, action)
 			if !errors.Is(err, store.ErrOpSending) {
 				t.Fatalf("err = %v, want ErrOpSending", err)
 			}

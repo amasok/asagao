@@ -2,13 +2,10 @@ package sync
 
 import (
 	"context"
-	"html"
-	"regexp"
-	"strings"
 	"time"
-	"unicode"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -242,25 +239,13 @@ func (s *Syncer) find(ctx context.Context, op store.Op, since time.Time) (outcom
 	return sent, notFound, nil
 }
 
-// sameTaskFields compares the fields a create sets besides the name, so a task someone
-// made by hand with the same name is not taken for ours.
+// sameTaskFields is outbox.SameTaskFields on the task as Asana returns it.
 func sameTaskFields(t asana.Task, payload map[string]any) bool {
-	str := func(k string) string { v, _ := payload[k].(string); return v }
-	if str("due_on") != t.DueOn {
-		return false
-	}
-	assignee := ""
+	f := outbox.TaskFields{DueOn: t.DueOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
 	if t.Assignee != nil {
-		assignee = t.Assignee.GID
+		f.AssigneeGID = t.Assignee.GID
 	}
-	if str("assignee") != assignee {
-		return false
-	}
-	if _, rich := payload["html_notes"]; rich {
-		return textKey(stripHTML(t.HTMLNotes)) == textKey(stripHTML(str("html_notes"))) ||
-			textKey(t.Notes) == textKey(str("notes"))
-	}
-	return textKey(t.Notes) == textKey(str("notes"))
+	return outbox.SameTaskFields(f, payload)
 }
 
 // tasksCreatedUnder lists the tasks a new task could be among: the parent's subtasks, the
@@ -310,42 +295,7 @@ func pick[T any](items []T, keep func(T) bool) (T, match) {
 	return zero, ambiguous
 }
 
-// sameComment reports whether a story is the comment we sent. Asana makes the plain text
-// of a rich-text comment itself (links, mentions and lists come out differently from our
-// Markdown-derived text), so the visible words of either form are compared.
+// sameComment is outbox.SameComment on a story as Asana returns it.
 func sameComment(st asana.Story, text, htmlText string) bool {
-	if textKey(text) == "" { // only emoji or symbols: nothing to compare loosely
-		return strings.TrimSpace(termsafe.String(st.Text)) == strings.TrimSpace(termsafe.String(text))
-	}
-	if textKey(st.Text) == textKey(text) {
-		return true
-	}
-	return htmlText != "" && st.HTMLText != "" && textKey(stripHTML(st.HTMLText)) == textKey(stripHTML(htmlText))
-}
-
-var (
-	// mentionOrImage matches <a>/<img> elements Asana fills in itself from data-asana-gid
-	// (we send them empty; Asana returns the user's name or the image).
-	mentionOrImage = regexp.MustCompile(`(?s)<(a|img)\b[^>]*data-asana-gid[^>]*?(/>|>.*?</a>)`)
-	tagRE          = regexp.MustCompile(`(?s)<[^>]*>`)
-	urlRE          = regexp.MustCompile(`https?://\S+`)
-)
-
-// stripHTML returns the visible text of Asana rich text, without mentions and images.
-func stripHTML(s string) string {
-	s = mentionOrImage.ReplaceAllString(s, " ")
-	return html.UnescapeString(tagRE.ReplaceAllString(s, " "))
-}
-
-// textKey keeps only letters and digits (URLs removed), so spacing, punctuation, list
-// markers and link targets do not matter.
-func textKey(s string) string {
-	s = urlRE.ReplaceAllString(s, " ")
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
+	return outbox.SameComment(st.Text, st.HTMLText, text, htmlText, termsafe.String)
 }

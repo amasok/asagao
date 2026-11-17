@@ -32,7 +32,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 
 | パッケージ (目標) | 層 | 今 | 使ってよい外部ライブラリ | 中身 |
 |---|---|---|---|---|
-| `internal/domain/gid` | ドメイン | (store の `LocalPrefix`・`IsLocalGID`) | なし | ローカル gid の型と判定、作り方 (乱数は引数) |
+| `internal/domain/gid` | ドメイン | (store の `LocalPrefix`・`IsLocalGID`) | なし | ローカル gid の判定と作り方 (乱数は引数。型は作らない: gid はどこでも string) |
 | `internal/domain/task` | ドメイン | (store の `NewTask`・`TagEdit`・`TagRef`、`validateFields` ほか) | なし | 作るタスクの内容 (`NewTask`)、解決済みのタグの変更 (`TagEdit`)、タスクの欄の検証、承認の状態の決まり |
 | `internal/domain/outbox` | ドメイン | (store の `Op`、`safeToResend`、`UpdateTaskLocal` の後半、sync の `sameTaskFields`) | なし | 操作の種類・状態、畳み込み、再送してよいか、照合で同じとみなす条件 |
 | `internal/domain/rich` | ドメイン | (richtext の `Target`、`layout()`、入れ子の決まり) | なし | 送り先と、送り先ごとに許すタグ |
@@ -83,7 +83,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
 | store → asana | `asana.Task` などの型 (9 ファイル) | 直す | d1 |
-| store → richtext | `ToEditableMarkdown` (describe.go:104) | 直す | c1 |
+| store → richtext | `Target.Fit` (outbox_richtext.go。送り待ちのコメントと status update を今の変換で書き直す、#71)。`ToEditableMarkdown` (describe.go) は c1 で呼ぶ側に移した | 直す | d3 (`sync.Push` が変換をポートで受け、`FitQueuedRichText` に渡す) |
 | sync → store | `*store.Store`、`store.Op` などの型 | 直す | b2 (Op を domain/outbox へ)、d3 (ポートにする) |
 | sync → asana | `*asana.Client`、型 | 直す | d1 (型)、d3 (ポート) |
 | sync → auth | `ErrNotLoggedIn`・`ErrLoginReplaced` (push.go:616) | 直す | d2 |

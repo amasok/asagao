@@ -10,7 +10,7 @@ asagao を、言葉と決まりがまとまる単位 (境界づけられたコ�
 | **Asana 連携** (腐敗防止層) | HTTP、再試行、batch、Events の token、Asana の JSON の型 | `internal/asana` | sync-pull (再試行) |
 | **認証** | ログイン、トークンの更新と保存、保存先の選び方 | `internal/auth`, `internal/auth/tokenstore`, `internal/cli/auth.go` | auth-token |
 | **ローカルキャッシュ** | キャッシュの表、開き方・移行・排他・初期化、取り込みのときの当て直し | `internal/store` | store-lifecycle |
-| **送信待ち** (中心) | 操作の種類、ローカル gid、畳み込み、再送してよいか、捨てた変更、送った記録 | `internal/store` (outbox*.go ほか), `internal/sync/resolve.go` | outbox-push |
+| **送信待ち** (中心) | 操作の種類、ローカル gid、畳み込み、再送してよいか、捨てた変更、送った記録 | `internal/store` (outbox*.go ほか), `internal/app/outbox.go`, `internal/domain/outbox`, `internal/domain/gid` | outbox-push |
 | **同期** | 送る順番と結果の扱い、照合、取り込みの取り方と記録の進め方、片付け | `internal/sync` | sync-pull, outbox-push |
 | **説明文** | Markdown ⇔ rich text、送り先ごとの制限、入れ子の決まり | `internal/richtext` | rich-text |
 | **タスクの操作** (中心) | タスク作成・更新・コメント・status update の手順。入力の解釈 (期日、名前の解決) | 今は入り口ごとに散らばっている (`tui`・`cli`・`mcpserver`) | write-flow |

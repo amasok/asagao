@@ -1,16 +1,32 @@
-package sync
+package app
 
 import (
 	"context"
 	"errors"
 	"fmt"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Resolving outbox entries (changes that could not be sent) is shared by the TUI, the CLI
 // and the MCP server. Resolve does the local part; the caller then does the network part
 // it asks for (push the requeued entry, refresh the task), each with its own plumbing.
+
+// OutboxStore is the part of the local cache that resolving outbox entries needs.
+// *store.Store satisfies it.
+type OutboxStore interface {
+	GetOp(ctx context.Context, id int64) (*outbox.Op, error)
+	ResolveKeepLocal(ctx context.Context, id int64) error
+	RetryOp(ctx context.Context, id int64) error
+	DiscardOp(ctx context.Context, id int64) error
+}
+
+// Outbox is the use case on outbox entries: resolving one.
+type Outbox struct {
+	Store OutboxStore
+}
 
 // ResolveAction says what to do with an outbox entry.
 type ResolveAction string
@@ -42,7 +58,7 @@ func (e *StateError) Error() string {
 	if e.Action == Retry {
 		want = "送信に失敗した変更"
 	}
-	return fmt.Sprintf("#%d は%sではありません（状態: %s）。%s は%sにだけ使えます", e.ID, want, store.OpStateLabel(e.State), e.Action, want)
+	return fmt.Sprintf("#%d は%sではありません（状態: %s）。%s は%sにだけ使えます", e.ID, want, readmodel.OpStateLabel(e.State), e.Action, want)
 }
 
 func (e *StateError) Is(target error) bool { return target == ErrWrongState }
@@ -58,7 +74,7 @@ func ParseResolveAction(s string) (ResolveAction, error) {
 
 // Resolution is what Resolve did and what the caller should do next.
 type Resolution struct {
-	Op     store.Op // the entry as it was before resolving
+	Op     outbox.Op // the entry as it was before resolving
 	Action ResolveAction
 	// Push is true when the entry is back in the queue and should be sent now.
 	Push bool
@@ -69,33 +85,33 @@ type Resolution struct {
 }
 
 // Resolve applies action to outbox entry id in the local store.
-func Resolve(ctx context.Context, st *store.Store, id int64, action ResolveAction) (Resolution, error) {
-	op, err := st.GetOp(ctx, id)
+func (o *Outbox) Resolve(ctx context.Context, id int64, action ResolveAction) (Resolution, error) {
+	op, err := o.Store.GetOp(ctx, id)
 	if err != nil {
 		return Resolution{}, err
 	}
 	r := Resolution{Op: *op, Action: action}
-	if op.State == store.OpSending { // Push has it now; the store would refuse too
-		return r, fmt.Errorf("#%d: %w", op.ID, store.ErrOpSending)
+	if op.State == outbox.StateSending { // Push has it now; the store would refuse too
+		return r, fmt.Errorf("#%d: %w", op.ID, readmodel.ErrOpSending)
 	}
 	switch action {
 	case KeepLocal:
-		if op.State != store.OpConflict {
+		if op.State != outbox.StateConflict {
 			return r, &StateError{op.ID, op.State, action}
 		}
 		r.Push = true
-		return r, st.ResolveKeepLocal(ctx, op.ID)
+		return r, o.Store.ResolveKeepLocal(ctx, op.ID)
 	case Retry:
-		if op.State != store.OpFailed {
+		if op.State != outbox.StateFailed {
 			return r, &StateError{op.ID, op.State, action}
 		}
 		r.Push = true
-		return r, st.RetryOp(ctx, op.ID)
+		return r, o.Store.RetryOp(ctx, op.ID)
 	case KeepRemote, Discard:
-		if action == KeepRemote && op.State != store.OpConflict {
+		if action == KeepRemote && op.State != outbox.StateConflict {
 			return r, &StateError{op.ID, op.State, action}
 		}
-		if err := st.DiscardOp(ctx, op.ID); err != nil {
+		if err := o.Store.DiscardOp(ctx, op.ID); err != nil {
 			return r, err
 		}
 		r.RefreshGID = refreshTarget(*op)
@@ -106,14 +122,14 @@ func Resolve(ctx context.Context, st *store.Store, id int64, action ResolveActio
 }
 
 // refreshTarget is the task to re-fetch after dropping op, or "".
-func refreshTarget(op store.Op) string {
-	if store.IsLocalGID(op.TaskGID) {
+func refreshTarget(op outbox.Op) string {
+	if gid.IsLocal(op.TaskGID) {
 		return "" // removed by DiscardOp, or never reached Asana
 	}
 	switch op.Kind {
-	case store.OpCreateTask, store.OpDuplicateTask, // the task was local and is gone
-		store.OpRenameSection, store.OpCreateStatus, // task_gid is a section / project
-		store.OpMarkNotification: // task_gid is a notification
+	case outbox.KindCreateTask, outbox.KindDuplicateTask, // the task was local and is gone
+		outbox.KindRenameSection, outbox.KindCreateStatus, // task_gid is a section / project
+		outbox.KindMarkNotification: // task_gid is a notification
 		return ""
 	}
 	return op.TaskGID

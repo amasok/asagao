@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -27,42 +29,28 @@ import (
 //
 // "" means "clear" for due_on and assignee.
 
+// The kinds and states are aliases of domain/outbox's.
 const (
-	OpUpdateTask = "update_task"
-	OpCreateTask = "create_task"
-	OpAddComment = "add_comment"
-	OpMoveTask   = "move_task" // payload: project, section, section_name; base: section
+	OpUpdateTask = outbox.KindUpdateTask
+	OpCreateTask = outbox.KindCreateTask
+	OpAddComment = outbox.KindAddComment
+	OpMoveTask   = outbox.KindMoveTask
 
-	OpPending  = "pending"
-	OpConflict = "conflict"
-	OpFailed   = "failed"
+	OpPending  = outbox.StatePending
+	OpConflict = outbox.StateConflict
+	OpFailed   = outbox.StateFailed
 
-	// LocalPrefix marks gids of tasks/comments created offline and not yet sent.
-	LocalPrefix = "local:"
+	// LocalPrefix marks gids of tasks/comments created offline and not yet sent (an alias
+	// of gid.Prefix, kept while the callers move to domain/gid).
+	LocalPrefix = gid.Prefix
 )
 
-// IsLocalGID reports whether gid belongs to a task or comment not yet sent to Asana.
-func IsLocalGID(gid string) bool { return strings.HasPrefix(gid, LocalPrefix) }
+// IsLocalGID reports whether gid belongs to a task or comment not yet sent to Asana (see
+// gid.IsLocal, which it calls).
+func IsLocalGID(g string) bool { return gid.IsLocal(g) }
 
-type Op struct {
-	ID             int64          `json:"id"`
-	Kind           string         `json:"kind"`
-	TaskGID        string         `json:"task_gid"`
-	TaskName       string         `json:"task_name"`
-	Payload        map[string]any `json:"payload"`
-	Base           map[string]any `json:"base,omitempty"`
-	BaseModifiedAt string         `json:"base_modified_at,omitempty"`
-	State          string         `json:"state"`
-	Conflict       map[string]any `json:"conflict,omitempty"`
-	LastError      string         `json:"last_error,omitempty"`
-	Attempts       int            `json:"attempts"`
-	CreatedAt      string         `json:"created_at"`
-	// SentAt is when the entry was (first) sent; Verify means Asana may already have
-	// applied it, so Push checks Asana before sending it again (see outbox_send.go).
-	SentAt     string `json:"sent_at,omitempty"`
-	LastSentAt string `json:"last_sent_at,omitempty"`
-	Verify     bool   `json:"verify,omitempty"`
-}
+// Op is an outbox entry (an alias of outbox.Op).
+type Op = outbox.Op
 
 // NewTask is the input for CreateTaskLocal (an alias of task.NewTask; see TagEdit).
 type NewTask = task.NewTask
@@ -70,10 +58,10 @@ type NewTask = task.NewTask
 // --- local writes ---
 
 // UpdateTaskLocal applies field changes to a task and queues them for Asana.
-// Consecutive edits of the same task are merged into one outbox entry; an edit that
-// reverts every field to its original value removes the entry.
+// Consecutive edits of the same task are merged into one outbox entry (outbox.Fold); an
+// edit that reverts every field to its original value removes the entry.
 func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error {
-	if err := validateFields(changes); err != nil {
+	if err := task.ValidateFields(changes); err != nil {
 		return err
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
@@ -81,14 +69,9 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 		if err != nil {
 			return err
 		}
-		if _, ok := changes["approval_status"]; ok {
-			subtype, _ := cur["resource_subtype"].(string)
-			if v, ok := changes["resource_subtype"].(string); ok {
-				subtype = v
-			}
-			if subtype != "approval" {
-				return errors.New("承認タスクではないため、承認の状態は設定できません（種類を「承認」にすると設定できます）")
-			}
+		subtype, _ := cur["resource_subtype"].(string)
+		if err := task.CheckApproval(subtype, changes); err != nil {
+			return err
 		}
 		if IsLocalGID(gid) {
 			// Not on the server yet: fold the change into the pending create.
@@ -121,37 +104,18 @@ func (s *Store) UpdateTaskLocal(ctx context.Context, gid string, changes map[str
 			op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
 				BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
 		}
-		if _, ok := changes["approval_status"]; ok {
-			if _, ok := op.Base["completed"]; !ok {
-				// Deciding an approval completes the task locally: discarding restores it.
-				op.Base["completed"] = cur["completed"]
-			}
-		}
-		for k, v := range changes {
-			if _, ok := op.Base[k]; !ok {
-				op.Base[k] = cur[k]
-			}
-			if sameValue(op.Base[k], v) {
-				delete(op.Payload, k) // back to the original value
-				delete(op.Conflict, k)
-			} else {
-				op.Payload[k] = v
-			}
-		}
-		if op.State == OpConflict && len(op.Conflict) == 0 {
-			op.State = OpPending // no conflicting field left
-		}
+		folded, deleteOp := outbox.Fold(*op, cur, changes)
 		if err := applyFields(ctx, tx, gid, changes, now); err != nil {
 			return err
 		}
-		if len(op.Payload) == 0 {
-			if op.ID != 0 {
-				_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
+		if deleteOp {
+			if folded.ID != 0 {
+				_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", folded.ID)
 				return err
 			}
 			return nil
 		}
-		return saveOp(ctx, tx, op)
+		return saveOp(ctx, tx, &folded)
 	})
 }
 
@@ -266,7 +230,7 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	if nt.WorkspaceGID == "" && nt.ParentGID == "" { // subtasks inherit it from the parent in Asana
 		return "", errors.New("ワークスペースが決まりません（--project または --workspace を指定してください）")
 	}
-	gid := LocalPrefix + randomID()
+	gid := newLocalGID()
 	payload := map[string]any{"workspace": nt.WorkspaceGID, "name": nt.Name}
 	if nt.ParentGID != "" {
 		payload["parent"] = nt.ParentGID
@@ -323,7 +287,7 @@ func (s *Store) AddRichCommentLocal(ctx context.Context, taskGID, text, htmlText
 	if strings.TrimSpace(text) == "" {
 		return "", errors.New("コメントが空です")
 	}
-	gid := LocalPrefix + randomID()
+	gid := newLocalGID()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var exists int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", taskGID).Scan(&exists); err != nil {
@@ -693,45 +657,11 @@ func (s *Store) RecordedResults(ctx context.Context, prefix string) (map[string]
 
 // --- helpers ---
 
-var updatableFields = map[string]bool{"completed": true, "name": true, "notes": true, "html_notes": true, "due_on": true, "assignee": true, "liked": true,
-	"resource_subtype": true, "approval_status": true}
-
 // Task types (resource_subtype) and approval statuses that can be set.
 var (
 	TaskSubtypes     = task.Subtypes
 	ApprovalStatuses = task.ApprovalStatuses
 )
-
-func validateFields(changes map[string]any) error {
-	if len(changes) == 0 {
-		return errors.New("変更がありません")
-	}
-	for k, v := range changes {
-		if !updatableFields[k] {
-			return fmt.Errorf("unsupported field %q", k)
-		}
-		switch k {
-		case "completed", "liked":
-			if _, ok := v.(bool); !ok {
-				return fmt.Errorf("%s must be bool", k)
-			}
-		default:
-			if _, ok := v.(string); !ok {
-				return fmt.Errorf("%s must be string", k)
-			}
-		}
-	}
-	if name, ok := changes["name"].(string); ok && strings.TrimSpace(name) == "" {
-		return errors.New("タスク名が空です")
-	}
-	if v, ok := changes["resource_subtype"].(string); ok && !slices.Contains(TaskSubtypes, v) {
-		return fmt.Errorf("タスクの種類は %s のどれかです: %q", strings.Join(TaskSubtypes, " / "), v)
-	}
-	if v, ok := changes["approval_status"].(string); ok && !slices.Contains(ApprovalStatuses, v) {
-		return fmt.Errorf("承認の状態は %s のどれかです: %q", strings.Join(ApprovalStatuses, " / "), v)
-	}
-	return nil
-}
 
 // TaskFieldValues extracts update_task fields from an API task (for conflict checks).
 func TaskFieldValues(t *asana.Task) map[string]any {
@@ -990,7 +920,10 @@ func nonNil(m map[string]any) map[string]any {
 	return m
 }
 
-func sameValue(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
+func sameValue(a, b any) bool { return outbox.SameValue(a, b) }
+
+// newLocalGID makes a new local gid from a random id (gid.NewLocal).
+func newLocalGID() string { return gid.NewLocal(randomID()) }
 
 func randomID() string {
 	b := make([]byte, 8)

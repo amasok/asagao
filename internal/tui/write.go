@@ -11,7 +11,6 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
-	"github.com/amasok/asagao/internal/sync"
 )
 
 // Writes (complete / create / comment) are applied to the local store immediately and
@@ -429,7 +428,7 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	if m.opCursor < len(m.ops) {
 		op = &m.ops[m.opCursor]
 	}
-	resolve := func(action sync.ResolveAction, status string) tea.Cmd {
+	resolve := func(action app.ResolveAction, status string) tea.Cmd {
 		if op == nil {
 			return nil
 		}
@@ -439,7 +438,7 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 		}
 		st, id := m.deps.Store, op.ID
 		return func() tea.Msg {
-			r, err := sync.Resolve(m.ctx, st, id, action)
+			r, err := (&app.Outbox{Store: st}).Resolve(m.ctx, id, action)
 			if err != nil {
 				return writeDoneMsg{err: err}
 			}
@@ -461,13 +460,13 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+u", "pgup":
 		m.outboxTop = max(0, m.outboxTop-max(1, m.outboxHeight()/2))
 	case "l":
-		return m, resolve(sync.KeepLocal, "こちらの値で上書きします")
+		return m, resolve(app.KeepLocal, "こちらの値で上書きします")
 	case "s":
-		return m, resolve(sync.KeepRemote, "Asana の値を採用しました")
+		return m, resolve(app.KeepRemote, "Asana の値を採用しました")
 	case "d":
-		return m, resolve(sync.Discard, "取り消しました")
+		return m, resolve(app.Discard, "取り消しました")
 	case "R":
-		return m, resolve(sync.Retry, "もう一度送ります")
+		return m, resolve(app.Retry, "もう一度送ります")
 	}
 	return m, nil
 }
@@ -571,7 +570,7 @@ func (m *Model) outboxLines(inner int) []string {
 		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
 		for _, d := range m.discards {
 			lines = append(lines, "  "+store.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
-			for _, dt := range store.DiscardDetails(d) {
+			for _, dt := range store.DiscardDetails(d, richtext.ToEditableMarkdown) {
 				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))
 				for _, l := range strings.Split(ansi.Wrap(dt.Text, max(10, inner-6), ""), "\n") {
 					lines = append(lines, "      "+l)

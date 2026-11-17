@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
-// OpRenameSection renames a section. The outbox task_gid column holds the section gid.
-// payload: name; base: name (before the local edit).
-const OpRenameSection = "rename_section"
+// OpRenameSection renames a section (outbox.KindRenameSection).
+const OpRenameSection = outbox.KindRenameSection
 
 // RenameSectionLocal renames a section locally and queues the change for Asana.
 func (s *Store) RenameSectionLocal(ctx context.Context, sectionGID, name string, now time.Time) error {
