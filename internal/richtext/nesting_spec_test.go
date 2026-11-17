@@ -129,7 +129,8 @@ func TestFromMarkdownFollowsNestingRules(t *testing.T) {
 		{"- ```\n  a ``` b\n  ```", "<body><ul><li><code>a ``` b</code></li></ul></body>"},
 		{"- a\n  ```\n  ```\n- b", "<body><ul><li>a</li><li>b</li></ul></body>"},
 		{"> - a\n>   ```\n>   c\n>   ```", "<body><blockquote>- a\n<code>c</code></blockquote></body>"},
-		{"- a\n\n      code", "<body><ul><li>a</li></ul>      code</body>"}, // as before: indentation after a blank line is text
+		// code in the item after a blank line (indented past the item's text, #13)
+		{"- a\n\n      code", "<body><ul><li>a\n<code>code</code></li></ul></body>"},
 		// what Asana takes stays as it was
 		{"> # h\n> ```\n> c\n> ```", "<body><blockquote><h1>h</h1><pre>c</pre></blockquote></body>"},
 		{"- a\n  - b", "<body><ul><li>a<ul><li>b</li></ul></li></ul></body>"},

@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80、#12。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80、#12、#13。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -176,12 +176,24 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `<body>  a\nb</body>` になる (字下げは文字のまま)
 
 ### Requirement: 入れ子のリストのあとの文は、そのリストの最後の項目に入れる
-リスト項目の中で入れ子のリストのあとに続く文は、そのリストの最後の項目の新しい行にする (MUST)。Markdown はその行を最後の項目の続きと読むので、エディタはそこにしか書き戻せないため。`FromMarkdown` も送るときにそうし、html にあるときも読むときにそうする (間の改行は落とし、語はくっつけない)。そのあとに続くリストは、隣り合うリストになる (#59)。空行と字下げで打った外側の項目の続き (`- a\n  - b\n\n  c`) は、まだリストの外に出る (#82)。
+リスト項目の中で入れ子のリストのあとに続く文は、そのリストの最後の項目の新しい行にする (MUST)。Markdown はその行を最後の項目の続きと読むので、エディタはそこにしか書き戻せないため。`FromMarkdown` も送るときにそうし、html にあるときも読むときにそうする (間の改行は落とし、語はくっつけない)。そのあとに続くリストは、隣り合うリストになる (#59)。空行と字下げで打った外側の項目の続き (`- a\n  - b\n\n  c`) も、Markdown がそう読むので、この文にする (#13、次の要件)。
 根拠: frommd.go itemBlocks; richtext.go moveTextAfterNestedLists; lists_test.go TestTextAfterNestedList
 
 #### Scenario: 入れ子のリストのあとの文
 - **WHEN** `<ul><li>a<ul><li>b</li></ul>c</li></ul>` をエディタで往復する
 - **THEN** `<ul><li>a<ul><li>b\nc</li></ul></li></ul>` になる
+
+### Requirement: 空行のあとでも、項目の内容の桁まで字下げした行は項目の続き
+空行のあとの行も、開いているリスト項目の内容の桁 (印と、そのあとの空白のあと) まで字下げしてあれば、その項目の続きとして読む (MUST、CommonMark と同じ)。いちばん深い、届いている項目の続きになり、届かない項目は終わる。どの項目にも届かない行の字下げは、これまでどおり文字にする (#13)。エディタは、リストのすぐあとの行の字下げを文字参照 (`&#32;`・`&#9;`) で書き、項目の続きと読まれないようにする (MUST)。
+根拠: frommd.go keepIndentation, itemContentColumn; richtext.go lineAfterList; list_continuation_test.go TestIndentedLineAfterBlankLineInItem
+
+#### Scenario: 空行のあとの外側の項目の続き
+- **WHEN** `- a\n  - b\n\n  c` を変換する
+- **THEN** `c` はリストの中に入る (`<ul><li>a<ul><li>b\nc</li></ul></li></ul>`)
+
+#### Scenario: リストのあとの字下げした文
+- **WHEN** `<ul><li>x</li></ul>  y` をエディタで開く
+- **THEN** `- x\n\n&#32; y` になり、戻すと同じ html になる
 
 ### Requirement: リスト項目の中のブロックは、読むときに文字にする
 Asana が受け付けないリスト項目の中の引用・コード片・見出し・区切り線が html にあるとき (Asana は送ってこないが、キャッシュやほかの道具が持つことがある) は、読むときに、`FromMarkdown` が送るのと同じ文字にする (MUST): `> ` の行 (中のリストは `- ` の行)、行ごとのコード、`# h`、`---`。ブロックとして書くとリストが終わり、あとの項目が文字になるため。引用を文字にできるか (段落などを含まないか) は書き換える前に確かめ、できないものは何も変えずにリストのあとに出す (#59)。
