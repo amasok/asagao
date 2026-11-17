@@ -62,7 +62,7 @@ asagao を、言葉と決まりがまとまる単位 (境界づけられたコ�
 ### 認証 → Asana 連携
 
 - 認証は `oauth2.TokenSource` を作り、組み立ての場所 (`internal/cli/root.go:91-97`) で `asana.NewClient(oauth2.NewClient(ctx, src))` にする。`asana.NewClient` を呼ぶのは、ここ 1 か所だけ。
-- 問題: 同期 (`internal/sync/push.go:614-616`) が `*oauth2.RetrieveError` と `auth.ErrNotLoggedIn`・`auth.ErrLoginReplaced` を直接見て、「送っていない」と判断している。同期が認証のライブラリを知っている。段階 d で、認証が「送る前に失敗した」を表す自前のエラー (例: `auth.ErrNoToken`) に包んで返すようにし、sync から x/oauth2 の import を外す。
+- 送る前の失敗: 認証の `Source.Token` は、トークンを得られなかったとき (ログアウト、別のログイン、OAuth の更新の失敗) に自前のエラー `*auth.TokenError` で包んで返す。同期 (`internal/sync/push.go` の `requestNotSent`) は、そのエラーの `RequestNotSent()` のメソッドで「送っていない」と判断し、認証も x/oauth2 も import しない (d2。前は `*oauth2.RetrieveError` と `auth.ErrNotLoggedIn`・`auth.ErrLoginReplaced` を直接見ていた)。
 
 ### タスクの操作 → 送信待ち・ローカルキャッシュ・説明文: 顧客/供給者
 

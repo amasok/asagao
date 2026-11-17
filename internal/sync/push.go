@@ -11,10 +11,7 @@ import (
 	"os"
 	"slices"
 
-	"golang.org/x/oauth2"
-
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -615,9 +612,10 @@ func isNetworkError(err error) bool {
 
 // requestNotSent reports whether a network error happened before the request could reach
 // the server (no connection could be made, or no token: logged out, refresh failed).
+// An error without a token says so itself (auth.TokenError's RequestNotSent).
 func requestNotSent(err error) bool {
-	var retrieveErr *oauth2.RetrieveError
-	if errors.Is(err, auth.ErrNotLoggedIn) || errors.Is(err, auth.ErrLoginReplaced) || errors.As(err, &retrieveErr) {
+	var noToken interface{ RequestNotSent() bool }
+	if errors.As(err, &noToken) && noToken.RequestNotSent() {
 		return true
 	}
 	var opErr *net.OpError
