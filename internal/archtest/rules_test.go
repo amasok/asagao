@@ -123,7 +123,6 @@ type violation struct {
 // The rows marked "許す" are not here: layers, adapterExceptions, entryAdapters and
 // entryToEntry let them through.
 var allowed = []violation{
-	{"internal/auth", "internal/asana", "d1: *asana.Error (401) moves to asana/model"},
 	{"internal/store", "internal/asana", "d1: the asana types move to asana/model"},
 	{"internal/store", "internal/richtext", "d3: outbox_richtext.go's Target.Fit comes through a port of sync.Push (c1 moved describe.go's ToEditableMarkdown to the caller)"},
 	{"internal/sync", "internal/store", "b2: store.Op moves to domain/outbox; d3: the store becomes a port"},

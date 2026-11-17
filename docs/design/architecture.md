@@ -41,7 +41,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/sync` | アプリ | 同じ | なし (段階 d で x/oauth2 を外す) | 同期のユースケース (push・照合・pull)。Asana とキャッシュはポート経由 |
 | `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクションだけ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
-| `internal/asana/model` | 共有の型 | (今は `internal/asana` の中) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
+| `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
 | `internal/readmodel` | 共有の型 | (今は `internal/store` の中。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 の最初の PR でタスクとプロジェクトの表示の型を移した) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口が判定に使うエラーの値 (`ErrNotFound` など) |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
@@ -79,7 +79,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | cmd/asagao → cli | `Execute` | 許す (組み立て) | — |
 | asana → termsafe | 文字の除去 | 許す | — |
 | auth → auth/tokenstore・config・browser | 保存先、設定、ログインでブラウザを開く | 許す (決まり 3 の例外) | — |
-| auth → asana | `*asana.Error` で 401 の判定 (tokensource.go:56) | 直す | d1 (`asana/model` へ) |
+| auth → asana | なし (401 の判定は `*model.Error`) | 直した | d1 (済み) |
 | auth/tokenstore → config | 設定の型、保存先のフォルダ | 許す (決まり 3 の例外) | — |
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
 | store → asana | `asana.Task` などの型 (9 ファイル) | 直す | d1 |
