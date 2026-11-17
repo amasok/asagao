@@ -178,8 +178,6 @@ func (w *htmlWriter) textOut(s string) {
 // they are, and what is sent is accepted.
 func (w *htmlWriter) asText(n gast.Node) bool {
 	e, ok := blockElement(n)
-	// (a rule too: the documentation does not say an item takes <hr/>, and editable
-	// Markdown would write it after the list, #80)
 	return ok && !rich.Nests(e, w.quote > 0, w.item > 0)
 }
 
@@ -196,6 +194,7 @@ func blockElement(n gast.Node) (rich.Element, bool) {
 	case gast.KindFencedCodeBlock, gast.KindCodeBlock:
 		return rich.CodeBlock, true
 	case gast.KindThematicBreak:
+		// (not in a list item either: editable Markdown would write it after the list, #80)
 		return rich.Rule, true
 	}
 	return 0, false
