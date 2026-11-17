@@ -156,6 +156,10 @@ type converter struct {
 	// separateTokens (#58).
 	tokens []inlineToken
 	strong int // inside <strong>: a mention shown as bold is not bold again
+	// afterList is set from the end of a list until something other than blank lines and
+	// quote prefixes is written: indentation written as it is on the first line with text
+	// would be read as the list item's (see text, #13).
+	afterList bool
 }
 
 type listState struct {
@@ -165,6 +169,9 @@ type listState struct {
 }
 
 func (c *converter) write(s string) {
+	if c.afterList && strings.Trim(s, "> \t\n") != "" {
+		c.afterList = false
+	}
 	c.b.WriteString(s)
 	if strings.HasSuffix(s, "\n") {
 		c.markLineStart()
@@ -379,6 +386,7 @@ func (c *converter) walk(n *html.Node) {
 		c.lists = c.lists[:len(c.lists)-1]
 		if len(c.lists) == 0 {
 			c.block()
+			c.afterList = true
 		}
 	case atom.Li:
 		c.listItem(n)
@@ -412,7 +420,9 @@ func (c *converter) text(n *html.Node) {
 		return // whitespace between list tags
 	}
 	// Editable Markdown shows indentation as it is (FromMarkdown keeps it); inside list items
-	// it stays a character reference, as indentation there is list structure.
+	// it stays a character reference, as indentation there is list structure. So it does on
+	// the first line with text after a list (see afterList): indented as far as the item's
+	// text, it would go on the item (#13).
 	rawIndent := c.editable && !inList
 	// after indentation written by text before (in another element), the line still starts
 	// here as Markdown reads it: "\t" then "#" would be a heading, or code
@@ -432,7 +442,10 @@ func (c *converter) text(n *html.Node) {
 			}
 			c.newline()
 		}
-		if i == last && !rawIndent && l != "" && asciiBlank(l) && c.atLineStart() &&
+		if rawIndent && c.afterList && c.atLineStart() && l != "" && (l[0] == ' ' || l[0] == '\t') &&
+			(!asciiBlank(l) || i == last && c.lineContentFollows(n)) {
+			l = indentRef[l[0]] + l[1:] // the first line with text after a list
+		} else if i == last && !rawIndent && l != "" && asciiBlank(l) && c.atLineStart() &&
 			c.lineContentFollows(n) {
 			// whitespace before inline content at the start of a line (in a list item, or
 			// for display): Markdown would drop it as indentation
@@ -456,8 +469,8 @@ func (c *converter) nextOnLine(n *html.Node) byte {
 			case sib.DataAtom == atom.Br, blockAtoms[sib.DataAtom]:
 				return '\n'
 			case transparentAtoms[sib.DataAtom] && !markAtoms[sib.DataAtom]:
-				if t := textOf(sib); t != "" {
-					return t[0]
+				if b, ok := firstOnLine(sib); ok {
+					return b
 				}
 			default:
 				return 'x' // a delimiter, a link, code or an image
@@ -468,6 +481,29 @@ func (c *converter) nextOnLine(n *html.Node) byte {
 		}
 	}
 	return '\n'
+}
+
+// firstOnLine is nextOnLine for what element n (written as its children) writes first:
+// text, '\n' for a line break in it (#14), or a placeholder; ok is false if n writes nothing.
+func firstOnLine(n *html.Node) (b byte, ok bool) {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		switch {
+		case ch.Type == html.TextNode:
+			if ch.Data != "" {
+				return ch.Data[0], true
+			}
+		case ch.Type != html.ElementNode:
+		case ch.DataAtom == atom.Br, blockAtoms[ch.DataAtom]:
+			return '\n', true
+		case transparentAtoms[ch.DataAtom] && !markAtoms[ch.DataAtom]:
+			if b, ok := firstOnLine(ch); ok {
+				return b, true
+			}
+		default:
+			return 'x', true
+		}
+	}
+	return 0, false
 }
 
 // prevByte is the output byte before the next text, as Linkify sees it (see escapeInline):
@@ -542,7 +578,9 @@ func (c *converter) contentFollows(n *html.Node, blocks bool) bool {
 			case blockAtoms[sib.DataAtom]:
 				return blocks
 			case sib.DataAtom == atom.Img:
-				return c.editable || blocks // displayed as a block of its own
+				if writes, inline := c.imageWrites(sib); writes {
+					return inline || blocks // displayed as a block of its own
+				}
 			case !asciiBlank(textOf(sib)) || attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib):
 				return true
 			}
@@ -572,14 +610,17 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 			case sib.DataAtom == atom.Br, blockAtoms[sib.DataAtom]:
 				return false
 			case sib.DataAtom == atom.Img:
-				return c.editable
+				if writes, inline := c.imageWrites(sib); writes {
+					return inline
+				}
 			default:
 				// an inline element: what it writes first
-				t := textOf(sib)
-				if line, _, nl := strings.Cut(t, "\n"); !asciiBlank(line) ||
-					attr(sib, "data-asana-gid") != "" || hasAsanaRef(sib) {
+				if attr(sib, "data-asana-gid") != "" {
 					return true
-				} else if nl {
+				}
+				if content, ended := c.firstLineContent(sib); content {
+					return true
+				} else if ended {
 					return false
 				}
 			}
@@ -589,6 +630,38 @@ func (c *converter) lineContentFollows(n *html.Node) bool {
 		}
 	}
 	return false
+}
+
+// firstLineContent looks at what inline element n writes up to its first line break (a
+// newline in text, a <br> or a block in it, #14): whether there is inline content, and
+// whether the line ends in n.
+func (c *converter) firstLineContent(n *html.Node) (content, ended bool) {
+	for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+		switch {
+		case ch.Type == html.TextNode:
+			line, _, nl := strings.Cut(ch.Data, "\n")
+			if !asciiBlank(line) {
+				return true, false
+			}
+			if nl {
+				return false, true
+			}
+		case ch.Type != html.ElementNode:
+		case ch.DataAtom == atom.Br, blockAtoms[ch.DataAtom]:
+			return false, true
+		case ch.DataAtom == atom.Img:
+			if writes, inline := c.imageWrites(ch); writes {
+				return inline, !inline
+			}
+		case attr(ch, "data-asana-gid") != "":
+			return true, false
+		default:
+			if content, ended := c.firstLineContent(ch); content || ended {
+				return content, ended
+			}
+		}
+	}
+	return false, false
 }
 
 // blockAtoms are the elements that start a block of their own (see walk).
@@ -781,9 +854,42 @@ func (c *converter) link(n *html.Node) {
 			c.write(`\!`)
 		}
 		c.token("[", true, false)
-		c.write(escape(text, false) + "](" + linkDest(href))
+		if styledLink(n) {
+			c.children(n) // its emphasis and code, which FromMarkdown keeps in the link (#15)
+		} else {
+			c.write(escape(text, false))
+		}
+		c.write("](" + linkDest(href))
 		c.token(")", false, false)
 	}
+}
+
+// styledLink reports whether the text of link n has emphasis or code in it, and nothing
+// else but text and elements written only as their children: written by walk, the link
+// text keeps them. (Images, line breaks and other links in it are written as the text.)
+func styledLink(n *html.Node) bool {
+	styled := false
+	var rec func(*html.Node) bool
+	rec = func(n *html.Node) bool {
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			switch {
+			case ch.Type == html.TextNode:
+			case ch.Type != html.ElementNode:
+				return false
+			case ch.DataAtom == atom.Code:
+				styled = true
+			case transparentAtoms[ch.DataAtom]:
+				styled = styled || markAtoms[ch.DataAtom]
+				if !rec(ch) {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	return rec(n) && styled
 }
 
 // autolinkSafe reports whether u can be written as an autolink (<u>): a URL with a scheme
@@ -1376,13 +1482,32 @@ func hasBlock(n *html.Node) bool {
 	return false
 }
 
-func (c *converter) image(n *html.Node) {
-	gid := attr(n, "data-asana-gid")
-	if gid == "" {
-		if m := assetID.FindStringSubmatch(attr(n, "src")); m != nil {
-			gid = m[1]
-		}
+// imageGID is the gid of the attachment image n shows, "" if none.
+func imageGID(n *html.Node) string {
+	if gid := attr(n, "data-asana-gid"); gid != "" {
+		return gid
 	}
+	if m := assetID.FindStringSubmatch(attr(n, "src")); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// imageWrites reports whether image n writes anything (see image), and if so, whether on
+// the line (in editable Markdown, or its alt text) rather than as a block of its own. An
+// image with neither a gid nor alt text writes nothing: it is not content on the line.
+func (c *converter) imageWrites(n *html.Node) (writes, inline bool) {
+	switch {
+	case imageGID(n) != "":
+		return true, c.editable
+	case attr(n, "alt") != "":
+		return true, true
+	}
+	return false, false
+}
+
+func (c *converter) image(n *html.Node) {
+	gid := imageGID(n)
 	if gid == "" {
 		if alt := attr(n, "alt"); alt != "" {
 			c.write("[画像: " + escape(alt, false) + "]")
