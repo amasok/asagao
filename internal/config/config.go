@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -80,8 +81,24 @@ func parse(b []byte, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	return toml.Unmarshal(normalized, cfg)
+	if err := toml.Unmarshal(normalized, cfg); err != nil {
+		return typeNameError{err}
+	}
+	return nil
 }
+
+// settingsType matches the Go type names a decode error shows (struct field
+// settings.SyncConfig.CompletedDays).
+var settingsType = regexp.MustCompile(`\bsettings\.(\w*Config)\b`)
+
+// typeNameError shows a decode error as before the types moved to internal/settings: the
+// struct fields are named config.X, as they were. It unwraps to the error it holds.
+type typeNameError struct{ err error }
+
+func (e typeNameError) Error() string {
+	return settingsType.ReplaceAllString(e.err.Error(), "config.$1")
+}
+func (e typeNameError) Unwrap() error { return e.err }
 
 func validate(c Config) error {
 	switch c.Auth.TokenStore {
