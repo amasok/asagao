@@ -15,10 +15,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amasok/asagao/internal/browser"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/tui"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // tuiSyncInterval is the background sync interval (requirements 8 章: default 5 minutes).
@@ -45,7 +45,7 @@ func (a *app) runTUI(ctx context.Context) error {
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
 		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
 		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys,
-		CacheDir: filepath.Join(config.CacheDir(), "attachments"), BackupDir: backupDir(), AuthScopes: a.cfg.Auth.Scopes}
+		CacheDir: filepath.Join(xdg.CacheDir(), "attachments"), BackupDir: backupDir(), AuthScopes: a.cfg.Auth.Scopes}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)

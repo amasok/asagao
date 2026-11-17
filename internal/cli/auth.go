@@ -17,8 +17,8 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // EnvClientSecret lets the client secret be passed non-interactively (e.g. `op run`).
@@ -54,7 +54,7 @@ OAuth で使うなら、Asana に OAuth アプリを登録して config.toml の
 			}
 			if a.cfg.Auth.ClientID == "" && !pat && (manual || noBrowser) {
 				return fmt.Errorf("auth.client_id が未設定です。OAuth を使うなら %s に設定するか ASANA_CLIENT_ID を指定してください"+
-					"（OAuth アプリを登録しないなら asagao auth login --pat）", config.FilePath())
+					"（OAuth アプリを登録しないなら asagao auth login --pat）", xdg.ConfigFile())
 			}
 			if pat || a.cfg.Auth.ClientID == "" {
 				return a.loginPAT(cmd, ts)
@@ -332,7 +332,7 @@ func (a *app) authMigrateCmd() *cobra.Command {
 				return fmt.Errorf("%s からの削除: %w", from.Name(), err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s から %s に移しました。%s の auth.token_store を %q にしてください\n",
-				from.Name(), dst.Name(), config.FilePath(), to)
+				from.Name(), dst.Name(), xdg.ConfigFile(), to)
 			return nil
 		},
 	}

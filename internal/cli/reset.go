@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // backupDir is where unsent changes are written before a reset.
-func backupDir() string { return filepath.Join(config.DataDir(), "backups") }
+func backupDir() string { return filepath.Join(xdg.DataDir(), "backups") }
 
 func (a *app) resetCmd() *cobra.Command {
 	var force bool

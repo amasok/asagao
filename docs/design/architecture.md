@@ -49,6 +49,7 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | `internal/config` | adapter | 同じ | go-toml | 設定ファイル |
 | `internal/imageview`, `internal/browser` | adapter | 同じ | x/sys、x/term (imageview だけ。browser は標準ライブラリだけ) | 端末と OS |
 | `internal/termsafe` | 共通 | 同じ | なし | 端末の制御文字の除去 |
+| `internal/settings` | 共有の型 | (d4b で `internal/config` の `Config` などの型と `Default` を移した。config に別名) | なし | 設定の型と既定値。ファイルや TOML は読まない |
 | `internal/xdg` | 共通 | (d3 で `internal/config` の `ConfigDir`・`DataDir`・`CacheDir` の決まりを移した) | なし | ツールのフォルダの場所 (XDG)。環境変数とホームディレクトリだけを読む |
 | `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi | 画面 |
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
@@ -101,7 +102,8 @@ Issue #69 の段階 a〜d が終わったときの形。どの段階でも、移
 | tui・mcpserver・cli → dates | 期日の解釈 (6 か所) | import は許す (ドメイン)。呼び出しは app に移した (`app.ParseDue`。archtest の関数の決まりで確かめる) | a1・a5 (済み) |
 | cli → tui・mcpserver | 起動 | 許す (決まり 5) | — |
 | cli → asana | なし。クライアントは wire が作り (`wire.APIClient`・`wire.CheckPAT`)、cmd/asagao が `cli.Wiring` で渡す | 直した | d4 (済み) |
-| cli → config・tokenstore | 設定の読み込み、`auth migrate` の保存先 | 直す | d4b (設定の読み込みを wire へ、移す処理を auth へ) |
+| cli → config | なし。設定の型は `internal/settings` (共有の型)、読み込みとフォルダの移し替えは `Wiring.LoadSettings`・`MigrateLegacyDirs`、場所は `internal/xdg` | 直した | d4b (済み) |
+| cli → tokenstore | `auth login`・`status`・`logout`・`migrate` の保存先 | 直す | d4b (保存先の操作を auth へ) |
 | cli → termsafe、tui → termsafe ほか | 文字の除去 | 許す | — |
 
 外部ライブラリの「直す」: なし。cli → x/oauth2 は d4 で済んだ (HTTP クライアントは `auth.Source.Client`・`auth.PATClient`)。sync → x/oauth2 は d2 で済んだ。ほかは表のとおり許す。

@@ -45,3 +45,22 @@ func TestDirs(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigFileAndOwnDirs(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/c")
+	t.Setenv("XDG_DATA_HOME", "/d")
+	t.Setenv("XDG_CACHE_HOME", "/k")
+	if got := ConfigFile(); got != filepath.Join("/c", "asagao", "config.toml") {
+		t.Errorf("ConfigFile = %q", got)
+	}
+	want := []string{"/c/asagao", "/d/asagao", "/k/asagao", "/c/asana-tui", "/d/asana-tui", "/k/asana-tui"}
+	got := OwnDirs()
+	if len(got) != len(want) {
+		t.Fatalf("OwnDirs = %q", got)
+	}
+	for i := range want {
+		if got[i] != filepath.FromSlash(want[i]) {
+			t.Errorf("OwnDirs[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

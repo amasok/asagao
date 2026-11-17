@@ -14,12 +14,12 @@ import (
 	"github.com/spf13/cobra"
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
-	"github.com/amasok/asagao/internal/config"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // writeResult is the JSON output of write commands.
@@ -347,7 +347,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 
 	attach := a.writeCommand("attach <gid> <ファイル>", "ファイルを添付する（100MB まで）", cobra.ExactArgs(2),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
-			copies := &usecase.Copies{Store: st, CacheDir: filepath.Join(config.CacheDir(), "attachments"), Clock: time.Now}
+			copies := &usecase.Copies{Store: st, CacheDir: filepath.Join(xdg.CacheDir(), "attachments"), Clock: time.Now}
 			_, err := copies.Attach(cmd.Context(), args[0], args[1])
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})

@@ -12,126 +12,31 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/amasok/asagao/internal/settings"
 	"github.com/amasok/asagao/internal/xdg"
 )
 
 const appName = xdg.AppName
 
-// Token store backends.
-const (
-	TokenStoreKeychain  = "keychain"
-	TokenStore1Password = "1password"
-	TokenStoreFile      = "file"
+// The settings' types are internal/settings's; config reads them from config.toml.
+type (
+	Config            = settings.Config
+	UIConfig          = settings.UIConfig
+	MCPConfig         = settings.MCPConfig
+	AuthConfig        = settings.AuthConfig
+	OnePasswordConfig = settings.OnePasswordConfig
+	SyncConfig        = settings.SyncConfig
 )
 
-type Config struct {
-	Auth AuthConfig `toml:"auth"`
-	Sync SyncConfig `toml:"sync"`
-	UI   UIConfig   `toml:"ui"`
-	MCP  MCPConfig  `toml:"mcp"`
-	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asagao keys`).
-	Keys map[string]any `toml:"keys"`
-}
+// Token store backends (settings').
+const (
+	TokenStoreKeychain  = settings.TokenStoreKeychain
+	TokenStore1Password = settings.TokenStore1Password
+	TokenStoreFile      = settings.TokenStoreFile
+)
 
-// KeyBindings returns [keys] as action -> keys.
-func (c Config) KeyBindings() (map[string][]string, error) {
-	out := map[string][]string{}
-	for action, v := range c.Keys {
-		switch v := v.(type) {
-		case string:
-			out[action] = []string{v}
-		case []any:
-			for _, k := range v {
-				s, ok := k.(string)
-				if !ok {
-					return nil, fmt.Errorf("keys.%s: keys must be strings", action)
-				}
-				out[action] = append(out[action], s)
-			}
-		default:
-			return nil, fmt.Errorf("keys.%s: want a string or a list of strings", action)
-		}
-	}
-	return out, nil
-}
-
-type UIConfig struct {
-	// ImageProtocol is how images are shown: "auto" (detect the terminal), "iterm"
-	// (iTerm2 / WezTerm), "kitty" (kitty / Ghostty) or "open" (the OS image viewer).
-	ImageProtocol string `toml:"image_protocol"`
-	// InlineImages draws images inside the detail pane where they appear in the text:
-	// "auto" (when the image protocol is kitty), "on" or "off".
-	InlineImages string `toml:"inline_images"`
-	// Editor is the command used to edit tasks and comments (default: $VISUAL, $EDITOR, nvim).
-	Editor string `toml:"editor"`
-	// Theme is "auto" (follow the terminal background), "dark" or "light".
-	Theme string `toml:"theme"`
-	// Accent is the accent color, e.g. "#7aa2f7" ("" = default).
-	Accent string `toml:"accent"`
-}
-
-type MCPConfig struct {
-	// UploadDirs are folders (besides the current folder, ~/Downloads and ~/Desktop) whose
-	// files the MCP tool upload_attachment may send to Asana. "~/" is the home folder.
-	UploadDirs []string `toml:"upload_dirs"`
-}
-
-// ExpandedUploadDirs returns [mcp] upload_dirs with "~" replaced by the home folder.
-func (c MCPConfig) ExpandedUploadDirs() []string {
-	home, _ := os.UserHomeDir()
-	var out []string
-	for _, d := range c.UploadDirs {
-		if d == "~" || strings.HasPrefix(d, "~/") {
-			if home == "" {
-				continue
-			}
-			d = filepath.Join(home, strings.TrimPrefix(d, "~"))
-		}
-		out = append(out, filepath.Clean(d))
-	}
-	return out
-}
-
-type AuthConfig struct {
-	// ClientID of the OAuth app registered in the Asana developer console.
-	ClientID string `toml:"client_id"`
-	// RedirectPort is the localhost port for the OAuth callback.
-	// The redirect URL http://localhost:<port>/callback must be registered on the app.
-	RedirectPort int `toml:"redirect_port"`
-	// Scopes to request. Empty means the app's "Full permissions" (default scope).
-	Scopes []string `toml:"scopes"`
-	// TokenStore is one of "keychain", "1password", "file".
-	TokenStore  string            `toml:"token_store"`
-	OnePassword OnePasswordConfig `toml:"onepassword"`
-}
-
-type OnePasswordConfig struct {
-	Vault string `toml:"vault"`
-	Item  string `toml:"item"`
-	// LegacyItem is the item read when Item has nothing yet: the default item name before
-	// the rename (asana-tui). Empty when config.toml sets item (a name chosen is kept).
-	LegacyItem string `toml:"-"`
-	Account    string `toml:"account"` // optional, for multiple 1Password accounts
-}
-
-type SyncConfig struct {
-	// CompletedDays is how many days of completed tasks to keep in the local store.
-	CompletedDays int `toml:"completed_days"`
-	// AllProjects syncs every project in the workspace instead of only projects you are a member of.
-	AllProjects bool `toml:"all_projects"`
-}
-
-func Default() Config {
-	return Config{
-		Auth: AuthConfig{
-			RedirectPort: 8976,
-			TokenStore:   TokenStoreKeychain,
-			OnePassword:  OnePasswordConfig{Vault: "Private", Item: appName, LegacyItem: LegacyAppName},
-		},
-		Sync: SyncConfig{CompletedDays: 14},
-		UI:   UIConfig{ImageProtocol: "auto", InlineImages: "auto"},
-	}
-}
+// Default is settings.Default.
+func Default() Config { return settings.Default() }
 
 // Load reads the config file, falling back to defaults when it does not exist.
 // ASANA_CLIENT_ID overrides auth.client_id.
@@ -151,7 +56,7 @@ func Load() (Config, error) {
 	if v := os.Getenv("ASANA_CLIENT_ID"); v != "" {
 		cfg.Auth.ClientID = v
 	}
-	return cfg, cfg.validate()
+	return cfg, validate(cfg)
 }
 
 // parse decodes TOML into cfg. Asana client IDs are all digits, so an unquoted
@@ -178,7 +83,7 @@ func parse(b []byte, cfg *Config) error {
 	return toml.Unmarshal(normalized, cfg)
 }
 
-func (c Config) validate() error {
+func validate(c Config) error {
 	switch c.Auth.TokenStore {
 	case TokenStoreKeychain, TokenStore1Password, TokenStoreFile:
 	default:
@@ -222,4 +127,4 @@ func DataDir() string { return xdg.DataDir() }
 // CacheDir follows XDG: $XDG_CACHE_HOME/asagao or ~/.cache/asagao (downloaded attachments).
 func CacheDir() string { return xdg.CacheDir() }
 
-func FilePath() string { return filepath.Join(ConfigDir(), "config.toml") }
+func FilePath() string { return xdg.ConfigFile() }
