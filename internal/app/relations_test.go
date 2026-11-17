@@ -38,7 +38,9 @@ func newRelationStore() *relationStore {
 	}
 }
 
-func (f *relationStore) log(format string, a ...any) { f.calls = append(f.calls, fmt.Sprintf(format, a...)) }
+func (f *relationStore) log(format string, a ...any) {
+	f.calls = append(f.calls, fmt.Sprintf(format, a...))
+}
 
 func (f *relationStore) write(name string, format string, a ...any) error {
 	f.log(name+" "+format, a...)
