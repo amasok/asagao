@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -37,12 +38,14 @@ const (
 	OpConflict = "conflict"
 	OpFailed   = "failed"
 
-	// LocalPrefix marks gids of tasks/comments created offline and not yet sent.
-	LocalPrefix = "local:"
+	// LocalPrefix marks gids of tasks/comments created offline and not yet sent (an alias
+	// of gid.Prefix, kept while the callers move to domain/gid).
+	LocalPrefix = gid.Prefix
 )
 
-// IsLocalGID reports whether gid belongs to a task or comment not yet sent to Asana.
-func IsLocalGID(gid string) bool { return strings.HasPrefix(gid, LocalPrefix) }
+// IsLocalGID reports whether gid belongs to a task or comment not yet sent to Asana (see
+// gid.IsLocal, which it calls).
+func IsLocalGID(g string) bool { return gid.IsLocal(g) }
 
 type Op struct {
 	ID             int64          `json:"id"`
@@ -266,7 +269,7 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	if nt.WorkspaceGID == "" && nt.ParentGID == "" { // subtasks inherit it from the parent in Asana
 		return "", errors.New("ワークスペースが決まりません（--project または --workspace を指定してください）")
 	}
-	gid := LocalPrefix + randomID()
+	gid := newLocalGID()
 	payload := map[string]any{"workspace": nt.WorkspaceGID, "name": nt.Name}
 	if nt.ParentGID != "" {
 		payload["parent"] = nt.ParentGID
@@ -323,7 +326,7 @@ func (s *Store) AddRichCommentLocal(ctx context.Context, taskGID, text, htmlText
 	if strings.TrimSpace(text) == "" {
 		return "", errors.New("コメントが空です")
 	}
-	gid := LocalPrefix + randomID()
+	gid := newLocalGID()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var exists int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", taskGID).Scan(&exists); err != nil {
@@ -991,6 +994,9 @@ func nonNil(m map[string]any) map[string]any {
 }
 
 func sameValue(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
+
+// newLocalGID makes a new local gid from a random id (gid.NewLocal).
+func newLocalGID() string { return gid.NewLocal(randomID()) }
 
 func randomID() string {
 	b := make([]byte, 8)

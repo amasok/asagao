@@ -186,7 +186,7 @@ func (s *Store) DuplicateTaskLocal(ctx context.Context, gid, name string, now ti
 	if IsLocalGID(gid) {
 		return "", errors.New("まだ送信されていないタスクは複製できません（送信後に複製してください）")
 	}
-	copyGID := LocalPrefix + randomID()
+	copyGID := newLocalGID()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var orig string
 		if err := tx.QueryRowContext(ctx, "SELECT name FROM tasks WHERE gid = ?", gid).Scan(&orig); err != nil {
@@ -236,7 +236,7 @@ func (s *Store) UploadAttachmentLocal(ctx context.Context, taskGID, srcPath, cac
 	if info.Size() > MaxUploadSize {
 		return "", errTooLarge
 	}
-	gid := LocalPrefix + randomID()
+	gid := newLocalGID()
 	name := filepath.Base(srcPath)
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return "", err

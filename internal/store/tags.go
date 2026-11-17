@@ -64,7 +64,7 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 			// reuse an existing tag with that name
 			err := tx.QueryRowContext(ctx, "SELECT gid FROM tags WHERE name = ?", tagName).Scan(&tagGID)
 			if errors.Is(err, sql.ErrNoRows) {
-				tagGID = LocalPrefix + randomID()
+				tagGID = newLocalGID()
 				if _, err := tx.ExecContext(ctx, "INSERT INTO tags(gid, name) VALUES(?, ?)", tagGID, tagName); err != nil {
 					return err
 				}
