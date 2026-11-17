@@ -45,3 +45,31 @@ func TestLinkTextKeepsMarks(t *testing.T) {
 		}
 	}
 }
+
+// A blank line in a link's text is written as a line of a backslash, as in a list item: a
+// blank line would end the paragraph and leave "[" and "](…)" as text (#22).
+func TestLinkTextBlankLine(t *testing.T) {
+	cases := []struct{ in, md, out string }{ // out "" is in
+		{"<body><a href=\"https://e.com\">a\n\nb</a></body>", "[a\n\\\nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\"><strong>a</strong>\n\nb</a></body>", "[**a**\n\\\nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\">a\n\n\nb</a></body>", "[a\n\\\n\\\nb](https://e.com)", ""},
+		{"<body>x <a href=\"https://e.com\">a\n\nb</a> y</body>", "x [a\n\\\nb](https://e.com) y", ""},
+		{"<body><blockquote><a href=\"https://e.com\">a\n\nb</a></blockquote></body>", "> [a\n> \\\n> b](https://e.com)", ""},
+		{"<body><ul><li><a href=\"https://e.com\">a\n\nb</a></li></ul></body>", "- [a\n\\\nb](https://e.com)", ""},
+		{"<body><a href=\"https://e.com\">a\n\n# b</a></body>", "[a\n\\\n\\# b](https://e.com)", ""},
+		// spaces on the blank line go, as in a list item
+		{"<body><a href=\"https://e.com\">a\n \t\nb</a></body>", "[a  \n\\\nb](https://e.com)", "<body><a href=\"https://e.com\">a\n\nb</a></body>"},
+		// one line break: as before
+		{"<body><a href=\"https://e.com\">a\nb</a></body>", "[a\nb](https://e.com)", ""},
+	}
+	for _, tc := range cases {
+		out := tc.out
+		if out == "" {
+			out = tc.in
+		}
+		md1, h1, _, h2 := rt2(tc.in)
+		if md1 != tc.md || h1 != out || h2 != out {
+			t.Errorf("in  %q\nmd1 %q (want %q)\nh1  %q (want %q)\nh2  %q", tc.in, md1, tc.md, h1, out, h2)
+		}
+	}
+}

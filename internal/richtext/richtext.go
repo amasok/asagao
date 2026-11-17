@@ -156,6 +156,7 @@ type converter struct {
 	// separateTokens (#58).
 	tokens []inlineToken
 	strong int // inside <strong>: a mention shown as bold is not bold again
+	inLink int // inside the text of a link (see keepBlankLineInItem)
 	// afterList is set from the end of a list until something other than blank lines and
 	// quote prefixes is written: indentation written as it is on the first line with text
 	// would be read as the list item's (see text, #13).
@@ -544,9 +545,12 @@ func betweenListTags(n *html.Node) bool {
 // keepBlankLineInItem is called before a line break in a list item: if the line is blank and
 // text of the item follows (inlineFollows), the blank line would end the item and the rest
 // would leave the list. A line of only a backslash is a line break instead (a hard break at
-// its end), so the item goes on (#51). It reports whether it wrote one.
+// its end), so the item goes on (#51). So it is in the text of a link, where a blank line
+// would end the paragraph and leave "[" and "](…)" as text (#22). It reports whether it
+// wrote one.
 func (c *converter) keepBlankLineInItem(inlineFollows func() bool) bool {
-	if len(c.lists) == 0 || c.outOfItem || c.pre > 0 || len(bytes.TrimLeft(c.b.Bytes()[c.lineStart:], " \t")) > 0 ||
+	inItem := len(c.lists) > 0 && !c.outOfItem
+	if !inItem && c.inLink == 0 || c.pre > 0 || len(bytes.TrimLeft(c.b.Bytes()[c.lineStart:], " \t")) > 0 ||
 		!inlineFollows() {
 		return false
 	}
@@ -855,7 +859,11 @@ func (c *converter) link(n *html.Node) {
 		}
 		c.token("[", true, false)
 		if styledLink(n) {
-			c.children(n) // its emphasis and code, which FromMarkdown keeps in the link (#15)
+			// its emphasis and code, which FromMarkdown keeps in the link (#15), and its
+			// blank lines, which keepBlankLineInItem keeps from ending the paragraph (#22)
+			c.inLink++
+			c.children(n)
+			c.inLink--
 		} else {
 			c.write(escape(text, false))
 		}
@@ -864,9 +872,10 @@ func (c *converter) link(n *html.Node) {
 	}
 }
 
-// styledLink reports whether the text of link n has emphasis or code in it, and nothing
-// else but text and elements written only as their children: written by walk, the link
-// text keeps them. (Images, line breaks and other links in it are written as the text.)
+// styledLink reports whether the text of link n has emphasis, code or a blank line in it,
+// and nothing else but text and elements written only as their children: written by walk,
+// the link text keeps them. (Images, line breaks and other links in it are written as the
+// text.)
 func styledLink(n *html.Node) bool {
 	styled := false
 	var rec func(*html.Node) bool
@@ -889,8 +898,11 @@ func styledLink(n *html.Node) bool {
 		}
 		return true
 	}
-	return rec(n) && styled
+	return rec(n) && (styled || blankLineRe.MatchString(textOf(n)))
 }
+
+// blankLineRe matches a blank line in text (which would end a paragraph in Markdown).
+var blankLineRe = regexp.MustCompile(`\n[ \t]*\n`)
 
 // autolinkSafe reports whether u can be written as an autolink (<u>): a URL with a scheme
 // and nothing that would end the autolink early or make it raw HTML instead.
