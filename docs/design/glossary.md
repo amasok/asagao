@@ -1,6 +1,6 @@
 # 用語集 (ユビキタス言語)
 
-コード・仕様・Issue・レビューで同じ言葉を使うための一覧。「コードの名前」は今の main (dac91b2) のもの。段階 b 以降で型の名前が変わったら、ここも直す。
+コード・仕様・Issue・レビューで同じ言葉を使うための一覧。「コードの名前」は、移行 (Issue #69 の段階 a〜e1) が終わったときのもの。型や関数の名前が変わったら、ここも直す。
 
 ## 同期
 
@@ -42,12 +42,12 @@
 |---|---|---|
 | gid | Asana のものの ID (数字の文字列) | `GID` |
 | ローカル gid | まだ Asana に作っていないものの仮の ID。`local:` + 16 桁の 16 進数 | `gid.Prefix`, `gid.IsLocal` (`internal/domain/gid`) |
-| タスク | Asana のタスク。サブタスクも同じ。名前は空にできない | `asana.Task` |
+| タスク | Asana のタスク。サブタスクも同じ。名前は空にできない | `model.Task` (`internal/asana/model`) |
 | 種類 (subtype) | `default_task`・`milestone`・`approval` | `resource_subtype` |
 | 承認の状態 | `pending`・`approved`・`rejected`・`changes_requested`。種類が `approval` のタスクだけ | `approval_status` |
-| コメント (story) | タスクへのコメント。Asana の API では story | `asana.Story` |
-| status update | プロジェクトの状況報告 | `asana.StatusUpdate` |
-| 受信箱 (inbox) | Asana の通知 | `asana.Notification` |
+| コメント (story) | タスクへのコメント。Asana の API では story | `model.Story` |
+| status update | プロジェクトの状況報告 | `model.StatusUpdate` |
+| 受信箱 (inbox) | Asana の通知 | `model.Notification` |
 | 依存 | タスク同士の「先にやる」の関係 | `task_dependencies` 表 |
 | 対象の参照 (task_refs) | 片付けたあとも、依存の相手の名前と状態だけ残したもの | `task_refs` 表 |
 
@@ -78,9 +78,9 @@
 |---|---|
 | 入り口 | TUI・CLI・MCP サーバーの 3 つ |
 | ユースケース | 入り口から呼ぶ、1 つの書き込みや読み取りの手順 (例: タスクを作る)。アプリケーション層に置く |
-| アプリケーション層 | ユースケースを置く層。今はない (段階 a で作る) |
-| ドメイン層 | Asana と outbox の決まりを、外部依存なしで書く層 (段階 b) |
-| リポジトリ | キャッシュの読み書きを SQL だけで行う部分 (段階 c で store をそうする) |
+| アプリケーション層 | ユースケースを置く層。`internal/app` (ユースケースとポート) と `internal/sync` (同期) |
+| ドメイン層 | Asana と outbox の決まりを、外部依存なしで書く層。`internal/domain/...` と `internal/dates` |
+| リポジトリ | キャッシュの読み書きを SQL だけで行う部分。`internal/store` |
 | ポート | アプリケーション層が使う外部のもの (Asana の API、キャッシュ、時計) のインターフェース |
 | adapter | ポートを外部のライブラリで実装する部分 (SQLite、HTTP、goldmark、keychain など) |
-| 組み立て (composition root) | adapter を作ってユースケースに渡す 1 か所。今は `internal/cli/root.go` |
+| 組み立て (composition root) | adapter を作ってユースケースに渡す 1 か所。`internal/wire` (cmd/asagao が `cli.Wiring` で cli に渡す) |

@@ -42,7 +42,7 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 | `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクションだけ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
 | `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
-| `internal/readmodel` | 共有の型 | (今は `internal/store` の中。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 でタスク・プロジェクト・通知の表示の型、一覧の条件、エラーの値、表示の文言を移した。d4b・e1 で、入り口と sync が使うキャッシュの名前 (sync_state のキー、送った記録の接頭辞 `Result*`、`AmbiguousMessage`) と、Asana のタスクから保存の形の値を取る関数 (`TaskFieldValues`・`CustomFieldValue`・`CustomFieldAPIValue`・`ServerCustomField`) を移した。store には別名が残る) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口と sync が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy` など)、キャッシュの名前 (sync_state のキー)、カスタムフィールドの値の保存の形。共有の型 `asana/model` を import する |
+| `internal/readmodel` | 共有の型 | (c2 までは `internal/store` の中にあった。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 でタスク・プロジェクト・通知の表示の型、一覧の条件、エラーの値、表示の文言を移した。d4b・e1 で、入り口と sync が使うキャッシュの名前 (sync_state のキー、送った記録の接頭辞 `Result*`、`AmbiguousMessage`) と、Asana のタスクから保存の形の値を取る関数 (`TaskFieldValues`・`CustomFieldValue`・`CustomFieldAPIValue`・`ServerCustomField`) を移した。store には別名が残る) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口と sync が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy` など)、キャッシュの名前 (sync_state のキー)、カスタムフィールドの値の保存の形。共有の型 `asana/model` を import する |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
 | `internal/richtext` | adapter | 同じ | goldmark、x/net/html | Markdown ⇔ rich text の変換。決まりは `domain/rich` を読む |
@@ -116,4 +116,5 @@ e1 で「直す」の行がなくなり、依存の向きのテストの許可�
 - 読み取り (一覧、検索、詳細) は、段階 a では今のまま入り口から `store` を呼んでよい。書き込みと違って、同じ手順が入り口ごとに重なっている量が少なく、振る舞いの違いの原因にもなっていない。
 - 入り口が読む型は、`asana/model` の型ではなく、**store が定義した表示用の型** (`store.TaskSummary`・`store.TaskDetail`・`store.CustomFieldView`・`store.ProjectView` など) と、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp`・`AccountChangedHelp` など) と、エラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など)。tui だけで約 50 種類ある。
 - 段階 c2 で、これらを標準ライブラリだけの `internal/readmodel` に移す。store は readmodel の型を作って返し、エラーも readmodel の値を返す。store には型の別名をしばらく残し、入り口を少しずつ移す。そのあと `app` に読み取りのユースケース `Query` とポート `QueryStore` を置き (ADR 0009)、入り口は `app` を通して読む。これで入り口から `store` の import がなくなる。
+- readmodel には、表示の型のほかに、キャッシュの名前 (sync_state のキー) と、Asana のタスクから保存の形の値を取る関数 (`TaskFieldValues`・`CustomFieldAPIValue` など。競合の確かめと PUT の形に使い、表示のためではない) も置く (d4b・e1)。sync と store の両方が使い、`asana/model` の型を受けるのでドメインには置けないため。そのために readmodel は `asana/model` を import する (共有の型どうし)。
 - `asana/model` の型 (ADR 0005) は、キャッシュと同期が Asana の応答を扱うための型で、入り口の表示には readmodel を使う。
