@@ -39,6 +39,8 @@ func TestIndentedSetextHeading(t *testing.T) {
 		"  a\n<div>\n---":      "<body>  a\n\n&lt;div&gt;\n---</body>", // an HTML block ends it too
 		"  a\n<!-- c -->\n---": "<body>  a\n\n&lt;!-- c --&gt;\n<hr/></body>",
 		"  a\n<span>\n---":     "<body><h2>a &lt;span&gt;</h2></body>", // (not one that can)
+		"  a\n<!x\n---":        "<body><h2>a &lt;!x</h2></body>",       // (goldmark: "<!" and an upper-case letter)
+		"  a\n<!X\n---":        "<body>  a\n\n&lt;!X\n---</body>",
 		// no underline of this paragraph: the indentation is text
 		"  a\nb":          "<body>  a\nb</body>",
 		"  a\n1. x\n---":  "<body>  a\n<ol><li>x</li></ol><hr/></body>",

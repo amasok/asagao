@@ -1009,7 +1009,7 @@ func interruptsParagraphLine(line string) bool {
 
 // htmlBlockStart matches the start of an HTML block that can end a paragraph (CommonMark's
 // kinds 1 to 6; goldmark reads them so, though FromMarkdown writes them as text).
-var htmlBlockStart = regexp.MustCompile(`(?i)^(?:<(?:script|pre|style|textarea)(?:[ \t>]|$)|<!--|<\?|<![a-z]|<!\[CDATA\[|</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$))`)
+var htmlBlockStart = regexp.MustCompile(`(?i)^(?:<(?:script|pre|style|textarea)(?:[ \t>]|$)|<!--|<\?|(?-i:<![A-Z])|<!\[CDATA\[|</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|/>|$))`)
 
 // atxHeading matches the start of an ATX heading (without indentation).
 var atxHeading = regexp.MustCompile(`^#{1,6}(?:[ \t]|$)`)
