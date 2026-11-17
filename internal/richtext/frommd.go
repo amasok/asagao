@@ -957,6 +957,11 @@ func keepIndentation(src string) string {
 			fence = f
 			continue
 		}
+		if inItem && listItemStart(trimmed) && !interruptsParagraph(trimmed) {
+			// ("2.", or an empty item, in an item's paragraph: the paragraph goes on, or a
+			// setext underline makes it a heading; no item starts)
+			continue
+		}
 		if listItemStart(trimmed) {
 			if inItem {
 				for len(items) > 0 && items[len(items)-1] > col {
