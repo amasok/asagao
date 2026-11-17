@@ -31,6 +31,14 @@ func TestUploadAttachmentLocalFailureRemovesCachedCopy(t *testing.T) {
 			_, err := s.db.Exec(`CREATE TRIGGER fail_op BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'boom'); END`)
 			must(t, err)
 		},
+		// Both rows are written, then Commit fails on a deferred foreign key: the
+		// row is confirmed absent after the error, so the copy goes too.
+		"commit refused": func(t *testing.T, s *Store) {
+			_, err := s.db.Exec(`CREATE TABLE zz(x TEXT REFERENCES tasks(gid) DEFERRABLE INITIALLY DEFERRED)`)
+			must(t, err)
+			_, err = s.db.Exec(`CREATE TRIGGER zz_t AFTER INSERT ON outbox BEGIN INSERT INTO zz VALUES('nope'); END`)
+			must(t, err)
+		},
 		"database closed": func(t *testing.T, s *Store) {
 			must(t, s.Close())
 		},
