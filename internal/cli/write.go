@@ -19,7 +19,6 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
-	"github.com/amasok/asagao/internal/xdg"
 )
 
 // writeResult is the JSON output of write commands.
@@ -83,6 +82,9 @@ func takeDiscards(ctx context.Context, st Store, w io.Writer, print bool) []read
 // pushNow tries to send the outbox right away. Failure is not an error for the command:
 // the change is saved locally and will be sent by the next sync.
 func (a *app) pushNow(ctx context.Context, st Store) (*sync.PushResult, error) {
+	if a.dryRun {
+		return nil, errDryRunSend
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	api, err := a.apiClient(ctx)
@@ -94,6 +96,9 @@ func (a *app) pushNow(ctx context.Context, st Store) (*sync.PushResult, error) {
 }
 
 func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done string) error {
+	if d, ok := st.(*dryRunStore); ok {
+		return a.reportDryRun(cmd, d, r)
+	}
 	push, err := a.pushNow(cmd.Context(), st)
 	r.Push = push
 	if err != nil {
@@ -140,7 +145,7 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 	if !completed {
 		short = "タスクを未完了に戻す"
 	}
-	return &cobra.Command{
+	return a.addDryRunFlag(&cobra.Command{
 		Use:   use + " <gid>...",
 		Short: short,
 		Args:  cobra.MinimumNArgs(1),
@@ -159,7 +164,7 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: strings.Join(args, ",")}, fmt.Sprintf("%d 件を更新しました", len(args)))
 		},
-	}
+	})
 }
 
 // createOpts are the flags of `task create`.
@@ -265,7 +270,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&o.notes, "notes", "", "説明（マークダウン）")
 	cmd.Flags().StringVar(&o.parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
 	cmd.Flags().BoolVar(&quick, "quick", false, "名前の末尾の @担当・期日・#タグ を読む（例: 牛乳を買う @me 明日 #買い物）")
-	return cmd
+	return a.addDryRunFlag(cmd)
 }
 
 func (a *app) taskTagCmd() *cobra.Command {
@@ -295,12 +300,12 @@ func (a *app) taskTagCmd() *cobra.Command {
 	}
 	cmd.Flags().StringSliceVar(&add, "add", nil, "付けるタグ（名前または gid）")
 	cmd.Flags().StringSliceVar(&remove, "remove", nil, "外すタグ（名前または gid）")
-	return cmd
+	return a.addDryRunFlag(cmd)
 }
 
 // withStore opens the store for a write command and reports the result.
 func (a *app) writeCommand(use, short string, args cobra.PositionalArgs, run func(cmd *cobra.Command, st Store, args []string) (string, string, error)) *cobra.Command {
-	return &cobra.Command{
+	return a.addDryRunFlag(&cobra.Command{
 		Use: use, Short: short, Args: args,
 		RunE: func(cmd *cobra.Command, argv []string) error {
 			st, err := a.openStore(cmd.Context())
@@ -314,7 +319,7 @@ func (a *app) writeCommand(use, short string, args cobra.PositionalArgs, run fun
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: gid}, msg)
 		},
-	}
+	})
 }
 
 func (a *app) taskExtraCmds() []*cobra.Command {
@@ -367,7 +372,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 
 	attach := a.writeCommand("attach <gid> <ファイル>", "ファイルを添付する（100MB まで）", cobra.ExactArgs(2),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
-			copies := &usecase.Copies{Store: st, CacheDir: filepath.Join(xdg.CacheDir(), "attachments"), Clock: time.Now}
+			copies := &usecase.Copies{Store: st, CacheDir: attachmentCacheDir(st), Clock: time.Now}
 			_, err := copies.Attach(cmd.Context(), args[0], args[1])
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})
@@ -467,7 +472,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {
-	return &cobra.Command{
+	return a.addDryRunFlag(&cobra.Command{
 		Use:   "assign <gid> <me|none|ユーザーの gid か名前>",
 		Short: "担当者を変更する（none で未割り当て）",
 		Args:  cobra.ExactArgs(2),
@@ -484,7 +489,7 @@ func (a *app) taskAssignCmd() *cobra.Command {
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "担当者を変更しました")
 		},
-	}
+	})
 }
 
 func (a *app) taskMoveCmd() *cobra.Command {
@@ -511,7 +516,7 @@ func (a *app) taskMoveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&section, "section", "", "移動先のセクション（gid または名前）")
 	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（タスクが複数のプロジェクトに入っている場合）")
 	_ = cmd.MarkFlagRequired("section")
-	return cmd
+	return a.addDryRunFlag(cmd)
 }
 
 func (a *app) sectionCmd() *cobra.Command {
@@ -539,7 +544,7 @@ func (a *app) sectionCmd() *cobra.Command {
 	}
 	rename.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
 	_ = rename.MarkFlagRequired("project")
-	cmd.AddCommand(rename)
+	cmd.AddCommand(a.addDryRunFlag(rename))
 	return cmd
 }
 
@@ -574,7 +579,7 @@ func (a *app) tagCmd() *cobra.Command {
 
 func (a *app) commentCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "comment", Short: "コメント"}
-	cmd.AddCommand(&cobra.Command{
+	cmd.AddCommand(a.addDryRunFlag(&cobra.Command{
 		Use:   "add <タスクの gid> <コメント>",
 		Short: "タスクにコメントする（マークダウン可）",
 		Args:  cobra.MinimumNArgs(2),
@@ -592,7 +597,7 @@ func (a *app) commentCmd() *cobra.Command {
 			}
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0], CommentID: gid}, "コメントしました")
 		},
-	})
+	}))
 	return cmd
 }
 
@@ -600,7 +605,7 @@ func (a *app) outboxCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "outbox", Short: "未送信の変更（オフライン中の編集・競合）を確認・解決する"}
 
 	withOp := func(use, short string, action func() (usecase.ResolveAction, error)) *cobra.Command {
-		return &cobra.Command{
+		return a.addDryRunFlag(&cobra.Command{
 			Use:   use + " <id>",
 			Short: short,
 			Args:  cobra.ExactArgs(1),
@@ -619,6 +624,9 @@ func (a *app) outboxCmd() *cobra.Command {
 					return err
 				}
 				defer st.Close()
+				if d, ok := st.(*dryRunStore); ok {
+					return a.dryRunResolve(cmd, d, id, act)
+				}
 				msg, err := a.resolve(ctx, st, cmd.OutOrStdout(), id, act)
 				if err != nil {
 					return err
@@ -626,7 +634,7 @@ func (a *app) outboxCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), msg)
 				return nil
 			},
-		}
+		})
 	}
 
 	cmd.AddCommand(&cobra.Command{

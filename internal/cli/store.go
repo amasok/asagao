@@ -15,6 +15,8 @@ type Store interface {
 	mcpserver.Store
 
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
+	// CopyTo writes a copy of the store to a new file (for --dry-run).
+	CopyTo(ctx context.Context, dst string) error
 	Close() error
 }
 

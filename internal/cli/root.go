@@ -25,6 +25,9 @@ type app struct {
 	cfg     settings.Config
 	json    bool
 	offline bool
+	// dryRun (--dry-run of a write command) makes openStore return a throwaway copy of the
+	// store and reportWrite show what would be queued instead of sending it (dryrun.go).
+	dryRun bool
 	// baseURL overrides the Asana API URL (tests).
 	baseURL string
 	// jsonOut is where --json output goes: the command's output before the termsafe
@@ -115,7 +118,11 @@ func (a *app) syncer(api sync.AsanaAPI, st Store) *sync.Syncer {
 func (a *app) storePath() string { return filepath.Join(xdg.DataDir(), "store.db") }
 
 func (a *app) openStore(ctx context.Context) (Store, error) {
-	return wiring.OpenStore(ctx, a.storePath())
+	st, err := wiring.OpenStore(ctx, a.storePath())
+	if err != nil || !a.dryRun {
+		return st, err
+	}
+	return openDryRun(ctx, st)
 }
 
 // printJSON writes v as indented JSON to the command's output (#25).
