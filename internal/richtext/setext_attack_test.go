@@ -89,8 +89,8 @@ func TestSetextIndentExactHTML(t *testing.T) {
 	for src, want := range map[string]string{
 		"   a\n  ---":       "<body><h2>a</h2></body>",
 		"   a\n   ===":      "<body><h1>a</h1></body>",
-		"   a\n    ---":     "<body>   a\n---</body>",
-		"a\n    ---":        "<body>a\n---</body>",
+		"   a\n    ---":     "<body>   a\n    ---</body>",
+		"a\n    ---":        "<body>a\n    ---</body>",
 		"> a\n> > b\n  ---": "<body><blockquote>a\n<blockquote>b</blockquote></blockquote><hr/></body>",
 		"> a\n   b\n> > c":  "<body><blockquote>a\n   b\n<blockquote>c</blockquote></blockquote></body>",
 	} {
