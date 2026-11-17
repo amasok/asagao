@@ -47,7 +47,7 @@
 | 入り口は store の書き込みを呼ばない | `Local` で終わる公開のメソッド (`CreateTaskLocal` など。store にしかない) と `ApplyTagEdit`。パッケージ名で修飾したもの (`sync.KeepLocal`) は数えない | a6 で入れた |
 | 入り口は期日を解釈しない | `dates.Parse` | a5 で入れた |
 
-これも許可リスト (ファイルと名前の組) を持ち、段階ごとに減らす。a5 で、上の 2 つを `internal/archtest/calls_test.go` に入れた (`entryForbiddenCalls`。違反がなくなったので許可リスト `allowedCalls` は空)。store の書き込みの決まりは a6 で同じテストに足し (`storeWrites`)、そのときの呼び出しを許可リストに入れて、まとまりごとに消す。
+これも許可リスト (ファイルと名前の組) を持ち、段階ごとに減らす。a5 で、上の 2 つを `internal/archtest/calls_test.go` に入れた (`entryForbiddenCalls`。違反がなくなったので許可リスト `allowedCalls` は空)。store の書き込みの決まりは a6 で同じテストに足し (`storeWrites`)、そのときの呼び出しを許可リストに入れて、まとまりごとに消した。a6 の終わりに許可リストは空になった。
 
 ## ドメインの「時刻は引数」を守らせる
 
