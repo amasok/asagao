@@ -878,6 +878,13 @@ func keepIndentation(src string) string {
 	var items []int
 	itemDepth := 0
 	emptyItem := false // the line before started an item with nothing in it
+	// closeLists is set at the blank line that ends an empty item: goldmark ends all the
+	// lists then, unless an item follows (#24)
+	closeLists := false
+	// parked are the items open around a quote in an item, at quote depth parkedDepth (-1
+	// if none): after the quote, a line can go on with them (#24)
+	var parked []int
+	parkedDepth := -1
 	for i, l := range lines {
 		prefix, rest := cutQuotePrefix(l)
 		depth := strings.Count(prefix, ">")
@@ -891,19 +898,40 @@ func keepIndentation(src string) string {
 			}
 			continue
 		}
-		if depth != itemDepth {
+		blank := strings.TrimSpace(trimmed) == ""
+		switch {
+		case depth == itemDepth:
+		case depth == parkedDepth:
+			// back from the quote in the item
+			items, itemDepth, parked, parkedDepth = append(items[:0], parked...), depth, parked[:0], -1
+		case depth > itemDepth && len(items) > 0 && quoteColumn(l, itemDepth) >= items[len(items)-1]:
+			// a quote in the item: its lines are the quote's, the items wait for after it
+			parked, parkedDepth = append(parked[:0], items...), itemDepth
+			items, itemDepth = items[:0], depth
+		case depth < itemDepth && inItem && !blank && !interruptsParagraphLine(rest):
+			// a lazy line of the item's paragraph: it does not end the quote
+			continue
+		default:
 			items, itemDepth = items[:0], depth // (a blank line with fewer ">" ends the quote)
+			if depth < parkedDepth {
+				parked, parkedDepth = parked[:0], -1
+			}
 		}
-		if strings.TrimSpace(trimmed) == "" {
+		if blank {
 			endPara(false)
 			inItem = false
 			if emptyItem && len(items) > 0 {
 				items = items[:len(items)-1] // an item starts with at most one blank line
+				closeLists = true
 			}
 			emptyItem = false
 			continue
 		}
 		emptyItem = false
+		if closeLists && !listItemStart(trimmed) {
+			items = items[:0]
+		}
+		closeLists = false
 		col := indentWidth(rest)
 		if !inItem {
 			// not a lazy line of an item's paragraph: the items it does not reach end
@@ -954,6 +982,19 @@ func keepIndentation(src string) string {
 	}
 	endPara(false)
 	return strings.Join(lines, "\n")
+}
+
+// quoteColumn is the column of the quote marker after the first depth markers of line (in
+// the text after those markers).
+func quoteColumn(line string, depth int) int {
+	for ; depth > 0; depth-- {
+		t := strings.TrimLeft(line, " ")
+		if !strings.HasPrefix(t, ">") {
+			break
+		}
+		line = strings.TrimPrefix(t[1:], " ")
+	}
+	return indentWidth(line)
 }
 
 // indentWidth is the width of the indentation of line, in columns (a tab to the next

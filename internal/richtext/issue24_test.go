@@ -68,3 +68,31 @@ func TestLineBreakAfterElementSameMarkdown(t *testing.T) {
 		}
 	}
 }
+
+// After a quote in a list item (indented as far as the item's text), or a lazy line of a
+// quote's item, a line indented as far as the item's text still goes on the item, as
+// Markdown reads it (#24, 3). After an empty item ends at a blank line, goldmark ends all
+// the lists unless an item follows: the indentation of the line after them is text (#24, 4).
+func TestItemAfterQuoteAndEmptyItem(t *testing.T) {
+	for md, want := range map[string]string{
+		"- a\n\n  > q\n\n  c":          "<body><ul><li>a\n&gt; q\nc</li></ul></body>",
+		"- a\n  > q\n\n  c":            "<body><ul><li>a\n&gt; q\nc</li></ul></body>",
+		"- a\n\n  > q\n  > r\n\n    c": "<body><ul><li>a\n&gt; q\n&gt; r\nc</li></ul></body>",
+		"> - a\nb\n>\n>   c":           "<body><blockquote>- a\nb\n\nc</blockquote></body>",
+		// not as far as the item's text, or a quote outside it: after the list
+		"- a\n\n  > q\n\nc":  "<body><ul><li>a\n&gt; q</li></ul>c</body>",
+		"- a\n\n> q\n\n  c":  "<body><ul><li>a</li></ul><blockquote>q</blockquote>  c</body>",
+		"- a\n\n  > q\n\n c": "<body><ul><li>a\n&gt; q</li></ul> c</body>",
+		// empty items
+		"- a\n\n  -\n\n  c":          "<body><ul><li>a<ul><li></li></ul></li></ul>  c</body>",
+		"- a\n  - b\n\n    -\n\n  c": "<body><ul><li>a<ul><li>b<ul><li></li></ul></li></ul></li></ul>  c</body>",
+		"- a\n\n  -\n\n- d":          "<body><ul><li>a<ul><li></li></ul></li><li>d</li></ul></body>",
+		"1. a\n\n   1.\n\n   c":      "<body><ol><li>a<ol><li></li></ol></li></ol>   c</body>",
+	} {
+		h1 := FromMarkdown(md)
+		md2 := ToEditableMarkdown(h1)
+		if h2 := FromMarkdown(md2); h1 != want || h2 != h1 {
+			t.Errorf("md  %q\nh1  %q (want %q)\nmd2 %q\nh2  %q", md, h1, want, md2, h2)
+		}
+	}
+}

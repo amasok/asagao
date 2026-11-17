@@ -40,7 +40,7 @@ Markdown から rich text を作るときは、送り先 `TaskNotes` (タスク�
 - **THEN** 出力に `<table>` `<tr>` `<td>` がない
 
 ### Requirement: タスクの説明の変換は固定の入力集の結果と同じ
-`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80、#12、#13。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
+`TaskNotes` の変換結果 (html と plain の両方) は、testdata/tasknotes_golden.json と同じである (MUST)。この結果は #63 の前の main (45ff98d) で作り、変換を直す Issue でだけ作り直した (#72、#64、#66、#59、#80、#12、#13、#24。#65 と #61 では変わらなかった)。作り直すときは `RICHTEXT_UPDATE_GOLDEN=1` でテストを回し、変わった入力を 1 件ずつ確かめる。
 根拠: tasknotes_golden_test.go TestTaskNotesMatchMain (1500 件、seed 630、testdata/tasknotes_golden.json)
 
 #### Scenario: 固定の入力集で比べる
@@ -184,7 +184,7 @@ Asana の rich text `h0` をエディタで開いて何も変えずに戻した 
 - **THEN** `<ul><li>a<ul><li>b\nc</li></ul></li></ul>` になる
 
 ### Requirement: 空行のあとでも、項目の内容の桁まで字下げした行は項目の続き
-空行のあとの行も、開いているリスト項目の内容の桁 (印と、そのあとの空白のあと) まで字下げしてあれば、その項目の続きとして読む (MUST、CommonMark と同じ)。いちばん深い、届いている項目の続きになり、届かない項目は終わる。どの項目にも届かない行の字下げは、これまでどおり文字にする (#13)。エディタは、リストのすぐあとの行の字下げを文字参照 (`&#32;`・`&#9;`) で書き、項目の続きと読まれないようにする (MUST)。
+空行のあとの行も、開いているリスト項目の内容の桁 (印と、そのあとの空白のあと) まで字下げしてあれば、その項目の続きとして読む (MUST、CommonMark と同じ)。いちばん深い、届いている項目の続きになり、届かない項目は終わる。どの項目にも届かない行の字下げは、これまでどおり文字にする (#13)。項目の中の引用のあとや、引用の中の項目の lazy な行のあとでも同じ (#24)。中身のない項目が空行で終わったあとは、goldmark に合わせて、項目でない行ですべてのリストを終える (その行の字下げは文字、#24)。エディタは、リストのすぐあとの行の字下げを文字参照 (`&#32;`・`&#9;`) で書き、項目の続きと読まれないようにする (MUST)。
 根拠: frommd.go keepIndentation, itemContentColumn; richtext.go lineAfterList; list_continuation_test.go TestIndentedLineAfterBlankLineInItem
 
 #### Scenario: 空行のあとの外側の項目の続き
