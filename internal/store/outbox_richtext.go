@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/amasok/asana-tui/internal/richtext"
+	"github.com/amasok/asagao/internal/richtext"
 )
 
 // richTextTarget is the destination of the html_text of an entry of kind (false if it has

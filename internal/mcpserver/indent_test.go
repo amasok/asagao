@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // get_task shows indentation as spaces and tabs, not as "&#32;" / "&#9;", and giving that

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // inboxStore makes the store the CLI opens (XDG_DATA_HOME is a temp dir) with three
@@ -110,7 +110,7 @@ func TestInboxCommandFallsBackToRecent(t *testing.T) {
 	}
 
 	// Explicit scopes without notifications:read: the hint names the config.
-	cfg := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "asana-tui")
+	cfg := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "asagao")
 	if err := os.MkdirAll(cfg, 0o700); err != nil {
 		t.Fatal(err)
 	}

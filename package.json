@@ -1,5 +1,5 @@
 {
-  "name": "asana-tui-devtools",
+  "name": "asagao-devtools",
   "private": true,
   "description": "開発でだけ使う道具 (OpenSpec)。アプリには入らない。docs/design/adr/0002-openspec-tooling.md を参照。",
   "license": "UNLICENSED",

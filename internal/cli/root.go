@@ -12,12 +12,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 var version = "dev"
@@ -37,7 +37,7 @@ func NewRoot() *cobra.Command { return newRoot(&app{}) }
 
 func newRoot(a *app) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "asana-tui",
+		Use:           "asagao",
 		Short:         "Asana をターミナルから操作する TUI / CLI / MCP サーバー（引数なしで TUI を起動）",
 		Args:          cobra.NoArgs,
 		RunE:          func(cmd *cobra.Command, _ []string) error { return a.runTUI(cmd.Context()) },

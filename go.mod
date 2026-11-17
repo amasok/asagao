@@ -1,4 +1,4 @@
-module github.com/amasok/asana-tui
+module github.com/amasok/asagao
 
 go 1.27.4
 

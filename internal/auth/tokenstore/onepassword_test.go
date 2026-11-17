@@ -25,7 +25,7 @@ func (f *fakeOP) run(_ context.Context, stdin []byte, args ...string) ([]byte, e
 	switch args[1] {
 	case "get":
 		if f.item == nil {
-			return nil, &opError{msg: `[ERROR] "asana-tui" isn't an item in the "Private" vault.`}
+			return nil, &opError{msg: `[ERROR] "asagao" isn't an item in the "Private" vault.`}
 		}
 		return json.Marshal(f.item)
 	case "create":
@@ -42,7 +42,7 @@ func (f *fakeOP) run(_ context.Context, stdin []byte, args ...string) ([]byte, e
 		return nil, json.Unmarshal(stdin, &f.item)
 	case "delete":
 		if f.item == nil {
-			return nil, &opError{msg: `[ERROR] "asana-tui" isn't an item in the "Private" vault.`}
+			return nil, &opError{msg: `[ERROR] "asagao" isn't an item in the "Private" vault.`}
 		}
 		f.item = nil
 		return nil, nil
@@ -53,7 +53,7 @@ func (f *fakeOP) run(_ context.Context, stdin []byte, args ...string) ([]byte, e
 func TestOnePasswordRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeOP{}
-	s := &OnePassword{Vault: "Private", Item: "asana-tui", run: fake.run}
+	s := &OnePassword{Vault: "Private", Item: "asagao", run: fake.run}
 
 	if _, err := s.Load(ctx); err != ErrNotFound {
 		t.Fatalf("Load before save: %v", err)
@@ -121,7 +121,7 @@ func TestFileRoundTrip(t *testing.T) {
 func TestOnePasswordSwitchMethod(t *testing.T) {
 	ctx := context.Background()
 	fake := &fakeOP{}
-	s := &OnePassword{Vault: "Private", Item: "asana-tui", run: fake.run}
+	s := &OnePassword{Vault: "Private", Item: "asagao", run: fake.run}
 
 	if err := s.Save(ctx, &Credentials{ClientSecret: "secret-cs", RefreshToken: "secret-rt"}); err != nil {
 		t.Fatal(err)

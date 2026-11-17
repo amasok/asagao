@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/config"
 )
 
 // ErrNotFound means no credentials have been saved yet (not logged in).
@@ -59,7 +59,7 @@ type Store interface {
 func New(cfg config.AuthConfig) (Store, error) {
 	switch cfg.TokenStore {
 	case config.TokenStoreKeychain:
-		return &Keychain{Service: "asana-tui", User: "default"}, nil
+		return &Keychain{Service: "asagao", User: "default"}, nil
 	case config.TokenStore1Password:
 		return &OnePassword{Vault: cfg.OnePassword.Vault, Item: cfg.OnePassword.Item, Account: cfg.OnePassword.Account}, nil
 	case config.TokenStoreFile:

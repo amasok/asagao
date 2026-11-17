@@ -49,7 +49,7 @@ func TestUploadPolicyBypasses(t *testing.T) {
 		{"hidden file through a path with ./ and //", allowed + "/./sub/..//" + ".secret/key"},
 		{"symlink to /dev/zero", devLink},
 		{"symlink to the parent folder", filepath.Join(upLink, filepath.Base(outside))},
-		{"asana-tui's files via .. from an allowed folder", allowed + "/x/../appdata/token.json"},
+		{"asagao's files via .. from an allowed folder", allowed + "/x/../appdata/token.json"},
 		{"tilde is not expanded", "~/Downloads/" + filepath.Base(hidden)},
 		{"empty path", ""},
 	} {
@@ -74,7 +74,7 @@ func TestUploadPolicyBypasses(t *testing.T) {
 	}
 }
 
-// A hard link has no symlink to resolve: a link in an allowed folder to asana-tui's token
+// A hard link has no symlink to resolve: a link in an allowed folder to asagao's token
 // (or to any file elsewhere) looks like an ordinary file there.
 func TestUploadPolicyHardLinkToDeniedFile(t *testing.T) {
 	allowed := t.TempDir()
@@ -86,7 +86,7 @@ func TestUploadPolicyHardLinkToDeniedFile(t *testing.T) {
 	}
 	p := UploadPolicy{Allowed: []string{allowed}, Denied: []string{appData}}
 	if got, err := p.Check(hard); err == nil {
-		t.Errorf("hard link to asana-tui's token was allowed (as %s)", got)
+		t.Errorf("hard link to asagao's token was allowed (as %s)", got)
 	}
 }
 

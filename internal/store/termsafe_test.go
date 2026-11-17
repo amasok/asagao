@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 const evil = "\x1b]52;c;ZXZpbA==\x07\x1b_Ga=T;AAAA\x1b\\\u009b2J"

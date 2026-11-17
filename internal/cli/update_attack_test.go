@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // A wrong positional argument is reported as the parser or the store says it, with no

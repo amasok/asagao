@@ -30,7 +30,7 @@ func TestFromMarkdownForCommentsAndStatusUpdates(t *testing.T) {
 		{"![画像](asana:12)", "<body>![画像](asana:12)</body>", "![画像](asana:12)"},
 		{`![画像](asana:12 "題")`, `<body>![画像](asana:12 &#34;題&#34;)</body>`, `![画像](asana:12 "題")`},
 		// a cached file is referred to by its gid: its path is local to this machine
-		{"見て ![x](/home/u/.cache/asana-tui/attachments/55-a.png)", "<body>見て ![x](asana:55)</body>", "見て ![x](asana:55)"},
+		{"見て ![x](/home/u/.cache/asagao/attachments/55-a.png)", "<body>見て ![x](asana:55)</body>", "見て ![x](asana:55)"},
 		{"a\n\n#\n\nb", "<body>a\n\nb</body>", "a\n\nb"},
 		// FromMarkdown writes no <table> (Asana takes it only in tasks and briefs): a
 		// Markdown table stays as the text written

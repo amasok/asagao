@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // writeCLIEnv is fieldsCLIEnv (offline: no token; tasks t1 and t2 in 新居 / 家具) with a

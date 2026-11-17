@@ -7,7 +7,7 @@ import (
 
 	"modernc.org/sqlite"
 
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Every TEXT value read from the store passes through termsafe.String, so text from Asana

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 func TestTakeDiscards(t *testing.T) {

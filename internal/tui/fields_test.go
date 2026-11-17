@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Two quick toggles in a multi_enum chooser keep both: the second is made on the updated

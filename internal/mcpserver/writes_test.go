@@ -10,10 +10,10 @@ import (
 	stdsync "sync"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // snapshot is everything a failed write must leave untouched.
@@ -231,7 +231,7 @@ func TestPushBusyIsNotOffline(t *testing.T) {
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t2", "completed": true}, &w)
 	unlock()
-	if w.Sent || !strings.Contains(w.Note, "another asana-tui process") || strings.Contains(w.Note, "could not be reached") {
+	if w.Sent || !strings.Contains(w.Note, "another asagao process") || strings.Contains(w.Note, "could not be reached") {
 		t.Fatalf("busy push = %+v", w)
 	}
 	ops, _ := st.ListOps(ctx)
@@ -270,7 +270,7 @@ func TestAccountChangedIsExplained(t *testing.T) {
 
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t2", "completed": true}, &w)
-	if w.Sent || !strings.Contains(w.Note, "NOT sent") || !strings.Contains(w.Note, "asana-tui reset") || !strings.Contains(w.Note, "1 unsent") {
+	if w.Sent || !strings.Contains(w.Note, "NOT sent") || !strings.Contains(w.Note, "asagao reset") || !strings.Contains(w.Note, "1 unsent") {
 		t.Fatalf("write while the account changed: %+v", w)
 	}
 	if n, _ := st.UnsentCount(ctx); n != 1 {
@@ -308,7 +308,7 @@ func TestSyncBusyIsNotAnError(t *testing.T) {
 	defer unlock()
 	var out SyncOutput
 	res := call(t, cs, "sync", nil, &out)
-	if res.IsError || !strings.Contains(out.Note, "another asana-tui process") || strings.Contains(out.Note, "offline") {
+	if res.IsError || !strings.Contains(out.Note, "another asagao process") || strings.Contains(out.Note, "offline") {
 		t.Fatalf("busy sync: error=%q out=%+v", toolError(res), out)
 	}
 }

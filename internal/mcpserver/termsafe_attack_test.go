@@ -8,8 +8,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 const attack = "\x1b[2J\x1b]52;c;ZXZpbA==\x07\x1b]8;;https://evil.example\x1b\\\x1b_Ga=T;AAAA\x1b\\" +

@@ -52,7 +52,7 @@ func TestUploadPolicy(t *testing.T) {
 		{"dot-dot escaping the folder", allowed + "/sub/../../" + filepath.Base(outside) + "/id_ed25519", "not in a folder that allows uploads"},
 		{"hidden file", write(t, filepath.Join(allowed, ".env")), "hidden"},
 		{"file in a hidden folder", write(t, filepath.Join(allowed, ".ssh", "id_rsa")), "hidden"},
-		{"asana-tui's own files", write(t, filepath.Join(appData, "store.db")), "asana-tui itself"},
+		{"asagao's own files", write(t, filepath.Join(appData, "store.db")), "asagao itself"},
 		{"missing file", filepath.Join(allowed, "nope.pdf"), "no such file"},
 	} {
 		got, err := p.Check(tc.path)
@@ -67,7 +67,7 @@ func TestUploadPolicy(t *testing.T) {
 	}
 	if runtime.GOOS == "darwin" { // case-insensitive file names must not slip past the deny list
 		upper := filepath.Join(allowed, "APPDATA", "store.db")
-		if _, err := p.Check(upper); err == nil || !strings.Contains(err.Error(), "asana-tui itself") {
+		if _, err := p.Check(upper); err == nil || !strings.Contains(err.Error(), "asagao itself") {
 			t.Errorf("%s: err = %v", upper, err)
 		}
 	}
@@ -86,7 +86,7 @@ func TestDefaultUploadFolders(t *testing.T) {
 		{"/Users", false},
 		{home, false},
 		{home + "/.ssh", false},
-		{home + "/.config/asana-tui", false},
+		{home + "/.config/asagao", false},
 		{home + "/src/project", true},
 		{home + "/src/project/.worktrees/x", true},
 		{"/opt/work", true},

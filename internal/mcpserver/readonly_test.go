@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // A read-only server's sync only pulls: changes the user queued (in the TUI or CLI) stay

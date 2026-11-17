@@ -14,7 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // realNotesHTML is the shape of html_notes Asana returns for a pasted screenshot (signed URL).
@@ -25,7 +25,7 @@ func TestInlineImageFromSignedURL(t *testing.T) {
 	cache := os.Getenv("XDG_CACHE_HOME")
 	ctx := context.Background()
 	name := "スクリーンショット 2026-11-13 15.53.03.png"
-	path := filepath.Join(cache, "asana-tui", "attachments", "1220507679870013-"+name)
+	path := filepath.Join(cache, "asagao", "attachments", "1220507679870013-"+name)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 	if err := os.WriteFile(path, pngBytes(t, 406, 230), 0o600); err != nil {
 		t.Fatal(err)

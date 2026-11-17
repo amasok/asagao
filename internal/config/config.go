@@ -1,4 +1,4 @@
-// Package config loads asana-tui settings from ~/.config/asana-tui/config.toml.
+// Package config loads asagao settings from ~/.config/asagao/config.toml.
 package config
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const appName = "asana-tui"
+const appName = "asagao"
 
 // Token store backends.
 const (
@@ -27,7 +27,7 @@ type Config struct {
 	Sync SyncConfig `toml:"sync"`
 	UI   UIConfig   `toml:"ui"`
 	MCP  MCPConfig  `toml:"mcp"`
-	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asana-tui keys`).
+	// Keys rebinds TUI shortcuts: action name = "key" or ["key", ...] (see `asagao keys`).
 	Keys map[string]any `toml:"keys"`
 }
 
@@ -203,13 +203,13 @@ func (c Config) validate() error {
 	return nil
 }
 
-// ConfigDir follows XDG: $XDG_CONFIG_HOME/asana-tui or ~/.config/asana-tui (also on macOS).
+// ConfigDir follows XDG: $XDG_CONFIG_HOME/asagao or ~/.config/asagao (also on macOS).
 func ConfigDir() string { return xdgDir("XDG_CONFIG_HOME", ".config") }
 
-// DataDir follows XDG: $XDG_DATA_HOME/asana-tui or ~/.local/share/asana-tui.
+// DataDir follows XDG: $XDG_DATA_HOME/asagao or ~/.local/share/asagao.
 func DataDir() string { return xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share")) }
 
-// CacheDir follows XDG: $XDG_CACHE_HOME/asana-tui or ~/.cache/asana-tui (downloaded attachments).
+// CacheDir follows XDG: $XDG_CACHE_HOME/asagao or ~/.cache/asagao (downloaded attachments).
 func CacheDir() string { return xdgDir("XDG_CACHE_HOME", ".cache") }
 
 func FilePath() string { return filepath.Join(ConfigDir(), "config.toml") }

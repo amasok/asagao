@@ -13,9 +13,9 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/config"
 )
 
 // The tests of this package run commands as a user would, so before any of them:
@@ -56,7 +56,7 @@ func (l loopbackOnly) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestMain(m *testing.M) {
 	// The store (store.db), config.toml and caches are under these: a test that does not
 	// set its own reads and writes a private directory, never the user's data.
-	tmp, err := os.MkdirTemp("", "asana-tui-cli-test-")
+	tmp, err := os.MkdirTemp("", "asagao-cli-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -93,7 +93,7 @@ func TestDefaultTokenStoreIsTheMock(t *testing.T) {
 	}
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	kc := &tokenstore.Keychain{Service: "asana-tui", User: "default"}
+	kc := &tokenstore.Keychain{Service: "asagao", User: "default"}
 	ctx := context.Background()
 	if _, err := kc.Load(ctx); err != tokenstore.ErrNotFound {
 		t.Fatalf("the mock keychain should start empty here: %v", err)
@@ -102,7 +102,7 @@ func TestDefaultTokenStoreIsTheMock(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = kc.Delete(ctx) })
-	if v, err := keyring.Get("asana-tui", "default"); err != nil || !strings.Contains(v, "mock-pat") {
+	if v, err := keyring.Get("asagao", "default"); err != nil || !strings.Contains(v, "mock-pat") {
 		t.Fatalf("the saved token should be in the mock: %q, %v", v, err)
 	}
 	out, err := runCLI(t, "auth", "status")
@@ -122,7 +122,7 @@ func TestDataAndConfigArePrivate(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	tmp := os.TempDir()
 	for _, p := range []string{config.DataDir(), config.ConfigDir(), config.FilePath()} {
-		if !strings.Contains(p, "asana-tui-cli-test-") || (home != "" && strings.HasPrefix(p, filepath.Join(home, ".config"))) {
+		if !strings.Contains(p, "asagao-cli-test-") || (home != "" && strings.HasPrefix(p, filepath.Join(home, ".config"))) {
 			t.Errorf("%s is not under the private test directory (TMPDIR %s)", p, tmp)
 		}
 	}

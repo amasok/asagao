@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // OpRenameSection renames a section. The outbox task_gid column holds the section gid.

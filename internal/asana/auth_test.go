@@ -19,7 +19,7 @@ func TestUnauthorizedIsNotRetriedAndCarriesHint(t *testing.T) {
 		fmt.Fprint(w, `{"errors":[{"message":"Not Authorized"}]}`)
 	})
 	c.MaxRetries = 3
-	c.AuthHint = "asana-tui auth login --pat で登録し直してください"
+	c.AuthHint = "asagao auth login --pat で登録し直してください"
 	ctx := context.Background()
 
 	_, err := c.Me(ctx)

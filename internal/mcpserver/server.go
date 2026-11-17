@@ -1,4 +1,4 @@
-// Package mcpserver exposes asana-tui's local store and outbox as an MCP server.
+// Package mcpserver exposes asagao's local store and outbox as an MCP server.
 //
 // Reads come from the local store (fast, works offline). Writes go through the same
 // outbox as the TUI and CLI: they are applied locally at once and sent to Asana right
@@ -20,14 +20,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
-const instructions = `Asana tasks from a local cache that asana-tui keeps in sync.
+const instructions = `Asana tasks from a local cache that asagao keeps in sync.
 
 - Reads (list_tasks, search_tasks, get_task, list_projects) are served from the local cache,
   so they are fast and work offline. Call sync first if you need the very latest data.
@@ -64,7 +64,7 @@ func (s *Server) New() *mcp.Server {
 	if s.Now == nil {
 		s.Now = time.Now
 	}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "asana-tui", Title: "Asana (asana-tui)", Version: s.Version},
+	srv := mcp.NewServer(&mcp.Implementation{Name: "asagao", Title: "Asana (asagao)", Version: s.Version},
 		&mcp.ServerOptions{Instructions: instructions})
 
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true}
@@ -95,7 +95,7 @@ func (s *Server) New() *mcp.Server {
 		"(incremental; full=true re-fetches everything and removes deleted tasks)."
 	if s.ReadOnly {
 		syncDesc = "Pull changes from Asana into the cache (incremental; full=true re-fetches everything and removes deleted tasks). " +
-			"This server is read-only: queued local changes are not sent (the TUI or `asana-tui sync` sends them)."
+			"This server is read-only: queued local changes are not sent (the TUI or `asagao sync` sends them)."
 	}
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync", Annotations: &mcp.ToolAnnotations{IdempotentHint: true, OpenWorldHint: ptr(true)},
 		Description: syncDesc}, s.sync)
@@ -125,7 +125,7 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "upload_attachment", Annotations: write(true),
 			Description: "Attach a local file to a task (max 100MB). The file is sent to Asana, so only upload files the user asked for. " +
 				"path must be absolute and inside an allowed folder: " + s.uploadFolders() + ". " +
-				"Hidden files and asana-tui's own files are refused."}, s.uploadAttachment)
+				"Hidden files and asagao's own files are refused."}, s.uploadAttachment)
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_status_update", Annotations: write(false),
 			Description: "Post a status update on a project: status (on_track, at_risk, off_track, on_hold, complete), title and a Markdown text."}, s.createStatus)
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
@@ -213,14 +213,14 @@ type SyncStatusOutput struct {
 	Conflict int        `json:"conflicts"`
 	Failed   int        `json:"failed"`
 	// Outbox lists local changes not yet sent. Conflicts need the user to decide
-	// (asana-tui TUI "!" or `asana-tui outbox resolve`).
+	// (asagao TUI "!" or `asagao outbox resolve`).
 	Outbox []store.Op `json:"outbox"`
 }
 
 type SyncOutput struct {
 	Result sync.Result      `json:"result"`
 	Status SyncStatusOutput `json:"status"`
-	// Note says why nothing was synced (another asana-tui process is syncing).
+	// Note says why nothing was synced (another asagao process is syncing).
 	Note string `json:"note,omitempty"`
 }
 
@@ -453,7 +453,7 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 		if !errors.Is(err, sync.ErrPushBusy) {
 			return nil, out, err
 		}
-		out.Note = "another asana-tui process (the TUI, the CLI or another MCP server) is syncing right now, so nothing was done; " +
+		out.Note = "another asagao process (the TUI, the CLI or another MCP server) is syncing right now, so nothing was done; " +
 			"queued changes are sent by that process. Try again in a moment if you need fresh data."
 	}
 	out.Status, err = s.status(ctx)
@@ -650,9 +650,9 @@ func (s *Server) accountChangedNote(ctx context.Context) string {
 	n, _ := s.Store.UnsentCount(ctx)
 	return fmt.Sprintf("the Asana account now logged in is not the one this local data was synced with, so syncing is stopped "+
 		"(%d unsent change(s) from the previous account). Tell the user, and let them choose: log in again with the previous "+
-		"account (`asana-tui auth login`) to send the changes, or reset the local data to use the new account "+
-		"(`asana-tui reset`, or \"ローカルデータを初期化\" in the TUI menu; unsent changes are backed up to a JSON file first). "+
-		"This MCP server cannot reset. (%s)", n, store.AccountChangedHelp(n, "asana-tui reset"))
+		"account (`asagao auth login`) to send the changes, or reset the local data to use the new account "+
+		"(`asagao reset`, or \"ローカルデータを初期化\" in the TUI menu; unsent changes are backed up to a JSON file first). "+
+		"This MCP server cannot reset. (%s)", n, store.AccountChangedHelp(n, "asagao reset"))
 }
 
 // push sends the outbox now. A failure is reported in the output, not as a tool error:
@@ -683,7 +683,7 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 		out.Note += "saved locally but NOT sent: Asana rejected the login token. Tell the user to log in again (in a terminal); " +
 			"the change is sent by the next sync after that: " + auth.LoginHelp(err)
 	case errors.Is(err, sync.ErrPushBusy):
-		out.Note += "saved locally; another asana-tui process is sending the outbox right now and will send this change too"
+		out.Note += "saved locally; another asagao process is sending the outbox right now and will send this change too"
 	case err != nil:
 		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
 	case res.InboxReadOnly:
@@ -736,7 +736,7 @@ func (s *Server) getSyncer(ctx context.Context) (*sync.Syncer, error) {
 }
 
 // dropSyncerOn forgets the syncer after a login problem or another account, so the next
-// call builds it again and picks up a login made meanwhile (asana-tui auth login).
+// call builds it again and picks up a login made meanwhile (asagao auth login).
 func (s *Server) dropSyncerOn(err error) {
 	if auth.LoginHelp(err) == "" && !errors.Is(err, sync.ErrAccountChanged) {
 		return

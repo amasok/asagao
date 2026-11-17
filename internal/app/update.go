@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/dates"
-	"github.com/amasok/asana-tui/internal/domain/task"
+	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 // ParseDue reads a due date as a user types it: YYYY-MM-DD, today, tomorrow, yesterday,

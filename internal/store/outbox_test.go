@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 var testNow = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)

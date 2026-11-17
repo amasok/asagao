@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/config"
 )
 
 // fakeAsanaMe answers /users/me for the tokens in users (token -> gid) and 401 otherwise.
@@ -174,7 +174,7 @@ func TestAuthLoginWarnsOtherAccount(t *testing.T) {
 	_ = st.Close()
 
 	out, err := runAuthCLI(t, srv.URL, "pat-other", "auth", "login", "--pat")
-	if err != nil || !strings.Contains(out, "アカウントと違う") || !strings.Contains(out, "asana-tui reset") {
+	if err != nil || !strings.Contains(out, "アカウントと違う") || !strings.Contains(out, "asagao reset") {
 		t.Fatalf("login as another account: %v\n%s", err, out)
 	}
 	out, err = runAuthCLI(t, srv.URL, "pat-me", "auth", "login", "--pat")

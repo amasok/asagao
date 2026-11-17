@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // An attachment fetched by gid is recorded under the task Asana says it belongs to, not

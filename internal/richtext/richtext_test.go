@@ -208,7 +208,7 @@ func TestTabsDoNotCreateBlocks(t *testing.T) {
 
 func TestEditableImagesAsLocalPaths(t *testing.T) {
 	in := `<body>前<img data-asana-gid="111">後</body>`
-	path := "/Users/me/.cache/asana-tui/attachments/111-photo.png"
+	path := "/Users/me/.cache/asagao/attachments/111-photo.png"
 	md := ToEditableMarkdownWith(in, func(gid string) string {
 		if gid == "111" {
 			return path

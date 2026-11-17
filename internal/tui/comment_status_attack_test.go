@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // The comment and status-update closures as on main before a4 (copied verbatim).

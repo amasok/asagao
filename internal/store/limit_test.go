@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // manyTasks opens a store with n tasks; every task has a tag and a project.

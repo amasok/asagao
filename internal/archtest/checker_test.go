@@ -38,7 +38,7 @@ func fakeGraph(pkgs map[string][]string, mods map[string]string) *graph {
 // matter here): every line of sampleAllowed happens, and nothing else breaks a rule.
 func sample() map[string][]string {
 	return map[string][]string{
-		"cmd/asana-tui":            {"internal/cli"},
+		"cmd/asagao":               {"internal/cli"},
 		"internal/app":             {"context", "internal/dates", "internal/domain/task"},
 		"internal/dates":           {"time"},
 		"internal/domain/task":     nil,
@@ -192,8 +192,8 @@ func TestCheckerCatches(t *testing.T) {
 			},
 			[]string{"internal/cli → internal/wire: nothing imports the wiring"}},
 		{"something imports archtest",
-			func(m map[string][]string) { m["cmd/asana-tui"] = append(m["cmd/asana-tui"], "internal/archtest") },
-			[]string{"cmd/asana-tui → internal/archtest: packages with only tests are not imported"}},
+			func(m map[string][]string) { m["cmd/asagao"] = append(m["cmd/asagao"], "internal/archtest") },
+			[]string{"cmd/asagao → internal/archtest: packages with only tests are not imported"}},
 		{"a package without a layer",
 			func(m map[string][]string) { m["internal/newthing"] = nil },
 			[]string{"internal/newthing"}},
@@ -269,7 +269,7 @@ func TestCheckerAllowsTheRules(t *testing.T) {
 	m["internal/asana/model"] = []string{"time"}
 	m["internal/readmodel"] = []string{"internal/asana/model", "internal/domain/task", "internal/termsafe"}
 	m["internal/wire"] = []string{"internal/store", "internal/asana", "internal/config", "internal/app", "internal/sync"}
-	m["cmd/asana-tui"] = append(m["cmd/asana-tui"], "internal/wire")
+	m["cmd/asagao"] = append(m["cmd/asagao"], "internal/wire")
 	m["internal/app"] = append(m["internal/app"], "internal/asana/model", "internal/readmodel", "internal/termsafe", "internal/domain/outbox")
 	m["internal/sync"] = append(m["internal/sync"], "internal/domain/outbox", "internal/asana/model")
 	m["internal/store"] = append(m["internal/store"], "internal/readmodel", "internal/asana/model")

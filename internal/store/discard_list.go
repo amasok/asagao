@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // RecentDiscards returns the last limit dropped changes, notified or not, newest first,

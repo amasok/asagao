@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // A client cannot ask for more than maxLimit rows, and a huge modified_within_days works

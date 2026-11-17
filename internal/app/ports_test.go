@@ -1,9 +1,9 @@
 package app_test
 
 import (
-	"github.com/amasok/asana-tui/internal/app"
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // The adapters satisfy the ports as they are.

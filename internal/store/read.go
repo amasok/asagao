@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/amasok/asana-tui/internal/readmodel"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // ErrNotFound is returned when a task or project is not in the local store.
@@ -625,7 +625,7 @@ func (s *Store) DefaultWorkspace(ctx context.Context) (string, error) {
 	var gid string
 	err := s.db.QueryRowContext(ctx, "SELECT gid FROM workspaces ORDER BY name LIMIT 1").Scan(&gid)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("ワークスペースがありません。先に `asana-tui sync` を実行してください")
+		return "", errors.New("ワークスペースがありません。先に `asagao sync` を実行してください")
 	}
 	return gid, err
 }
@@ -643,7 +643,7 @@ func (s *Store) FirstSection(ctx context.Context, projectGID string) (string, er
 func (s *Store) MeGID(ctx context.Context) (string, error) {
 	gid, err := s.SyncState(ctx, KeyMeGID)
 	if err == nil && gid == "" {
-		return "", errors.New("自分のユーザー情報がローカルストアにありません。`asana-tui sync` を実行してください")
+		return "", errors.New("自分のユーザー情報がローカルストアにありません。`asagao sync` を実行してください")
 	}
 	return gid, err
 }

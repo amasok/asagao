@@ -9,7 +9,7 @@ import (
 	stdsync "sync"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // hooked wraps a fake server; hook may answer a request itself (returning true).

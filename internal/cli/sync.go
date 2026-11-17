@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 func (a *app) syncCmd() *cobra.Command {
@@ -38,7 +38,7 @@ func (a *app) syncCmd() *cobra.Command {
 				if a.json {
 					return a.printJSON(res)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "別の asana-tui（TUI・MCP サーバーなど）が同期中のため、今回は何もしませんでした。未送信の変更はそちらで送られます")
+				fmt.Fprintln(cmd.OutOrStdout(), "別の asagao（TUI・MCP サーバーなど）が同期中のため、今回は何もしませんでした。未送信の変更はそちらで送られます")
 				return nil
 			}
 			if err != nil {
@@ -61,7 +61,7 @@ func (a *app) syncCmd() *cobra.Command {
 			if p := res.Push; p.Sent+p.Conflicts+p.Failed > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "未送信の変更: 送信 %d / 競合 %d / 失敗 %d\n", p.Sent, p.Conflicts, p.Failed)
 				if p.Conflicts+p.Failed > 0 {
-					fmt.Fprintln(cmd.OutOrStdout(), "  → `asana-tui outbox list` で確認してください")
+					fmt.Fprintln(cmd.OutOrStdout(), "  → `asagao outbox list` で確認してください")
 				}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d / 取得したタスク %d / 削除 %d（%s）\n",
@@ -96,7 +96,7 @@ func (a *app) syncCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "最終同期: %s\nワークスペース %d / プロジェクト %d / セクション %d / タスク %d（未完了 %d）\n",
 				last, stats.Workspaces, stats.Projects, stats.Sections, stats.Tasks, stats.OpenTasks)
 			if p, c, f, err := st.OutboxCounts(cmd.Context()); err == nil && p+c+f > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "未送信 %d / 競合 %d / 失敗 %d（`asana-tui outbox list`）\n", p, c, f)
+				fmt.Fprintf(cmd.OutOrStdout(), "未送信 %d / 競合 %d / 失敗 %d（`asagao outbox list`）\n", p, c, f)
 			}
 			return nil
 		},

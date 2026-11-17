@@ -15,9 +15,9 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/browser"
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/browser"
+	"github.com/amasok/asagao/internal/config"
 )
 
 const (
@@ -140,13 +140,13 @@ func callbackHandler(state string) (http.Handler, <-chan callbackResult) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("state") != state {
-			http.Error(w, "asana-tui: state が一致しません。asana-tui に表示された URL からログインし直してください。", http.StatusBadRequest)
+			http.Error(w, "asagao: state が一致しません。asagao に表示された URL からログインし直してください。", http.StatusBadRequest)
 			return
 		}
 		first := false
 		once.Do(func() { first = true })
 		if !first {
-			http.Error(w, "asana-tui: このログインはすでに処理されています。", http.StatusConflict)
+			http.Error(w, "asagao: このログインはすでに処理されています。", http.StatusConflict)
 			return
 		}
 		var res callbackResult
@@ -154,7 +154,7 @@ func callbackHandler(state string) (http.Handler, <-chan callbackResult) {
 			http.Error(w, e, http.StatusBadRequest)
 			res.err = fmt.Errorf("認可が拒否されました: %s %s", e, q.Get("error_description"))
 		} else {
-			fmt.Fprintln(w, "asana-tui: ログインしました。このタブは閉じて構いません。")
+			fmt.Fprintln(w, "asagao: ログインしました。このタブは閉じて構いません。")
 			res.code = q.Get("code")
 		}
 		ch <- res // buffered and sent once: never blocks

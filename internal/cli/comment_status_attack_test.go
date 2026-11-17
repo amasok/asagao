@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/richtext"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // legacyComment and legacyStatus are the bodies of `comment add` and `project status post`

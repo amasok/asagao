@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // Resetting the local data (to use another Asana account), with a confirmation that shows
@@ -78,7 +78,7 @@ func (m *Model) updateReset(msg tea.Msg) (tea.Cmd, bool) {
 			m.status = "未送信の変更が増えたため、何も消さずに初期化をやめました。もう一度確かめてください"
 			return m.startReset(), true
 		case errors.Is(msg.err, store.ErrPushBusy):
-			m.status = "別の asana-tui が同期・送信中のため初期化できません。終わってからやり直してください"
+			m.status = "別の asagao が同期・送信中のため初期化できません。終わってからやり直してください"
 			return nil, true
 		case msg.err != nil:
 			m.status = "エラー: " + msg.err.Error()

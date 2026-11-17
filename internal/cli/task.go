@@ -11,8 +11,8 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 func (a *app) taskCmd() *cobra.Command {
@@ -89,9 +89,9 @@ func (a *app) taskListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "タスクを一覧表示する（ローカルストアから。デフォルトは自分の未完了タスク）",
-		Example: `  asana-tui task list
-  asana-tui task list --due-before +7d
-  asana-tui task list --project 新居 --json`,
+		Example: `  asagao task list
+  asagao task list --due-before +7d
+  asagao task list --project 新居 --json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)

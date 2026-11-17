@@ -16,7 +16,7 @@ import (
 type UploadPolicy struct {
 	// Allowed folders: a file must be inside one of them (after resolving symlinks).
 	Allowed []string
-	// Denied folders: never uploaded even inside an allowed folder (asana-tui's own
+	// Denied folders: never uploaded even inside an allowed folder (asagao's own
 	// config, data and cache: the token file, the store, downloaded attachments).
 	Denied []string
 }
@@ -75,7 +75,7 @@ func (p UploadPolicy) Check(path string) (string, error) {
 			continue
 		}
 		if within(real, resolveDir(d)) || within(real, filepath.Clean(d)) {
-			return "", errors.New("upload_attachment: files of asana-tui itself (config, token, store, cache) cannot be uploaded")
+			return "", errors.New("upload_attachment: files of asagao itself (config, token, store, cache) cannot be uploaded")
 		}
 	}
 	for _, a := range p.Allowed {
@@ -90,14 +90,14 @@ func (p UploadPolicy) Check(path string) (string, error) {
 			return "", errors.New("upload_attachment: hidden files and files in hidden folders (names starting with \".\") cannot be uploaded")
 		}
 		// A hard link has no symlink to resolve: a link here to ~/.ssh/id_ed25519 or to
-		// asana-tui's token would look like an ordinary file of this folder.
+		// asagao's token would look like an ordinary file of this folder.
 		if info, err := os.Stat(real); err == nil && info.Mode().IsRegular() && links(info) > 1 {
 			return "", errors.New("upload_attachment: files with more than one hard link cannot be uploaded (copy the file instead)")
 		}
 		return real, nil
 	}
 	return "", fmt.Errorf("upload_attachment: %s is not in a folder that allows uploads (%s). "+
-		"Ask the user to move the file to one of them, or to add its folder to upload_dirs under [mcp] in asana-tui's config.toml",
+		"Ask the user to move the file to one of them, or to add its folder to upload_dirs under [mcp] in asagao's config.toml",
 		path, strings.Join(p.Allowed, ", "))
 }
 
@@ -122,7 +122,7 @@ func relInside(dir, path string) (string, bool) {
 }
 
 // within reports whether path is dir or inside it. On macOS and Windows file names are
-// usually case-insensitive, so ~/.Config/ASANA-TUI must match too.
+// usually case-insensitive, so ~/.Config/ASAGAO must match too.
 func within(path, dir string) bool {
 	_, ok := relInside(fold(dir), fold(path))
 	return ok

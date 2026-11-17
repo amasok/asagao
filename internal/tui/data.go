@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // queryRows loads the tasks for the list pane and groups them:

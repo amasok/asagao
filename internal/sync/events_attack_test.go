@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // #27 (tester) attacks on the events sync, with the fake Asana of events_test.go.

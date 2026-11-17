@@ -49,7 +49,7 @@ func TestFileSaveFolderSymlink(t *testing.T) {
 			if err := os.Chmod(real, c.mode); err != nil {
 				t.Fatal(err)
 			}
-			conf := filepath.Join(root, "asana-tui")
+			conf := filepath.Join(root, "asagao")
 			symlink(t, real, conf)
 			f := &File{Path: filepath.Join(conf, "token.json")}
 			err := f.Save(ctx, &Credentials{RefreshToken: "rt"})
@@ -227,8 +227,8 @@ func TestFileSymlinkErrorSaysWhatToRun(t *testing.T) {
 		if err := os.Chmod(real, 0o775); err != nil {
 			t.Fatal(err)
 		}
-		symlink(t, real, filepath.Join(root, "asana-tui"))
-		err := (&File{Path: filepath.Join(root, "asana-tui", "token.json")}).Save(ctx, &Credentials{RefreshToken: "rt"})
+		symlink(t, real, filepath.Join(root, "asagao"))
+		err := (&File{Path: filepath.Join(root, "asagao", "token.json")}).Save(ctx, &Credentials{RefreshToken: "rt"})
 		target, _ := filepath.EvalSymlinks(real)
 		if err == nil || !strings.Contains(err.Error(), "chmod go-w '"+target+"'") {
 			t.Fatalf("err = %v; want the command for %s", err, target)
@@ -273,10 +273,10 @@ func TestFileSymlinkErrorSaysWhatToRun(t *testing.T) {
 
 func TestShellQuote(t *testing.T) {
 	for in, want := range map[string]string{
-		"/home/me/.config/asana-tui": "/home/me/.config/asana-tui",
-		"/a b":                       "'/a b'",
-		"/it's":                      `'/it'\''s'`,
-		"/$(rm)":                     "'/$(rm)'",
+		"/home/me/.config/asagao": "/home/me/.config/asagao",
+		"/a b":                    "'/a b'",
+		"/it's":                   `'/it'\''s'`,
+		"/$(rm)":                  "'/$(rm)'",
 	} {
 		if got := shellQuote(in); got != want {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
@@ -286,12 +286,12 @@ func TestShellQuote(t *testing.T) {
 
 func TestShowPath(t *testing.T) {
 	for in, want := range map[string]string{
-		"/home/me/.config/asana-tui": "/home/me/.config/asana-tui",
-		"/a b/日本語":                   "/a b/日本語",
-		"/x\ny":                      `"/x\ny"`,
-		"/x\ty":                      `"/x\ty"`,
-		"/x\x1b[2Jy":                 `"/x\x1b[2Jy"`,
-		"/x\u202ey":                  `"/x\u202ey"`,
+		"/home/me/.config/asagao": "/home/me/.config/asagao",
+		"/a b/日本語":                "/a b/日本語",
+		"/x\ny":                   `"/x\ny"`,
+		"/x\ty":                   `"/x\ty"`,
+		"/x\x1b[2Jy":              `"/x\x1b[2Jy"`,
+		"/x\u202ey":               `"/x\u202ey"`,
 	} {
 		if got := showPath(in); got != want {
 			t.Errorf("showPath(%q) = %q, want %q", in, got, want)

@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 // CreateHere takes gids as they are: the only store calls are the ones the placement needs

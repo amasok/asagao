@@ -10,14 +10,14 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/config"
 )
 
 // ErrNotLoggedIn is returned when neither ASANA_TOKEN nor stored credentials exist.
-var ErrNotLoggedIn = errors.New("ログインしていません。`asana-tui auth login --pat` で Personal Access Token（" + PATConsoleURL +
-	" で作成）を登録するか、`asana-tui auth login` で OAuth ログインしてください")
+var ErrNotLoggedIn = errors.New("ログインしていません。`asagao auth login --pat` で Personal Access Token（" + PATConsoleURL +
+	" で作成）を登録するか、`asagao auth login` で OAuth ログインしてください")
 
 // ErrLoginReplaced is returned by a running OAuth session when the store now holds a login
 // for another (or an unknown) user, made meanwhile in another process. It is not adopted:
@@ -45,9 +45,9 @@ func (s *Source) UnauthorizedHint() string {
 	case s.FromEnv:
 		return EnvToken + " の Personal Access Token が無効です。新しいトークンを " + PATConsoleURL + " で作り、" + EnvToken + " に設定し直してください"
 	case s.Method == tokenstore.MethodPAT:
-		return "保存した Personal Access Token が無効です。`asana-tui auth login --pat` で新しいトークン（" + PATConsoleURL + " で作成）を登録してください"
+		return "保存した Personal Access Token が無効です。`asagao auth login --pat` で新しいトークン（" + PATConsoleURL + " で作成）を登録してください"
 	}
-	return "ログインが無効になっています。`asana-tui auth login` でログインし直してください"
+	return "ログインが無効になっています。`asagao auth login` でログインし直してください"
 }
 
 // LoginHelp returns what the user should do when err means they must log in (again):
@@ -63,7 +63,7 @@ func LoginHelp(err error) string {
 		if apiErr.Hint != "" {
 			return apiErr.Hint
 		}
-		return "Asana がトークンを受け付けません。`asana-tui auth login --pat` か `asana-tui auth login` でログインし直してください"
+		return "Asana がトークンを受け付けません。`asagao auth login --pat` か `asagao auth login` でログインし直してください"
 	}
 	return ""
 }
@@ -87,7 +87,7 @@ func TokenSource(ctx context.Context, cfg config.AuthConfig, store tokenstore.St
 	}
 	if cfg.ClientID == "" {
 		return nil, errors.New("auth.client_id が設定されていません（config.toml または ASANA_CLIENT_ID）。" +
-			"OAuth アプリを登録しないで使うなら `asana-tui auth login --pat` で Personal Access Token を登録してください")
+			"OAuth アプリを登録しないで使うなら `asagao auth login --pat` で Personal Access Token を登録してください")
 	}
 	newBase := func(c *tokenstore.Credentials) oauth2.TokenSource {
 		oc := OAuthConfig(cfg, c.ClientSecret, LocalRedirectURL(cfg.RedirectPort))

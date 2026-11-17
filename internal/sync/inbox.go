@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // MaxNotifications is how many notifications per workspace sync keeps (newest first).
@@ -90,10 +90,10 @@ func InboxUnavailableMessage(st store.InboxState, scopes []string) string {
 	case store.InboxForbidden:
 		if len(scopes) > 0 && !slices.Contains(scopes, "notifications:read") {
 			return "受信トレイ（Asana の通知）を見るには、config.toml の auth.scopes と Asana のアプリ設定に " +
-				"notifications:read と notifications:write を追加し、asana-tui auth login でログインし直してください。" +
+				"notifications:read と notifications:write を追加し、asagao auth login でログインし直してください。" +
 				"それまでは最近の更新を表示します"
 		}
-		return "受信トレイ（Asana の通知）を見る権限がありません。asana-tui auth login でログインし直してください" +
+		return "受信トレイ（Asana の通知）を見る権限がありません。asagao auth login でログインし直してください" +
 			"（Asana のアプリ設定で通知の権限 notifications:read / notifications:write も許可してください）。それまでは最近の更新を表示します"
 	case store.InboxPayment:
 		return "このワークスペースのプランでは Asana の通知を API で取得できません。最近の更新を表示します"
@@ -106,10 +106,10 @@ func InboxUnavailableMessage(st store.InboxState, scopes []string) string {
 func InboxReadOnlyMessage(scopes []string) string {
 	if len(scopes) > 0 && !slices.Contains(scopes, "notifications:write") {
 		return "通知を既読・未読にするには、config.toml の auth.scopes と Asana のアプリ設定に notifications:write を追加し、" +
-			"asana-tui auth login でログインし直してください（通知を見ることはできます）"
+			"asagao auth login でログインし直してください（通知を見ることはできます）"
 	}
 	return "通知を既読・未読にする権限がありません。Asana のアプリ設定で notifications:write を許可し、" +
-		"asana-tui auth login でログインし直してください（通知を見ることはできます）"
+		"asagao auth login でログインし直してください（通知を見ることはできます）"
 }
 
 // fetchNotificationTargets fetches tasks that notifications are about but the sync did not

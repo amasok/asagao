@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // rollbackTo turns a fresh store back into one written before migration idx (and every

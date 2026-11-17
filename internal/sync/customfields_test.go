@@ -11,9 +11,9 @@ import (
 	stdsync "sync"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // fieldServer is a fake Asana with one task t1 that has an enum field cf1 (options o1, o2),

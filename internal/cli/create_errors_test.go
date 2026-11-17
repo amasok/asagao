@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/dates"
+	"github.com/amasok/asagao/internal/dates"
 )
 
 // task create names the flag of a bad input once ("--due: …", "--assignee: …") followed

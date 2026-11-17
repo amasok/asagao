@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/config"
 )
 
 // File stores credentials as JSON in a 0600 file. Fallback for environments without a keychain.

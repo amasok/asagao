@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/store"
+	"github.com/amasok/asagao/internal/store"
 )
 
 // #27 (tester): a second project p2 next to the fake's p1. p1's events fail in various

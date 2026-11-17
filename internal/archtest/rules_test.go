@@ -60,7 +60,7 @@ var layers = map[string]layer{
 	"internal/mcpserver": layerEntry,
 
 	"internal/wire": layerWire,
-	"cmd/asana-tui": layerWire,
+	"cmd/asagao":    layerWire,
 
 	"internal/archtest": layerTest,
 }

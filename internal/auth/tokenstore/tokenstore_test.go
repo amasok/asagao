@@ -10,7 +10,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/config"
 )
 
 func TestNew(t *testing.T) {
@@ -35,7 +35,7 @@ func TestNew(t *testing.T) {
 		}
 		switch s := s.(type) {
 		case *Keychain:
-			if s.Service != "asana-tui" || s.User != "default" {
+			if s.Service != "asagao" || s.User != "default" {
 				t.Errorf("keychain = %+v", s)
 			}
 		case *OnePassword:
@@ -43,7 +43,7 @@ func TestNew(t *testing.T) {
 				t.Errorf("1password = %+v", s)
 			}
 		case *File:
-			if want := filepath.Join("/x/conf", "asana-tui", "token.json"); s.Path != want {
+			if want := filepath.Join("/x/conf", "asagao", "token.json"); s.Path != want {
 				t.Errorf("file path = %q, want %q", s.Path, want)
 			}
 		}
@@ -56,7 +56,7 @@ func TestNew(t *testing.T) {
 func TestKeychain(t *testing.T) {
 	keyring.MockInit()
 	ctx := context.Background()
-	k := &Keychain{Service: "asana-tui-test", User: "u"}
+	k := &Keychain{Service: "asagao-test", User: "u"}
 	if _, err := k.Load(ctx); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Load before save: %v, want ErrNotFound", err)
 	}
@@ -70,7 +70,7 @@ func TestKeychain(t *testing.T) {
 		t.Fatalf("Load = %+v, %v; want %+v", got, err, in)
 	}
 	// Another service/user is a different secret.
-	if _, err := (&Keychain{Service: "asana-tui-test", User: "other"}).Load(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := (&Keychain{Service: "asagao-test", User: "other"}).Load(ctx); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other user: %v", err)
 	}
 	if err := k.Delete(ctx); err != nil {
@@ -84,7 +84,7 @@ func TestKeychain(t *testing.T) {
 	}
 
 	// A broken secret is an error, not "not logged in".
-	if err := keyring.Set("asana-tui-test", "u", "{not json"); err != nil {
+	if err := keyring.Set("asagao-test", "u", "{not json"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := k.Load(ctx); err == nil || errors.Is(err, ErrNotFound) {

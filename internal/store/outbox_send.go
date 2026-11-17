@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // Sending outbox entries (used by sync.Push).

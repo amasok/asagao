@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
 )
 
 func fastLoginRetry(t *testing.T) {

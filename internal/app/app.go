@@ -11,8 +11,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
-	"github.com/amasok/asana-tui/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // TaskStore is the part of the local cache that task use cases need. *store.Store

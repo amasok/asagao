@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/readmodel"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // The conversions for comments and status updates mark their target, so that a test can

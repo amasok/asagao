@@ -14,11 +14,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asana-tui/internal/browser"
-	"github.com/amasok/asana-tui/internal/config"
-	"github.com/amasok/asana-tui/internal/imageview"
-	"github.com/amasok/asana-tui/internal/sync"
-	"github.com/amasok/asana-tui/internal/tui"
+	"github.com/amasok/asagao/internal/browser"
+	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/imageview"
+	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/tui"
 )
 
 // tuiSyncInterval is the background sync interval (requirements 8 章: default 5 minutes).
@@ -39,7 +39,7 @@ func (a *app) runTUI(ctx context.Context) error {
 	}
 	for id := range keys {
 		if !slices.Contains(tui.ActionIDs(), id) {
-			return fmt.Errorf("config [keys]: unknown action %q (see `asana-tui keys`)", id)
+			return fmt.Errorf("config [keys]: unknown action %q (see `asagao keys`)", id)
 		}
 	}
 	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,

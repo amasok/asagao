@@ -47,7 +47,7 @@ func TestEditableRoundTripCannotInjectMention(t *testing.T) {
 // norm writes quotes one way (", &#34; and &quot; are the same character in text).
 func norm(s string) string { return strings.NewReplacer("&#34;", `"`, "&quot;", `"`).Replace(s) }
 
-// What asana-tui itself writes (FromMarkdown, kept in the cache until the next sync) must
+// What asagao itself writes (FromMarkdown, kept in the cache until the next sync) must
 // survive the editor: editing a description twice before it is synced must not lose its
 // mentions or images.
 func TestEditableRoundTripOfOwnOutput(t *testing.T) {

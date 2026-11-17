@@ -13,10 +13,10 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asana-tui/internal/auth"
-	"github.com/amasok/asana-tui/internal/imageview"
-	"github.com/amasok/asana-tui/internal/store"
-	"github.com/amasok/asana-tui/internal/sync"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/imageview"
+	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Deps are the TUI's external dependencies (swapped out in tests).
@@ -595,7 +595,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncer = msg.syncer
 		}
 		// After a login problem or another account, build the syncer again next time, so a
-		// login made meanwhile (asana-tui auth login in another terminal) is picked up.
+		// login made meanwhile (asagao auth login in another terminal) is picked up.
 		loginHelp := auth.LoginHelp(msg.err)
 		if loginHelp != "" || errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.syncer = nil
@@ -603,7 +603,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if errors.Is(msg.err, auth.ErrLoginReplaced) {
 			m.syncAgain = true // check the new login's account now, not in 5 minutes
 		}
-		// Another asana-tui (CLI, MCP server, another TUI) is syncing or sending: not an
+		// Another asagao (CLI, MCP server, another TUI) is syncing or sending: not an
 		// error and not offline. Keep the last state and quietly try again soon.
 		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
 		if m.syncBusy {
@@ -1032,13 +1032,13 @@ func (m *Model) syncStatus() (string, bool) {
 	case m.syncing:
 		return "⟳ 同期中", true
 	case m.syncBusy:
-		return "⟳ 別の asana-tui が同期中（少し後にもう一度同期します）", true
+		return "⟳ 別の asagao が同期中（少し後にもう一度同期します）", true
 	case errors.Is(m.syncErr, sync.ErrAccountChanged):
 		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:
 		return "○ オフライン", false
 	case errors.Is(m.syncErr, auth.ErrNotLoggedIn):
-		return "○ 未ログイン（asana-tui auth login --pat）", false
+		return "○ 未ログイン（asagao auth login --pat）", false
 	case auth.LoginHelp(m.syncErr) != "":
 		return "○ ログインし直してください（案内は下の行）", false
 	case m.syncErr != nil:

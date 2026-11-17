@@ -126,7 +126,7 @@ func lines(vs []violation) []string {
 }
 
 // isModulePackage reports whether p names a package of this module (as the tables do:
-// "internal/store", "cmd/asana-tui") rather than an external module.
+// "internal/store", "cmd/asagao") rather than an external module.
 func isModulePackage(p string) bool {
 	return strings.HasPrefix(p, "internal/") || strings.HasPrefix(p, "cmd/")
 }

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Payloads an attacker can put into any Asana text: every kind of escape sequence the

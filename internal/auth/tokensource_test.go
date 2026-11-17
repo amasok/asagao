@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/amasok/asana-tui/internal/asana"
-	"github.com/amasok/asana-tui/internal/auth/tokenstore"
-	"github.com/amasok/asana-tui/internal/config"
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth/tokenstore"
+	"github.com/amasok/asagao/internal/config"
 )
 
 type memStore struct {

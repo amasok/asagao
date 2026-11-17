@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 // OpCreateStatus posts a project status update. task_gid holds the project gid;

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 // UpdateTaskLocal makes fakeStore a TaskStore; the Create tests never reach it.

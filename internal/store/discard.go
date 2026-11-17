@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amasok/asana-tui/internal/termsafe"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Changes to things deleted in Asana are dropped automatically (Asana answered 404), and

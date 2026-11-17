@@ -3,7 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asana-tui/internal/imageview"
+	"github.com/amasok/asagao/internal/imageview"
 )
 
 // imageViewCmd is run by the TUI (via tea.ExecProcess) to show images full screen.

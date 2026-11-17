@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/amasok/asana-tui/internal/asana"
+	"github.com/amasok/asagao/internal/asana"
 )
 
 func strp(s string) *string { return &s }
