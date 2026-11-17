@@ -3,14 +3,14 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"os"
 	"time"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// ErrUnsentChanges is returned by Reset (without force) when local changes have not been
-// sent to Asana yet; Reset then deletes nothing.
-var ErrUnsentChanges = errors.New("Asana に送っていない変更があります")
+// ErrUnsentChanges is readmodel.ErrUnsentChanges.
+var ErrUnsentChanges = readmodel.ErrUnsentChanges
 
 // ResetReason is the reason recorded for unsent changes deleted by Reset.
 const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"

@@ -10,6 +10,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
@@ -27,26 +28,15 @@ const (
 	// notifications:write scope): front ends say why and do not mark them by themselves.
 	KeyInboxWrite = "inbox_write"
 
-	InboxOK = "ok"
-	// InboxForbidden: the login lacks the notifications:read scope (Asana answered 401/403).
-	InboxForbidden = "forbidden"
-	// InboxPayment: not available on the workspace's plan (402).
-	InboxPayment = "payment"
-	// InboxError: another error Asana keeps answering (4xx).
-	InboxError = "error"
+	// The Inbox* values are readmodel's.
+	InboxOK        = readmodel.InboxOK
+	InboxForbidden = readmodel.InboxForbidden
+	InboxPayment   = readmodel.InboxPayment
+	InboxError     = readmodel.InboxError
 )
 
-// InboxState says whether the notifications can be shown. When they cannot, front ends
-// show the recently modified tasks instead.
-type InboxState struct {
-	Status string `json:"status"`          // InboxOK, InboxForbidden, InboxPayment, InboxError or ""
-	Error  string `json:"error,omitempty"` // Asana's message
-	// WriteForbidden: notifications can be listed but not marked read / unread.
-	WriteForbidden bool `json:"write_forbidden,omitempty"`
-}
-
-// Available reports whether notifications were fetched (at the latest sync).
-func (s InboxState) Available() bool { return s.Status == InboxOK }
+// InboxState is readmodel.InboxState.
+type InboxState = readmodel.InboxState
 
 func (s *Store) InboxState(ctx context.Context) (InboxState, error) {
 	status, err := s.SyncState(ctx, KeyInboxStatus)
@@ -106,29 +96,8 @@ func (s *Store) SetInboxState(ctx context.Context, st InboxState) error {
 	return s.SetSyncState(ctx, KeyInboxError, st.Error)
 }
 
-// Notification is a cached inbox item.
-type Notification struct {
-	GID          string `json:"gid"`
-	WorkspaceGID string `json:"workspace_gid"`
-	Read         bool   `json:"read"`
-	CreatedAt    string `json:"created_at"`
-	ActorGID     string `json:"actor_gid,omitempty"`
-	ActorName    string `json:"actor_name,omitempty"`
-	// Subtype is the story's resource_subtype (comment_added, assigned, ...).
-	Subtype string `json:"subtype,omitempty"`
-	Text    string `json:"text,omitempty"`
-	// Target is what the notification is about: usually a task (TargetType "task").
-	TargetGID  string `json:"target_gid,omitempty"`
-	TargetType string `json:"target_type,omitempty"`
-	TargetName string `json:"target_name,omitempty"`
-	// TaskCached: the target task is in the local store (it can be shown offline).
-	TaskCached bool `json:"task_cached"`
-	// Pending: a read / unread change has not been sent to Asana yet.
-	Pending bool `json:"pending"`
-}
-
-// IsTask reports whether the notification is about a task.
-func (n Notification) IsTask() bool { return n.TargetType == "task" && n.TargetGID != "" }
+// Notification is readmodel.Notification.
+type Notification = readmodel.Notification
 
 // ReplaceNotifications replaces the cached notifications of a workspace with what Asana
 // returned (newest first). Read / unread changes not sent yet are applied again on top.
@@ -213,11 +182,8 @@ func reapplyNotificationMarks(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-// NotificationFilter selects cached notifications.
-type NotificationFilter struct {
-	UnreadOnly bool
-	Limit      int
-}
+// NotificationFilter is readmodel.NotificationFilter.
+type NotificationFilter = readmodel.NotificationFilter
 
 // ListNotifications returns cached notifications, newest first.
 func (s *Store) ListNotifications(ctx context.Context, f NotificationFilter) ([]Notification, error) {
@@ -396,36 +362,8 @@ func (s *Store) PendingNotificationMarks(ctx context.Context, op Op, limit int) 
 	return out, nil
 }
 
-// NotificationLabel says in a few words what kind of activity a notification reports.
-func NotificationLabel(subtype string) string {
-	switch subtype {
-	case "comment_added":
-		return "コメント"
-	case "assigned":
-		return "担当に設定"
-	case "unassigned":
-		return "担当から外す"
-	case "marked_complete":
-		return "完了"
-	case "marked_incomplete":
-		return "未完了に戻す"
-	case "due_date_changed", "due_today", "due_soon", "due_date_approaching":
-		return "期日"
-	case "liked", "comment_liked":
-		return "いいね"
-	case "collaborator_added", "follower_added":
-		return "フォロワーに追加"
-	case "added_to_project":
-		return "プロジェクトに追加"
-	case "mentioned", "mention":
-		return "メンション"
-	case "attachment_added":
-		return "添付"
-	case "":
-		return ""
-	}
-	return strings.ReplaceAll(subtype, "_", " ")
-}
+// NotificationLabel is readmodel.NotificationLabel.
+func NotificationLabel(subtype string) string { return readmodel.NotificationLabel(subtype) }
 
 // TaskSummaries returns the cached tasks among gids, by gid.
 func (s *Store) TaskSummaries(ctx context.Context, gids []string) (map[string]TaskSummary, error) {
