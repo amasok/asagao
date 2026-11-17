@@ -65,14 +65,14 @@ const keychainService = "asagao"
 func New(cfg config.AuthConfig) (Store, error) {
 	switch cfg.TokenStore {
 	case config.TokenStoreKeychain:
-		return &withLegacy{
-			Store:  &Keychain{Service: keychainService, User: "default"},
-			legacy: &Keychain{Service: config.LegacyAppName, User: "default"},
-		}, nil
+		return newWithLegacy(
+			&Keychain{Service: keychainService, User: "default"},
+			&Keychain{Service: config.LegacyAppName, User: "default"},
+		), nil
 	case config.TokenStore1Password:
 		op := &OnePassword{Vault: cfg.OnePassword.Vault, Item: cfg.OnePassword.Item, Account: cfg.OnePassword.Account}
 		if l := cfg.OnePassword.LegacyItem; l != "" && l != op.Item {
-			return &withLegacy{Store: op, legacy: &OnePassword{Vault: op.Vault, Item: l, Account: op.Account}}, nil
+			return newWithLegacy(op, &OnePassword{Vault: op.Vault, Item: l, Account: op.Account}), nil
 		}
 		return op, nil
 	case config.TokenStoreFile:

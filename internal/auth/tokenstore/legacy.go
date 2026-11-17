@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/amasok/asagao/internal/config"
 )
@@ -15,9 +16,19 @@ import (
 // what it finds again under the current name. The former entry is not deleted there: an old
 // binary still registered somewhere (an MCP server, say) may still use it. Save writes only
 // the current store.
+//
+// The copy and Save hold a lock file (lockPath), so two processes starting together (the TUI
+// and an MCP server) copy only once: 1Password makes a second item of the same name on a
+// second create, and then finds neither. A login saved meanwhile (auth login in another
+// terminal) is not overwritten by the copy either.
 type withLegacy struct {
 	Store
-	legacy Store
+	legacy   Store
+	lockPath string
+}
+
+func newWithLegacy(cur, legacy Store) *withLegacy {
+	return &withLegacy{Store: cur, legacy: legacy, lockPath: filepath.Join(config.ConfigDir(), ".login.lock")}
 }
 
 func (s *withLegacy) Load(ctx context.Context) (*Credentials, error) {
@@ -25,16 +36,36 @@ func (s *withLegacy) Load(ctx context.Context) (*Credentials, error) {
 	if !errors.Is(err, ErrNotFound) {
 		return c, err
 	}
-	c, err = s.legacy.Load(ctx)
+	old, err := s.legacy.Load(ctx)
 	if errors.Is(err, ErrNotFound) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("旧名 %s で保存したログインを読めません: %w", config.LegacyAppName, err)
 	}
-	// Not saved now: used as it is, and copied again on the next run.
-	_ = s.Store.Save(ctx, c)
-	return c, nil
+	unlock, err := lockCopy(ctx, s.lockPath)
+	if err != nil {
+		return old, nil // not copied now (no lock: it might make a second copy); next run
+	}
+	defer unlock()
+	// Another process may have copied it, or saved a new login, while we waited.
+	c, err = s.Store.Load(ctx)
+	if err == nil {
+		return c, nil
+	}
+	if errors.Is(err, ErrNotFound) {
+		_ = s.Store.Save(ctx, old) // if this fails, the login is still used, and copied next run
+	}
+	return old, nil
+}
+
+// Save holds the lock too, so a copy running in another process does not overwrite it. If
+// the lock cannot be taken, it saves anyway: a new login matters more.
+func (s *withLegacy) Save(ctx context.Context, c *Credentials) error {
+	if unlock, err := lockCopy(ctx, s.lockPath); err == nil {
+		defer unlock()
+	}
+	return s.Store.Save(ctx, c)
 }
 
 // Delete removes the login under both names: `auth logout` and `auth migrate` mean to forget

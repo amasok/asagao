@@ -2,9 +2,13 @@ package tokenstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -73,6 +77,7 @@ func TestKeychainNothingSaved(t *testing.T) {
 
 // memStore is a store in memory whose Load and Save can fail.
 type memStore struct {
+	mu               sync.Mutex
 	c                *Credentials
 	loadErr, saveErr error
 	saves, deletes   int
@@ -81,6 +86,8 @@ type memStore struct {
 func (m *memStore) Name() string            { return "mem" }
 func (m *memStore) CachesAccessToken() bool { return true }
 func (m *memStore) Load(context.Context) (*Credentials, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.loadErr != nil {
 		return nil, m.loadErr
 	}
@@ -90,6 +97,8 @@ func (m *memStore) Load(context.Context) (*Credentials, error) {
 	return m.c, nil
 }
 func (m *memStore) Save(_ context.Context, c *Credentials) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.saves++
 	if m.saveErr != nil {
 		return m.saveErr
@@ -97,13 +106,19 @@ func (m *memStore) Save(_ context.Context, c *Credentials) error {
 	m.c = c
 	return nil
 }
-func (m *memStore) Delete(context.Context) error { m.deletes++; m.c = nil; return nil }
+func (m *memStore) Delete(context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deletes++
+	m.c = nil
+	return nil
+}
 
 func TestWithLegacyEdgeCases(t *testing.T) {
 	ctx := context.Background()
 	t.Run("current wins", func(t *testing.T) {
 		cur, old := &memStore{c: &Credentials{RefreshToken: "new"}}, &memStore{c: &Credentials{RefreshToken: "old"}}
-		c, err := (&withLegacy{Store: cur, legacy: old}).Load(ctx)
+		c, err := (&withLegacy{Store: cur, legacy: old, lockPath: lockPath(t)}).Load(ctx)
 		if err != nil || c.RefreshToken != "new" || cur.saves != 0 {
 			t.Fatalf("%+v, %v, saves %d", c, err, cur.saves)
 		}
@@ -111,20 +126,20 @@ func TestWithLegacyEdgeCases(t *testing.T) {
 	t.Run("current fails: no fallback", func(t *testing.T) {
 		boom := errors.New("keychain locked")
 		cur, old := &memStore{loadErr: boom}, &memStore{c: &Credentials{RefreshToken: "old"}}
-		if _, err := (&withLegacy{Store: cur, legacy: old}).Load(ctx); !errors.Is(err, boom) {
+		if _, err := (&withLegacy{Store: cur, legacy: old, lockPath: lockPath(t)}).Load(ctx); !errors.Is(err, boom) {
 			t.Fatalf("want the current store's error: %v", err)
 		}
 	})
 	t.Run("old fails: says which", func(t *testing.T) {
 		boom := errors.New("op not signed in")
-		_, err := (&withLegacy{Store: &memStore{}, legacy: &memStore{loadErr: boom}}).Load(ctx)
+		_, err := (&withLegacy{Store: &memStore{}, legacy: &memStore{loadErr: boom}, lockPath: lockPath(t)}).Load(ctx)
 		if !errors.Is(err, boom) || !strings.Contains(err.Error(), config.LegacyAppName) {
 			t.Fatalf("want a wrapped error naming %s: %v", config.LegacyAppName, err)
 		}
 	})
 	t.Run("copy fails: login still works", func(t *testing.T) {
 		cur := &memStore{saveErr: errors.New("read-only")}
-		c, err := (&withLegacy{Store: cur, legacy: &memStore{c: &Credentials{RefreshToken: "old"}}}).Load(ctx)
+		c, err := (&withLegacy{Store: cur, legacy: &memStore{c: &Credentials{RefreshToken: "old"}}, lockPath: lockPath(t)}).Load(ctx)
 		if err != nil || c.RefreshToken != "old" || cur.saves != 1 {
 			t.Fatalf("%+v, %v, saves %d", c, err, cur.saves)
 		}
@@ -184,5 +199,103 @@ func TestOnePasswordExplicitItemHasNoFallback(t *testing.T) {
 		if !ok || op.Item != item {
 			t.Errorf("item %q: got %T %+v", item, s, s)
 		}
+	}
+}
+
+func lockPath(t *testing.T) string { return filepath.Join(t.TempDir(), ".login.lock") }
+
+// fakeVault is a 1Password vault where, as in 1Password, titles are not unique: a create
+// always adds an item, and a get of a title two items have fails ("More than one item").
+// get and create take a while, as `op` does.
+type fakeVault struct {
+	mu      sync.Mutex
+	items   map[string][]map[string]any
+	creates int
+}
+
+func (v *fakeVault) run(_ context.Context, stdin []byte, args ...string) ([]byte, error) {
+	time.Sleep(20 * time.Millisecond)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	switch args[1] {
+	case "get":
+		switch its := v.items[args[2]]; len(its) {
+		case 0:
+			return nil, &opError{msg: `[ERROR] "` + args[2] + `" isn't an item in the "Private" vault.`}
+		case 1:
+			return json.Marshal(its[0])
+		default:
+			return nil, &opError{msg: `[ERROR] More than one item matches "` + args[2] + `".`}
+		}
+	case "create":
+		var it map[string]any
+		if err := json.Unmarshal(stdin, &it); err != nil {
+			return nil, err
+		}
+		title, _ := it["title"].(string)
+		it["id"] = title + "-id"
+		v.items[title] = append(v.items[title], it)
+		v.creates++
+		return nil, nil
+	}
+	panic("unexpected op call " + strings.Join(args, " "))
+}
+
+// The TUI and an MCP server start together after the rename, both finding only the old
+// 1Password item: the login is copied once, so there is one "asagao" item and later runs
+// can read it.
+func TestOnePasswordLegacyCopyOnceAcrossProcesses(t *testing.T) {
+	ctx := context.Background()
+	v := &fakeVault{items: map[string][]map[string]any{}}
+	if err := (&OnePassword{Vault: "Private", Item: config.LegacyAppName, run: v.run}).Save(ctx,
+		&Credentials{RefreshToken: "secret-rt", ClientSecret: "secret-cs"}); err != nil {
+		t.Fatal(err)
+	}
+	v.creates = 0
+	lock := lockPath(t)
+	var wg sync.WaitGroup
+	for range 4 {
+		// one store per "process", sharing the vault and the lock file
+		s := &withLegacy{
+			Store:    &OnePassword{Vault: "Private", Item: "asagao", run: v.run},
+			legacy:   &OnePassword{Vault: "Private", Item: config.LegacyAppName, run: v.run},
+			lockPath: lock,
+		}
+		wg.Go(func() {
+			if c, err := s.Load(ctx); err != nil || c.RefreshToken != "secret-rt" {
+				t.Errorf("Load = %+v, %v", c, err)
+			}
+		})
+	}
+	wg.Wait()
+	if v.creates != 1 || len(v.items["asagao"]) != 1 {
+		t.Fatalf("want one asagao item, got %d (creates %d)", len(v.items["asagao"]), v.creates)
+	}
+	if c, err := (&OnePassword{Vault: "Private", Item: "asagao", run: v.run}).Load(ctx); err != nil || c.RefreshToken != "secret-rt" {
+		t.Fatalf("asagao item afterwards: %+v, %v", c, err)
+	}
+}
+
+// A login saved under the new name while a copy waits for the lock is not overwritten by
+// the copy.
+func TestLegacyCopyDoesNotOverwriteNewLogin(t *testing.T) {
+	ctx := context.Background()
+	lock := lockPath(t)
+	cur := &memStore{}
+	s := &withLegacy{Store: cur, legacy: &memStore{c: &Credentials{RefreshToken: "old"}}, lockPath: lock}
+	unlock, err := lockCopy(ctx, lock) // another process holds the lock...
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *Credentials)
+	go func() { c, _ := s.Load(ctx); done <- c }()
+	time.Sleep(100 * time.Millisecond)
+	_ = cur.Save(ctx, &Credentials{RefreshToken: "new"}) // ...and saves a new login
+	unlock()
+	if c := <-done; c.RefreshToken != "new" {
+		t.Errorf("Load = %+v, want the new login", c)
+	}
+	if c, _ := cur.Load(ctx); c.RefreshToken != "new" {
+		t.Errorf("the new login was overwritten: %+v", c)
 	}
 }
