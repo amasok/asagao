@@ -49,3 +49,24 @@ func TestLinkMultiLineAttack(t *testing.T) {
 		}
 	}
 }
+
+// Links written as text (image, <br>, mention in them): blank lines are folded, and the
+// round trip still settles.
+func TestLinkTextWithAtomsBlankLineAttack(t *testing.T) {
+	inners := []string{
+		"a\n\n<img data-asana-gid=\"1\">b", "a<br>\n\nb", "a\n\n\n<br>\n\nb", "\n\n<br>",
+		"a\n\n<a href=\"https://f.com\">b</a>", "a\n \n<br>b", "@x\n\n<br>y",
+	}
+	for _, w := range []string{"%s", "<ul><li>%s</li></ul>", "<blockquote>%s</blockquote>", "<h1>%s</h1>"} {
+		for _, in := range inners {
+			h := "<body>" + strings.Replace(w, "%s", `<a href="https://e.com">`+in+`</a>`, 1) + "</body>"
+			md1, h1, md2, h2 := rt2(h)
+			if h1 != h2 {
+				t.Errorf("in %q\nmd1 %q\nh1 %q\nmd2 %q\nh2 %q", h, md1, h1, md2, h2)
+			}
+			if strings.Contains(md1, "\n\n") && !strings.Contains(w, "<blockquote") && strings.Contains(md1, "](https") && strings.Index(md1, "[") < strings.Index(md1, "\n\n") && strings.Index(md1, "\n\n") < strings.Index(md1, "](https") {
+				t.Errorf("blank line inside link text: in %q md1 %q", h, md1)
+			}
+		}
+	}
+}
