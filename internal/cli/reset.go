@@ -9,14 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 // backupDir is where unsent changes are written before a reset.
-func backupDir() string { return filepath.Join(config.DataDir(), "backups") }
+func backupDir() string { return filepath.Join(xdg.DataDir(), "backups") }
 
 func (a *app) resetCmd() *cobra.Command {
 	var force bool
@@ -39,7 +38,7 @@ func (a *app) resetCmd() *cobra.Command {
 			// without it, and afterwards with the backup and in `outbox discarded`).
 			upTo := int64(0)
 			if force {
-				upTo = store.AnyUnsent
+				upTo = readmodel.AnyUnsent
 			}
 			res, err := st.ResetWithBackup(ctx, backupDir(), upTo, time.Now())
 			switch {
@@ -71,7 +70,7 @@ func (a *app) resetCmd() *cobra.Command {
 }
 
 // accountChanged explains sync.ErrAccountChanged with the number of unsent changes.
-func accountChanged(ctx context.Context, st *store.Store) error {
+func accountChanged(ctx context.Context, st Store) error {
 	n, _ := query(st).UnsentCount(ctx)
 	return fmt.Errorf("%s: %w", readmodel.AccountChangedHelp(n, "asagao reset"), sync.ErrAccountChanged)
 }

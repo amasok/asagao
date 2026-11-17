@@ -10,7 +10,6 @@ import (
 
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -34,7 +33,7 @@ func taskImages(d *readmodel.TaskDetail) []string {
 		if htmlText != "" {
 			return richtext.Images(htmlText)
 		}
-		return store.InlineAssets(plain)
+		return readmodel.InlineAssets(plain)
 	}
 	for _, g := range textImages(d.HTMLNotes, d.Notes) {
 		add(g)

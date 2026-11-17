@@ -11,7 +11,6 @@ import (
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -51,7 +50,7 @@ func (a *app) projectCmd() *cobra.Command {
 }
 
 // onlineSyncer returns a syncer with an API client (for online-only project operations).
-func (a *app) onlineSyncer(ctx context.Context, st *store.Store) (*sync.Syncer, error) {
+func (a *app) onlineSyncer(ctx context.Context, st Store) (*sync.Syncer, error) {
 	api, err := a.apiClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("Asana に接続できません: %w", err)

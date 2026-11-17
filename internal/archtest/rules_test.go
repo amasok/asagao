@@ -52,6 +52,7 @@ var layers = map[string]layer{
 
 	"internal/asana/model": layerShared,
 	"internal/readmodel":   layerShared,
+	"internal/settings":    layerShared,
 
 	"internal/termsafe": layerCommon,
 	"internal/xdg":      layerCommon,
@@ -125,9 +126,4 @@ type violation struct {
 // entryToEntry let them through.
 var allowed = []violation{
 	{"internal/sync", "internal/store", "after d3 (the store is the LocalStore port now): the names sync still takes from the store, the outbox kinds, sync_state keys, errors and helpers (store.OpX, store.KeyX, store.ErrNotFound, store.TaskFieldValues, ...), move out of it"},
-	{"internal/tui", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
-	{"internal/mcpserver", "internal/store", "a: writes go through app; c2: read types move to readmodel"},
-	{"internal/cli", "internal/store", "d4b: the commands hold the store through ports (d4 moved Open to wire)"},
-	{"internal/cli", "internal/config", "d4b: loading the settings moves to wire"},
-	{"internal/cli", "internal/auth/tokenstore", "d4b: auth migrate moves to auth"},
 }

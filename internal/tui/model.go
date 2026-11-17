@@ -17,13 +17,12 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
 // Deps are the TUI's external dependencies (swapped out in tests).
 type Deps struct {
-	Store *store.Store
+	Store Store
 	// NewSyncer creates a syncer with an authenticated API client. It is called lazily in the
 	// background so the UI never waits for authentication (e.g. a 1Password unlock).
 	// nil means offline-only.

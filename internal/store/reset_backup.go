@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Resetting the store from the TUI or CLI: unsent changes (and the record of dropped
@@ -22,11 +24,8 @@ type ResetBackup struct {
 	Discarded []Discard `json:"discarded"`
 }
 
-// ResetResult says what ResetWithBackup did.
-type ResetResult struct {
-	Unsent     int    `json:"unsent"`                // unsent changes deleted
-	BackupPath string `json:"backup_path,omitempty"` // "" when there was nothing to keep
-}
+// ResetResult says what ResetWithBackup did (readmodel.ResetResult).
+type ResetResult = readmodel.ResetResult
 
 // UnsentCount is the number of outbox entries not in Asana (any state).
 func (s *Store) UnsentCount(ctx context.Context) (int, error) {

@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"regexp"
-	"strings"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -16,10 +13,8 @@ import (
 // AttachmentView is readmodel.AttachmentView.
 type AttachmentView = readmodel.AttachmentView
 
-var imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".heic": true, ".bmp": true}
-
-// IsImageName reports whether a file name looks like an image.
-func IsImageName(name string) bool { return imageExts[strings.ToLower(filepath.Ext(name))] }
+// IsImageName reports whether a file name looks like an image (readmodel.IsImageName).
+func IsImageName(name string) bool { return readmodel.IsImageName(name) }
 
 // ReplaceAttachments stores a task's attachments, keeping local paths of files already
 // downloaded and files attached offline ("local:" gids) that are not uploaded yet.
@@ -109,23 +104,12 @@ func (s *Store) UpsertAttachment(ctx context.Context, taskGID string, a model.At
 	return err
 }
 
-// inlineAsset matches images pasted into task descriptions and comments, which the API
-// returns as links like https://app.asana.com/app/asana/-/get_asset?asset_id=1220507679870013
-// (the asset id is the attachment gid).
-var inlineAsset = regexp.MustCompile(`https://app\.asana\.com/app/asana/-/get_asset\?[^\s)\]>]*?asset_id=(\d+)[^\s)\]>]*`)
+// InlineAssets returns the attachment gids of images embedded in text, in order
+// (readmodel.InlineAssets).
+func InlineAssets(text string) []string { return readmodel.InlineAssets(text) }
 
-// InlineAssets returns the attachment gids of images embedded in text, in order.
-func InlineAssets(text string) []string {
-	var gids []string
-	for _, m := range inlineAsset.FindAllStringSubmatch(text, -1) {
-		gids = append(gids, m[1])
-	}
-	return gids
-}
-
-// ReplaceInlineAssets replaces each embedded image link with repl(gid).
+// ReplaceInlineAssets replaces each embedded image link with repl(gid)
+// (readmodel.ReplaceInlineAssets).
 func ReplaceInlineAssets(text string, repl func(gid string) string) string {
-	return inlineAsset.ReplaceAllStringFunc(text, func(link string) string {
-		return repl(inlineAsset.FindStringSubmatch(link)[1])
-	})
+	return readmodel.ReplaceInlineAssets(text, repl)
 }

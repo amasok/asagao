@@ -9,9 +9,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 )
 
 const (
@@ -607,7 +607,7 @@ func (m *Model) renderDetail(w int) string {
 			if a.LocalPath != "" {
 				text += m.st.dim.Render("  ✓保存済み")
 			}
-			if store.IsLocalGID(a.GID) {
+			if localgid.IsLocal(a.GID) {
 				text += " ↑"
 			}
 			row(item(itemAttachment, i), ansi.Truncate(text, w, "…"))

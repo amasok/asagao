@@ -44,7 +44,7 @@ func (s *Store) Reset(ctx context.Context, force bool, now time.Time) (unsent in
 }
 
 // AnyUnsent lets ResetUpTo delete every unsent change, however many there are.
-const AnyUnsent int64 = -1
+const AnyUnsent = readmodel.AnyUnsent
 
 // ResetUpTo is Reset for a reset the user confirmed after seeing the unsent changes: it
 // deletes them only if none was queued after outbox entry upTo (the newest one shown;

@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -44,7 +43,7 @@ func (m *Model) inboxScope() scope {
 // inboxRows loads the notifications as list rows. Rows about a cached task carry it (the
 // detail pane shows it, task actions apply to it); enter on one about a task not cached
 // yet fetches it. notice (if any) is shown above the list.
-func inboxRows(ctx context.Context, st *store.Store, now time.Time, notice string) ([]row, error) {
+func inboxRows(ctx context.Context, st Store, now time.Time, notice string) ([]row, error) {
 	ns, err := queryOf(st).ListNotifications(ctx, readmodel.NotificationFilter{})
 	if err != nil {
 		return nil, err

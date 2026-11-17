@@ -13,17 +13,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/auth/tokenstore"
-	"github.com/amasok/asagao/internal/config"
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/settings"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/xdg"
 )
 
 var version = "dev"
 
 type app struct {
-	cfg     config.Config
+	cfg     settings.Config
 	json    bool
 	offline bool
 	// baseURL overrides the Asana API URL (tests).
@@ -47,10 +47,10 @@ func newRoot(a *app) *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// Folders of the former name (asana-tui) move to the new ones. What could not
 			// be moved is left in place: warn and go on with the new folders.
-			if err := config.MigrateLegacyDirs(); err != nil {
+			if err := wiring.MigrateLegacyDirs(); err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "注意:", termsafe.String(err.Error()))
 			}
-			cfg, err := config.Load()
+			cfg, err := wiring.LoadSettings()
 			if err != nil {
 				return err
 			}
@@ -74,12 +74,16 @@ func newRoot(a *app) *cobra.Command {
 // adapters (the store, the Asana client) itself (architecture.md, 依存の決まり 4 and 6).
 // cmd/asagao fills it with wire's functions; the package's tests do the same.
 type Wiring struct {
+	// MigrateLegacyDirs moves the folders of the former name (config.MigrateLegacyDirs).
+	MigrateLegacyDirs func() error
+	// LoadSettings reads config.toml (config.Load).
+	LoadSettings func() (settings.Config, error)
 	// APIClient is the Asana client for the login of cfg; baseURL overrides Asana's URL.
-	APIClient func(ctx context.Context, cfg config.Config, baseURL string) (sync.AsanaAPI, error)
+	APIClient func(ctx context.Context, cfg settings.Config, baseURL string) (sync.AsanaAPI, error)
 	// Syncer is the Syncer for api (nil: offline) and st, with the settings of cfg.
-	Syncer func(api sync.AsanaAPI, st *store.Store, cfg config.Config) *sync.Syncer
-	// OpenStore opens the local store at path.
-	OpenStore func(ctx context.Context, path string) (*store.Store, error)
+	Syncer func(api sync.AsanaAPI, st sync.LocalStore, cfg settings.Config) *sync.Syncer
+	// OpenStore opens the local store at path (a nil Store with the error).
+	OpenStore func(ctx context.Context, path string) (Store, error)
 	// CheckPAT asks Asana whose a Personal Access Token is, retrying once after retryDelay.
 	CheckPAT func(ctx context.Context, token, baseURL string, retryDelay time.Duration, onRetry func(status int, wait time.Duration)) (*model.User, error)
 }
@@ -95,7 +99,7 @@ func Execute(w Wiring) {
 	}
 }
 
-func (a *app) tokenStore() (tokenstore.Store, error) { return tokenstore.New(a.cfg.Auth) }
+func (a *app) tokenStore() (auth.TokenStore, error) { return auth.OpenTokenStore(a.cfg.Auth) }
 
 // apiClient is the Asana client for the login (wire.APIClient).
 func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {
@@ -103,13 +107,13 @@ func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {
 }
 
 // syncer is the Syncer for api and st (wire.Syncer).
-func (a *app) syncer(api sync.AsanaAPI, st *store.Store) *sync.Syncer {
+func (a *app) syncer(api sync.AsanaAPI, st Store) *sync.Syncer {
 	return wiring.Syncer(api, st, a.cfg)
 }
 
-func (a *app) storePath() string { return filepath.Join(config.DataDir(), "store.db") }
+func (a *app) storePath() string { return filepath.Join(xdg.DataDir(), "store.db") }
 
-func (a *app) openStore(ctx context.Context) (*store.Store, error) {
+func (a *app) openStore(ctx context.Context) (Store, error) {
 	return wiring.OpenStore(ctx, a.storePath())
 }
 

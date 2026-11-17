@@ -59,7 +59,7 @@ func TestCreateTaskInMyTasks(t *testing.T) {
 		t.Fatalf("status:\n%s", s)
 	}
 	want := map[string]any{"workspace": "w1", "name": "牛乳を買う", "due_on": "2026-11-14", "assignee": "me"}
-	if got := createdPayload(t, h.m.deps.Store); !samePayload(got, want) {
+	if got := createdPayload(t, h.m.deps.Store.(*store.Store)); !samePayload(got, want) {
 		t.Fatalf("payload = %v, want %v", got, want)
 	}
 }

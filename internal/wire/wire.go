@@ -53,7 +53,7 @@ func newClient(hc *http.Client, baseURL string) *asana.Client {
 
 // Syncer is the Syncer for api and st, with the [sync] settings of cfg and the rich text
 // conversion. A nil api leaves Syncer.API unset (offline).
-func Syncer(api sync.AsanaAPI, st *store.Store, cfg config.Config) *sync.Syncer {
+func Syncer(api sync.AsanaAPI, st sync.LocalStore, cfg config.Config) *sync.Syncer {
 	return &sync.Syncer{API: api, Store: st, Cfg: sync.Config(cfg.Sync), RichText: richtext.Converter{}}
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Writes (complete / create / comment) are applied to the local store immediately and
@@ -106,7 +105,7 @@ func (m *Model) requestSync() tea.Cmd {
 }
 
 // queryOf reads the local cache (app.Query over the store).
-func queryOf(st *store.Store) app.Query { return app.Query{Store: st} }
+func queryOf(st Store) app.Query { return app.Query{Store: st} }
 
 // tasks returns the task use cases on the cache, with the clock stopped at now: the time
 // the key was pressed, which the TUI's writes use. The use cases only write locally and

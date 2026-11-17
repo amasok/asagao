@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Collapsible groups in the list view. The collapsed groups of each scope (project or
@@ -22,10 +22,10 @@ func (m *Model) scopeKey() string {
 	return "my"
 }
 
-func collapsedStateKey(scope string) string { return store.KeyCollapsed + scope }
+func collapsedStateKey(scope string) string { return readmodel.KeyCollapsed + scope }
 
 // loadCollapsed reads the collapsed group keys of a scope (in a command goroutine).
-func loadCollapsed(ctx context.Context, st *store.Store, scope string) map[string]bool {
+func loadCollapsed(ctx context.Context, st Store, scope string) map[string]bool {
 	out := map[string]bool{}
 	v, err := st.SyncState(ctx, collapsedStateKey(scope))
 	if err != nil || v == "" {
