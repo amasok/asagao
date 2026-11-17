@@ -154,6 +154,9 @@ func (m *Model) afterWrite() tea.Cmd {
 }
 
 func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	if cmd, ok := m.updateBulk(msg); ok {
+		return m, cmd, true
+	}
 	if cmd, ok := m.updateFields(msg); ok {
 		return m, cmd, true
 	}

@@ -237,6 +237,9 @@ type Model struct {
 	leader         bool                  // space was pressed: the menu is open
 	renderedActive bool                  // the detail was last rendered with selectable items
 	dueTask        readmodel.TaskSummary // task for promptDue
+	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
+	marked         map[string]bool         // gids of the tasks marked in the list (bulk.go)
+	bulkAsk        *bulkPlan               // a change to the marked tasks waiting for y/n
 	tagTask        readmodel.TaskSummary // task for promptNewTag
 	// custom fields (fields.go)
 	fieldTask   readmodel.TaskSummary     // task for promptField
@@ -665,6 +668,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// modal layers first: text input, overlays, the space menu
 	switch {
+	case m.bulkAsk != nil:
+		return m.handleBulkKey(key)
 	case m.promptMode != promptNone:
 		return m.handlePromptKey(msg)
 	case m.showOutbox:
@@ -770,6 +775,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // back handles esc / backspace / q: leave the innermost thing (a subtask opened in the
 // detail, the full-screen detail, the search, the detail focus); q quits at the top.
 func (m *Model) back(key string) tea.Cmd {
+	if key == "esc" && m.clearMarks() {
+		return nil
+	}
 	if m.inDetail() {
 		if cmd, ok := m.popDetail(); ok {
 			return cmd
@@ -895,7 +903,7 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		m.rowsScope = key
 	}
 	m.allRows = rows
-	m.rows = m.visibleRows()
+	m.showRows()
 	target := prevRow
 	if m.selectAfter != "" && m.listed(m.selectAfter) {
 		target = m.selectAfter
