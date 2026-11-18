@@ -5,7 +5,8 @@ import (
 )
 
 // customTypeFields are the fields of a custom task type with its statuses (#59).
-var customTypeFields = []string{"name", "status_options.name", "status_options.color",
+// The statuses' gids are asked for by name, like the task's (see TaskFields).
+var customTypeFields = []string{"name", "status_options.gid", "status_options.name", "status_options.color",
 	"status_options.enabled", "status_options.completion_state"}
 
 // CustomTypes returns the custom task types a project offers, with their statuses

@@ -79,10 +79,17 @@ func (s *Syncer) customTypeRefused(ctx context.Context, op outbox.Op, err error)
 // customTypeApplied checks that Asana's answer to a change with a custom type has it: an
 // answer without it (the field ignored) is customTypeWithdrawn, applied, instead of a
 // change completed silently without its type. A task read without its custom type is not
-// checked.
+// checked, nor one whose type or status came without its gid.
 func customTypeApplied(op outbox.Op, t *model.Task) error {
 	if !domaintask.TouchesCustomType(op.Payload) || t == nil || t.Partial || t.NoCustomType {
 		return nil
+	}
+	// A type or status without its gid (read by name only) cannot be compared: the change
+	// is not taken for refused because of it.
+	for _, r := range []*model.Ref{t.CustomType, t.CustomTypeStatusOption} {
+		if r != nil && r.GID == "" {
+			return nil
+		}
 	}
 	sent := taskUpdateFields(op)
 	got := map[string]string{"resource_subtype": t.ResourceSubtype}
