@@ -322,6 +322,13 @@ func (c *Created) guardBody(method, path string, body M) error {
 	}
 	ok := false
 	switch {
+	case method == "POST" && path == "/tasks":
+		// a task asagao has not seen (the remote search of #36): only in our projects
+		projects, _ := data["projects"].([]string)
+		ok = prefixed && len(projects) > 0
+		for _, p := range projects {
+			ok = ok && slices.Contains(c.Projects, p)
+		}
 	case method == "POST" && path == "/tags":
 		ok = data["workspace"] == TestWorkspace && prefixed
 	case method == "PUT" && len(parts) == 2 && (parts[0] == "tags" || parts[0] == "projects"):

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ type fakeTimeAsana struct {
 	calls   []string
 	unpaid  bool
 	entries []map[string]any
+	made    int
 }
 
 func (f *fakeTimeAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,12 +48,29 @@ func (f *fakeTimeAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "POST /tasks/t1/time_tracking_entries":
 		var body struct{ Data map[string]any }
 		_ = json.Unmarshal(raw, &body)
-		e := map[string]any{"gid": "te9", "duration_minutes": body.Data["duration_minutes"], "entered_on": body.Data["entered_on"],
+		gid := "te9"
+		if f.made++; f.made > 1 {
+			gid = fmt.Sprintf("te9-%d", f.made)
+		}
+		e := map[string]any{"gid": gid, "duration_minutes": body.Data["duration_minutes"], "entered_on": body.Data["entered_on"],
 			"created_by": map[string]string{"gid": "me", "name": "Me"}, "created_at": "2026-11-13T00:00:00Z"}
 		f.entries = append(f.entries, e)
 		w.WriteHeader(http.StatusCreated)
 		reply(e)
 	default:
+		if gid, ok := strings.CutPrefix(r.URL.Path, "/time_tracking_entries/"); ok && r.Method == http.MethodPut {
+			var body struct{ Data map[string]any }
+			_ = json.Unmarshal(raw, &body)
+			for _, e := range f.entries {
+				if e["gid"] == gid {
+					for k, v := range body.Data {
+						e[k] = v
+					}
+					reply(e)
+					return
+				}
+			}
+		}
 		http.Error(w, `{"errors":[{"message":"not in the fake"}]}`, http.StatusNotFound)
 	}
 }
@@ -114,7 +133,19 @@ func TestTimeAddAndList(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}
 	}
-	stdout, _, err := run("--json", "time", "list", "t1", "--offline")
+	// --json gives the sent entry's real gid, which time edit / delete take (#31).
+	stdout, _, err := run("--json", "time", "add", "t1", "30m", "--date", "2026-11-13")
+	var added struct {
+		GID  string `json:"time_entry_gid"`
+		Sent bool   `json:"sent"`
+	}
+	if err != nil || json.Unmarshal([]byte(stdout), &added) != nil || !added.Sent || added.GID == "" || strings.HasPrefix(added.GID, "local:") {
+		t.Errorf("time add --json = %q (%v)", stdout, err)
+	}
+	if _, errOut, err := run("time", "edit", added.GID, "--duration", "45m"); err != nil {
+		t.Errorf("time edit with the printed gid: %v %s", err, errOut)
+	}
+	stdout, _, err = run("--json", "time", "list", "t1", "--offline")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +153,7 @@ func TestTimeAddAndList(t *testing.T) {
 		Entries      []map[string]any `json:"entries"`
 		TotalMinutes int              `json:"total_minutes"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &es); err != nil || len(es.Entries) != 2 || es.TotalMinutes != 120 {
+	if err := json.Unmarshal([]byte(stdout), &es); err != nil || len(es.Entries) != 3 || es.TotalMinutes != 165 {
 		t.Errorf("json %q (%v)", stdout, err)
 	}
 }

@@ -26,7 +26,8 @@ import (
 type writeResult struct {
 	TaskGID   string `json:"task_gid,omitempty"`
 	CommentID string `json:"comment_gid,omitempty"`
-	// TimeEntryID is the time tracking entry `time add` recorded (a local gid until sent).
+	// TimeEntryID is the time tracking entry `time add` recorded (its real gid once sent,
+	// a local one until then).
 	TimeEntryID string `json:"time_entry_gid,omitempty"`
 	// SectionGID is the section `section create` made (its Asana gid once sent).
 	SectionGID string           `json:"section_gid,omitempty"`
@@ -126,6 +127,13 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 	if localgid.IsLocal(r.SectionGID) {
 		if real, err := st.RealSectionGID(cmd.Context(), r.SectionGID); err == nil {
 			r.SectionGID = real
+		}
+	}
+	// A sent time entry has its real gid, as add_time_entry gives it (found on the real
+	// Asana, #31): the local one can not be used with `time edit` / `time delete`.
+	if localgid.IsLocal(r.TimeEntryID) {
+		if real, waiting, err := st.LocalResult(cmd.Context(), readmodel.ResultTimeEntry, r.TimeEntryID); err == nil && real != "" && !waiting {
+			r.TimeEntryID = real
 		}
 	}
 	if a.json {
