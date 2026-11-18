@@ -23,10 +23,12 @@ import (
 
 // writeResult is the JSON output of write commands.
 type writeResult struct {
-	TaskGID   string           `json:"task_gid,omitempty"`
-	CommentID string           `json:"comment_gid,omitempty"`
-	Sent      bool             `json:"sent"`
-	Push      *sync.PushResult `json:"push,omitempty"`
+	TaskGID   string `json:"task_gid,omitempty"`
+	CommentID string `json:"comment_gid,omitempty"`
+	// SectionGID is the section `section create` made (its Asana gid once sent).
+	SectionGID string           `json:"section_gid,omitempty"`
+	Sent       bool             `json:"sent"`
+	Push       *sync.PushResult `json:"push,omitempty"`
 	// Discarded lists queued changes dropped because what they changed was deleted in Asana
 	// (by this push or an earlier one not shown yet).
 	Discarded []readmodel.Discard `json:"discarded,omitempty"`
@@ -117,6 +119,11 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 	// The gid may have changed from local:... to the real one.
 	if r.TaskGID != "" && localgid.IsLocal(r.TaskGID) && r.Sent {
 		r.TaskGID = ""
+	}
+	if localgid.IsLocal(r.SectionGID) {
+		if real, err := st.RealSectionGID(cmd.Context(), r.SectionGID); err == nil {
+			r.SectionGID = real
+		}
 	}
 	if a.json {
 		return a.printJSON(r)
@@ -557,7 +564,7 @@ func (a *app) sectionCmd() *cobra.Command {
 	}
 	rename.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
 	_ = rename.MarkFlagRequired("project")
-	cmd.AddCommand(a.addDryRunFlag(rename))
+	cmd.AddCommand(a.addDryRunFlag(rename), a.sectionCreateCmd(), a.sectionRmCmd(), a.sectionMoveCmd())
 	return cmd
 }
 
@@ -581,12 +588,13 @@ func (a *app) tagCmd() *cobra.Command {
 			}
 			rows := [][]string{}
 			for _, t := range tags {
-				rows = append(rows, []string{"#" + t.Name, fmt.Sprintf("未完了 %d / 全 %d", t.Open, t.Total)})
+				rows = append(rows, []string{"#" + t.Name, fmt.Sprintf("未完了 %d / 全 %d", t.Open, t.Total), t.Color})
 			}
 			printTable(cmd.OutOrStdout(), rows)
 			return nil
 		},
 	})
+	cmd.AddCommand(a.tagRenameCmd(), a.tagColorCmd(), a.tagRmCmd())
 	return cmd
 }
 

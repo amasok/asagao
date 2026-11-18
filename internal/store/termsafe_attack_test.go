@@ -124,7 +124,7 @@ func TestStoreOtherTextsAreTerminalSafe(t *testing.T) {
 	if err := s.UpsertUsers(ctx, []asana.User{{GID: "u1", Name: "ユーザー" + p}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpsertTags(ctx, []asana.Ref{{GID: "tg1", Name: "タグ" + p}}); err != nil {
+	if err := s.UpsertTags(ctx, []asana.Tag{{GID: "tg1", Name: "タグ" + p}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReplaceNotifications(ctx, "w1", []asana.Notification{{GID: "n1", CreatedAt: time.Now(),

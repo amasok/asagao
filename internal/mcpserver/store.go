@@ -13,6 +13,7 @@ type Store interface {
 	app.StatusStore
 	app.RelationStore
 	app.SectionStore
+	app.TagStore
 	app.CopyStore
 	app.NotificationStore
 	app.OutboxStore

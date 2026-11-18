@@ -269,6 +269,12 @@ const (
 	pickDepAction   // open / remove a linked task
 	pickDepTarget   // a task to link
 	pickSavedSearch // a saved search to show (searches.go)
+	// sectiontags.go
+	pickDeleteSection
+	pickTagManage
+	pickTagAction
+	pickTagColor
+	pickDeleteTag
 )
 
 type pickerItem struct {
@@ -401,6 +407,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.bulkPicked(p, item)
 		}
 		if cmd, ok := m.handleDepPicker(p, item); ok {
+			return m, cmd
+		}
+		if cmd, ok := m.handleSectionTagPicker(p, item); ok {
 			return m, cmd
 		}
 		switch p.kind {

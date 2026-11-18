@@ -3,8 +3,11 @@ package mcpserver
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -29,5 +32,86 @@ func TestMoveTaskAndRenameSectionQueue(t *testing.T) {
 	}
 	if name, err := st.SectionName(ctx, "s1"); err != nil || name != "大型家具" {
 		t.Errorf("s1 is named %q (%v), want 大型家具", name, err)
+	}
+}
+
+// create_section makes a section tasks can be moved to at once (offline too); move_section
+// and delete_section queue their change; update_tag / delete_tag change the tag itself.
+func TestSectionAndTagTools(t *testing.T) {
+	st := seed(t)
+	if err := st.UpsertTags(context.Background(), []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, &Server{Store: st})
+	var w WriteOutput
+	if res := call(t, cs, "create_section", map[string]any{"project": "新居", "name": "保留", "after": "家具"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if !store.IsLocalGID(w.SectionGID) {
+		t.Fatalf("section_gid = %q, want the local gid (offline)", w.SectionGID)
+	}
+	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": w.SectionGID, "project": "新居"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if res := call(t, cs, "move_section", map[string]any{"project": "新居", "section": "手続き", "before": "家具"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if res := call(t, cs, "move_section", map[string]any{"project": "新居", "section": "手続き"}, &w); !res.IsError {
+		t.Error("move_section without before / after: no error")
+	}
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "light-green"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "green"}, &w); !res.IsError {
+		t.Error("update_tag with an unknown color: no error")
+	}
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ"}, &w); !res.IsError {
+		t.Error("update_tag without a change: no error")
+	}
+	if res := call(t, cs, "delete_tag", map[string]any{"tag": "急ぎ"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	got := opList(t, st)
+	// The unsent color change of a tag deleted afterwards is not sent.
+	want := []string{store.OpCreateSection, store.OpMoveTask + ":t1", store.OpInsertSection + ":s2", store.OpDeleteTag + ":g1"}
+	if len(got) != len(want) {
+		t.Fatalf("ops = %v, want %v", got, want)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Fatalf("ops = %v, want %v", got, want)
+		}
+	}
+	// A section holding a task is not deleted.
+	if res := call(t, cs, "delete_section", map[string]any{"project": "新居", "section": w.SectionGID}, &w); !res.IsError {
+		t.Error("delete_section of a section with a task: no error")
+	}
+}
+
+// A feature Asana refused with a 402 is not offered at all.
+func TestSectionToolsHiddenAfterPaymentRequired(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	if err := st.SetSyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSections, "2026-11-18T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, &Server{Store: st})
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range res.Tools {
+		names = append(names, tool.Name)
+	}
+	for _, hidden := range []string{"create_section", "move_section", "delete_section"} {
+		if slices.Contains(names, hidden) {
+			t.Errorf("%s offered after a 402", hidden)
+		}
+	}
+	for _, kept := range []string{"rename_section", "update_tag", "delete_tag"} {
+		if !slices.Contains(names, kept) {
+			t.Errorf("%s not offered", kept)
+		}
 	}
 }

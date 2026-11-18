@@ -82,7 +82,8 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 		other := len(names)
 		names = append(names, "その他")
 		keys = append(keys, "other")
-		return groupKeyed(tasks, names, keys, func(t readmodel.TaskSummary) int {
+		// Empty sections are shown too (as in Asana), so they can be renamed, moved or deleted.
+		return groupKeyedKeep(tasks, names, keys, func(t readmodel.TaskSummary) int {
 			for _, m := range t.Memberships {
 				if m.ProjectGID == sc.project {
 					if i, ok := index[m.SectionGID]; ok {
@@ -91,7 +92,7 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 				}
 			}
 			return other
-		}), nil
+		}, func(b int) bool { return b != other }), nil
 
 	default: // My Tasks
 		me, err := queryOf(st).MeGID(ctx)
@@ -131,6 +132,11 @@ func group(tasks []readmodel.TaskSummary, headers []string, bucket func(readmode
 // groupKeyed is group with a stable key per header (section gid), used to remember
 // which groups are collapsed.
 func groupKeyed(tasks []readmodel.TaskSummary, headers, keys []string, bucket func(readmodel.TaskSummary) int) []row {
+	return groupKeyedKeep(tasks, headers, keys, bucket, func(int) bool { return false })
+}
+
+// groupKeyedKeep is groupKeyed that keeps the empty groups keep says to keep.
+func groupKeyedKeep(tasks []readmodel.TaskSummary, headers, keys []string, bucket func(readmodel.TaskSummary) int, keep func(b int) bool) []row {
 	buckets := make([][]int, len(headers))
 	for i, t := range tasks {
 		b := bucket(t)
@@ -138,10 +144,10 @@ func groupKeyed(tasks []readmodel.TaskSummary, headers, keys []string, bucket fu
 	}
 	var rows []row
 	for b, idx := range buckets {
-		if len(idx) == 0 {
+		if len(idx) == 0 && !keep(b) {
 			continue
 		}
-		rows = append(rows, row{header: headers[b], key: keys[b], count: len(idx)})
+		rows = append(rows, row{header: headers[b], key: keys[b], count: len(idx), empty: len(idx) == 0})
 		for _, i := range idx {
 			rows = append(rows, row{task: &tasks[i]})
 		}

@@ -97,6 +97,8 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 	taken := func(prefix string) (map[string]bool, error) { return s.Store.RecordedResults(ctx, prefix) }
 
 	switch op.Kind {
+	case outbox.KindCreateSection:
+		return s.findCreatedSection(ctx, op)
 	case outbox.KindCreateTask:
 		tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), since)
 		if err != nil || !ok {
@@ -226,7 +228,7 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 		if err != nil {
 			return sent, notFound, err
 		}
-		g, m := pick(tags, func(g model.Ref) bool { return g.Name == str("tag_name") })
+		g, m := pick(tags, func(g model.Tag) bool { return g.Name == str("tag_name") })
 		switch m {
 		case ambiguous:
 			return sent, ambiguous, nil

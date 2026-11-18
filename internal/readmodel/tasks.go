@@ -101,6 +101,7 @@ type TaskFilter struct {
 type TagCount struct {
 	GID   string `json:"gid"`
 	Name  string `json:"name"`
+	Color string `json:"color,omitempty"` // one of Asana's tag colors, "" for none
 	Open  int    `json:"open_tasks"`
 	Total int    `json:"tasks"`
 }

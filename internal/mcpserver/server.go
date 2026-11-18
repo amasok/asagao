@@ -132,6 +132,7 @@ func (s *Server) New() *mcp.Server {
 				"project is needed only when the task is in more than one project."}, s.moveTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "rename_section", Annotations: write(false),
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
+		s.addSectionTagTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "duplicate_task", Annotations: write(false),
 			Description: "Duplicate a task (with its description, assignee, dates, projects, tags, subtasks, attachments and followers)."}, s.duplicateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "upload_attachment", Annotations: write(true),
@@ -320,6 +321,8 @@ type AttachmentOutput struct {
 
 type WriteOutput struct {
 	TaskGID string `json:"task_gid,omitempty"`
+	// SectionGID is the section create_section made (its Asana gid once sent).
+	SectionGID string `json:"section_gid,omitempty"`
 	// Sent is true when the change reached Asana; false means it is queued locally.
 	Sent bool   `json:"sent"`
 	Note string `json:"note,omitempty"`

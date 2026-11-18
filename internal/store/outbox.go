@@ -573,6 +573,14 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 				return err
 			}
 		}
+	case OpUpdateTag, OpDeleteTag:
+		if err := undoTagOp(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpCreateSection, OpDeleteSection, OpInsertSection:
+		if err := undoSectionOp(ctx, tx, op); err != nil {
+			return err
+		}
 	case OpMoveTask:
 		project, _ := op.Payload["project"].(string)
 		section, _ := op.Base["section"].(string)

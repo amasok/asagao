@@ -43,6 +43,13 @@ type Section struct {
 	Project *Ref   `json:"project"`
 }
 
+// Tag is a tag with its color (a color name such as "dark-green", or "" for none).
+type Tag struct {
+	GID   string `json:"gid"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
 type Membership struct {
 	Project *Ref `json:"project"`
 	Section *Ref `json:"section"`

@@ -2,6 +2,8 @@ package readmodel
 
 import (
 	"path/filepath"
+
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"regexp"
 	"strings"
 )
@@ -33,7 +35,40 @@ const (
 	KeyCustomFields = "custom_fields:"
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
 	KeyEvents = "events:"
+	// KeyPlanUnavailable + a PlanFeature: when Asana refused that feature because the
+	// workspace's plan lacks it (402). The feature is not offered while it is set.
+	KeyPlanUnavailable = "plan_unavailable:"
 )
+
+// Features that a plan may lack (KeyPlanUnavailable).
+const (
+	PlanSections  = "sections"   // creating, deleting and reordering sections
+	PlanTags      = "tags"       // renaming, recoloring and deleting tags
+	PlanMySection = "my_section" // the sections of My Tasks
+)
+
+// PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
+func PlanFeatureOf(kind string) string {
+	switch kind {
+	case outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection:
+		return PlanSections
+	case outbox.KindUpdateTag, outbox.KindDeleteTag:
+		return PlanTags
+	case outbox.KindMoveMySection:
+		return PlanMySection
+	}
+	return ""
+}
+
+// PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
+func PlanUnavailableMessage(feature string) string {
+	what := map[string]string{
+		PlanSections:  "セクションの作成・削除・並べ替え",
+		PlanTags:      "タグの名前・色の変更と削除",
+		PlanMySection: "マイタスクのセクション",
+	}[feature]
+	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
+}
 
 // Prefixes of the sync_state keys that map a local gid to what Asana created for it (a
 // prefix + the local gid; the value is the Asana gid).
@@ -44,6 +79,8 @@ const (
 	ResultStatus     = "status:"
 	// ResultTag maps a tag created offline to the tag Asana created.
 	ResultTag = "tag:"
+	// ResultSection maps a section created offline to the section Asana created.
+	ResultSection = "section:"
 )
 
 // ResetResult says what a reset with a backup did.

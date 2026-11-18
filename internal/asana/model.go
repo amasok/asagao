@@ -11,6 +11,7 @@ type (
 	Workspace          = model.Workspace
 	Project            = model.Project
 	Section            = model.Section
+	Tag                = model.Tag
 	Membership         = model.Membership
 	Task               = model.Task
 	TaskQuery          = model.TaskQuery

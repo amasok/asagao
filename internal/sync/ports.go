@@ -31,7 +31,14 @@ type AsanaAPI interface {
 	CreateProject(ctx context.Context, workspaceGID, teamGID, name string) (*model.Project, error)
 	CreateStatusUpdate(ctx context.Context, projectGID, statusType, title, text, htmlText string) (*model.StatusUpdate, error)
 	CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*model.Task, error)
+	CreateSection(ctx context.Context, projectGID, name, before, after string) (*model.Section, error)
 	CreateTag(ctx context.Context, workspaceGID, name string) (*model.Ref, error)
+	DeleteSection(ctx context.Context, gid string) error
+	DeleteTag(ctx context.Context, gid string) error
+	InsertSection(ctx context.Context, projectGID, sectionGID, before, after string) error
+	Tag(ctx context.Context, gid string) (*model.Tag, error)
+	UpdateTag(ctx context.Context, gid string, changes map[string]any) (*model.Tag, error)
+	UserTaskList(ctx context.Context, userGID, workspaceGID string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
 	Dependencies(ctx context.Context, taskGID string) ([]model.TaskRef, error)
@@ -54,7 +61,7 @@ type AsanaAPI interface {
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
 	Stories(ctx context.Context, taskGID string) ([]model.Story, error)
 	Subtasks(ctx context.Context, taskGID string) ([]model.Task, error)
-	Tags(ctx context.Context, workspaceGID string) ([]model.Ref, error)
+	Tags(ctx context.Context, workspaceGID string) ([]model.Tag, error)
 	Task(ctx context.Context, gid string) (*model.Task, error)
 	TaskDetail(ctx context.Context, gid string) (*model.Task, error)
 	Tasks(ctx context.Context, tq model.TaskQuery) ([]model.Task, error)
@@ -70,6 +77,12 @@ type AsanaAPI interface {
 // its types are domain/outbox's, readmodel's and asana/model's.
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
+	ApplyTag(ctx context.Context, t model.Tag) error
+	CompleteCreateSection(ctx context.Context, id int64, local, real string) error
+	RealSectionGID(ctx context.Context, gid string) (string, error)
+	SectionCreateQueued(ctx context.Context, gid string) (bool, error)
+	SetOpPayload(ctx context.Context, id int64, key string, value any) error
+	TagCreateQueued(ctx context.Context, tag string) (bool, error)
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
@@ -125,7 +138,7 @@ type LocalStore interface {
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error
 	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error
-	UpsertTags(ctx context.Context, tags []model.Ref) error
+	UpsertTags(ctx context.Context, tags []model.Tag) error
 	UpsertTasks(ctx context.Context, tasks []model.Task) error
 	UpsertUser(ctx context.Context, u model.User) error
 	UpsertUsers(ctx context.Context, users []model.User) error
