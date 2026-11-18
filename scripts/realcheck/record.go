@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Created is everything the run made in Asana, so cleanup deletes exactly that and nothing
@@ -25,6 +26,35 @@ type Created struct {
 	ProjectTemplates []string
 	Goals            []string
 	Portfolios       []string
+	Jobs             []string // duplicate / template jobs: cleanup waits for them
+}
+
+// recordJob records what a job (its start or a GET /jobs) says it makes, as soon as it
+// says so, so cleanup deletes it even when the job is slow or the run stops.
+func (c *Created) recordJob(v any) {
+	if g := str(v, "data", "new_project", "gid"); gidRE.MatchString(g) {
+		c.add(&c.Projects, g)
+	}
+	if g := str(v, "data", "new_project_template", "gid"); gidRE.MatchString(g) {
+		c.add(&c.ProjectTemplates, g)
+	}
+	if g := str(v, "data", "new_task", "gid"); gidRE.MatchString(g) {
+		c.add(&c.Tasks, g)
+	}
+}
+
+// addPrefixed adds the typeahead results whose name has the prefix to list.
+func (c *Created) addPrefixed(list *[]string, data json.RawMessage) {
+	var a []struct {
+		GID  string `json:"gid"`
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(data, &a)
+	for _, e := range a {
+		if strings.HasPrefix(e.Name, c.Prefix) && gidRE.MatchString(e.GID) {
+			c.add(list, e.GID)
+		}
+	}
 }
 
 func (c *Created) add(list *[]string, gid string) {
@@ -113,6 +143,8 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 		fields = "task.gid"
 	case "allocations":
 		fields = "parent.gid"
+	case "project_templates":
+		fields = "name"
 	default:
 		fields = "name,workspace.gid"
 	}
@@ -166,10 +198,21 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 // (a copy made by a job, a task adopted by the reconciliation, ...). owned still checks
 // each one before it is deleted.
 func (r *Runner) collect(ctx context.Context, c *Created) {
+	typeahead := func(kind string, list *[]string) {
+		data, err := r.API(ctx, "GET", "/workspaces/"+TestWorkspace+"/typeahead",
+			"resource_type="+kind, "query="+c.Prefix, "count=100", "opt_fields=name")
+		if err == nil {
+			c.addPrefixed(list, data)
+		}
+	}
+	// Projects first: their tasks are collected next (a copy made by a slow job).
+	typeahead("project", &c.Projects)
+	typeahead("project_template", &c.ProjectTemplates)
+	typeahead("goal", &c.Goals)
+	typeahead("portfolio", &c.Portfolios)
 	gidsOf := func(data json.RawMessage) []string {
 		var a []struct {
-			GID  string `json:"gid"`
-			Name string `json:"name"`
+			GID string `json:"gid"`
 		}
 		_ = json.Unmarshal(data, &a)
 		var out []string
@@ -192,24 +235,26 @@ func (r *Runner) collect(ctx context.Context, c *Created) {
 			}
 		}
 	}
-	for _, rt := range []struct {
-		kind string
-		list *[]string
-	}{{"task", &c.Tasks}, {"tag", &c.Tags}} {
-		data, err := r.API(ctx, "GET", "/workspaces/"+TestWorkspace+"/typeahead",
-			"resource_type="+rt.kind, "query="+c.Prefix, "count=100", "opt_fields=name")
-		if err != nil {
-			continue
-		}
-		var a []struct {
-			GID  string `json:"gid"`
-			Name string `json:"name"`
-		}
-		_ = json.Unmarshal(data, &a)
-		for _, e := range a {
-			if strings.HasPrefix(e.Name, c.Prefix) {
-				c.add(rt.list, e.GID)
+	typeahead("task", &c.Tasks)
+	typeahead("tag", &c.Tags)
+}
+
+// waitJobs waits (up to 2 minutes) for the jobs the run started, so a duplicate or a
+// template is not still being made while cleanup deletes; what they made is recorded.
+func (r *Runner) waitJobs(ctx context.Context, c *Created) {
+	deadline := time.Now().Add(2 * time.Minute)
+	for _, j := range c.Jobs {
+		for time.Now().Before(deadline) {
+			data, err := r.API(ctx, "GET", "/jobs/"+j)
+			if err != nil {
+				break
 			}
+			v := map[string]any{"data": decode(data)}
+			c.recordJob(v)
+			if st := str(v, "data", "status"); st == "succeeded" || st == "failed" {
+				break
+			}
+			time.Sleep(3 * time.Second)
 		}
 	}
 }
@@ -228,6 +273,7 @@ func gone(why string) bool {
 // then status updates, tags, custom fields and projects. It returns what was left behind.
 func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	r.Close() // no MCP server pushing while we delete
+	r.waitJobs(ctx, c)
 	r.collect(ctx, c)
 	del := func(kind string, gids []string) {
 		for i := len(gids) - 1; i >= 0; i-- { // subtasks and copies were added after parents

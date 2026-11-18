@@ -66,14 +66,17 @@ func (s *shapes) del(name, path string) {
 // job polls GET /jobs/{gid} until it is done, saving the first and the last answer.
 func (s *shapes) job(name string, started any) any {
 	g := str(started, "data", "gid")
+	s.c.Made.recordJob(started)
 	if g == "" {
 		return nil
 	}
+	s.c.Made.add(&s.c.Made.Jobs, g)
 	var last any
 	for i := 0; i < 30; i++ {
 		out, err := s.c.R.CLI(s.c.ctx, "api", "/jobs/"+g)
 		var v any
 		_ = json.Unmarshal(out, &v)
+		s.c.Made.recordJob(v) // the new project / template is known before the job ends
 		if i == 0 {
 			s.save(name+"-job-first", "GET /jobs/"+g, out, err)
 		}

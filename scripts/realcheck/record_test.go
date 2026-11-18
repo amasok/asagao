@@ -146,3 +146,26 @@ func TestGuardBody(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectAddsPrefixedProjectsFromTypeahead(t *testing.T) {
+	c := &Created{Prefix: "asagao-realcheck-1", Projects: []string{"1000001"}}
+	data := []byte(`[{"gid":"1000002","name":"asagao-realcheck-1-duplicate"},
+		{"gid":"1000003","name":"test さんの最初のプロジェクト"},
+		{"gid":"1000004","name":"x asagao-realcheck-1"},
+		{"gid":"../1","name":"asagao-realcheck-1-evil"},
+		{"gid":"1000001","name":"asagao-realcheck-1"}]`)
+	c.addPrefixed(&c.Projects, data)
+	if got := c.Projects; len(got) != 2 || got[1] != "1000002" {
+		t.Fatalf("projects %v", got)
+	}
+}
+
+func TestRecordJob(t *testing.T) {
+	c := &Created{}
+	c.recordJob(M{"data": M{"gid": "1", "status": "in_progress", "new_project": M{"gid": "1000002"}}})
+	c.recordJob(M{"data": M{"new_project_template": M{"gid": "8000008"}, "new_task": M{"gid": "2000002"}}})
+	c.recordJob(M{"data": M{"new_project": M{"gid": "not-a-gid"}}})
+	if len(c.Projects) != 1 || c.Projects[0] != "1000002" || len(c.ProjectTemplates) != 1 || len(c.Tasks) != 1 {
+		t.Fatalf("%+v", c)
+	}
+}

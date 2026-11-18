@@ -635,7 +635,7 @@ func toDiscard(before, after []M, tasks []string) []M {
 
 // leftovers checks after cleanup that typeahead finds nothing with the prefix.
 func (c *Check) leftovers() {
-	for _, kind := range []string{"task", "tag", "project"} {
+	for _, kind := range []string{"task", "tag", "project", "project_template", "goal", "portfolio"} {
 		as, err := c.asana("/workspaces/"+TestWorkspace+"/typeahead", "resource_type="+kind, "query="+c.Made.Prefix, "opt_fields=name")
 		var left []string
 		for _, e := range asArray(as) {
