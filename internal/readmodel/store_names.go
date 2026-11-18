@@ -43,6 +43,8 @@ const (
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
+	// KeyTimeEntries + task gid: when the task's time tracking entries were last fetched.
+	KeyTimeEntries = "time_entries:"
 )
 
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not
@@ -58,6 +60,8 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
+	// PlanTimeTracking is the time tracking entries of tasks (#6).
+	PlanTimeTracking = "time_tracking"
 )
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
@@ -69,6 +73,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanTags
 	case outbox.KindMoveMySection:
 		return PlanMySection
+	case outbox.KindAddTimeEntry, outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
+		return PlanTimeTracking
 	}
 	return ""
 }
@@ -76,9 +82,10 @@ func PlanFeatureOf(kind string) string {
 // PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
 func PlanUnavailableMessage(feature string) string {
 	what := map[string]string{
-		PlanSections:  "セクションの作成・削除・並べ替え",
-		PlanTags:      "タグの名前・色の変更と削除",
-		PlanMySection: "マイタスクのセクション",
+		PlanSections:     "セクションの作成・削除・並べ替え",
+		PlanTags:         "タグの名前・色の変更と削除",
+		PlanMySection:    "マイタスクのセクション",
+		PlanTimeTracking: "タイムトラッキング (作業時間の記録)",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
@@ -94,6 +101,8 @@ const (
 	ResultTag = "tag:"
 	// ResultSection maps a section created offline to the section Asana created.
 	ResultSection = "section:"
+	// ResultTimeEntry maps a time tracking entry recorded offline to the one Asana created.
+	ResultTimeEntry = "time:"
 )
 
 // ResetResult says what a reset with a backup did.

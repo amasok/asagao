@@ -206,6 +206,9 @@ type Model struct {
 	newSectionAfter string               // promptNewSection: the section to add it after
 	tagList         []readmodel.TagCount // the tags the tag manager shows
 	tagTarget       readmodel.TagCount   // the tag being changed
+	// time tracking (timetracking.go): the task whose entries are shown, the entry edited
+	timeTask  readmodel.TaskSummary
+	timeEntry string
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
 	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).

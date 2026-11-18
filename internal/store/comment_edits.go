@@ -390,8 +390,8 @@ func dropChangesOf(ctx context.Context, tx *sql.Tx, key, gid string, kinds ...st
 	return nil
 }
 
-// LocalResult returns, for a comment or attachment with a local gid, what Asana created for
-// it (prefix ResultStory or ResultAttachment) and whether its create is still in the
+// LocalResult returns, for a comment, attachment or time entry with a local gid, what Asana created for
+// it (prefix ResultStory, ResultAttachment or ResultTimeEntry) and whether its create is still in the
 // outbox (waiting: a change to it waits for that). real is "" if none is recorded.
 func (s *Store) LocalResult(ctx context.Context, prefix, gid string) (real string, waiting bool, err error) {
 	if !IsLocalGID(gid) {
@@ -404,8 +404,11 @@ func (s *Store) LocalResult(ctx context.Context, prefix, gid string) (real strin
 		return real, false, nil
 	}
 	kind, key := OpAddComment, "story_gid"
-	if prefix == ResultAttachment {
+	switch prefix {
+	case ResultAttachment:
 		kind, key = OpUploadAttachment, "attachment"
+	case ResultTimeEntry:
+		kind, key = OpAddTimeEntry, "entry"
 	}
 	var n int
 	err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?", kind, key, gid).Scan(&n)

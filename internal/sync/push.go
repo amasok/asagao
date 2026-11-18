@@ -490,6 +490,12 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushUpdateStory(ctx, op)
 	case outbox.KindDeleteStory, outbox.KindDeleteAttachment:
 		err = s.pushDeleteItem(ctx, op)
+	case outbox.KindAddTimeEntry:
+		err = s.pushAddTimeEntry(ctx, op)
+	case outbox.KindUpdateTimeEntry:
+		err = s.pushUpdateTimeEntry(ctx, op)
+	case outbox.KindDeleteTimeEntry:
+		err = s.pushDeleteTimeEntry(ctx, op)
 	case outbox.KindCreateStatus:
 		err = s.pushStatus(ctx, op)
 	case outbox.KindMarkNotification:
@@ -1191,7 +1197,7 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 	return sentNotSaved(s.Store.CompleteUpload(ctx, op.ID, local, att.GID, att.ViewURL))
 }
 
-// storyTarget returns, for an edit or a delete of a comment or attachment, the payload key
+// storyTarget returns, for an edit or a delete of a comment, attachment or time entry, the payload key
 // of its gid and the prefix under which a local one's result is recorded ("" otherwise).
 func storyTarget(kind string) (key, prefix string) {
 	switch kind {
@@ -1199,6 +1205,8 @@ func storyTarget(kind string) (key, prefix string) {
 		return "story", readmodel.ResultStory
 	case outbox.KindDeleteAttachment:
 		return "attachment", readmodel.ResultAttachment
+	case outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
+		return "entry", readmodel.ResultTimeEntry
 	}
 	return "", ""
 }

@@ -34,6 +34,8 @@ const (
 	promptDepSearch // search for a task to link (deps.go)
 	promptNewSection
 	promptRenameTag
+	promptTimeAdd  // record time on a task (timetracking.go)
+	promptTimeEdit // change a time tracking entry
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -175,6 +177,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if cmd, ok := m.updateSectionTags(msg); ok {
 		return m, cmd, true
 	}
+	if cmd, ok := m.updateTimeTracking(msg); ok {
+		return m, cmd, true
+	}
 	switch msg := msg.(type) {
 	case outboxLoadedMsg:
 		if msg.err == nil {
@@ -312,6 +317,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptRenameTag:
 		m.prompt.Prompt = "タグ名: "
 		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+	case promptTimeAdd, promptTimeEdit:
+		m.prompt.Prompt = "作業時間: "
+		m.prompt.Placeholder = "1h30m / 45m / 1:30 のあとに日付（昨日 / 2026-11-12。省略で今日）"
 	case promptSubtask:
 		m.prompt.Prompt = "サブタスク: "
 		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
@@ -366,6 +374,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.createSection(value)
 		case promptRenameTag:
 			return m, m.submitTagName(value)
+		case promptTimeAdd, promptTimeEdit:
+			return m, m.submitTime(kind, value)
 		case promptSubtask:
 			return m, m.createSubtask(m.subtaskParent, value)
 		case promptNewTag:
