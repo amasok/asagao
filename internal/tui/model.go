@@ -527,6 +527,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateOverview(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateBrief(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateGoals(msg); ok {
 		return m, cmd
 	}

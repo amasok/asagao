@@ -84,6 +84,8 @@ func (m *Model) handleItemPicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 	case pickConfirmDel:
 		action, gid, _ := strings.Cut(item.value, "\x00")
 		switch action {
+		case "delete-brief":
+			return m.deleteBrief(gid), true
 		case "delete-comment":
 			comments := m.comments(m.deps.Now())
 			return func() tea.Msg {
