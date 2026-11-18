@@ -125,8 +125,8 @@ func (f *typesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := body.Data["custom_type_status_option"].(string); ok {
 			f.status = v
-			// Assumption (not yet checked against the real Asana): a task put in a
-			// status whose completion_state is Complete is completed by Asana.
+			// As the real Asana does (checked): a task put in a status whose
+			// completion_state is Complete is completed, and reopened by another.
 			f.completed = v == "cs-done"
 		}
 		if v, ok := body.Data["completed"].(bool); ok {

@@ -66,7 +66,7 @@ func TestCustomTypeReadWithGid(t *testing.T) {
 	if res.Sent != 1 || len(res.Discarded) != 0 || len(f.puts) != 1 || f.puts[0]["custom_type"] != "ct1" || f.puts[0]["custom_type_status_option"] != "cs-done" {
 		t.Fatalf("push %+v, PUT %v", res, f.puts)
 	}
-	// A Complete status completes the task (locally at once; in Asana by assumption, see
+	// A Complete status completes the task (locally at once, and in Asana: see
 	// typesServer), and the answer to the PUT does not reopen it.
 	if d, _ := st.GetTask(ctx, "t1"); d.CustomTypeStatus == nil || d.CustomTypeStatus.GID != "cs-done" || !d.Completed || !f.completed {
 		t.Fatalf("after push %+v completed=%v (Asana %v)", d.CustomTypeStatus, d.Completed, f.completed)
