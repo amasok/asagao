@@ -32,6 +32,7 @@ func realMain() int {
 	bin := flag.String("bin", filepath.Join(home, "asagao-test", "bin", "asagao-realcheck"), "asagao built from this branch")
 	out := flag.String("out", "", "write the report (Markdown) here as well (default: the run directory)")
 	probe := flag.Bool("probe", false, "only read: probe the paid features")
+	colors := flag.Bool("colors", false, "only probe the color names (a tag and a project of the run)")
 	shapesF := flag.Bool("shapes", false, "also save the raw responses of the paid features (in the run directory)")
 	templates := flag.Bool("templates", false, "with -shapes: also save a project template from the check project and instantiate it")
 	pause := flag.Duration("pause", 2*time.Second, "pause after every command (free plan: 150 requests a minute)")
@@ -52,7 +53,7 @@ func realMain() int {
 
 	rep := &Report{}
 	r := &Runner{Env: env, Pause: *pause, Log: os.Stderr}
-	c := &Check{R: r, Rep: rep, Made: &Created{Prefix: "asagao-realcheck-" + runID}, Shapes: *shapesF, Templates: *templates}
+	c := &Check{R: r, Rep: rep, Made: &Created{Prefix: "asagao-realcheck-" + runID}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors}
 	go func() {
 		// The first Ctrl-C stops the steps and cleanup runs; a second one leaves at once
 		// and says what is left in Asana.
@@ -119,7 +120,11 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 		c.syncClean("片付けのあとの同期")
 		code = rep.exitCode()
 	}()
-	c.writes()
+	if c.ColorsOnly {
+		c.colorNames()
+	} else {
+		c.writes()
+	}
 	return rep.exitCode()
 }
 
@@ -143,7 +148,7 @@ type Check struct {
 	tag      string
 	cf       map[string]string // custom fields made for the run, by type
 
-	Shapes, Templates bool // -shapes, -templates
+	Shapes, Templates, ColorsOnly bool // -shapes, -templates, -colors
 }
 
 func (c *Check) group(name string) { c.Rep.group(name) }

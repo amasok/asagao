@@ -77,7 +77,7 @@ func TestToDiscard(t *testing.T) {
 
 func TestGuardBody(t *testing.T) {
 	pre := "asagao-realcheck-1"
-	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"},
+	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"}, Tags: []string{"3000003"},
 		CustomFields: []string{"5000005"}, TimeEntries: []string{"6000006"}, Allocations: []string{"7000007"},
 		ProjectTemplates: []string{"8000008"}, Goals: []string{"9100001"}, Portfolios: []string{"9200002"}}
 	named := func(n string, kv ...any) M {
@@ -110,6 +110,9 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "9200002"}}}, // a nested one of ours
 		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "9100001"}}},
 		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "1000001"}}},
+		{"POST", "/tags", named(pre+"-colors", "workspace", TestWorkspace)},
+		{"PUT", "/tags/3000003", M{"data": M{"color": "dark-red"}}},
+		{"PUT", "/projects/1000001", M{"data": M{"color": "none"}}},
 	}
 	for _, a := range allowed {
 		if err := c.guardBody(a.m, a.p, a.b); err != nil {
@@ -122,6 +125,10 @@ func TestGuardBody(t *testing.T) {
 	}{
 		{"PUT", "/tasks/9999999", M{"data": M{}}},
 		{"PUT", "/projects/1000001", M{"data": M{}}}, // project edits go through asagao
+		{"PUT", "/projects/1000001", M{"data": M{"color": "red", "name": "x"}}},
+		{"PUT", "/projects/9999999", M{"data": M{"color": "red"}}},
+		{"PUT", "/tags/9999999", M{"data": M{"color": "red"}}},
+		{"POST", "/tags", named("urgent", "workspace", TestWorkspace)},
 		{"POST", "/tasks/9999999/time_tracking_entries", M{"data": M{}}},
 		{"PUT", "/time_tracking_entries/9999999", M{"data": M{}}},
 		{"POST", "/allocations", M{"data": M{"parent": "9999999", "assignee": TestUser}}},

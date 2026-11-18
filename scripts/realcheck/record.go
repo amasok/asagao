@@ -317,6 +317,13 @@ func (c *Created) guardBody(method, path string, body M) error {
 	}
 	ok := false
 	switch {
+	case method == "POST" && path == "/tags":
+		ok = data["workspace"] == TestWorkspace && prefixed
+	case method == "PUT" && len(parts) == 2 && (parts[0] == "tags" || parts[0] == "projects"):
+		// only the color (the color-name probe); other edits go through asagao
+		list := map[string][]string{"tags": c.Tags, "projects": c.Projects}[parts[0]]
+		_, color := data["color"]
+		ok = ours(list, 1) && len(data) == 1 && color
 	case method == "PUT" && len(parts) == 2 && parts[0] == "tasks":
 		ok = ours(c.Tasks, 1)
 	case method == "POST" && len(parts) == 3 && parts[0] == "tasks" &&

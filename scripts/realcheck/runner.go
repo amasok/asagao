@@ -59,7 +59,8 @@ func (r *Runner) CLI(ctx context.Context, args ...string) ([]byte, error) {
 		r.RateLimited++
 	}
 	if err != nil {
-		return out.Bytes(), fmt.Errorf("asagao %s: %w: %s%s", args[0], err, strings.TrimSpace(out.String()), strings.TrimSpace(errb.String()))
+		// stderr first: it has asagao's "asana: <status> …" line; stdout is Asana's body.
+		return out.Bytes(), fmt.Errorf("asagao %s: %w: %s %s", args[0], err, strings.TrimSpace(errb.String()), strings.TrimSpace(out.String()))
 	}
 	return out.Bytes(), nil
 }

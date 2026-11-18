@@ -221,7 +221,7 @@ func (c *Check) shapes(templates bool) {
 			"owner": c.Me, "time_period": quarter}})
 		if sg := str(sub, "data", "gid"); sg != "" {
 			c.Made.add(&c.Made.Goals, sg)
-			s.write("goal-add-subgoal", "POST", "/goals/"+gg+"/addSupportingRelationship", M{"data": M{"supporting_resource": sg, "contribution_weight": 1}})
+			s.write("goal-add-subgoal", "POST", "/goals/"+gg+"/addSupportingRelationship", M{"data": M{"supporting_resource": sg}})
 			s.write("goal-add-project", "POST", "/goals/"+gg+"/addSupportingRelationship", M{"data": M{"supporting_resource": c.p}})
 			s.get("goal-relationships", "/goal_relationships", "supported_goal="+gg,
 				"opt_fields=supporting_resource.name,supporting_resource.resource_type,supported_goal.name,contribution_weight,resource_subtype")
@@ -286,4 +286,47 @@ func currentQuarter(periods any, today string) string {
 		}
 	}
 	return ""
+}
+
+// legacyColors are the color names asagao offers (internal/domain/tag, project).
+var legacyColors = []string{
+	"dark-pink", "dark-green", "dark-blue", "dark-red", "dark-teal", "dark-brown", "dark-orange", "dark-purple", "dark-warm-gray",
+	"light-pink", "light-green", "light-blue", "light-red", "light-teal", "light-brown", "light-orange", "light-purple", "light-warm-gray",
+	"none",
+}
+
+// colorNames records, for every color name asagao sends, what Asana answers to the PUT and
+// to a later GET, for a tag and for a project (Asana renames the old names: dark-red comes
+// back as red). Only a tag and a project made by this run are changed.
+func (c *Check) colorNames() {
+	c.group("色の名前 (-colors)")
+	out := c.tool("create_project", "create_project", M{"name": c.Made.Prefix + "-colors", "team": c.team})
+	c.p = str(out, "project_gid")
+	if c.p == "" {
+		c.must("create_project の gid", fmt.Errorf("%v", out))
+	}
+	c.Made.add(&c.Made.Projects, c.p)
+	tg, err := c.R.WriteBody(c.ctx, c.Made, "POST", "/tags", M{"data": M{"workspace": TestWorkspace, "name": c.Made.Prefix + "-colors"}})
+	g := str(decode(tg), "data", "gid")
+	if err != nil || g == "" {
+		c.must("タグを作る", fmt.Errorf("%v %s", err, tg))
+	}
+	c.Made.add(&c.Made.Tags, g)
+	rows := []string{"| 送った色 | タグ: PUT の答え | タグ: GET | プロジェクト: PUT の答え | プロジェクト: GET |", "|---|---|---|---|---|"}
+	for _, col := range legacyColors {
+		c.gate()
+		cell := func(kind, gid string) (string, string) {
+			body, err := c.R.WriteBody(c.ctx, c.Made, "PUT", "/"+kind+"/"+gid, M{"data": M{"color": col}})
+			put := str(decode(body), "data", "color")
+			if err != nil {
+				put = "エラー " + oneLine(err.Error())
+			}
+			got, gerr := c.asana("/"+kind+"/"+gid, "opt_fields=color")
+			return put, str(got, "color") + errText(gerr)
+		}
+		tp, tgt := cell("tags", g)
+		pp, pgt := cell("projects", c.p)
+		rows = append(rows, fmt.Sprintf("| %s | %s | %s | %s | %s |", col, tp, tgt, pp, pgt))
+	}
+	c.Rep.lines = append(c.Rep.lines, rows...)
 }
