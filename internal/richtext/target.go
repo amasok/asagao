@@ -99,3 +99,11 @@ func hasLayoutTag(s string) bool {
 	}
 	return found(doc)
 }
+
+// BriefMarkdown converts a project brief's html_text to editable Markdown
+// (BriefToEditableMarkdown).
+func (Converter) BriefMarkdown(htmlText string) string { return BriefToEditableMarkdown(htmlText, nil) }
+
+// ProjectBrief converts the body of a project brief to its html_text and plain text
+// (BriefFromMarkdown).
+func (Converter) ProjectBrief(md string) (htmlText, plain string, err error) { return BriefFromMarkdown(md) }
