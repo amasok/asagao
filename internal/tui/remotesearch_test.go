@@ -160,3 +160,20 @@ func TestQuickAddLooksUpAnAssigneeTheCacheLacks(t *testing.T) {
 		t.Fatalf("created %+v %v\n%s", tasks, err, h.screen())
 	}
 }
+
+// An answer for an earlier search that arrives late changes neither what Asana found for
+// the current search nor the status line.
+func TestSearchAsanaLateAnswerIsDropped(t *testing.T) {
+	h := newHarness(t, 160, 30)
+	h.m.query = "B"
+	h.run(h.m.remoteSearchDone(remoteSearchMsg{query: "B", res: readmodel.RemoteSearchResult{GIDs: []string{"t1"}}}))
+	for _, late := range []remoteSearchMsg{
+		{query: "A", res: readmodel.RemoteSearchResult{GIDs: []string{"t2", "t3"}}},
+		{query: "A", err: errors.New("offline")},
+	} {
+		h.run(h.m.remoteSearchDone(late))
+		if h.m.remote.query != "B" || len(h.m.remote.gids) != 1 || h.m.status != "Asana で 1 件見つかりました" {
+			t.Fatalf("late answer %+v: remote %+v status %q", late, h.m.remote, h.m.status)
+		}
+	}
+}

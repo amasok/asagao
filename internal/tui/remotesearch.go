@@ -85,6 +85,11 @@ func (m *Model) remoteSearchDone(msg remoteSearchMsg) tea.Cmd {
 	if msg.syncer != nil && m.syncer == nil {
 		m.syncer = msg.syncer
 	}
+	if msg.query != m.query {
+		// The search changed meanwhile: a late answer must not replace what Asana found
+		// for the current search, nor its status (the found tasks are cached anyway).
+		return nil
+	}
 	if msg.err != nil {
 		m.status = "Asana では探せませんでした: " + termsafe.String(msg.err.Error())
 		return nil
@@ -93,9 +98,6 @@ func (m *Model) remoteSearchDone(msg remoteSearchMsg) tea.Cmd {
 	m.status = fmt.Sprintf("Asana で %d 件見つかりました", len(msg.res.GIDs))
 	if msg.res.ByName {
 		m.status += "（プランに検索 API がないため、タスク名の先頭で探しました）"
-	}
-	if msg.query != m.query {
-		return nil // the search changed meanwhile: shown when it is searched again
 	}
 	return m.loadTasks()
 }
