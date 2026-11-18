@@ -27,6 +27,7 @@ type RelationStore interface {
 	ParseCustomFieldValue(ctx context.Context, fieldGID string, input any, now time.Time) (any, error)
 	SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error)
 	AddEnumOptionLocal(ctx context.Context, fieldGID, name string, now time.Time) (gid string, created bool, err error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	SyncState(ctx context.Context, key string) (string, error)
 }
 
@@ -157,7 +158,7 @@ func (r *Relations) ResolveFieldsAdding(ctx context.Context, taskGID string, in 
 			return nil, &FieldError{Field: "custom_fields", Err: err}
 		}
 		if addOptions && in[name] != nil && (f.Type == readmodel.CFEnum || f.Type == readmodel.CFMultiEnum) {
-			fv, err := r.FieldOptions().ParseAdding(ctx, f, in[name])
+			fv, err := r.FieldOptions().ParseAdding(ctx, taskGID, f, in[name])
 			if err != nil {
 				return nil, &FieldError{Field: "custom_fields", Err: err}
 			}

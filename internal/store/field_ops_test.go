@@ -257,3 +257,52 @@ func TestResolveProjectField(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A local option gid still held by the caller (an open chooser) after Asana created the
+// option is set as its Asana gid, never queued as the local one.
+func TestSetCustomFieldWithCreatedLocalOption(t *testing.T) {
+	s := setupFieldOps(t)
+	ctx := context.Background()
+	local, _, _ := s.AddEnumOptionLocal(ctx, "cf1", "低", testNow)
+	localM, _, _ := s.AddEnumOptionLocal(ctx, "cf4", "C", testNow)
+	for _, op := range fieldOpsOfKind(t, s, OpCreateEnumOption) {
+		real := "a-" + op.Payload["name"].(string)
+		must(t, s.CompleteCreateEnumOption(ctx, op.ID, op.TaskGID, asana.EnumOption{GID: real, Name: op.Payload["name"].(string)}))
+	}
+	display, err := s.SetCustomFieldLocal(ctx, "t1", "cf1", local, testNow)
+	if err != nil || display != "低" {
+		t.Fatalf("set = %q, %v", display, err)
+	}
+	_, err = s.SetCustomFieldLocal(ctx, "t1", "cf4", []string{"m2", localM}, testNow)
+	must(t, err)
+	if f := fieldOf(t, s, "t1", "cf1"); f.Value != "a-低" {
+		t.Fatalf("enum = %+v", f)
+	}
+	if f := fieldOf(t, s, "t1", "cf4"); fmt.Sprint(f.Value) != "[a-C m2]" {
+		t.Fatalf("multi = %+v", f)
+	}
+	for _, op := range fieldOpsOfKind(t, s, OpSetCustomField) {
+		if v := fmt.Sprint(op.Payload["value"]); v != "a-低" && v != "[a-C m2]" {
+			t.Fatalf("queued %s", v)
+		}
+	}
+}
+
+// The project's fields are listed in the project's order (not by gid).
+func TestProjectFieldsInProjectOrder(t *testing.T) {
+	s := setupFieldOps(t)
+	ctx := context.Background()
+	must(t, s.ReplaceProjectCustomFields(ctx, "p1", []asana.CustomFieldSetting{
+		{CustomField: asana.CustomField{GID: "cf4", Name: "ラベル", ResourceSubtype: CFMultiEnum, EnumOptions: []asana.EnumOption{}}},
+		{CustomField: asana.CustomField{GID: "cf1", Name: "優先度", ResourceSubtype: CFEnum, EnumOptions: []asana.EnumOption{}}},
+	}))
+	fields, err := s.ProjectFields(ctx, "p1")
+	must(t, err)
+	var got []string
+	for _, f := range fields {
+		got = append(got, f.GID)
+	}
+	if fmt.Sprint(got) != "[cf4 cf1 cf5]" {
+		t.Fatalf("order = %v", got)
+	}
+}

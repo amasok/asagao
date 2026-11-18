@@ -71,8 +71,12 @@ func (s *Store) AddEnumOptionLocal(ctx context.Context, fieldGID, name string, n
 		if err := writeFieldOptions(ctx, tx, fieldGID, append(d.Options, EnumOptionView{GID: gid, Name: name, Enabled: true})); err != nil {
 			return err
 		}
+		ws, err := fieldWorkspace(ctx, tx, fieldGID)
+		if err != nil {
+			return err
+		}
 		return saveOp(ctx, tx, &Op{Kind: OpCreateEnumOption, TaskGID: gid, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"field": fieldGID, "field_name": d.Name, "name": name}})
+			Payload: map[string]any{"field": fieldGID, "field_name": d.Name, "name": name, "workspace": ws}})
 	})
 	if err != nil {
 		return "", false, err
@@ -153,6 +157,26 @@ func (s *Store) RealEnumOptionGID(ctx context.Context, gid string) (string, erro
 		return gid, err
 	}
 	return v, nil
+}
+
+// realOptions replaces in a value (stored form) the local gids of options that Asana
+// created by their Asana gids.
+func realOptions(ctx context.Context, tx *sql.Tx, v any) (any, error) {
+	var err error
+	out := mapOption(v, func(g string) string {
+		if err != nil || !IsLocalGID(g) {
+			return g
+		}
+		var real string
+		switch e := tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", ResultEnumOption+g).Scan(&real); {
+		case e == nil && real != "":
+			return real
+		case e != nil && !errors.Is(e, sql.ErrNoRows):
+			err = e
+		}
+		return g
+	})
+	return out, err
 }
 
 // CompleteCreateEnumOption records that Asana created the option of entry id with gid
@@ -387,12 +411,9 @@ func undoCreateEnumOption(ctx context.Context, tx *sql.Tx, op *Op) error {
 // removes it, and queues the change. Undoing a change not sent yet drops it from the queue.
 func (s *Store) SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID string, add bool, now time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		var n int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM projects WHERE gid = ?", projectGID).Scan(&n); err != nil {
-			return err
-		}
-		if n == 0 {
-			return fmt.Errorf("project %s: %w", projectGID, ErrNotFound)
+		var ws string
+		if err := tx.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", projectGID).Scan(&ws); err != nil {
+			return notFound(err, "project "+projectGID)
 		}
 		d, err := getFieldDef(ctx, tx, fieldGID)
 		if err != nil {
@@ -431,7 +452,7 @@ func (s *Store) SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID s
 			return err
 		}
 		op := &Op{Kind: other, TaskGID: projectGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"field": fieldGID, "field_name": d.Name}}
+			Payload: map[string]any{"field": fieldGID, "field_name": d.Name, "workspace": ws}}
 		if add {
 			err = attachField(ctx, tx, projectGID, fieldGID, -1, false)
 		} else {
@@ -503,6 +524,38 @@ func (s *Store) FieldSettingQueued(ctx context.Context, taskGID, fieldGID string
 	return n > 0, err
 }
 
+// TaskWorkspace returns the workspace of a task: its own, else its first project's, else
+// the default workspace.
+func (s *Store) TaskWorkspace(ctx context.Context, taskGID string) (string, error) {
+	var ws string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF((SELECT workspace_gid FROM tasks WHERE gid = ?1), ''),
+		(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid WHERE m.task_gid = ?1 LIMIT 1), '')`,
+		taskGID).Scan(&ws)
+	if err != nil || ws != "" {
+		return ws, err
+	}
+	return s.DefaultWorkspace(ctx)
+}
+
+// ProjectWorkspace returns the workspace of a project.
+func (s *Store) ProjectWorkspace(ctx context.Context, projectGID string) (string, error) {
+	var ws string
+	if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", projectGID).Scan(&ws); err != nil {
+		return "", notFound(err, "project "+projectGID)
+	}
+	return ws, nil
+}
+
+// fieldWorkspace returns the workspace a field belongs to ("" if not known): from the
+// workspace's list, else from a project that has it.
+func fieldWorkspace(ctx context.Context, q dbQuerier, fieldGID string) (string, error) {
+	var ws string
+	err := q.QueryRowContext(ctx, `SELECT COALESCE((SELECT workspace_gid FROM workspace_custom_fields WHERE field_gid = ?1 LIMIT 1),
+		(SELECT p.workspace_gid FROM project_custom_fields pf JOIN projects p ON p.gid = pf.project_gid WHERE pf.field_gid = ?1 LIMIT 1), '')`,
+		fieldGID).Scan(&ws)
+	return ws, err
+}
+
 // --- the workspace's fields ---
 
 // ReplaceWorkspaceCustomFields stores the custom fields of a workspace (with their options).
@@ -561,9 +614,9 @@ func (s *Store) ProjectFields(ctx context.Context, projectGID string) ([]Project
 	}
 	var out []ProjectFieldView
 	seen := map[string]bool{}
-	rows, err = s.db.QueryContext(ctx, `SELECT field_gid, is_important, 1 FROM project_custom_fields WHERE project_gid = ?1
-		UNION ALL SELECT field_gid, 0, 0 FROM workspace_custom_fields WHERE workspace_gid = ?2
-		ORDER BY 3 DESC`, projectGID, workspace)
+	rows, err = s.db.QueryContext(ctx, `SELECT field_gid, is_important, 1 AS attached, position FROM project_custom_fields WHERE project_gid = ?1
+		UNION ALL SELECT field_gid, 0, 0, position FROM workspace_custom_fields WHERE workspace_gid = ?2
+		ORDER BY attached DESC, position, field_gid`, projectGID, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +624,8 @@ func (s *Store) ProjectFields(ctx context.Context, projectGID string) ([]Project
 	for rows.Next() {
 		var g string
 		var important, attached bool
-		if err := rows.Scan(&g, &important, &attached); err != nil {
+		var position int
+		if err := rows.Scan(&g, &important, &attached, &position); err != nil {
 			return nil, err
 		}
 		d, ok := defs[g]

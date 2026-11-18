@@ -442,6 +442,21 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	if isForbidden(err) {
 		err = s.fieldForbidden(ctx, op, err)
 	}
+	if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanCustomFields { // recorded per workspace
+		ws, _ := op.Payload["workspace"].(string)
+		if ws == "" {
+			ws, _ = s.Store.DefaultWorkspace(ctx)
+		}
+		if err == nil {
+			return out, s.clearPlanRefusal(ctx, feature, ws)
+		}
+		if refused, rerr := s.recordPlanRefusal(ctx, feature, ws, err); rerr != nil {
+			return out, rerr
+		} else if refused {
+			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
+		}
+		return out, err
+	}
 	if model.IsPaymentRequired(err) {
 		if feature := readmodel.PlanFeatureOf(op.Kind); feature != "" {
 			_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))

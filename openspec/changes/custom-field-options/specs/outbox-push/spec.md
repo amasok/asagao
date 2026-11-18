@@ -55,17 +55,33 @@ outbox の操作の種類は 33 個 (MUST): `update_task`、`create_task`、`add
 - **THEN** 先にフィールドが付けられ、そのあとで値が送られる
 
 ### Requirement: フィールドの付け外しの送信
-フィールドの付け外しに Asana が 400 を返しても、プロジェクトのフィールドを読んで既にその状態なら完了とする (MUST)。送れたらプロジェクトのフィールドを取り直す。
-根拠: sync/push_fields.go (pushFieldSetting); TestPushAddFieldSettingThenValue, TestPushAddFieldSettingAlreadyThere
+フィールドの付け外しや選択肢の作成に Asana が 4xx (401・402・403・404・429 を除く。例: "Custom field already exists in parent object."、"An enum option already exists with the name") を返しても、Asana を読んで既にその状態 (選択肢は同じ名前の有効なもの) なら完了とする (MUST)。送れたらプロジェクトのフィールドを取り直す。
+根拠: sync/push_fields.go (pushFieldSetting, pushCreateEnumOption, isRefusedAsIs); TestPushAddFieldSettingThenValue, TestPushAddFieldSettingAlreadyThere, TestPushNewOptionDuplicateMeanwhile
 
 #### Scenario: ほかの人が先に付けていた
 - **WHEN** 付けようとしたフィールドを、送る前にほかの人がプロジェクトに付けていた
 - **THEN** 400 が返っても完了になり、失敗にしない
 
-### Requirement: カスタムフィールドの変更を断られたとき
-選択肢の作成やフィールドの付け外しに Asana が 402 を返したら `plan_unavailable:custom_fields` を記録し、どちらの機能も TUI・CLI・MCP に出さない (MUST)。403 なら、選択肢はそのフィールドについて `field_options_locked:<field>` を、付け外しはそのプロジェクトについて `project_fields_locked:<project>` を記録し、そこでは出さない。操作は理由付きで失敗にする。
-根拠: sync/push_fields.go (fieldForbidden); sync/push.go (send); app/fields.go; TestPushNewOptionForbidden, TestPushNewOptionPaymentRequired, TestNewOptionNotOfferedWhenRefused, TestProjectFieldsLocked
+### Requirement: カスタムフィールドの変更をプランで断られたとき
+選択肢の作成やフィールドの付け外しに Asana が 402 を返したら、そのワークスペースについて `plan_unavailable:custom_fields:<workspace>` に時刻を記録し、24 時間はどちらの機能もそのワークスペースで TUI・CLI・MCP に出さない (MUST)。24 時間たてば試し直し、書き込みが通れば印を消す。ほかのワークスペースでは隠さない。操作は理由付きで失敗にする。
+根拠: sync/plan.go (recordPlanRefusal, clearPlanRefusal); sync/push.go (send); readmodel/plan.go (PlanKey, PlanOffFor); app/plan.go (planOffered); TestPushNewOptionPaymentRequired, TestNewOptionNotOfferedWhenRefused
+
+#### Scenario: 無料のワークスペースで 402
+- **WHEN** あるワークスペースで選択肢の作成に Asana が 402 を返す
+- **THEN** そのワークスペースでは 24 時間「選択肢を足して設定する」を出さず、ほかのワークスペースでは出す
+
+### Requirement: カスタムフィールドの変更を権限で断られたとき
+選択肢の作成に Asana が 403 を返したら、そのフィールドについて `field_options_locked:<field>` を記録し、そのフィールドでは選択肢の追加を出さない (MUST)。フィールドの付け外しの 403 なら、そのプロジェクトについて `project_fields_locked:<project>` を記録し、そこでは出さない。操作は理由付きで失敗にする。
+根拠: sync/push_fields.go (fieldForbidden); app/fields.go; TestPushNewOptionForbidden, TestValueWaitsForFailedFieldSetting, TestProjectFieldsLocked
 
 #### Scenario: 選択肢の追加を 403 で断られる
 - **WHEN** 選択肢の作成に Asana が 403 を返す
 - **THEN** 操作は失敗になり、そのフィールドでは「選択肢を足して設定する」を出さない。ほかのフィールドでは出す
+
+### Requirement: カスタムフィールドの値の書き込み形式
+`set_custom_field` の値は、Asana が受け付ける形で送る (MUST): date は `{"date": "YYYY-MM-DD"}` (文字列は "date_value: DayAndDateTime is not a JSON object" で断られる)、people と multi_enum は gid の配列で、空にするときは `[]` (people は null を "people_value: Not an array" で断られる)、そのほかを空にするときは null。本物の Asana で確かめた (Issue #1)。number の形は未確認。
+根拠: readmodel/fieldvalues.go (CustomFieldAPIValue); TestMovedValuesMatchOldStore, TestPushClearMultiEnumSendsEmptyList
+
+#### Scenario: 担当者のフィールドを空にする
+- **WHEN** people のフィールドを空にして同期する
+- **THEN** `{"custom_fields": {"<field>": []}}` が送られる

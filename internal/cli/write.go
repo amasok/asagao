@@ -425,7 +425,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			relations := relationUseCases(st)
 			fv := usecase.FieldValue{Field: f}
 			if addOption, _ := cmd.Flags().GetBool("add-option"); addOption && input != nil {
-				if fv, err = relations.FieldOptions().ParseAdding(ctx, f, input); err != nil {
+				if fv, err = relations.FieldOptions().ParseAdding(ctx, args[0], f, input); err != nil {
 					return "", "", err
 				}
 			} else if fv.Value, err = relations.ParseFieldValue(ctx, f.GID, input); err != nil {

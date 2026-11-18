@@ -79,6 +79,13 @@ func (s *Syncer) pushCreateEnumOption(ctx context.Context, op outbox.Op) (outcom
 	field, _ := op.Payload["field"].(string)
 	name, _ := op.Payload["name"].(string)
 	created, err := s.API.CreateEnumOption(ctx, field, name)
+	if isRefusedAsIs(err) {
+		// e.g. "An enum option already exists with the name" (someone added it meanwhile):
+		// take that one.
+		if m, ferr := s.findEnumOption(ctx, op); ferr == nil && m == matched {
+			return sent, nil
+		}
+	}
 	if err != nil {
 		return sent, err
 	}
@@ -123,8 +130,7 @@ func (s *Syncer) pushFieldSetting(ctx context.Context, op outbox.Op) error {
 		err = s.API.RemoveCustomFieldSetting(ctx, project, field)
 	}
 	var settings []model.CustomFieldSetting
-	var apiErr *model.Error
-	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
+	if isRefusedAsIs(err) { // e.g. "Custom field already exists in parent object."
 		var gerr error
 		if settings, gerr = s.API.CustomFieldSettings(ctx, project); gerr == nil && hasField(settings, field) == add {
 			err = nil
@@ -145,6 +151,21 @@ func (s *Syncer) pushFieldSetting(ctx context.Context, op outbox.Op) error {
 		}
 	}
 	return nil
+}
+
+// isRefusedAsIs reports whether Asana refused a request because of what it asked for (a
+// 4xx other than a missing login, plan, permission, object or a rate limit): it may be
+// that Asana already is as asked.
+func isRefusedAsIs(err error) bool {
+	var apiErr *model.Error
+	if !errors.As(err, &apiErr) || apiErr.Status < 400 || apiErr.Status >= 500 {
+		return false
+	}
+	switch apiErr.Status {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound, http.StatusTooManyRequests:
+		return false
+	}
+	return true
 }
 
 func hasField(settings []model.CustomFieldSetting, field string) bool {
@@ -186,6 +207,9 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 			return err
 		}
 	}
+	if hidden, err := s.planHidden(ctx, readmodel.PlanCustomFields, workspaceGID); err != nil || hidden {
+		return err // a recent 402: not asked for again yet
+	}
 	fields, err := s.API.WorkspaceCustomFields(ctx, workspaceGID)
 	now := s.clock().UTC().Format(time.RFC3339)
 	switch {
@@ -197,7 +221,7 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 		if err := s.Store.ReplaceWorkspaceCustomFields(ctx, workspaceGID, nil); err != nil {
 			return err
 		}
-		if err := s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomFields, now); err != nil {
+		if _, err := s.recordPlanRefusal(ctx, readmodel.PlanCustomFields, workspaceGID, err); err != nil {
 			return err
 		}
 	case isForbidden(err):

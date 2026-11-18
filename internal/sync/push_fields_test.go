@@ -12,7 +12,9 @@ import (
 	"strings"
 	stdsync "sync"
 	"testing"
+	"time"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
@@ -33,6 +35,9 @@ type optionServer struct {
 	// status, if set, answers the matching request ("POST /custom_fields/cf1/enum_options")
 	// with that status. 500 on a create: the option is created and the answer lost.
 	status map[string]int
+	// dupOnCreate: someone else adds the option just before ours is created, and Asana
+	// refuses ours as a duplicate.
+	dupOnCreate bool
 }
 
 func (f *optionServer) fieldJSON(g string, withValue string) map[string]any {
@@ -123,6 +128,11 @@ func (f *optionServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		f.next++
 		yes := true
+		if f.dupOnCreate {
+			d.EnumOptions = append(d.EnumOptions, asana.EnumOption{GID: "theirs", Name: str("name"), Enabled: &yes})
+			fail(400, "An enum option already exists with the name: "+str("name")+".")
+			return
+		}
 		o := asana.EnumOption{GID: fmt.Sprintf("new%d", f.next), Name: str("name"), Color: "blue", Enabled: &yes}
 		d.EnumOptions = append(d.EnumOptions, o)
 		if status == 500 {
@@ -437,14 +447,42 @@ func TestPushNewOptionPaymentRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.status["POST /custom_fields/cf1/enum_options"] = 402
+	s.now = func() time.Time { return now }
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomFields); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomFields, "w1")); v == "" {
 		t.Fatal("plan not recorded")
 	}
-	if v := fieldOf(t, st, "t1", "cf2"); v.CanAddOption {
-		t.Fatal("still offered")
+	ops, _ := st.ListOps(ctx)
+	if len(ops) != 1 || !strings.Contains(ops[0].LastError, "プラン") {
+		t.Fatalf("ops = %+v", ops)
+	}
+	// not offered in w1 now; again 24 hours later; and not hidden in another workspace
+	options := &app.FieldOptions{Store: st, Clock: func() time.Time { return now }}
+	if err := options.Addable(ctx, "t1", fieldOf(t, st, "t1", "cf2")); !app.IsPlanUnavailable(err) {
+		t.Fatalf("addable = %v", err)
+	}
+	options.Clock = func() time.Time { return now.Add(readmodel.PlanRecheckAfter) }
+	if err := options.Addable(ctx, "t1", fieldOf(t, st, "t1", "cf2")); err != nil {
+		t.Fatalf("after 24h = %v", err)
+	}
+	if !(&app.ProjectFields{Store: st, Clock: func() time.Time { return now }}).Available(ctx, "w2") {
+		t.Fatal("hidden in another workspace")
+	}
+	if (&app.ProjectFields{Store: st, Clock: func() time.Time { return now }}).Available(ctx, "w1") {
+		t.Fatal("offered in w1")
+	}
+	// a later success clears the mark
+	delete(f.status, "POST /custom_fields/cf1/enum_options")
+	if _, _, err := st.AddEnumOptionLocal(ctx, "cf2", "C", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomFields, "w1")); v != "" {
+		t.Fatalf("mark left: %q", v)
 	}
 }
 
@@ -594,7 +632,7 @@ func TestSyncWorkspaceCustomFields(t *testing.T) {
 	if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomFields); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomFields, "w1")); v == "" {
 		t.Fatal("plan not recorded")
 	}
 	fields, _ = st.ProjectFields(ctx, "p1")
@@ -605,5 +643,44 @@ func TestSyncWorkspaceCustomFields(t *testing.T) {
 	f.status["GET /workspaces/w1/custom_fields"] = 500
 	if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Someone adds the same option between our check and our create: Asana refuses ours as a
+// duplicate, and theirs is taken.
+func TestPushNewOptionDuplicateMeanwhile(t *testing.T) {
+	f, s, st := setupOptions(t)
+	ctx := context.Background()
+	local, _, _ := st.AddEnumOptionLocal(ctx, "cf1", "低", now)
+	if _, err := st.SetCustomFieldLocal(ctx, "t1", "cf1", local, now); err != nil {
+		t.Fatal(err)
+	}
+	f.dupOnCreate = true
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 2 || res.Failed != 0 || f.value("t1", "cf1") != "theirs" {
+		t.Fatalf("push = %+v, %v; calls %v", res, err, f.calls)
+	}
+}
+
+// Clearing a multi_enum (or people) field sends [], which Asana takes (it refuses null
+// for people: "people_value: Not an array").
+func TestPushClearMultiEnumSendsEmptyList(t *testing.T) {
+	f, s, st := setupOptions(t)
+	ctx := context.Background()
+	if _, err := st.SetCustomFieldLocal(ctx, "t1", "cf2", []string{"m1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetCustomFieldLocal(ctx, "t1", "cf2", nil, now); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	if f.count(`PUT /tasks/t1 {"data":{"custom_fields":{"cf2":[]}}}`) != 1 {
+		t.Fatalf("calls %v", f.calls)
 	}
 }

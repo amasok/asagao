@@ -21,6 +21,7 @@ import (
 type FieldOptionStore interface {
 	AddEnumOptionLocal(ctx context.Context, fieldGID, name string, now time.Time) (gid string, created bool, err error)
 	SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	SyncState(ctx context.Context, key string) (string, error)
 }
 
@@ -31,6 +32,7 @@ type ProjectFieldStore interface {
 	ProjectFields(ctx context.Context, projectGID string) ([]readmodel.ProjectFieldView, error)
 	ResolveProjectField(ctx context.Context, projectGID, arg string) (readmodel.ProjectFieldView, error)
 	SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID string, add bool, now time.Time) error
+	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
 	SyncState(ctx context.Context, key string) (string, error)
 }
 
@@ -45,11 +47,12 @@ func (e *ErrFieldLocked) Error() string {
 	return "このカスタムフィールドには選択肢を足せません（選択肢の編集が制限されているか、権限がありません。Asana が 403 を返しました）"
 }
 
-// refused reports, as an error, whether Asana refused feature (402) or the key (403).
+// refused says, as an error, whether Asana refused custom field changes in workspace
+// workspaceGID (402, less than PlanRecheck ago) or under lockedKey (403).
 func refused(ctx context.Context, st interface {
 	SyncState(ctx context.Context, key string) (string, error)
-}, lockedKey string, project bool) error {
-	if err := planAvailable(ctx, st, readmodel.PlanCustomFields); err != nil {
+}, workspaceGID, lockedKey string, project bool, now time.Time) error {
+	if err := planOffered(ctx, st, readmodel.PlanCustomFields, workspaceGID, now); err != nil {
 		return err
 	}
 	v, err := st.SyncState(ctx, lockedKey)
@@ -70,23 +73,27 @@ type FieldOptions struct {
 	Clock Clock
 }
 
-// Addable says (nil) whether options can be added to field f, else why not.
-func (u *FieldOptions) Addable(ctx context.Context, f readmodel.CustomFieldView) error {
+// Addable says (nil) whether options can be added to field f of task taskGID, else why not.
+func (u *FieldOptions) Addable(ctx context.Context, taskGID string, f readmodel.CustomFieldView) error {
 	if f.Type != readmodel.CFEnum && f.Type != readmodel.CFMultiEnum {
 		return fmt.Errorf("カスタムフィールド「%s」は選択式ではありません（%s）", f.Name, f.Type)
 	}
 	if !f.Editable {
 		return fmt.Errorf("カスタムフィールド「%s」は変更できません", f.Name)
 	}
-	return refused(ctx, u.Store, readmodel.KeyFieldOptionsLocked+f.GID, false)
+	ws, err := u.Store.TaskWorkspace(ctx, taskGID)
+	if err != nil {
+		return err
+	}
+	return refused(ctx, u.Store, ws, readmodel.KeyFieldOptionsLocked+f.GID, false, u.Clock())
 }
 
-// ParseAdding reads input as options of the enum / multi_enum field f (a name or gid;
+// ParseAdding reads input as options of the enum / multi_enum field f of task taskGID (a name or gid;
 // several separated by commas, or a list, for multi_enum), like ParseFieldValue, except
 // that a name only matches an option exactly (ignoring case): any other name is an option
 // to add (NewOptions). Nothing is written. Other types are an error.
-func (u *FieldOptions) ParseAdding(ctx context.Context, f readmodel.CustomFieldView, input any) (FieldValue, error) {
-	if err := u.Addable(ctx, f); err != nil {
+func (u *FieldOptions) ParseAdding(ctx context.Context, taskGID string, f readmodel.CustomFieldView, input any) (FieldValue, error) {
+	if err := u.Addable(ctx, taskGID, f); err != nil {
 		return FieldValue{}, err
 	}
 	var parts []string
@@ -139,7 +146,7 @@ func (u *FieldOptions) ParseAdding(ctx context.Context, f readmodel.CustomFieldV
 // field first unless it has one by that name (ignoring case). A multi_enum field keeps its
 // other options. It returns the value as text.
 func (u *FieldOptions) SetWithNewOption(ctx context.Context, taskGID string, f readmodel.CustomFieldView, name string) (string, error) {
-	fv, err := u.ParseAdding(ctx, f, name)
+	fv, err := u.ParseAdding(ctx, taskGID, f, name)
 	if err != nil {
 		return "", err
 	}
@@ -189,15 +196,20 @@ type ProjectFields struct {
 	Clock Clock
 }
 
-// Available reports whether adding fields to projects can be offered (the plan has it,
-// unless Asana refused it with a 402).
-func (u *ProjectFields) Available(ctx context.Context) bool {
-	return planAvailable(ctx, u.Store, readmodel.PlanCustomFields) == nil
+// Available reports whether adding fields to projects and options to fields can be
+// offered in a workspace (the plan has it, unless Asana refused it there with a 402 less
+// than readmodel.PlanRecheckAfter ago).
+func (u *ProjectFields) Available(ctx context.Context, workspaceGID string) bool {
+	return planOffered(ctx, u.Store, readmodel.PlanCustomFields, workspaceGID, u.Clock()) == nil
 }
 
 // Changeable says (nil) whether the fields of project projectGID can be changed, else why not.
 func (u *ProjectFields) Changeable(ctx context.Context, projectGID string) error {
-	return refused(ctx, u.Store, readmodel.KeyProjectFieldsLocked+projectGID, true)
+	ws, err := u.Store.ProjectWorkspace(ctx, projectGID)
+	if err != nil {
+		return err
+	}
+	return refused(ctx, u.Store, ws, readmodel.KeyProjectFieldsLocked+projectGID, true, u.Clock())
 }
 
 // List returns the fields of the project named (or with the gid) project, then (all) the

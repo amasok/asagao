@@ -46,6 +46,10 @@ func refAPIValue(fieldType string, v any) any {
 	if s, ok := v.(string); ok && fieldType == "date" {
 		return map[string]any{"date": s}
 	}
+	// Changed since (#1, checked on Asana): an empty people / multi_enum field goes as [].
+	if v == nil && (fieldType == "people" || fieldType == "multi_enum") {
+		return []string{}
+	}
 	return v
 }
 
@@ -71,6 +75,15 @@ func TestMovedValuesMatchOldStore(t *testing.T) {
 	}
 	if got := CustomFieldAPIValue("date", ""); got != nil {
 		t.Errorf("empty date = %#v", got)
+	}
+	// Asana refuses null for people ("people_value: Not an array"): [] clears it.
+	for _, ft := range []string{"people", "multi_enum"} {
+		if got := CustomFieldAPIValue(ft, nil); !reflect.DeepEqual(got, []string{}) {
+			t.Errorf("empty %s = %#v", ft, got)
+		}
+	}
+	if got := CustomFieldAPIValue("enum", nil); got != nil {
+		t.Errorf("empty enum = %#v", got)
 	}
 	in := []string{"b", "a"}
 	GIDList(in)

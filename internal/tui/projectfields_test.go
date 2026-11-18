@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -15,6 +16,9 @@ func setupFieldHarness(t *testing.T, subtype string) (*harness, *store.Store) {
 	t.Helper()
 	h := newHarness(t, 140, 30)
 	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
+	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "WS"}}); err != nil {
+		t.Fatal(err)
+	}
 	settings := []asana.CustomFieldSetting{{CustomField: asana.CustomField{GID: "cf", Name: "優先度", ResourceSubtype: subtype,
 		EnumOptions: []asana.EnumOption{{GID: "a", Name: "高"}}}}}
 	if err := st.ReplaceProjectCustomFields(ctx, "p1", settings); err != nil {
@@ -91,12 +95,13 @@ func TestNewOptionFromChooser(t *testing.T) {
 
 // Not offered when Asana refused it (402 for the plan, 403 for the field).
 func TestNewOptionNotOfferedWhenRefused(t *testing.T) {
-	for _, key := range []string{readmodel.KeyPlanUnavailable + readmodel.PlanCustomFields, readmodel.KeyFieldOptionsLocked + "cf"} {
+	for _, key := range []string{readmodel.PlanKey(readmodel.PlanCustomFields, "w1"), readmodel.KeyFieldOptionsLocked + "cf"} {
 		h, st := setupFieldHarness(t, store.CFEnum)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, key, "2026-11-13T00:00:00Z"); err != nil {
+		if err := st.SetSyncState(ctx, key, testNow.UTC().Format(time.RFC3339)); err != nil {
 			t.Fatal(err)
 		}
+		h.run(h.m.loadPlan())
 		d, _ := st.GetTask(ctx, "t1")
 		h.m.showFieldPicker(d.TaskSummary, h.field("cf"))
 		if slices.ContainsFunc(h.m.picker.items, func(it pickerItem) bool { return it.value == newOptionValue }) {

@@ -99,8 +99,8 @@ const (
 	//
 	// KindCreateEnumOption adds an option to an enum or multi_enum field. The outbox
 	// task_gid column holds the option's gid ("local:...", replaced once Asana created it:
-	// the values that use it wait for it). payload: field, field_name, name, and existing
-	// (the gids of the options with that name before the request, set when it is sent).
+	// the values that use it wait for it). payload: field, field_name, name. It is matched
+	// by name in Asana before it is sent and when it is verified (never created twice).
 	KindCreateEnumOption = "create_enum_option"
 	// KindAddFieldSetting adds an existing custom field to a project, KindRemoveFieldSetting
 	// removes it. The outbox task_gid column holds the project gid. payload: field,

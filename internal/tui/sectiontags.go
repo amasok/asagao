@@ -31,7 +31,8 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
-		if !(&app.ProjectFields{Store: st}).Available(m.ctx) {
+		// Per workspace (24 hours): the default workspace's, like the other menus.
+		if ws, err := st.DefaultWorkspace(m.ctx); err == nil && !(&app.ProjectFields{Store: st, Clock: m.deps.Now}).Available(m.ctx, ws) {
 			off[readmodel.PlanCustomFields] = true
 		}
 		return planLoadedMsg{off: off}

@@ -423,12 +423,11 @@ func (s *Store) taskCustomFields(ctx context.Context, gid string) ([]CustomField
 }
 
 // optionsAddable reports whether options can be added to a field: unless Asana refused it
-// before (402 for the plan, 403 for this field).
+// for this field before (403). Whether the workspace's plan has it (402) is the use
+// case's to say (app.FieldOptions.Addable).
 func (s *Store) optionsAddable(ctx context.Context, fieldGID string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM sync_state WHERE key IN (?, ?) AND value <> ''",
-		readmodel.KeyPlanUnavailable+readmodel.PlanCustomFields, readmodel.KeyFieldOptionsLocked+fieldGID).Scan(&n)
-	return n == 0, err
+	v, err := s.SyncState(ctx, readmodel.KeyFieldOptionsLocked+fieldGID)
+	return v == "", err
 }
 
 // ResolveCustomField finds a custom field of a task by gid or name (exact, ignoring case,
@@ -606,6 +605,12 @@ func (s *Store) SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID strin
 	value = normalizeCFValue(value)
 	var display string
 	err := s.tx(ctx, func(tx *sql.Tx) error {
+		// An option added offline that Asana created meanwhile (the caller still held its
+		// local gid, e.g. an open chooser): its Asana gid.
+		var err error
+		if value, err = realOptions(ctx, tx, value); err != nil {
+			return err
+		}
 		var modifiedAt string
 		if err := tx.QueryRowContext(ctx, "SELECT modified_at FROM tasks WHERE gid = ?", taskGID).Scan(&modifiedAt); err != nil {
 			return notFound(err, "task "+taskGID)

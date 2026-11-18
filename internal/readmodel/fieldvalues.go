@@ -98,12 +98,17 @@ func NormalizeCustomFieldValue(v any) any {
 }
 
 // CustomFieldAPIValue is a stored value as PUT /tasks sends it: the same, except that a
-// date goes as {"date": "YYYY-MM-DD"} (Asana rejects a plain string for date fields,
-// although its reference shows one; see the custom fields guide and forum). nil clears.
+// date goes as {"date": "YYYY-MM-DD"} (Asana rejects a plain string: "date_value:
+// DayAndDateTime is not a JSON object", checked on Asana in #1), and an empty people or
+// multi_enum field as [] (Asana rejects null for people: "people_value: Not an array").
+// nil clears the other types.
 func CustomFieldAPIValue(fieldType string, v any) any {
 	v = NormalizeCustomFieldValue(v)
 	if s, ok := v.(string); ok && fieldType == CFDate {
 		return map[string]any{"date": s}
+	}
+	if v == nil && (fieldType == CFPeople || fieldType == CFMultiEnum) {
+		return []string{}
 	}
 	return v
 }
