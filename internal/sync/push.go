@@ -379,17 +379,29 @@ func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 // maxStepsPerEntry bounds how often Push handles one entry (see Push).
 const maxStepsPerEntry = 4
 
-// waitsForCreate reports whether op belongs to a task (or, for a subtask's create, a
-// parent) created offline whose create is still queued or failed. It waits instead of
+// waitsForCreate reports whether op belongs to a task (or, for a subtask's create or a
+// parent change, a parent) created offline whose create is still queued or failed. It waits instead of
 // failing, and goes out once the create is sent (or is discarded with it).
 func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
 	gid := op.TaskGID
 	switch op.Kind {
 	case outbox.KindCreateTask:
 		gid, _ = op.Payload["parent"].(string)
+	case outbox.KindSetParent: // the task, and the new parent
+		if parent, _ := op.Payload["parent"].(string); parent != "" {
+			if wait, err := s.createQueued(ctx, parent); err != nil || wait {
+				return wait, err
+			}
+		}
 	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification:
 		return false, nil
 	}
+	return s.createQueued(ctx, gid)
+}
+
+// createQueued reports whether gid is a task created offline whose create (or duplicate)
+// is still in the outbox, in any state.
+func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 	if !localgid.IsLocal(gid) {
 		return false, nil
 	}
@@ -572,9 +584,15 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 				return ferr
 			}
 		} else {
-			if op.Kind == outbox.KindAddDependency || op.Kind == outbox.KindRemoveDependency {
-				// the other task is missing, or private to someone else
+			switch op.Kind { // the other task is missing, or private to someone else
+			case outbox.KindAddDependency, outbox.KindRemoveDependency:
 				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			case outbox.KindSetParent:
+				reason = "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			case outbox.KindMoveTask:
+				if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
+					reason = "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+				}
 			}
 			var d readmodel.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)

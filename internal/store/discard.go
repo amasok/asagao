@@ -25,6 +25,10 @@ type Discard = readmodel.Discard
 func (s *Store) DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]Discard, error) {
 	var out []Discard
 	err := s.tx(ctx, func(tx *sql.Tx) error {
+		// tasks moved under it go back to their parents, not away with it
+		if err := undoSetParentsTo(ctx, tx, taskGID); err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE sub(gid) AS (
 				SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid)
 			SELECT o.id FROM outbox o WHERE o.task_gid IN (SELECT gid FROM sub) ORDER BY o.id`, taskGID)

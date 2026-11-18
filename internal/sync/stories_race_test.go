@@ -18,6 +18,8 @@ type storiesRaceAPI struct {
 	list   []model.Story
 }
 
+func (a *storiesRaceAPI) ClockOffset() time.Duration { return 0 }
+
 func (a *storiesRaceAPI) TaskDetail(ctx context.Context, gid string) (*model.Task, error) {
 	return &model.Task{GID: gid, Name: "A"}, nil
 }

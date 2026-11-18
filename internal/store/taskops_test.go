@@ -271,3 +271,68 @@ func TestTaskOpsRefuseTasksBeingDeleted(t *testing.T) {
 		t.Errorf("outbox %v", got)
 	}
 }
+
+// A move (or parent change) to a place goes after the changes queued since: its place is
+// next to a task that may move in them.
+func TestMoveToAPlaceGoesToTheEndOfTheQueue(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	must(t, s.MoveTaskLocal(ctx, "t2", "p1", "s1", now))                          // t2 to 家具
+	must(t, s.MoveTaskAtLocal(ctx, "t3", "p1", "s1", Position{After: "t2"}, now)) // t3 after t2
+	must(t, s.MoveTaskAtLocal(ctx, "t2", "p1", "s1", Position{After: "t3"}, now)) // then t2 after t3
+	ops, _ := s.ListOps(ctx)
+	if got := opKindsOf(t, s); !slices.Equal(got, []string{"move_task t3", "move_task t2"}) {
+		t.Fatalf("outbox %v", got)
+	}
+	if ops[1].Base["section"] != "s2" || ops[1].Payload["insert_after"] != "t3" {
+		t.Errorf("requeued entry %+v", ops[1])
+	}
+	must(t, s.UpsertTasks(ctx, []asana.Task{{GID: "t2b", Name: "子", Parent: &asana.Ref{GID: "t1"}}}))
+	must(t, s.SetParentLocal(ctx, "t2", "t1", Position{}, now))
+	must(t, s.SetParentLocal(ctx, "t3", "t1", Position{After: "t2"}, now))
+	must(t, s.SetParentLocal(ctx, "t2", "t1", Position{After: "t3"}, now))
+	if got := opKindsOf(t, s); !slices.Equal(got[2:], []string{"set_parent t3", "set_parent t2"}) {
+		t.Fatalf("outbox %v", got)
+	}
+}
+
+// A parent made offline that goes away (its create discarded, or dropped as gone) takes
+// the parent changes to it along: the tasks go back to their parents and stay.
+func TestParentCreatedOfflineGoesAway(t *testing.T) {
+	for _, how := range []string{"discard", "dropped"} {
+		t.Run(how, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			parent, err := s.CreateTaskLocal(ctx, NewTask{Name: "親", ProjectGID: "p1", SectionGID: "s1"}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			must(t, s.SetParentLocal(ctx, "t1a", parent, Position{}, now))
+			ops, _ := s.ListOps(ctx)
+			if how == "discard" {
+				must(t, s.DiscardOp(ctx, ops[0].ID))
+			} else if _, err := s.DiscardDeletedTask(ctx, parent, "gone", now); err != nil {
+				t.Fatal(err)
+			}
+			d, err := s.GetTask(ctx, "t1a")
+			if err != nil || d.ParentGID != "t1" {
+				t.Fatalf("t1a: %+v %v", d, err)
+			}
+			if got := opKindsOf(t, s); len(got) != 0 {
+				t.Errorf("outbox %v", got)
+			}
+		})
+	}
+}
+
+// A pull of the task keeps a queued parent change, and does not count it twice.
+func TestPullKeepsQueuedParentAndCounts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	must(t, s.SetParentLocal(ctx, "t1a", "t2", Position{}, now))
+	must(t, s.UpsertTasks(ctx, []asana.Task{{GID: "t1a", Name: "サイズを測る", Parent: &asana.Ref{GID: "t1"}}}))
+	d, _ := s.GetTask(ctx, "t2")
+	if d.NumSubtasks != 1 {
+		t.Errorf("t2 subtasks %d", d.NumSubtasks)
+	}
+}
