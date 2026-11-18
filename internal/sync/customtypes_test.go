@@ -29,6 +29,7 @@ type typesServer struct {
 	refuse   bool // 402 for GET /custom_types and for a PUT with a custom type
 	reject   bool // 400 for a PUT with a custom type (the API does not take it)
 	ignore   bool // a PUT answers 200 without applying the custom type
+	failRest bool // a PUT without a custom type answers 503
 	// task is t1 as Asana has it.
 	subtype, typ, status string
 	name                 string // "" is "A"
@@ -44,7 +45,7 @@ func (f *typesServer) taskJSON() string {
 	if name == "" {
 		name = "A"
 	}
-	return fmt.Sprintf(`{"gid":"t1","name":%q,"resource_subtype":%q,"custom_type":%s,"custom_type_status_option":%s,
+	return fmt.Sprintf(`{"gid":"t1","name":%q,"resource_subtype":%q,"custom_type":%s,"custom_type_status_option":%s,"due_on":"2026-12-31",
 		"workspace":{"gid":"w1"},"memberships":[{"project":{"gid":"p1"}}],"modified_at":"2026-11-13T00:00:00Z"}`, name, f.subtype, ct, cs)
 }
 
@@ -70,6 +71,11 @@ func (f *typesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(b, &body)
 		f.puts = append(f.puts, body.Data)
 		_, custom := body.Data["custom_type"]
+		if f.failRest && !custom {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"errors":[{"message":"later"}]}`)
+			return
+		}
 		if f.refuse && custom {
 			w.WriteHeader(http.StatusPaymentRequired)
 			fmt.Fprint(w, `{"errors":[{"message":"payment required"}]}`)

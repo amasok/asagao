@@ -149,3 +149,38 @@ func TestPushCustomTypeNotSupported(t *testing.T) {
 		}
 	}
 }
+
+// A 402 to an entry with a start date and a custom type takes out the custom type only;
+// the start date goes with the rest, and start dates are not hidden.
+func TestPushCustomTypeAndStartOnPaymentRequired(t *testing.T) {
+	f, s, st, _ := setupTypes(t)
+	ctx := context.Background()
+	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", Workspace: &asana.Ref{GID: "w1"}, DueOn: "2026-12-31",
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "custom", "custom_type": "ct1", "start_on": "2026-12-01"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f.refuse, f.failRest = true, true // the rest is not sent this time
+	res, _ := s.Push(ctx)
+	if len(res.Discarded) != 1 || !strings.Contains(res.Discarded[0].Reason, "カスタムタイプ") {
+		t.Fatalf("push %+v", res)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1")); v != "" {
+		t.Fatal("start dates hidden for a custom type's 402")
+	}
+	f.failRest = false
+	if _, err := s.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if last := f.puts[len(f.puts)-1]; last["start_on"] != "2026-12-01" {
+		t.Fatalf("puts %v", f.puts)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("left %+v", ops)
+	}
+}

@@ -476,7 +476,9 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 		return out, err
 	}
-	if withStart {
+	if withStart && !errors.As(err, new(*customTypeWithdrawn)) {
+		// A 402 to an entry with a custom type takes out the custom type first (#59),
+		// the more likely cause: the start date is tried again with the rest.
 		return out, s.startOnOutcome(ctx, startWS, op, out, err)
 	}
 	if model.IsPaymentRequired(err) {
