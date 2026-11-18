@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -33,5 +34,20 @@ func TestCustomTypeInDetail(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no status item")
+	}
+}
+
+// The timeline's name column shows a custom type and its status as the list does, and a
+// milestone's ◆ once.
+func TestTimelineNameShowsCustomType(t *testing.T) {
+	h := newHarness(t, 140, 30)
+	custom := readmodel.TaskSummary{GID: "x", Name: "落ちる", ResourceSubtype: "custom",
+		CustomType: &readmodel.CustomTypeRef{GID: "ct1", Name: "バグ"}, CustomTypeStatus: &readmodel.CustomTypeStatusView{GID: "cs1", Name: "対応中"}}
+	if got := ansi.Strip(h.m.tlNameCell(&custom, 0, 40, false, false)); !strings.Contains(got, "落ちる [バグ: 対応中]") {
+		t.Fatalf("custom %q", got)
+	}
+	ms := readmodel.TaskSummary{GID: "y", Name: "リリース", ResourceSubtype: "milestone"}
+	if got := ansi.Strip(h.m.tlNameCell(&ms, 0, 40, false, false)); strings.Count(got, "◆") != 1 {
+		t.Fatalf("milestone %q", got)
 	}
 }

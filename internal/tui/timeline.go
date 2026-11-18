@@ -277,6 +277,11 @@ func (m *Model) tlNameCell(t *readmodel.TaskSummary, depth, w int, selected, foc
 		mark = strings.Repeat("  ", depth-1) + "└ " + mark
 	}
 	s := mark + " " + t.Name
+	// The list's marks (an approval's status, a custom type and its status, what it waits
+	// for), but the milestone's ◆, which is the mark here.
+	if badges := strings.TrimSpace(strings.TrimPrefix(readmodel.TaskBadges(*t), "◆")); badges != "" {
+		s += " " + badges
+	}
 	if t.NumSubtasks > 0 {
 		if m.expanded[t.GID] {
 			s += fmt.Sprintf(" ▾%d", t.NumSubtasks)
