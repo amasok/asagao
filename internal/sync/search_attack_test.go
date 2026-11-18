@@ -209,3 +209,39 @@ func TestSearchConcurrent(t *testing.T) {
 		t.Errorf("tags %+v", tags)
 	}
 }
+
+// A custom ID 402 is remembered like the search plan: Asana is not asked again, and the
+// other lookups (search, names) are not affected (#36).
+func TestTaskByCustomID402Remembered(t *testing.T) {
+	ctx := context.Background()
+	f := &searchServer{customStatus: http.StatusPaymentRequired}
+	s, st := setupSearch(t, f)
+	s.API.(*asana.Client).MaxRetries = 0
+	for i := 0; i < 3; i++ {
+		if _, err := s.TaskByCustomID(ctx, "ENG-123"); !errors.Is(err, ErrCustomIDUnavailable) {
+			t.Fatalf("%d: %v", i, err)
+		}
+	}
+	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomID); v == "" {
+		t.Fatal("402 not remembered")
+	}
+	f.customStatus = 0
+	if _, err := s.SearchTasks(ctx, "x", nil, 10); err != nil {
+		t.Fatalf("search affected by the custom ID plan: %v", err)
+	}
+	if n, err := s.FindUsers(ctx, "h"); err != nil || n == 0 {
+		t.Fatalf("names affected: %d %v", n, err)
+	}
+	// 500 / 403 are not remembered
+	for _, status := range []int{http.StatusInternalServerError, http.StatusForbidden} {
+		f2 := &searchServer{customStatus: status}
+		s2, st2 := setupSearch(t, f2)
+		s2.API.(*asana.Client).MaxRetries = 0
+		if _, err := s2.TaskByCustomID(ctx, "ENG-123"); err == nil || errors.Is(err, ErrCustomIDUnavailable) {
+			t.Fatalf("%d: %v", status, err)
+		}
+		if v, _ := st2.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomID); v != "" {
+			t.Fatalf("%d remembered as a plan limit", status)
+		}
+	}
+}
