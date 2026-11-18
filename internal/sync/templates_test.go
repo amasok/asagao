@@ -585,3 +585,44 @@ func TestPickTemplate(t *testing.T) {
 		}
 	}
 }
+
+// A date or role given by both its gid and its name is the same one: the same value is
+// accepted, different values are refused.
+func TestRequestedByGIDAndName(t *testing.T) {
+	ctx := context.Background()
+	f, s, _, _ := setupTemplates(t)
+	if _, err := s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "x",
+		Dates: map[string]string{"d1": "2026-01-01", "開始日": "2026-01-01"},
+		Roles: map[string]string{"r1": "u2", "担当": "u2"}}); err != nil {
+		t.Fatalf("same values: %v", err)
+	}
+	n := len(f.posts)
+	for _, in := range []ProjectInput{
+		{Name: "x", Dates: map[string]string{"d1": "2026-01-01", "開始日": "2026-01-02"}},
+		{Name: "x", Roles: map[string]string{"r1": "u2", "担当": "u3"}},
+	} {
+		if _, err := s.InstantiateProject(ctx, tmplProject, in); err == nil || !strings.Contains(err.Error(), "違う値") {
+			t.Errorf("%+v: err = %v", in, err)
+		}
+	}
+	if len(f.posts) != n {
+		t.Errorf("sent: %v", f.posts[n:])
+	}
+}
+
+// A date that is not on the calendar is refused before anything is sent.
+func TestRequestedDateOnTheCalendar(t *testing.T) {
+	ctx := context.Background()
+	f, s, _, _ := setupTemplates(t)
+	for _, v := range []string{"2026-02-30", "2026-13-01", "0000-00-00", "2026-1-1", "2026-01-01\n", " 2026-01-01"} {
+		if _, err := s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "x", Dates: map[string]string{"d1": v}}); err == nil {
+			t.Errorf("%q accepted", v)
+		}
+	}
+	if len(f.posts) != 0 {
+		t.Errorf("sent: %v", f.posts)
+	}
+	if _, err := s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "x", Dates: map[string]string{"d1": "2028-02-29"}}); err != nil {
+		t.Errorf("leap day: %v", err)
+	}
+}

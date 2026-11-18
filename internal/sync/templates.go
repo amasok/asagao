@@ -441,31 +441,20 @@ func jobError(job *model.Job, what string) error {
 }
 
 // requestedDates fills the template's requested dates: given ones (by gid or name) must
-// be YYYY-MM-DD, the others are today.
+// be dates YYYY-MM-DD, the others are today.
 func (s *Syncer) requestedDates(tmpl model.ProjectTemplate, given map[string]string) (map[string]string, error) {
-	out := map[string]string{}
-	used := map[string]bool{}
-	for _, d := range tmpl.RequestedDates {
-		v, key := "", ""
-		for _, k := range []string{d.GID, d.Name} {
-			if x, ok := given[k]; ok && k != "" {
-				v, key = x, k
-				break
-			}
-		}
-		if key == "" {
-			v = s.clock().Format("2006-01-02")
-		} else if !dateRE.MatchString(v) {
-			return nil, fmt.Errorf("日付「%s」は YYYY-MM-DD で書いてください: %s", d.Name, termsafe.String(v))
-		}
-		if key != "" {
-			used[key] = true
-		}
-		out[d.GID] = v
+	out, err := byGIDOrName(tmpl.RequestedDates, given, func(d model.TemplateDate) (string, string) { return d.GID, d.Name }, "日付")
+	if err != nil {
+		return nil, err
 	}
-	for k := range given {
-		if !used[k] {
-			return nil, fmt.Errorf("テンプレートに日付「%s」はありません", termsafe.String(k))
+	for _, d := range tmpl.RequestedDates {
+		v, ok := out[d.GID]
+		if !ok {
+			out[d.GID] = s.clock().Format(time.DateOnly)
+			continue
+		}
+		if _, err := time.Parse(time.DateOnly, v); err != nil || !dateRE.MatchString(v) {
+			return nil, fmt.Errorf("日付「%s」は YYYY-MM-DD の日付で書いてください: %s", d.Name, termsafe.String(v))
 		}
 	}
 	return out, nil
@@ -473,19 +462,30 @@ func (s *Syncer) requestedDates(tmpl model.ProjectTemplate, given map[string]str
 
 // requestedRoles maps the given roles (by gid or name) to the template's role gids.
 func requestedRoles(tmpl model.ProjectTemplate, given map[string]string) (map[string]string, error) {
+	return byGIDOrName(tmpl.RequestedRoles, given, func(r model.Ref) (string, string) { return r.GID, r.Name }, "役割")
+}
+
+// byGIDOrName maps values given by an item's gid or name to the item's gid. The same item
+// given both ways must have the same value; a key that is no item is an error.
+func byGIDOrName[T any](items []T, given map[string]string, keys func(T) (gid, name string), what string) (map[string]string, error) {
 	out := map[string]string{}
 	used := map[string]bool{}
-	for _, r := range tmpl.RequestedRoles {
-		for _, k := range []string{r.GID, r.Name} {
-			if v, ok := given[k]; ok && k != "" {
-				out[r.GID], used[k] = v, true
-				break
+	for _, it := range items {
+		gid, name := keys(it)
+		for _, k := range []string{gid, name} {
+			v, ok := given[k]
+			if !ok || k == "" {
+				continue
 			}
+			if prev, dup := out[gid]; dup && prev != v {
+				return nil, fmt.Errorf("%s「%s」に違う値が 2 つあります: %s / %s", what, name, termsafe.String(prev), termsafe.String(v))
+			}
+			out[gid], used[k] = v, true
 		}
 	}
 	for k := range given {
 		if !used[k] {
-			return nil, fmt.Errorf("テンプレートに役割「%s」はありません", termsafe.String(k))
+			return nil, fmt.Errorf("テンプレートに%s「%s」はありません", what, termsafe.String(k))
 		}
 	}
 	return out, nil
