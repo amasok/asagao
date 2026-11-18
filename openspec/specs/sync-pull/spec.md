@@ -95,6 +95,14 @@ Events に出たタスクを batch で取るのが Asana のエラー (再試行
 - **WHEN** 状態が `failed` の更新がある
 - **THEN** 取り込みでは当て直さない
 
+### Requirement: 未送信のコメントの編集と削除は取り直しで戻さない
+タスクのコメントと添付を Asana から取り直すときは、同じトランザクションで、状態が `failed` でない `update_story` の本文を当て直し、`delete_story`・`delete_attachment` の対象を消し直す (MUST, #34)。作成が送れてローカル gid が本物に替わったものにも当てる。コメントのリアクション (`reaction_summary`) もいっしょに取り込み、端末の制御文字を取り除いて表示する。
+根拠: store/write.go, attachments.go, comment_edits.go; TestReplaceStoriesKeepsQueuedEdits, TestReplaceStoriesSkipsFailedEdits, TestStoryReactions
+
+#### Scenario: 書き直したコメントを未送信のまま取り直す
+- **WHEN** 自分のコメントを書き直して未送信のまま、タスクのコメントを取り直す
+- **THEN** コメントは書き直した本文のままで、消したコメントや添付は戻らない
+
 ### Requirement: 消えたタスクの片付け
 全件の同期で、ワークスペースが 1 つ以上あるときだけ、今回取れなかったタスクを消す (MUST)。outbox に操作があるタスク (状態を問わない) と、取れたタスクのサブタスクは消さない。依存でつながったタスクは、消す前に `task_refs` に名前と状態を写す。差分の同期では消さない。
 根拠: sync.go:383-386; store/write.go:320-336; TestPruneKeepsLocalTasks, TestRunFullThenIncrementalThenPrune, TestFullSyncEmptyWorkspaceListKeepsTasks, TestOpenDependenciesAfterPrune

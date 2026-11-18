@@ -17,7 +17,8 @@ type AttachmentView = readmodel.AttachmentView
 func IsImageName(name string) bool { return readmodel.IsImageName(name) }
 
 // ReplaceAttachments stores a task's attachments, keeping local paths of files already
-// downloaded and files attached offline ("local:" gids) that are not uploaded yet.
+// downloaded and files attached offline ("local:" gids) that are not uploaded yet. Those
+// whose delete is queued stay deleted.
 func (s *Store) ReplaceAttachments(ctx context.Context, taskGID string, atts []model.Attachment) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		paths := map[string]string{}
@@ -46,7 +47,7 @@ func (s *Store) ReplaceAttachments(ctx context.Context, taskGID string, atts []m
 				return err
 			}
 		}
-		return nil
+		return reapplyAttachmentDeletes(ctx, tx, taskGID) // deleted locally, not sent yet (#34)
 	})
 }
 
@@ -95,13 +96,17 @@ func (s *Store) queryAttachments(ctx context.Context, where string, args ...any)
 
 // UpsertAttachment stores one attachment of a task (e.g. an inline image found in its notes).
 func (s *Store) UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO attachments
-		(gid, parent_gid, name, resource_subtype, host, view_url, permanent_url, size, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(gid) DO UPDATE SET name = excluded.name, host = excluded.host, view_url = excluded.view_url,
-			permanent_url = excluded.permanent_url, size = excluded.size`,
-		a.GID, taskGID, a.Name, a.ResourceSubtype, a.Host, a.ViewURL, a.PermanentURL, a.Size, formatTime(a.CreatedAt))
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO attachments
+			(gid, parent_gid, name, resource_subtype, host, view_url, permanent_url, size, created_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(gid) DO UPDATE SET name = excluded.name, host = excluded.host, view_url = excluded.view_url,
+				permanent_url = excluded.permanent_url, size = excluded.size`,
+			a.GID, taskGID, a.Name, a.ResourceSubtype, a.Host, a.ViewURL, a.PermanentURL, a.Size, formatTime(a.CreatedAt)); err != nil {
+			return err
+		}
+		return reapplyAttachmentDeletes(ctx, tx, taskGID)
+	})
 }
 
 // InlineAssets returns the attachment gids of images embedded in text, in order

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // ErrNotFound is readmodel.ErrNotFound.
@@ -280,22 +281,32 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text
-		FROM stories WHERE task_gid = ? ORDER BY created_at`, gid)
+	// A comment whose edit is not sent yet is pending too (#34).
+	rows, err := s.db.QueryContext(ctx, `SELECT gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text,
+		reactions, EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND `+resolvedSQL("story", ResultStory)+` = stories.gid)
+		FROM stories WHERE task_gid = ? ORDER BY created_at`, OpUpdateStory, gid)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var st StoryView
-		var byGID, byName string
-		if err := rows.Scan(&st.GID, &st.Type, &st.ResourceSubtype, &st.Text, &byGID, &byName, &st.CreatedAt, &st.HTMLText); err != nil {
+		var byGID, byName, reactions string
+		var edited bool
+		if err := rows.Scan(&st.GID, &st.Type, &st.ResourceSubtype, &st.Text, &byGID, &byName, &st.CreatedAt, &st.HTMLText,
+			&reactions, &edited); err != nil {
 			return nil, err
 		}
 		if byGID != "" {
 			st.CreatedBy = &UserRef{GID: byGID, Name: byName}
 		}
-		st.Pending = IsLocalGID(st.GID)
+		if reactions != "" {
+			// Emoji and names come from Asana: termsafe.Unmarshal drops control characters.
+			if err := termsafe.Unmarshal([]byte(reactions), &st.Reactions); err != nil {
+				return nil, fmt.Errorf("reactions of comment %s: %w", st.GID, err)
+			}
+		}
+		st.Pending = IsLocalGID(st.GID) || edited
 		d.Stories = append(d.Stories, st)
 	}
 	return d, rows.Err()

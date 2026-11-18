@@ -7,8 +7,8 @@
 ## Requirements
 
 ### Requirement: 操作の種類
-outbox の操作の種類は 18 個 (MUST): `update_task`、`create_task`、`add_comment`、`move_task`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`set_custom_field`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_status`、`mark_notification`。
-根拠: internal/store/outbox.go:28-33; relations.go:18-23; customfields.go:38-40; tags.go:15-16; dependencies.go:20-21; sections.go:16; projects.go:16; notifications.go:21
+outbox の操作の種類は 21 個 (MUST): `update_task`、`create_task`、`add_comment`、`move_task`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`set_custom_field`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_status`、`mark_notification`、`update_story`、`delete_story`、`delete_attachment`。
+根拠: internal/domain/outbox/outbox.go (種類の定数。store の Op* はその別名)
 
 #### Scenario: タスクにタグを付ける
 - **WHEN** 既にあるタグをタスクに付ける
@@ -137,6 +137,30 @@ push は `<db>.push.lock` を取り、アカウントが記録と同じことを
 #### Scenario: 作成のあとに接続が切れた
 - **WHEN** `create_task` を送ったあと、応答の前に接続が切れる
 - **THEN** 再送せず自動確認中にする
+
+### Requirement: 自分のコメントだけを変える
+コメントの編集と削除は、自分 (`created_by` がログイン中の利用者) のコメントだけを受け付ける (MUST, #34)。ほかの人のコメント、活動の記録、同期の前 (自分が分からない) は断り、何も積まない。編集は `update_story` (payload に `story`・`text`・`html_text`、base に元の本文)、削除は `delete_story`、添付の削除は `delete_attachment` を積む。削除の base には消した行の全体を入れ、`task_gid` にはタスクを入れる。同じコメントの未送信の編集は 1 つにまとめ、Asana の本文に戻したら操作を消す。破棄すると、編集は元の本文に、削除は消したものを元に戻す。
+根拠: store/comment_edits.go; TestEditCommentLocal, TestEditCommentNeedsMe, TestReplaceStoriesKeepsQueuedEdits, TestDeleteAttachmentLocal
+
+#### Scenario: ほかの人のコメントを直す
+- **WHEN** ほかの人が書いたコメントを編集しようとする
+- **THEN** 「自分のコメントだけを編集・削除できます」のエラーになり、outbox に何も積まない
+
+### Requirement: 送る前のコメントと添付への変更
+一度も送っていないコメント (`add_comment`) の編集は、その payload の書き換えにし、削除は `add_comment` ごと捨てる (MUST, #34)。未送信の添付の削除も `upload_attachment` を捨てる。作成が送信中・確認中・失敗のときは、ローカル gid のまま操作を積み、作成が送れるまで送らずに待つ。送れたら `story:` / `att:` の記録から本物の gid を引く。作成を捨てたら、待っていた操作も捨てる。
+根拠: store/comment_edits.go; sync/push.go (waitsForCreate); TestEditUnsentComment, TestEditCommentBeingSent, TestDiscardCommentDropsItsEdits, TestDeleteAttachmentBeingUploaded, TestPushEditWaitsForComment
+
+#### Scenario: 送る前のコメントを直す
+- **WHEN** オフラインで書いたコメントを、送る前に書き直す
+- **THEN** outbox は `add_comment` の 1 件のままで、payload の本文が新しい本文になる
+
+### Requirement: コメントと添付の変更の送り方
+編集 (PUT /stories) と削除 (DELETE) は何度送っても同じなので、届いたか分からなければ照合せずに再送する (MUST, #34)。削除の 404 は「もう消えている」ので、済んだものとして消し、捨てた変更としては記録しない。編集の 404 は、ほかの操作と同じく捨てて記録する。
+根拠: sync/push.go (pushUpdateStory, pushDelete); TestPushEditAndDeleteComment, TestPushDeleteGoneIsDone, TestStoryEditsSafeToResend
+
+#### Scenario: もう消えているコメントを削除する
+- **WHEN** `delete_story` を送って 404 が返る
+- **THEN** 操作は済んだものとして消え、失敗にも捨てた変更にもならない
 
 ### Requirement: 再送してよいかの判断
 作成 (`create_task`・`duplicate_task`・`add_comment`・`upload_attachment`・`create_status`) は、届いたか分からないまま再送しない (MUST)。`add_tag` は、タグがローカルでまだ記録がないときだけ再送しない。それ以外は再送してよい。途中で止まった (`sending` のまま残った) 操作は `pending` に戻し、再送してはいけないものは自動確認中にする。
