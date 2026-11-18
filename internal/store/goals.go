@@ -207,9 +207,9 @@ func scanGoal(sc interface{ Scan(...any) error }) (readmodel.GoalDetail, error) 
 	return d, nil
 }
 
-// ListGoals returns the cached goals, in Asana's order per workspace.
-func (s *Store) ListGoals(ctx context.Context) ([]readmodel.GoalView, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+goalColumns+" FROM goals ORDER BY workspace_gid, position, gid")
+// ListGoals returns the cached goals of a workspace, in Asana's order.
+func (s *Store) ListGoals(ctx context.Context, workspaceGID string) ([]readmodel.GoalView, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+goalColumns+" FROM goals WHERE workspace_gid = ? ORDER BY position, gid", workspaceGID)
 	if err != nil {
 		return nil, err
 	}
@@ -254,10 +254,11 @@ func (s *Store) GoalDetail(ctx context.Context, gid string) (*readmodel.GoalDeta
 	return &d, rows.Err()
 }
 
-// ListTimePeriods returns the cached time periods, the latest first and the longest
+// ListTimePeriods returns the cached time periods of a workspace, the latest first and the longest
 // first among those that start on the same day (a year before its halves and quarters).
-func (s *Store) ListTimePeriods(ctx context.Context) ([]readmodel.TimePeriodView, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT gid, display_name, period, start_on, end_on FROM time_periods ORDER BY start_on DESC, end_on DESC, gid")
+func (s *Store) ListTimePeriods(ctx context.Context, workspaceGID string) ([]readmodel.TimePeriodView, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT gid, display_name, period, start_on, end_on FROM time_periods WHERE workspace_gid = ?
+		ORDER BY start_on DESC, end_on DESC, gid`, workspaceGID)
 	if err != nil {
 		return nil, err
 	}
@@ -438,9 +439,9 @@ func scanPortfolio(sc interface{ Scan(...any) error }) (readmodel.PortfolioDetai
 	return d, nil
 }
 
-// ListPortfolios returns my cached portfolios, in Asana's order per workspace.
-func (s *Store) ListPortfolios(ctx context.Context) ([]readmodel.PortfolioView, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+portfolioColumns+" FROM portfolios WHERE mine = 1 ORDER BY workspace_gid, position, gid")
+// ListPortfolios returns my cached portfolios of a workspace, in Asana's order.
+func (s *Store) ListPortfolios(ctx context.Context, workspaceGID string) ([]readmodel.PortfolioView, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+portfolioColumns+" FROM portfolios WHERE mine = 1 AND workspace_gid = ? ORDER BY position, gid", workspaceGID)
 	if err != nil {
 		return nil, err
 	}

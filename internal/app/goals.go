@@ -8,7 +8,8 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// Goals, portfolios and time periods (#7), read from the local cache. The entry points
+// Goals, portfolios and time periods (#7), read from the local cache: those of the
+// default workspace, the one they are fetched from. The entry points
 // refresh them from Asana first when online (sync.FetchGoals and the like). A recent 402
 // (the workspace's plan lacks them) makes these return ErrPlanUnavailable, and Available
 // false, so they are not offered.
@@ -17,11 +18,11 @@ import (
 type GoalStore interface {
 	SyncState(ctx context.Context, key string) (string, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
-	ListGoals(ctx context.Context) ([]readmodel.GoalView, error)
+	ListGoals(ctx context.Context, workspaceGID string) ([]readmodel.GoalView, error)
 	GoalDetail(ctx context.Context, gid string) (*readmodel.GoalDetail, error)
-	ListTimePeriods(ctx context.Context) ([]readmodel.TimePeriodView, error)
+	ListTimePeriods(ctx context.Context, workspaceGID string) ([]readmodel.TimePeriodView, error)
 	ResolveGoal(ctx context.Context, arg string) (string, error)
-	ListPortfolios(ctx context.Context) ([]readmodel.PortfolioView, error)
+	ListPortfolios(ctx context.Context, workspaceGID string) ([]readmodel.PortfolioView, error)
 	PortfolioDetail(ctx context.Context, gid string) (*readmodel.PortfolioDetail, error)
 	ResolvePortfolio(ctx context.Context, arg string) (string, error)
 }
@@ -61,16 +62,17 @@ func (g *Goals) List(ctx context.Context, period string) (*readmodel.GoalList, e
 	if err := g.plan(ctx, readmodel.PlanGoals); err != nil {
 		return nil, err
 	}
-	goals, err := g.Store.ListGoals(ctx)
+	ws, _ := g.Store.DefaultWorkspace(ctx) // none yet: nothing is cached
+	goals, err := g.Store.ListGoals(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
-	periods, err := g.Store.ListTimePeriods(ctx)
+	periods, err := g.Store.ListTimePeriods(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
 	out := &readmodel.GoalList{Goals: goals, Periods: periods}
-	if ws, err := g.Store.DefaultWorkspace(ctx); err == nil {
+	if ws != "" {
 		if out.FetchedAt, err = g.Store.SyncState(ctx, readmodel.KeyGoals+ws); err != nil {
 			return nil, err
 		}
@@ -159,7 +161,8 @@ func (g *Goals) Portfolios(ctx context.Context) ([]readmodel.PortfolioView, erro
 	if err := g.plan(ctx, readmodel.PlanPortfolios); err != nil {
 		return nil, err
 	}
-	return g.Store.ListPortfolios(ctx)
+	ws, _ := g.Store.DefaultWorkspace(ctx)
+	return g.Store.ListPortfolios(ctx, ws)
 }
 
 // PortfoliosFetchedAt says when my portfolios were last fetched ("" never).

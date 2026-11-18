@@ -103,3 +103,30 @@ func TestGoalsPlanUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// Only the default workspace's goals, periods and portfolios are shown.
+func TestGoalsOfTheDefaultWorkspace(t *testing.T) {
+	ctx := context.Background()
+	st := goalStore(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(st.UpsertWorkspaces(ctx, []model.Workspace{{GID: "w1", Name: "会社"}, {GID: "w2", Name: "別"}}))
+	must(st.ReplaceGoals(ctx, "w2", []model.Goal{{GID: "g-other", Name: "別のゴール"}}))
+	must(st.ReplaceTimePeriods(ctx, "w2", []model.TimePeriod{{GID: "p-other", DisplayName: "別の期間"}}))
+	must(st.ReplacePortfolios(ctx, "w2", []model.Portfolio{{GID: "pf-other", Name: "別"}}))
+	must(st.ReplacePortfolios(ctx, "w1", []model.Portfolio{{GID: "pf1", Name: "こちら"}}))
+	uc := &app.Goals{Store: st, Clock: func() time.Time { return time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC) }}
+	l, err := uc.List(ctx, "")
+	must(err)
+	if strings.Contains(goalNames(l), "別") || len(l.Periods) != 3 {
+		t.Fatalf("list = %s, %d periods", goalNames(l), len(l.Periods))
+	}
+	ps, err := uc.Portfolios(ctx)
+	if err != nil || len(ps) != 1 || ps[0].GID != "pf1" {
+		t.Fatalf("portfolios = %+v, %v", ps, err)
+	}
+}

@@ -28,7 +28,7 @@ func TestGoalsAreTermsafe(t *testing.T) {
 		TimePeriod: &model.TimePeriod{GID: "tp", DisplayName: "Q" + esc}}}))
 	g, err := s.GoalDetail(ctx, "g1")
 	must(t, err)
-	ps, err := s.ListPortfolios(ctx)
+	ps, err := s.ListPortfolios(ctx, "w1")
 	must(t, err)
 	for _, v := range []string{g.Name, g.Owner.Name, g.Metric.Display, g.Metric.Currency, g.TimePeriod.DisplayName, g.HTMLNotes,
 		g.Supporting[0].Name, ps[0].Name, ps[0].Status.Title} {
@@ -85,7 +85,7 @@ func TestPortfoliosPrune(t *testing.T) {
 	must(t, s.SavePortfolio(ctx, model.Portfolio{GID: "a"}, []model.PortfolioItem{{GID: "n", ResourceType: "portfolio", Name: "N"}, {GID: "p1", ResourceType: "project"}}, testNow))
 	must(t, s.SavePortfolio(ctx, model.Portfolio{GID: "n", Name: "N"}, []model.PortfolioItem{{GID: "nn", ResourceType: "portfolio"}}, testNow))
 	must(t, s.SavePortfolio(ctx, model.Portfolio{GID: "nn", Name: "NN"}, []model.PortfolioItem{{GID: "p2", ResourceType: "project"}}, testNow))
-	ps, err := s.ListPortfolios(ctx)
+	ps, err := s.ListPortfolios(ctx, "w1")
 	must(t, err)
 	if len(ps) != 2 || ps[0].GID != "b" || ps[1].GID != "a" {
 		t.Fatalf("mine = %+v", ps)
@@ -112,7 +112,7 @@ func TestSavePortfolioKeepsItsPlace(t *testing.T) {
 	must(t, s.ReplacePortfolios(ctx, "w1", []model.Portfolio{{GID: "a", Name: "A"}, {GID: "b", Name: "B"}}))
 	must(t, s.SavePortfolio(ctx, model.Portfolio{GID: "a", Name: "A2"}, nil, testNow))
 	must(t, s.ReplacePortfolios(ctx, "w1", []model.Portfolio{{GID: "a", Name: "A2"}, {GID: "b", Name: "B"}}))
-	ps, err := s.ListPortfolios(ctx)
+	ps, err := s.ListPortfolios(ctx, "w1")
 	must(t, err)
 	if len(ps) != 2 || ps[0].Name != "A2" {
 		t.Fatalf("mine = %+v", ps)
@@ -126,7 +126,7 @@ func TestGoalsGoWithTheirWorkspaceAndReset(t *testing.T) {
 	s := projectStore(t)
 	must(t, s.ReplaceGoals(ctx, "w1", []model.Goal{{GID: "g1", Name: "一"}}))
 	must(t, s.SaveGoal(ctx, model.Goal{GID: "g9", Name: "九", Workspace: &model.Ref{GID: "w1"}}, nil, testNow))
-	gs, err := s.ListGoals(ctx)
+	gs, err := s.ListGoals(ctx, "w1")
 	must(t, err)
 	if len(gs) != 2 || gs[1].GID != "g9" {
 		t.Fatalf("goals = %+v", gs)
