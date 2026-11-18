@@ -48,6 +48,7 @@ func seed(t *testing.T) *store.Store {
 	must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
 	must(st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "WS"}}))
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "[家族]新居プロジェクト", Members: []asana.Ref{{GID: "me"}}}}, "me"))
+	must(st.SetSyncState(ctx, store.KeyProjectTasks+"p1", "all")) // its tasks are synced (#54)
 	must(st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "家具"}, {GID: "s2", Name: "手続き"}}))
 	must(st.UpsertTasks(ctx, []asana.Task{
 		{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20", Assignee: ref("me"), Workspace: ref("w1"), Memberships: in("s1")},

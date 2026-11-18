@@ -214,6 +214,13 @@ type LocalStore interface {
 	SetProjectArchivedLocal(ctx context.Context, projectGID string, archived bool) error
 	SetSyncState(ctx context.Context, key, value string) error
 	SyncState(ctx context.Context, key string) (string, error)
+	SyncStatesWithPrefix(ctx context.Context, prefix string) (map[string]string, error)
+	// Which projects' tasks are cached (#54, see lazy.go).
+	ProjectTaskStates(ctx context.Context) (map[string]string, error)
+	ProjectTaskState(ctx context.Context, projectGID string) (string, error)
+	WantProject(ctx context.Context, projectGID string) (string, error)
+	CountUnfetchedProjects(ctx context.Context, memberOnly bool) (int, error)
+	ProjectRef(ctx context.Context, gid string) (readmodel.ProjectRef, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error

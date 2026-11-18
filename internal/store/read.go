@@ -357,7 +357,8 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 func (s *Store) ListProjects(ctx context.Context, memberOnly bool) ([]ProjectView, error) {
 	// Favorites first, in the user's order; then by team (projects without a team last).
 	q := `SELECT gid, name, projects.workspace_gid, team_gid, team_name, f.project_gid IS NOT NULL, is_member, archived, permalink_url,
-		COALESCE((SELECT status_type FROM status_updates su WHERE su.project_gid = projects.gid ORDER BY created_at DESC LIMIT 1), '')
+		COALESCE((SELECT status_type FROM status_updates su WHERE su.project_gid = projects.gid ORDER BY created_at DESC LIMIT 1), ''),
+		` + fetchedSQL + `
 		FROM projects LEFT JOIN project_favorites f ON f.project_gid = projects.gid WHERE archived = 0`
 	if memberOnly {
 		q += " AND is_member = 1"
@@ -370,11 +371,13 @@ func (s *Store) ListProjects(ctx context.Context, memberOnly bool) ([]ProjectVie
 	projects := []ProjectView{}
 	for rows.Next() {
 		var p ProjectView
-		if err := rows.Scan(&p.GID, &p.Name, &p.WorkspaceGID, &p.TeamGID, &p.TeamName, &p.Favorite, &p.IsMember, &p.Archived, &p.PermalinkURL, &p.Status); err != nil {
+		var fetched bool
+		if err := rows.Scan(&p.GID, &p.Name, &p.WorkspaceGID, &p.TeamGID, &p.TeamName, &p.Favorite, &p.IsMember, &p.Archived, &p.PermalinkURL, &p.Status, &fetched); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		p.Sections = []SectionView{}
+		p.Unfetched = !fetched
 		projects = append(projects, p)
 	}
 	rows.Close()

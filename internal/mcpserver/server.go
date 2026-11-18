@@ -83,7 +83,8 @@ func (s *Server) New() *mcp.Server {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true}
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_tasks", Annotations: readOnly,
 		Description: "List tasks from the local cache. Defaults to my incomplete tasks, ordered by due date. " +
-			"Filter by project/section, assignee, due date range, overdue, tag or completion."}, s.listTasks)
+			"Filter by project/section, assignee, due date range, overdue, tag or completion. " +
+			"A project whose tasks are not cached yet (unfetched in list_projects) is fetched from Asana first when online."}, s.listTasks)
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_tasks", Annotations: readOnly,
 		Description: "Full-text search over task names, descriptions and comments in every synced project. " +
 			"Multiple words are ANDed. Includes completed tasks unless completion is set. " +
@@ -96,7 +97,8 @@ func (s *Server) New() *mcp.Server {
 		Description: "Get an attachment of a task. Images are returned as image content so you can look at them " +
 			"(e.g. those referenced as ![画像](asana:<gid>) in a description); other files return their local path."}, s.getAttachment)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: readOnly,
-		Description: "List projects and their sections (gid and name), my favorites first, then by team. By default only projects I am a member of; team narrows to one team."}, s.listProjects)
+		Description: "List projects and their sections (gid and name), my favorites first, then by team. By default only projects I am a member of; team narrows to one team. " +
+			"unfetched=true: the project's tasks are not cached yet (they are fetched once it is opened, e.g. by list_tasks with that project)."}, s.listProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_users", Annotations: readOnly,
 		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_project", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
@@ -220,6 +222,10 @@ type SearchOutput struct {
 type TasksOutput struct {
 	Tasks []readmodel.TaskSummary `json:"tasks"`
 	Count int                     `json:"count"`
+	// Note says which tasks are not in the cache yet (a project not fetched, #54).
+	Note string `json:"note,omitempty"`
+	// Fetched is what was fetched from Asana for the project first (#54): tasks, requests.
+	Fetched *sync.OpenResult `json:"fetched,omitempty"`
 }
 
 type GetTaskInput struct {
@@ -413,8 +419,13 @@ func (s *Server) listTasks(ctx context.Context, _ *mcp.CallToolRequest, in TaskF
 	if err != nil {
 		return nil, TasksOutput{}, err
 	}
+	var note string
+	var fetched *sync.OpenResult
+	if f.ProjectGID != "" {
+		note, fetched = s.openProject(ctx, f.ProjectGID)
+	}
 	tasks, err := s.query().ListTasks(ctx, f)
-	return nil, TasksOutput{Tasks: tasks, Count: len(tasks)}, err
+	return nil, TasksOutput{Tasks: tasks, Count: len(tasks), Note: note, Fetched: fetched}, err
 }
 
 func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
@@ -426,9 +437,16 @@ func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 		return nil, SearchOutput{}, err
 	}
 	f.Query = in.Query
+	var note string
+	if f.ProjectGID != "" {
+		note, _ = s.openProject(ctx, f.ProjectGID)
+	}
 	if !in.Remote {
 		tasks, err := s.query().ListTasks(ctx, f)
-		return nil, SearchOutput{Tasks: tasks, Count: len(tasks)}, err
+		if f.ProjectGID == "" {
+			note = s.unfetchedNote(ctx)
+		}
+		return nil, SearchOutput{Tasks: tasks, Count: len(tasks), Note: note}, err
 	}
 	res, err := app.SearchWithAsana(ctx, s.query(), finder{s}, f)
 	if err != nil {

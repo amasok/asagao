@@ -478,4 +478,8 @@ func TestCreateProjectInTeam(t *testing.T) {
 	if body["team"] != "tm2" || body["workspace"] != "w1" {
 		t.Fatalf("body = %v", body)
 	}
+	// #54: a new project has no tasks to fetch: it is not listed as unfetched.
+	if ps, err := st.ListProjects(ctx, false); err != nil || len(ps) != 1 || ps[0].Unfetched {
+		t.Fatalf("new project listed as %+v (%v)", ps, err)
+	}
 }

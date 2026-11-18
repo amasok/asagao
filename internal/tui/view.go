@@ -363,7 +363,11 @@ func (m *Model) sidebarLines(w, h int) []string {
 		case scopeInbox:
 			label = "✉ " + label
 		default:
-			label = "  " + label
+			if s.fetched {
+				label = "  " + label
+			} else {
+				label = unfetchedMark + label
+			}
 		}
 		lines = append(lines, m.highlight(label, w, i == m.scopeCursor, m.focus == paneSidebar))
 	}

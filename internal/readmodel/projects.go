@@ -7,6 +7,9 @@ type SectionView struct {
 	Name string `json:"name"`
 }
 
+// ProjectRef is a cached project's name and workspace.
+type ProjectRef struct{ GID, Name, WorkspaceGID string }
+
 type ProjectView struct {
 	GID          string `json:"gid"`
 	Name         string `json:"name"`
@@ -22,6 +25,9 @@ type ProjectView struct {
 	Sections     []SectionView `json:"sections"`
 	// Status is the type of the latest status update ("" if none).
 	Status string `json:"status,omitempty"`
+	// Unfetched: the project's tasks are not in the cache, only the project (#54). They are
+	// fetched when it is opened (or by the next sync, once it was opened).
+	Unfetched bool `json:"unfetched,omitempty"`
 }
 
 // TeamView is a team (of the teams I am in, or of a cached project).

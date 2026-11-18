@@ -41,7 +41,13 @@ type Client struct {
 	// latest response (0 until one arrived, or when the difference is within noise).
 	clockOffset atomic.Int64
 	clockKnown  atomic.Bool // a response with a Date header has arrived
+	// requests counts the HTTP requests sent (each retry too), for Requests.
+	requests atomic.Int64
 }
+
+// Requests is how many HTTP requests the client has sent to Asana (each retry counts), to
+// show what a sync cost (#54).
+func (c *Client) Requests() int64 { return c.requests.Load() }
 
 // minClockOffset is the smallest difference between Asana's clock and ours that
 // ClockOffset reports. The Date header has a resolution of one second and the response
@@ -166,6 +172,7 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, pa
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		c.requests.Add(1)
 		resp, err := hc.Do(req)
 		if err != nil {
 			return nil, err
