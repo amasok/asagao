@@ -242,6 +242,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 					return res, err
 				}
 			}
+			if err := s.syncMySections(ctx, w.GID); err != nil {
+				return res, err
+			}
 		}
 		// My Tasks may hold tasks in no project, which no project's events report: they are
 		// fetched with modified_since on every sync (one request, only what changed).

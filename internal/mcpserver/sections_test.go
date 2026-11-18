@@ -115,3 +115,41 @@ func TestSectionToolsHiddenAfterPaymentRequired(t *testing.T) {
 		}
 	}
 }
+
+// move_task with my_tasks moves within the sections of My Tasks; list_my_sections lists them.
+func TestMoveTaskMyTasks(t *testing.T) {
+	st := seed(t)
+	ctx := context.Background()
+	if err := st.ReplaceMyTaskSections(ctx, "w1", []asana.Section{{GID: "m1", Name: "今日やる"}, {GID: "m2", Name: "あとで"}}); err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, &Server{Store: st})
+	var secs MySectionsOutput
+	if res := call(t, cs, "list_my_sections", map[string]any{}, &secs); res.IsError || len(secs.Sections) != 2 {
+		t.Fatalf("list_my_sections = %+v", secs)
+	}
+	var w WriteOutput
+	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": "今日やる", "my_tasks": true, "project": "新居"}, &w); !res.IsError {
+		t.Error("my_tasks with project: no error")
+	}
+	if res := call(t, cs, "move_task", map[string]any{"gid": "t3", "section": "今日やる", "my_tasks": true}, &w); !res.IsError {
+		t.Error("moving another's task within My Tasks: no error")
+	}
+	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": "今日やる", "my_tasks": true}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if got := opList(t, st); !slices.Equal(got, []string{store.OpMoveMySection + ":t1"}) {
+		t.Fatalf("ops = %v", got)
+	}
+	var list struct {
+		Tasks []readmodel.TaskSummary `json:"tasks"`
+	}
+	if res := call(t, cs, "list_tasks", map[string]any{}, &list); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	for _, tk := range list.Tasks {
+		if tk.GID == "t1" && (tk.MySection == nil || tk.MySection.Name != "今日やる") {
+			t.Errorf("t1 in list_tasks: my_section = %+v", tk.MySection)
+		}
+	}
+}

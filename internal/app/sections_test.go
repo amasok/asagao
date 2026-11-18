@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // sectionStore records the calls of the section use cases. Project 新居 (p1) has the
@@ -198,5 +200,47 @@ func TestSectionsPlanUnavailable(t *testing.T) {
 	}
 	if !(&Sections{Store: &sectionStore{}, Clock: ticking()}).Available(ctx) {
 		t.Error("Available = false without a 402")
+	}
+}
+
+func (f *sectionStore) ListMyTaskSections(_ context.Context, workspaceGID string) ([]readmodel.SectionView, error) {
+	return []readmodel.SectionView{{GID: "m1", Name: "今日やる"}, {GID: "m2", Name: "あとで"}}, nil
+}
+
+func (f *sectionStore) ResolveMySection(_ context.Context, taskGID, arg string) (string, error) {
+	f.log("ResolveMySection %s %s", taskGID, arg)
+	if g, ok := map[string]string{"今日やる": "m1", "あとで": "m2"}[arg]; ok {
+		return g, nil
+	}
+	return "", errNotFound
+}
+
+func (f *sectionStore) MoveMySectionLocal(_ context.Context, gid, sectionGID string, now time.Time) error {
+	return f.write("MoveMySectionLocal", "%s %s at=%s", gid, sectionGID, now.Format(time.TimeOnly))
+}
+
+func TestSectionsMoveMine(t *testing.T) {
+	st := &sectionStore{}
+	s := &Sections{Store: st, Clock: ticking()}
+	ctx := context.Background()
+	if err := s.MoveMine(ctx, "t1", "あとで"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveMine(ctx, "t1", "ない"); !errors.Is(err, errNotFound) {
+		t.Errorf("unknown section: err = %v", err)
+	}
+	if w := st.writes(); !slices.Equal(w, []string{"MoveMySectionLocal t1 m2 at=10:00:01"}) {
+		t.Errorf("writes = %v", w)
+	}
+	if secs, _ := s.MySections(ctx, ""); len(secs) != 2 {
+		t.Errorf("MySections = %v", secs)
+	}
+	// Not on this plan: nothing is offered.
+	st.planOff = map[string]bool{"my_section": true}
+	if secs, err := s.MySections(ctx, ""); err != nil || len(secs) != 0 {
+		t.Errorf("MySections after a 402 = %v, %v", secs, err)
+	}
+	if err := s.MoveMine(ctx, "t1", "今日やる"); !IsPlanUnavailable(err) {
+		t.Errorf("MoveMine after a 402: err = %v", err)
 	}
 }

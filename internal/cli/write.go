@@ -514,11 +514,13 @@ func (a *app) taskAssignCmd() *cobra.Command {
 
 func (a *app) taskMoveCmd() *cobra.Command {
 	var project, section string
+	var mine bool
 	cmd := &cobra.Command{
-		Use:     "move <gid> --section <セクション>",
-		Short:   "タスクを別のセクションに移動する",
-		Example: `  asagao task move 1203455468597469 --section Done`,
-		Args:    cobra.ExactArgs(1),
+		Use:   "move <gid> --section <セクション> [--my-tasks]",
+		Short: "タスクを別のセクションに移動する（--my-tasks でマイタスクのセクション）",
+		Example: `  asagao task move 1203455468597469 --section Done
+  asagao task move 1203455468597469 --section 今日やる --my-tasks`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)
@@ -527,6 +529,15 @@ func (a *app) taskMoveCmd() *cobra.Command {
 			}
 			defer st.Close()
 			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			if mine {
+				if project != "" {
+					return fmt.Errorf("--my-tasks と --project は一緒に使えません")
+				}
+				if err := sections.MoveMine(ctx, args[0], section); err != nil {
+					return err
+				}
+				return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "移動しました: → "+section+"（マイタスク）")
+			}
 			if err := sections.Move(ctx, args[0], project, section); err != nil {
 				return err
 			}
@@ -535,6 +546,7 @@ func (a *app) taskMoveCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&section, "section", "", "移動先のセクション（gid または名前）")
 	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（タスクが複数のプロジェクトに入っている場合）")
+	cmd.Flags().BoolVar(&mine, "my-tasks", false, "マイタスクのセクション（今日やる・あとで など）に移す")
 	_ = cmd.MarkFlagRequired("section")
 	return a.addDryRunFlag(cmd)
 }
@@ -564,7 +576,7 @@ func (a *app) sectionCmd() *cobra.Command {
 	}
 	rename.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
 	_ = rename.MarkFlagRequired("project")
-	cmd.AddCommand(a.addDryRunFlag(rename), a.sectionCreateCmd(), a.sectionRmCmd(), a.sectionMoveCmd())
+	cmd.AddCommand(a.addDryRunFlag(rename), a.sectionCreateCmd(), a.sectionRmCmd(), a.sectionMoveCmd(), a.sectionMineCmd())
 	return cmd
 }
 

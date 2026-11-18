@@ -3,7 +3,10 @@
 // use them; internal/asana keeps aliases (migration-plan.md, d1).
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Ref struct {
 	GID  string `json:"gid"`
@@ -87,6 +90,9 @@ type Task struct {
 	// are nil when the response did not include them.
 	Dependencies []Ref `json:"dependencies"`
 	Dependents   []Ref `json:"dependents"`
+	// AssigneeSection is the section of the assignee's My Tasks the task is in. Set is
+	// false when the response did not include it (it is then left as it is).
+	AssigneeSection OptionalRef `json:"assignee_section"`
 	// Partial is set when the task was fetched without the optional fields (see
 	// optionalTaskFields): its custom fields, dependencies and approval status are unknown.
 	Partial bool `json:"-"`
@@ -134,4 +140,39 @@ type StatusUpdate struct {
 	HTMLText   string    `json:"html_text"`
 	Author     *Ref      `json:"author"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// OptionalRef is a reference that a response may leave out (Set false), give as null
+// (Set, Ref nil) or give (Set, Ref).
+type OptionalRef struct {
+	Set bool
+	Ref *Ref
+}
+
+func (o *OptionalRef) UnmarshalJSON(b []byte) error {
+	o.Set, o.Ref = true, nil
+	if string(b) == "null" {
+		return nil
+	}
+	var r Ref
+	if err := json.Unmarshal(b, &r); err != nil {
+		return err
+	}
+	o.Ref = &r
+	return nil
+}
+
+func (o OptionalRef) MarshalJSON() ([]byte, error) {
+	if o.Ref == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(o.Ref)
+}
+
+// GID is the referenced gid ("" for none).
+func (o OptionalRef) GID() string {
+	if o.Ref == nil {
+		return ""
+	}
+	return o.Ref.GID
 }

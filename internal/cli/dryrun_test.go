@@ -110,6 +110,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 		{"tag rename", []string{"tag", "rename", "急ぎ", "至急"}, "名前を「至急」に変更"},
 		{"tag color", []string{"tag", "color", "急ぎ", "dark-red"}, "色を dark-red に変更"},
 		{"tag rm", []string{"tag", "rm", "急ぎ"}, "タグ「急ぎ」の削除"},
+		{"move my tasks", []string{"task", "move", "t1", "--section", "今日やる", "--my-tasks"}, "マイタスクのセクション「今日やる」への移動"},
 		{"status", []string{"project", "status", "post", "新居", "--text", "順調"}, "新居"},
 		{"project create", []string{"project", "create", "引っ越し"}, "プロジェクト「引っ越し」の作成"},
 		{"project archive", []string{"project", "archive", "新居"}, "プロジェクト「新居」のアーカイブ"},
@@ -117,6 +118,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, requests, run := dryRunEnv(t)
+			addMyTaskSections(t, path)
 			before := storeState(t, path)
 			out, errOut, err := run(append(tc.args, "--dry-run")...)
 			if err != nil {

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: 操作の種類
-outbox の操作の種類は 23 個 (MUST): `update_task`、`create_task`、`add_comment`、`move_task`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`set_custom_field`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_section`、`delete_section`、`insert_section`、`update_tag`、`delete_tag`、`create_status`、`mark_notification`。
+outbox の操作の種類は 24 個 (MUST): `update_task`、`create_task`、`add_comment`、`move_task`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`set_custom_field`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_section`、`delete_section`、`insert_section`、`update_tag`、`delete_tag`、`move_my_section`、`create_status`、`mark_notification`。
 根拠: internal/domain/outbox/outbox.go; internal/store/outbox.go:28-33; section_ops.go; tag_ops.go; relations.go:18-23; customfields.go:38-40; tags.go:15-16; dependencies.go:20-21; sections.go:16; projects.go:16; notifications.go:21
 
 #### Scenario: タスクにタグを付ける
@@ -57,3 +57,11 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 #### Scenario: 並べ替えに 402 が返る
 - **WHEN** セクションの並べ替えを送ると Asana が 402 を返す
 - **THEN** その操作は失敗になり、以後セクションの作成・削除・並べ替えは出さない。タグの変更は出したまま
+
+### Requirement: マイタスクのセクションへの移動
+自分が担当のタスクは、マイタスクのセクションの間を `move_my_section` で移せる (MUST)。payload は `section`・`section_name`・`workspace`、base は元のセクション。続けて移すと 1 つにまとめ、元に戻すと消す。送るときは `POST /sections/{gid}/addTask` を使う (繰り返しても害がない)。同期で Asana の `assignee_section` を入れても、未送信の移動を保つ。取り消すと元のセクションに戻す。ほかの人が担当のタスクは移せない。
+根拠: store/my_sections.go; sync/my_sections.go; TestMoveMySectionLocal, TestSyncAndMoveMySections
+
+#### Scenario: 今日やるへ移す
+- **WHEN** あとでにある自分のタスクを今日やるへ移し、送る前に同期する
+- **THEN** キャッシュでは今日やるのままで、次の送信で今日やるのセクションへ addTask が送られる

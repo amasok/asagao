@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -107,6 +108,10 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 		if filter == filterCompleted {
 			return group(tasks, []string{"完了済み"}, func(readmodel.TaskSummary) int { return 0 }), nil
 		}
+		// By the sections of My Tasks when they are known (as in Asana), else by due date.
+		if secs, err := (&app.Sections{Store: st}).MySections(ctx, ""); err == nil && len(secs) > 0 {
+			return groupByMySection(tasks, secs), nil
+		}
 		week := now.AddDate(0, 0, 7).Format(time.DateOnly)
 		return group(tasks, []string{"期限切れ", "今日", "7日以内", "それ以降", "期日なし"}, func(t readmodel.TaskSummary) int {
 			switch {
@@ -171,4 +176,28 @@ func modifiedDay(modifiedAt string, now time.Time) string {
 		return "昨日"
 	}
 	return t.Format("1/2") + "(" + weekdays[t.Weekday()] + ")"
+}
+
+// groupByMySection groups my tasks by their section of My Tasks, in the list's order;
+// tasks whose section is not known go last.
+func groupByMySection(tasks []readmodel.TaskSummary, secs []readmodel.SectionView) []row {
+	names := make([]string, 0, len(secs)+1)
+	keys := make([]string, 0, len(secs)+1)
+	index := map[string]int{}
+	for i, s := range secs {
+		names = append(names, s.Name)
+		keys = append(keys, "my:"+s.GID)
+		index[s.GID] = i
+	}
+	other := len(names)
+	names = append(names, "セクション不明")
+	keys = append(keys, "my:other")
+	return groupKeyed(tasks, names, keys, func(t readmodel.TaskSummary) int {
+		if t.MySection != nil {
+			if i, ok := index[t.MySection.GID]; ok {
+				return i
+			}
+		}
+		return other
+	})
 }

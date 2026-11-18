@@ -573,6 +573,11 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 				return err
 			}
 		}
+	case OpMoveMySection:
+		section, _ := op.Base["section"].(string)
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET assignee_section_gid = ? WHERE gid = ?", section, op.TaskGID); err != nil {
+			return err
+		}
 	case OpUpdateTag, OpDeleteTag:
 		if err := undoTagOp(ctx, tx, op); err != nil {
 			return err

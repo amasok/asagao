@@ -275,6 +275,7 @@ const (
 	pickTagAction
 	pickTagColor
 	pickDeleteTag
+	pickMySection // a section of My Tasks (mysections.go)
 )
 
 type pickerItem struct {
@@ -329,6 +330,9 @@ func (m *Model) openSectionPicker() {
 	}
 	project := m.sectionProject // chosen from a project line in the detail view
 	m.sectionProject = ""
+	if project == "" && m.currentScope().kind == scopeMyTasks && m.openMySectionPicker(*t) {
+		return
+	}
 	if project != "" {
 	} else if sc := m.currentScope(); sc.kind == scopeProject {
 		project = sc.project
@@ -445,6 +449,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.loadTasks()
 		case pickSection:
 			return m, m.moveTask(p.task, p.project, item.value, item.label)
+		case pickMySection:
+			return m, m.moveMine(p.task, item.value, item.label)
 		case pickAssignee:
 			return m, m.assign(p.task, item.value, item.label)
 		}

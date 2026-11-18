@@ -38,6 +38,8 @@ const (
 	// KeyPlanUnavailable + a PlanFeature: when Asana refused that feature because the
 	// workspace's plan lacks it (402). The feature is not offered while it is set.
 	KeyPlanUnavailable = "plan_unavailable:"
+	// KeyUserTaskList + workspace gid: the gid of my My Tasks list there.
+	KeyUserTaskList = "user_task_list:"
 )
 
 // Features that a plan may lack (KeyPlanUnavailable).

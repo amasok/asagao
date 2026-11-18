@@ -42,7 +42,7 @@ func (c *Client) CustomFieldSettings(ctx context.Context, projectGID string) ([]
 // read is repeated without them, and so are later ones of this client: tasks still sync,
 // only without those fields (Task.Partial).
 func isOptionalTaskField(f string) bool {
-	for _, p := range []string{"custom_fields", "approval_status", "dependencies", "dependents"} {
+	for _, p := range []string{"custom_fields", "approval_status", "dependencies", "dependents", "assignee_section"} {
 		if f == p || strings.HasPrefix(f, p+".") {
 			return true
 		}

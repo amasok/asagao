@@ -96,6 +96,9 @@ func (s *Server) New() *mcp.Server {
 		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_project", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		Description: "Get a project: sections, members and its status updates (Markdown, newest first)."}, s.getProject)
+	mcp.AddTool(srv, &mcp.Tool{Name: "list_my_sections", Annotations: readOnly,
+		Description: "List the sections of my My Tasks list (e.g. Today / This week / Later), in order. " +
+			"Tasks show theirs as my_section; move_task with my_tasks=true moves between them."}, s.listMySections)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_tags", Annotations: readOnly,
 		Description: "List tags used by tasks, with the number of open and total tasks for each."}, s.listTags)
 	mcp.AddTool(srv, &mcp.Tool{Name: "sync_status", Annotations: readOnly,
@@ -285,6 +288,7 @@ type MoveTaskInput struct {
 	GID     string `json:"gid" jsonschema:"task gid"`
 	Section string `json:"section" jsonschema:"destination section gid or exact name"`
 	Project string `json:"project,omitempty" jsonschema:"project gid or name; only needed if the task is in several projects"`
+	MyTasks bool   `json:"my_tasks,omitempty" jsonschema:"move within the sections of My Tasks (e.g. Today / Later; see list_my_sections) instead of a project's; the task must be assigned to me"`
 }
 
 type RenameSectionInput struct {
@@ -552,6 +556,15 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 
 func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	if in.MyTasks {
+		if in.Project != "" {
+			return nil, WriteOutput{}, fmt.Errorf("my_tasks and project cannot be used together")
+		}
+		if err := sections.MoveMine(ctx, in.GID, in.Section); err != nil {
+			return nil, WriteOutput{}, err
+		}
+		return nil, s.push(ctx, in.GID), nil
+	}
 	if err := sections.Move(ctx, in.GID, in.Project, in.Section); err != nil {
 		return nil, WriteOutput{}, err
 	}

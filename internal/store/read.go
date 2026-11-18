@@ -59,7 +59,8 @@ const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.
 	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid), t.liked, t.num_likes, t.approval_status,
 	(SELECT count(*) FROM task_dependencies dp LEFT JOIN tasks bt ON bt.gid = dp.dependency_gid
 		LEFT JOIN task_refs br ON br.gid = dp.dependency_gid
-		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed) = 0)`
+		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed) = 0),
+	t.assignee_section_gid, COALESCE((SELECT ms.name FROM my_task_sections ms WHERE ms.gid = t.assignee_section_gid), '')`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string
@@ -146,12 +147,15 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 	tasks := []TaskSummary{}
 	for rows.Next() {
 		var t TaskSummary
-		var assigneeGID, assigneeName string
+		var assigneeGID, assigneeName, mySection, mySectionName string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
 			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending, &t.Liked, &t.NumLikes,
-			&t.ApprovalStatus, &t.OpenDependencies); err != nil {
+			&t.ApprovalStatus, &t.OpenDependencies, &mySection, &mySectionName); err != nil {
 			return nil, err
+		}
+		if mySection != "" && mySectionName != "" {
+			t.MySection = &SectionView{GID: mySection, Name: mySectionName}
 		}
 		if assigneeGID != "" {
 			t.Assignee = &UserRef{GID: assigneeGID, Name: assigneeName}

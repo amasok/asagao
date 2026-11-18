@@ -252,6 +252,9 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if err := upsertTaskCustomFields(ctx, tx, t); err != nil {
 		return err
 	}
+	if err := upsertAssigneeSection(ctx, tx, t, workspace); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ?", t.GID); err != nil {
 		return err
 	}

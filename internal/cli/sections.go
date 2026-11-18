@@ -197,3 +197,36 @@ func (a *app) tagRmCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "確認なしで削除する")
 	return a.addDryRunFlag(cmd)
 }
+
+func (a *app) sectionMineCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mine",
+		Short: "マイタスクのセクション（今日やる・あとで など）を表示する",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			secs, err := (&usecase.Sections{Store: st, Clock: time.Now}).MySections(ctx, "")
+			if err != nil {
+				return err
+			}
+			if a.json {
+				return a.printJSON(secs)
+			}
+			if len(secs) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "マイタスクのセクションはまだ分かりません（同期のあとに表示します）")
+				return nil
+			}
+			rows := [][]string{}
+			for _, s := range secs {
+				rows = append(rows, []string{s.Name, s.GID})
+			}
+			printTable(cmd.OutOrStdout(), rows)
+			return nil
+		},
+	}
+}

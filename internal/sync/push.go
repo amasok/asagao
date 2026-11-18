@@ -437,6 +437,8 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		return s.pushUpdateTag(ctx, op)
 	case outbox.KindDeleteTag:
 		err = s.pushDeleteTag(ctx, op)
+	case outbox.KindMoveMySection:
+		err = s.pushMoveMySection(ctx, op)
 	case outbox.KindCreateTask:
 		return s.pushCreate(ctx, op)
 	case outbox.KindAddComment:

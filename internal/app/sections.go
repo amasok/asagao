@@ -21,6 +21,9 @@ type SectionStore interface {
 	MoveSectionLocal(ctx context.Context, sectionGID, before, after string, now time.Time) error
 	SyncState(ctx context.Context, key string) (string, error)
 	SectionName(ctx context.Context, gid string) (string, error)
+	ListMyTaskSections(ctx context.Context, workspaceGID string) ([]readmodel.SectionView, error)
+	ResolveMySection(ctx context.Context, taskGID, arg string) (string, error)
+	MoveMySectionLocal(ctx context.Context, gid, sectionGID string, now time.Time) error
 }
 
 // Sections is the use cases on sections: moving a task to another section, and renaming
@@ -205,4 +208,34 @@ func (s *Sections) ReorderHere(ctx context.Context, sectionGID, before, after st
 		return err
 	}
 	return s.Store.MoveSectionLocal(ctx, sectionGID, before, after, s.Clock())
+}
+
+// MySections returns the sections of my My Tasks list in a workspace ("" for the default
+// one), in order: none when they are not known (not synced yet, or not on this plan).
+func (s *Sections) MySections(ctx context.Context, workspaceGID string) ([]readmodel.SectionView, error) {
+	if planAvailable(ctx, s.Store, readmodel.PlanMySection) != nil {
+		return []readmodel.SectionView{}, nil
+	}
+	return s.Store.ListMyTaskSections(ctx, workspaceGID)
+}
+
+// MoveMine moves task taskGID (assigned to me) to the section of My Tasks named (or with
+// the gid) section.
+func (s *Sections) MoveMine(ctx context.Context, taskGID, section string) error {
+	if err := planAvailable(ctx, s.Store, readmodel.PlanMySection); err != nil {
+		return err
+	}
+	gid, err := s.Store.ResolveMySection(ctx, taskGID, section)
+	if err != nil {
+		return err
+	}
+	return s.MoveMineHere(ctx, taskGID, gid)
+}
+
+// MoveMineHere moves task taskGID to the My Tasks section sectionGID the user chose.
+func (s *Sections) MoveMineHere(ctx context.Context, taskGID, sectionGID string) error {
+	if err := planAvailable(ctx, s.Store, readmodel.PlanMySection); err != nil {
+		return err
+	}
+	return s.Store.MoveMySectionLocal(ctx, taskGID, sectionGID, s.Clock())
 }

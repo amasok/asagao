@@ -10,6 +10,7 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/tag"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Tools that change sections and tags themselves (#33). A feature Asana refused with a
@@ -129,4 +130,21 @@ func (s *Server) deleteTag(ctx context.Context, _ *mcp.CallToolRequest, in Delet
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, ""), nil
+}
+
+type MySectionsOutput struct {
+	Sections []readmodel.SectionView `json:"sections"`
+	Note     string                  `json:"note,omitempty"`
+}
+
+func (s *Server) listMySections(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, MySectionsOutput, error) {
+	secs, err := (&app.Sections{Store: s.Store, Clock: s.Now}).MySections(ctx, "")
+	if err != nil {
+		return nil, MySectionsOutput{}, err
+	}
+	out := MySectionsOutput{Sections: secs}
+	if len(secs) == 0 {
+		out.Note = "the sections of My Tasks are not known (not synced yet, or not available on this plan)"
+	}
+	return nil, out, nil
 }

@@ -78,6 +78,7 @@ type AsanaAPI interface {
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
 	ApplyTag(ctx context.Context, t model.Tag) error
+	ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error
 	CompleteCreateSection(ctx context.Context, id int64, local, real string) error
 	RealSectionGID(ctx context.Context, gid string) (string, error)
 	SectionCreateQueued(ctx context.Context, gid string) (bool, error)
