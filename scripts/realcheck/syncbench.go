@@ -202,7 +202,8 @@ func (b *bench) run(args ...string) benchResult {
 	ctx, cancel := context.WithTimeout(b.c.ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, b.env.Bin, append([]string{"--no-context"}, args...)...)
-	cmd.Env = append(slices.Clone(b.env.Vars), "GODEBUG=http2debug=2")
+	// No GODEBUG=http2debug: Go would log the authorization header (the token).
+	cmd.Env = slices.Clone(b.env.Vars)
 	cmd.Dir = b.env.Work
 	detach(cmd)
 	var out bytes.Buffer
