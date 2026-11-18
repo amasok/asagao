@@ -31,11 +31,11 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
-		ws, _ := st.DefaultWorkspace(m.ctx) // the workspace the templates are made in
-		for _, f := range []string{readmodel.PlanTaskTemplates, readmodel.PlanProjectTemplates} {
-			if !app.PlanOffered(m.ctx, st, f, ws, m.deps.Now()) {
-				off[f] = true
-			}
+		// Project templates are listed and made in the default workspace. (Task templates
+		// are hidden per project: templates.go.)
+		ws, _ := st.DefaultWorkspace(m.ctx)
+		if !app.TemplatesOffered(m.ctx, st, readmodel.PlanProjectTemplates, ws, m.deps.Now()) {
+			off[readmodel.PlanProjectTemplates] = true
 		}
 		return planLoadedMsg{off: off}
 	}

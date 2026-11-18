@@ -120,7 +120,7 @@ func (m *Model) actions() []action {
 		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
 		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
-		{id: "task_from_template", key: "G", group: groupProject, label: "テンプレートからタスクを作る（オンライン）", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanTaskTemplates, ready: (*Model).hasTaskTemplates, run: (*Model).startTaskFromTemplate},
+		{id: "task_from_template", key: "G", group: groupProject, label: "テンプレートからタスクを作る（オンライン）", ctx: ctxList | ctxBoard, needProject: true, ready: (*Model).hasTaskTemplates, run: (*Model).startTaskFromTemplate},
 		{id: "project_from_template", key: "B", group: groupProject, label: "テンプレートからプロジェクトを作る（オンライン）", ctx: ctxAll, plan: readmodel.PlanProjectTemplates, ready: (*Model).hasProjectTemplates, run: (*Model).startProjectFromTemplate},
 		{id: "duplicate_project", key: "S", group: groupProject, label: "このプロジェクトを複製（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).startDuplicateProject},
 		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
