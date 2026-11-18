@@ -115,6 +115,11 @@ type SyncConfig struct {
 	CompletedDays int `toml:"completed_days"`
 	// AllProjects syncs every project in the workspace instead of only projects you are a member of.
 	AllProjects bool `toml:"all_projects"`
+	// LazyProjects fetches a project's tasks only once it is opened (and from then on), plus
+	// those of the favorites and My Tasks (#54); the other projects are only listed. false
+	// fetches every project I am a member of from the start, as before. AllProjects fetches
+	// every project from the start either way.
+	LazyProjects bool `toml:"lazy_projects"`
 }
 
 // Default is the settings when config.toml sets nothing.
@@ -125,7 +130,7 @@ func Default() Config {
 			TokenStore:   TokenStoreKeychain,
 			OnePassword:  OnePasswordConfig{Vault: "Private", Item: xdg.AppName, LegacyItem: xdg.LegacyAppName},
 		},
-		Sync: SyncConfig{CompletedDays: 14},
+		Sync: SyncConfig{CompletedDays: 14, LazyProjects: true},
 		UI:   UIConfig{ImageProtocol: "auto", InlineImages: "auto"},
 	}
 }

@@ -60,6 +60,27 @@ const (
 	// KeyCustomID + a task's custom ID ("ENG-123"): the gid Asana gave for it, so that a
 	// commit can name the task while offline once it was found (Issue #36).
 	KeyCustomID = "custom_id:"
+	// KeyProjectTasks + project gid: how far the project's tasks are in the local cache
+	// (#54): TasksWanted, TasksOpen or TasksAll. A project without it (and without an events
+	// token, which a project synced before #54 has) is only listed: its tasks are fetched
+	// when it is opened.
+	KeyProjectTasks = "project_tasks:"
+	// KeyMyTasks + workspace gid: how far My Tasks of the workspace is fetched (TasksOpen
+	// or TasksAll; "" after a sync before #54 means all).
+	KeyMyTasks = "my_tasks:"
+)
+
+// States of KeyProjectTasks and KeyMyTasks. Stored, so they must not change.
+const (
+	// TasksWanted: the project was opened (or is a favorite) but its tasks are not fetched
+	// yet; the next sync, or the open itself when online, fetches them.
+	TasksWanted = "wanted"
+	// TasksOpen: the incomplete tasks are fetched; the completed ones (sync.completed_days)
+	// are fetched next.
+	TasksOpen = "open"
+	// TasksAll: the tasks are fetched as a sync keeps them (incomplete, and completed within
+	// sync.completed_days).
+	TasksAll = "all"
 )
 
 // Keys of the sync state for goals and portfolios (#7).

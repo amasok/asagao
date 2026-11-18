@@ -89,6 +89,7 @@ func (f *listFlags) filter(ctx context.Context, st Store, cmd *cobra.Command, de
 
 func (a *app) taskListCmd() *cobra.Command {
 	var f listFlags
+	var offline bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "タスクを一覧表示する（ローカルストアから。デフォルトは自分の未完了タスク。.asana.json があればそのプロジェクトの未完了タスク）",
@@ -117,6 +118,9 @@ func (a *app) taskListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if tf.ProjectGID != "" {
+				a.openProject(cmd, st, tf.ProjectGID, offline)
+			}
 			tasks, err := query(st).ListTasks(ctx, tf)
 			if err != nil {
 				return err
@@ -129,12 +133,13 @@ func (a *app) taskListCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd, "me")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Asana に問い合わせない（タスクをまだ取得していないプロジェクトも、その場で取りにいかない）")
 	return cmd
 }
 
 func (a *app) searchCmd() *cobra.Command {
 	var f listFlags
-	var remote bool
+	var remote, offline bool
 	cmd := &cobra.Command{
 		Use:   "search <キーワード>...",
 		Short: "タスク名・説明・コメントを全文検索する（ローカルストアから。--remote で Asana も）",
@@ -158,12 +163,18 @@ func (a *app) searchCmd() *cobra.Command {
 				return err
 			}
 			tf.Query = strings.Join(args, " ")
+			if tf.ProjectGID != "" {
+				a.openProject(cmd, st, tf.ProjectGID, offline)
+			}
 			if remote {
 				return a.searchRemote(cmd, st, tf)
 			}
 			tasks, err := query(st).ListTasks(ctx, tf)
 			if err != nil {
 				return err
+			}
+			if tf.ProjectGID == "" {
+				a.noteUnfetched(cmd, st)
 			}
 			if a.json {
 				return a.printJSON(tasks)
@@ -174,6 +185,7 @@ func (a *app) searchCmd() *cobra.Command {
 	}
 	f.register(cmd, "any")
 	cmd.Flags().BoolVar(&remote, "remote", false, "Asana でも探す（見つけたタスクはキャッシュに入る）")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Asana に問い合わせない（--project のタスクをまだ取得していなくても、その場で取りにいかない）")
 	return cmd
 }
 

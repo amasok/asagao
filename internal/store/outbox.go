@@ -354,6 +354,11 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 				gid, nt.ProjectGID, nt.SectionGID); err != nil {
 				return err
 			}
+			// Working in a project opens it (#54): the syncs keep it, and the new task, up to
+			// date (a full sync would otherwise remove the task once it was sent).
+			if err := wantProject(ctx, tx, nt.ProjectGID); err != nil {
+				return err
+			}
 		}
 		return saveOp(ctx, tx, &Op{Kind: OpCreateTask, TaskGID: gid, Payload: payload, State: OpPending, CreatedAt: ts})
 	})
