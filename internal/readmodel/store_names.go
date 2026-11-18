@@ -43,6 +43,9 @@ const (
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
+	// KeyCustomID + a task's custom ID ("ENG-123"): the gid Asana gave for it, so that a
+	// commit can name the task while offline once it was found (Issue #36).
+	KeyCustomID = "custom_id:"
 )
 
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not

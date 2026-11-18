@@ -157,25 +157,28 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 	return add(ctx, found)
 }
 
-// TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it and
-// returns its gid. A custom ID Asana does not know is readmodel.ErrNotFound.
+// TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it,
+// remembers its gid (readmodel.KeyCustomID) and returns it. A custom ID Asana does not know
+// is readmodel.ErrNotFound (and forgotten).
 func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, error) {
 	ws, err := s.Store.DefaultWorkspace(ctx)
 	if err != nil {
 		return "", err
 	}
+	key := readmodel.KeyCustomID + customID
 	t, err := s.API.TaskByCustomID(ctx, ws, customID)
 	var apiErr *model.Error
-	if errors.As(err, &apiErr) && apiErr.Status == 404 {
+	if (errors.As(err, &apiErr) && apiErr.Status == 404) || (err == nil && t.GID == "") {
+		_ = s.Store.SetSyncState(ctx, key, "")
 		return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
 	}
 	if err != nil {
 		return "", err
 	}
-	if t.GID == "" {
-		return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
-	}
 	if err := s.Store.UpsertTasks(ctx, []model.Task{*t}); err != nil {
+		return "", err
+	}
+	if err := s.Store.SetSyncState(ctx, key, t.GID); err != nil {
 		return "", err
 	}
 	return t.GID, nil

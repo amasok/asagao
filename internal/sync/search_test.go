@@ -261,8 +261,19 @@ func TestTaskByCustomID(t *testing.T) {
 	if _, err := st.GetTask(ctx, "t3"); err != nil {
 		t.Fatalf("not cached: %v", err)
 	}
+	if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"ENG-123"); v != "t3" {
+		t.Fatalf("gid not remembered: %q", v)
+	}
 	if _, err := s.TaskByCustomID(ctx, "ENG-999"); !errors.Is(err, readmodel.ErrNotFound) {
 		t.Fatalf("unknown: %v", err)
+	}
+	// an ID that Asana no longer knows is forgotten
+	f.customStatus = http.StatusNotFound
+	if _, err := s.TaskByCustomID(ctx, "ENG-123"); !errors.Is(err, readmodel.ErrNotFound) {
+		t.Fatalf("gone: %v", err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"ENG-123"); v != "" {
+		t.Fatalf("gone gid remembered: %q", v)
 	}
 	f.customStatus = http.StatusInternalServerError
 	s.API.(*asana.Client).MaxRetries = 0

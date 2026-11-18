@@ -7,6 +7,9 @@
 //     short number after "#" is left alone.
 //   - "asana#<gid>" (the prefix in any case) with any number of digits, to name a task
 //     whose gid is shorter, or to make the reference explicit.
+//   - "asana#<custom ID>": a task's custom ID (Asana's task IDs), letters and digits that
+//     start with a letter, a "-" and digits: "asana#ENG-123" (Issue #36). Only with the
+//     prefix: "UTF-8" or "SHA-256" in a message are not references.
 //
 // The "#" (or "asana") must not follow a letter, a digit, "_", "&", "/" or "#", so that
 // "abc#1234567890", "&#1234567890;" and "owner/repo#1234567890" are not references, and
@@ -34,17 +37,31 @@ const maxDigits = 32
 
 // Ref is a task referenced by a commit message.
 type Ref struct {
-	// TaskGID is the Asana gid of the task.
+	// TaskGID is the Asana gid of the task ("" for a reference by custom ID).
 	TaskGID string
 	// Fixes is set when a closing keyword comes before a reference to the task.
 	Fixes bool
+	// CustomID is the task's custom ID, as written ("ENG-123"), for a reference by custom
+	// ID. The entry point finds the task's gid in Asana.
+	CustomID string
+}
+
+// Key is what identifies the referenced task within one commit: the gid, or the custom ID.
+func (r Ref) Key() string {
+	if r.CustomID != "" {
+		return "id:" + r.CustomID
+	}
+	return r.TaskGID
 }
 
 // refRE matches a reference with what comes before it: the start or a character that may
 // come before a reference (group 1), a closing keyword (group 2), the "asana" prefix
-// (group 3) and the gid (group 4). The character after the gid is checked by Parse (RE2
-// has no lookahead).
-var refRE = regexp.MustCompile(`(?i)(^|[^0-9a-z_&/#])(?:(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)(?:[ \t]*:[ \t]*|[ \t]+))?(asana)?#([0-9]+)`)
+// (group 3) and the gid or custom ID (group 4). The character after it is checked by Parse
+// (RE2 has no lookahead).
+var refRE = regexp.MustCompile(`(?i)(^|[^0-9a-z_&/#])(?:(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)(?:[ \t]*:[ \t]*|[ \t]+))?(asana)?#([0-9]+|[a-z][0-9a-z]*-[0-9]+)`)
+
+// maxCustomID bounds a custom ID.
+const maxCustomID = 64
 
 // Parse returns the tasks that msg references, in the order they first appear, each once.
 // A task referenced several times is to be completed when any of its references is.
@@ -53,24 +70,35 @@ func Parse(msg string) []Ref {
 	var refs []Ref
 	index := map[string]int{}
 	for _, m := range refRE.FindAllStringSubmatchIndex(msg, -1) {
-		gid := msg[m[8]:m[9]]
-		if m[9] < len(msg) && isWordByte(msg[m[9]]) {
-			continue // "#1234567890abc": not a gid
+		id := msg[m[8]:m[9]]
+		if m[9] < len(msg) && (isWordByte(msg[m[9]]) || msg[m[9]] == '-') {
+			continue // "#1234567890abc", "asana#ENG-1-2": not a reference
 		}
 		prefixed := m[6] >= 0
-		if len(gid) > maxDigits || (!prefixed && len(gid) < MinBareDigits) {
+		var ref Ref
+		switch {
+		case !isDigit(id[0]): // a custom ID: only after "asana"
+			if !prefixed || len(id) > maxCustomID {
+				continue
+			}
+			ref.CustomID = id
+		case len(id) > maxDigits || (!prefixed && len(id) < MinBareDigits):
+			continue
+		default:
+			ref.TaskGID = id
+		}
+		ref.Fixes = m[4] >= 0 && !revert
+		if i, ok := index[ref.Key()]; ok {
+			refs[i].Fixes = refs[i].Fixes || ref.Fixes
 			continue
 		}
-		fixes := m[4] >= 0 && !revert
-		if i, ok := index[gid]; ok {
-			refs[i].Fixes = refs[i].Fixes || fixes
-			continue
-		}
-		index[gid] = len(refs)
-		refs = append(refs, Ref{TaskGID: gid, Fixes: fixes})
+		index[ref.Key()] = len(refs)
+		refs = append(refs, ref)
 	}
 	return refs
 }
+
+func isDigit(b byte) bool { return '0' <= b && b <= '9' }
 
 func isWordByte(b byte) bool {
 	return b == '_' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z'
@@ -124,13 +152,13 @@ func isHex(b byte) bool { return '0' <= b && b <= '9' || 'a' <= b && b <= 'f' ||
 // prev) did not have already: the previous version was handled when it was made, so a ref
 // it had is left out unless the amend adds a closing keyword to it.
 func Amended(prev, refs []Ref) []Ref {
-	had := map[string]bool{} // gid -> fixes
+	had := map[string]bool{} // Key -> fixes
 	for _, r := range prev {
-		had[r.TaskGID] = had[r.TaskGID] || r.Fixes
+		had[r.Key()] = had[r.Key()] || r.Fixes
 	}
 	var out []Ref
 	for _, r := range refs {
-		if fixes, ok := had[r.TaskGID]; ok && (fixes || !r.Fixes) {
+		if fixes, ok := had[r.Key()]; ok && (fixes || !r.Fixes) {
 			continue
 		}
 		out = append(out, r)

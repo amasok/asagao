@@ -113,13 +113,14 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, ho
 	seen := map[string]bool{}
 	for _, c := range commits {
 		for _, r := range c.Refs() {
-			if !seen[r.TaskGID] {
+			if r.TaskGID != "" && !seen[r.TaskGID] {
 				seen[r.TaskGID] = true
 				gids = append(gids, r.TaskGID)
 			}
 		}
 	}
-	if len(gids) == 0 {
+	customIDs := usecase.CustomIDs(commits)
+	if len(gids) == 0 && len(customIDs) == 0 {
 		if a.json {
 			for _, c := range commits {
 				res.Commits = append(res.Commits, gitScanCommit{SHA: c.SHA, Subject: c.Subject(), Actions: []usecase.GitLinkAction{}})
@@ -140,15 +141,27 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, ho
 		return err
 	}
 	defer st.Close()
+	// Tasks named by custom ID ("asana#ENG-123") are found in Asana (the hook gives it a
+	// short try), or as found before.
+	custom, warn := a.resolveCustomIDs(ctx, st, customIDs, offline, hook)
+	if warn != "" {
+		res.Warnings = append(res.Warnings, warn)
+	}
+	for _, id := range customIDs {
+		if gid := custom[id]; gid != "" && !seen[gid] {
+			seen[gid] = true
+			gids = append(gids, gid)
+		}
+	}
 	// The cache may not have the comment that marks a commit as handled (made on another
 	// computer, say): refresh the tasks first, and judge by the cache when that fails. The
 	// hook does not wait for Asana: it judges by the cache. (A dry run refreshes its copy.)
-	if !offline && !hook {
+	if !offline && !hook && len(gids) > 0 {
 		if warn := a.refreshTasks(ctx, st, gids); warn != "" {
 			res.Warnings = append(res.Warnings, warn)
 		}
 	}
-	link := usecase.GitLink{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+	link := usecase.GitLink{Store: st, Text: richtext.Converter{}, Clock: time.Now, CustomIDs: custom}
 	wrote := false
 	for _, c := range commits {
 		acts, err := link.Apply(ctx, c, false) // a dry run writes to its copy
@@ -229,6 +242,39 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, ho
 // hookPushTimeout is how long the hook tries to send what it queued.
 var hookPushTimeout = 3 * time.Second
 
+// resolveCustomIDs finds the gids of the tasks with the custom IDs (app.ResolveCustomIDs):
+// in Asana unless offline (the hook waits for it at most hookPushTimeout), else as found
+// before. It returns a warning when Asana could not be asked.
+func (a *app) resolveCustomIDs(ctx context.Context, st Store, ids []string, offline, hook bool) (map[string]string, string) {
+	if len(ids) == 0 {
+		return nil, ""
+	}
+	var find usecase.CustomIDFinder
+	var problem error
+	if !offline {
+		timeout := 20 * time.Second
+		if hook {
+			timeout = hookPushTimeout
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+		if api, err := a.apiClient(ctx); err != nil {
+			problem = err
+		} else {
+			find = a.syncer(api, st)
+		}
+	}
+	custom, err := usecase.ResolveCustomIDs(ctx, st, find, ids)
+	if err == nil {
+		err = problem
+	}
+	if err != nil {
+		return custom, fmt.Sprintf("Asana でタスクの ID（%s）を引けませんでした。前に見つけたものだけを使います（%v）", strings.Join(ids, ", "), err)
+	}
+	return custom, ""
+}
+
 // refreshTasks fetches the tasks gids from Asana. It returns a warning when that could not
 // be done, for the commands to go on with the cache.
 func (a *app) refreshTasks(ctx context.Context, st Store, gids []string) string {
@@ -279,7 +325,12 @@ func printGitScan(w io.Writer, res gitScanResult, hook, skipped bool) {
 			} else {
 				name += " (" + act.TaskGID + ")"
 			}
+			if act.CustomID != "" {
+				name = act.CustomID + " " + name
+			}
 			switch {
+			case act.Result == usecase.GitLinkNotFound && act.CustomID != "" && act.TaskGID == "":
+				fmt.Fprintf(w, "  見つかりません: %s（Asana にその ID のタスクがないか、Asana に届きませんでした）\n", act.CustomID)
 			case act.Result == usecase.GitLinkNotFound:
 				fmt.Fprintf(w, "  見つかりません: %s（ローカルストアにありません。`asagao sync` のあとでもう一度）\n", act.TaskGID)
 			case act.Result == usecase.GitLinkAlready:
