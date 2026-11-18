@@ -118,3 +118,46 @@ func TestBriefAttackTermsafeCache(t *testing.T) {
 }
 
 var asanaBriefEsc = asana.ProjectBrief{GID: "b1", Title: "t\x1b[31m", Text: "x\x07\u009b", HTMLText: "<body>x</body>"}
+
+// Partial payloads: title then body edits fold; changing one back leaves the other;
+// both back removes the entry; the cache always shows the whole brief.
+func TestBriefAttackPartialFold(t *testing.T) {
+	s, ctx := briefStore(t, asanaBrief)
+	now := time.Now()
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "新", HTMLText: "<body>年内</body>", Text: "年内"}, now))
+	op := briefEntries(t, s)[0]
+	if _, has := op.Payload["html_text"]; has || op.Payload["title"] != "新" {
+		t.Fatalf("payload = %v", op.Payload)
+	}
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "新", HTMLText: "<body>春</body>", Text: "春"}, now))
+	op = briefEntries(t, s)[0]
+	if op.Payload["title"] != "新" || op.Payload["text"] != "春" {
+		t.Fatalf("payload = %v", op.Payload)
+	}
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>春</body>", Text: "春"}, now))
+	op = briefEntries(t, s)[0]
+	if _, has := op.Payload["title"]; has {
+		t.Fatalf("title kept: %v", op.Payload)
+	}
+	o, _ := s.ProjectOverview(ctx, "p1")
+	if o.Brief.Title != "目的" || o.Brief.Text != "春" {
+		t.Fatalf("cache = %+v", o.Brief)
+	}
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>年内</body>", Text: "年内"}, now))
+	if n := len(briefEntries(t, s)); n != 0 {
+		t.Fatalf("entries %d", n)
+	}
+}
+
+// Re-applying (the overview fetched again) a title-only change keeps Asana's body.
+func TestBriefAttackReapplyPartial(t *testing.T) {
+	s, ctx := briefStore(t, asanaBrief)
+	now := time.Now()
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "新", HTMLText: "<body>年内</body>", Text: "年内"}, now))
+	must(t, s.SaveProjectOverview(ctx, "p1", nil, BriefAvailable,
+		&asana.ProjectBrief{GID: "b1", Title: "目的", Text: "夏", HTMLText: "<body>夏</body>"}, now))
+	o, _ := s.ProjectOverview(ctx, "p1")
+	if o.Brief.Title != "新" || o.Brief.Text != "夏" || !o.BriefPending {
+		t.Fatalf("cache = %+v pending=%v", o.Brief, o.BriefPending)
+	}
+}
