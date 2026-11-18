@@ -78,6 +78,10 @@ func (c *Check) web(project, userTask string) {
 	err = c.R.Tool(c.ctx, "get_task", M{"gid": userTask}, &ut)
 	c.Rep.check("get_task にユーザーのタスクの種類とステータスが出る", err == nil && strings.Contains(show(ut), typeName) &&
 		strings.Contains(show(ut), str(u0, "custom_type_status_option", "name")), errText(err))
+	var ts M
+	err = c.R.JSON(c.ctx, &ts, "task", "show", userTask)
+	c.Rep.check("task show にユーザーのタスクの種類とステータスが出る", err == nil && str(ts, "custom_type", "gid") == typeGID &&
+		str(ts, "custom_type_status", "name") == str(u0, "custom_type_status_option", "name"), errText(err)+show(get(ts, "custom_type"))+show(get(ts, "custom_type_status")))
 	t := c.createTask(M{"name": pre + "-typed", "project": project})
 	c.syncClean("タスクを作る")
 	typeIs := func(name, subtype, ctype, st string, completed bool) {
@@ -97,6 +101,10 @@ func (c *Check) web(project, userTask string) {
 		typeIs(fmt.Sprintf("ステータス %s (%s)", st, states[st]), "custom", typeGID, st, states[st] == "Complete")
 	}
 	c.Rep.note("仮定 4: 完了のステータスにするとタスクも完了になる", "上の「ステータス」の行の completed で確かめた")
+	// From the complete status back to an incomplete one: the task is open again.
+	c.cli("task status (完了から戻す) "+incomplete[0], "task", "status", t, incomplete[0])
+	c.syncClean("task status 戻す")
+	typeIs(fmt.Sprintf("完了のステータスから %s に戻すと、タスクも未完了に戻る", incomplete[0]), "custom", typeGID, incomplete[0], false)
 	c.cli("task type milestone", "task", "type", t, "milestone")
 	c.syncClean("task type milestone")
 	typeIs("仮定 3: milestone に戻すと種類が消える", "milestone", "", "", false)
