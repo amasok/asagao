@@ -6,6 +6,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Names of the local cache that the entry points (d4b) and sync (e1) use without importing
@@ -59,8 +60,9 @@ const (
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
 	// PlanTaskTemplates and PlanProjectTemplates: making tasks and projects from
-	// templates (#2). Unlike the others they are offered again a day after the 402
-	// (app.TemplateRecheck), since a trial or an upgrade may change them.
+	// templates (#2). Unlike the others, their mark is per workspace (PlanKey) and
+	// they are offered again a day after the 402 (PlanValueOffered), since a trial or an
+	// upgrade may change them.
 	PlanTaskTemplates    = "task_templates"
 	PlanProjectTemplates = "project_templates"
 )
@@ -136,4 +138,37 @@ func ReplaceInlineAssets(text string, repl func(gid string) string) string {
 	return inlineAsset.ReplaceAllStringFunc(text, func(link string) string {
 		return repl(inlineAsset.FindStringSubmatch(link)[1])
 	})
+}
+
+// PlanKey is the sync_state key of the mark that Asana refused feature in workspace
+// workspaceGID with a 402. Its value is when (UTC, RFC 3339); "" is no mark. (The marks of
+// PlanSections, PlanTags and PlanMySection are still KeyPlanUnavailable + feature, for
+// every workspace: Issue #50.)
+func PlanKey(feature, workspaceGID string) string {
+	return KeyPlanUnavailable + feature + ":" + workspaceGID
+}
+
+const (
+	// PlanRecheck is how long after a 402 the feature is offered again (Asana is asked
+	// again): a trial or an upgrade may give it, a trial's end may take it away.
+	PlanRecheck = 24 * time.Hour
+	// PlanSkew is how far in the future a mark may be (another process's clock, the
+	// rounding to seconds) and still count.
+	PlanSkew = 5 * time.Minute
+)
+
+// PlanValueOffered reports whether a feature whose mark (the value at PlanKey) is value
+// is offered at now: when there is no mark, it cannot be read, it is PlanRecheck old, or
+// it is more than PlanSkew in the future (the clock went back, and the mark would hide the
+// feature for longer than PlanRecheck).
+func PlanValueOffered(value string, now time.Time) bool {
+	if value == "" {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return true
+	}
+	d := now.Sub(at)
+	return d >= PlanRecheck || d < -PlanSkew
 }

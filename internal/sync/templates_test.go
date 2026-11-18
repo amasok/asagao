@@ -202,7 +202,7 @@ func setupTemplates(t *testing.T) (*templateServer, *Syncer, *store.Store, *int)
 
 func planMark(t *testing.T, st *store.Store, feature string) string {
 	t.Helper()
-	v, err := st.SyncState(context.Background(), readmodel.KeyPlanUnavailable+feature)
+	v, err := st.SyncState(context.Background(), readmodel.PlanKey(feature, "w1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +229,13 @@ func TestTaskTemplatesListAndPlan(t *testing.T) {
 	}
 	if planMark(t, st, readmodel.PlanTaskTemplates) == "" {
 		t.Fatal("402 did not mark the plan")
+	}
+	// The mark is the default workspace's only (another workspace may have another plan).
+	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanTaskTemplates); v != "" {
+		t.Errorf("marked for every workspace: %q", v)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2")); v != "" {
+		t.Errorf("marked another workspace: %q", v)
 	}
 	delete(f.status, "GET /task_templates")
 	if _, err := s.TaskTemplates(ctx, "p1"); err != nil {

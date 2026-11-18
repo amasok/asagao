@@ -31,8 +31,9 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
+		ws, _ := st.DefaultWorkspace(m.ctx) // the workspace the templates are made in
 		for _, f := range []string{readmodel.PlanTaskTemplates, readmodel.PlanProjectTemplates} {
-			if !app.TemplatesOffered(m.ctx, st, f, m.deps.Now()) {
+			if !app.PlanOffered(m.ctx, st, f, ws, m.deps.Now()) {
 				off[f] = true
 			}
 		}

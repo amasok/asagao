@@ -21,8 +21,8 @@
 - **THEN** そのタスクを取り込み、POST をもう一度送らない
 
 ### Requirement: テンプレートが無いときは出さない
-TUI はテンプレートが 1 つもないとき、またはプランで使えない (402) とき、メニューに「テンプレートから作る」を出さない (MUST)。402 はその機能に印を付け、1 日たったらまた確かめる。一覧が取れたら印を消す。
-根拠: internal/tui/templates.go; internal/app/templates.go; internal/sync/templates.go (notePlan); TestTemplatesHiddenWithoutTemplates, TestTemplatesOffered, TestTaskTemplatesListAndPlan
+TUI はテンプレートが 1 つもないとき、またはプランで使えない (402) とき、メニューに「テンプレートから作る」を出さない (MUST)。402 はそのワークスペースのその機能に印を付け (`plan_unavailable:<機能>:<ワークスペースの gid>`)、1 日たったらまた確かめる。一覧が取れたら印を消す。
+根拠: internal/tui/templates.go; internal/app/templates.go; internal/sync/templates.go (notePlan); TestTemplatesHiddenWithoutTemplates, TestPlanOffered, TestTaskTemplatesListAndPlan
 
 #### Scenario: プランがテンプレートを持たない
 - **WHEN** `GET /task_templates` が 402 を返す

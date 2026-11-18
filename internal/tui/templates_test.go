@@ -194,7 +194,7 @@ func TestTemplatesHiddenWithoutTemplates(t *testing.T) {
 			t.Errorf("%s: fetched again at once", tc)
 		}
 		if tc == "402" {
-			if v, _ := st.SyncState(context.Background(), readmodel.KeyPlanUnavailable+readmodel.PlanTaskTemplates); v == "" {
+			if v, _ := st.SyncState(context.Background(), readmodel.PlanKey(readmodel.PlanTaskTemplates, "w1")); v == "" {
 				t.Error("402 did not mark the plan")
 			}
 			// The mark survives loading the plan again, and is dropped a day later.

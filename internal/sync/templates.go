@@ -26,8 +26,9 @@ import (
 // The job is waited for (GET /jobs/{gid}) up to jobWait. If it is still running, what is
 // there is stored and the result says so (Pending): the rest arrives with the next sync.
 //
-// A 402 marks the feature unavailable (readmodel.KeyPlanUnavailable), so the TUI stops
-// offering it; a list that works again clears the mark.
+// A 402 marks the feature unavailable in the workspace (readmodel.PlanKey), so the TUI
+// stops offering it there for a day (readmodel.PlanValueOffered); a list that works again
+// clears the mark.
 
 // Made is what a template or a duplicate made.
 type Made struct {
@@ -68,7 +69,7 @@ func (s *Syncer) TaskTemplates(ctx context.Context, projectGID string) ([]model.
 		return nil, ErrOffline
 	}
 	list, err := s.API.TaskTemplates(ctx, projectGID)
-	if err := s.notePlan(ctx, readmodel.PlanTaskTemplates, err); err != nil {
+	if err := s.notePlan(ctx, readmodel.PlanTaskTemplates, s.planWorkspace(ctx), err); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -93,7 +94,7 @@ func (s *Syncer) ProjectTemplates(ctx context.Context, teamGID string) ([]model.
 		// requires_workspace_received_organization): those of each team I am in.
 		list, err = s.teamProjectTemplates(ctx, ws)
 	}
-	if err := s.notePlan(ctx, readmodel.PlanProjectTemplates, err); err != nil {
+	if err := s.notePlan(ctx, readmodel.PlanProjectTemplates, ws, err); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -153,11 +154,18 @@ func needsTeam(err error) bool {
 	return false
 }
 
-// notePlan records what err says about the plan: a 402 marks feature unavailable (and
+// planWorkspace is the workspace whose plan a template's 402 is about: the default one,
+// where templates are listed and made (and which the TUI checks).
+func (s *Syncer) planWorkspace(ctx context.Context) string {
+	ws, _ := s.Store.DefaultWorkspace(ctx)
+	return ws
+}
+
+// notePlan records what err says about the plan of workspace workspaceGID: a 402 marks feature unavailable (and
 // is returned with a message saying so), a success clears the mark. Other errors are
 // returned as they are.
-func (s *Syncer) notePlan(ctx context.Context, feature string, err error) error {
-	key := readmodel.KeyPlanUnavailable + feature
+func (s *Syncer) notePlan(ctx context.Context, feature, workspaceGID string, err error) error {
+	key := readmodel.PlanKey(feature, workspaceGID)
 	switch {
 	case err == nil:
 		if v, _ := s.Store.SyncState(ctx, key); v != "" {
@@ -233,7 +241,7 @@ func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, n
 	started := s.clock()
 	job, err := s.API.InstantiateTask(ctx, tmpl.GID, name)
 	if err != nil {
-		err = s.notePlan(ctx, readmodel.PlanTaskTemplates, err)
+		err = s.notePlan(ctx, readmodel.PlanTaskTemplates, s.planWorkspace(ctx), err)
 		var pe *PlanError
 		if errors.As(err, &pe) || tmpl.Project == nil {
 			return nil, err
@@ -364,7 +372,7 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 	job, err := start()
 	if err != nil {
 		if feature != "" {
-			err = s.notePlan(ctx, feature, err)
+			err = s.notePlan(ctx, feature, ws, err)
 		}
 		var pe *PlanError
 		if errors.As(err, &pe) {
