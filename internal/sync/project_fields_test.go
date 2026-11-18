@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,13 +28,15 @@ type projectServer struct {
 	countsStatus                        int    // status of GET task_counts (0: 200)
 	teamsStatus, favoritesStatus        int
 	puts                                []map[string]any
+	putStatus                           int
+	ownerName                           string
 	calls                               map[string]int
 }
 
 func (p *projectServer) projectJSON() string {
 	owner := "null"
 	if p.owner != "" {
-		owner = fmt.Sprintf(`{"gid":%q,"name":"花子"}`, p.owner)
+		owner = fmt.Sprintf(`{"gid":%q,"name":%s}`, p.owner, jsonStr(cmp.Or(p.ownerName, "花子")))
 	}
 	brief := "null"
 	if p.brief != "" {
@@ -42,6 +45,11 @@ func (p *projectServer) projectJSON() string {
 	return fmt.Sprintf(`{"gid":"p1","name":"新居","notes":%q,"html_notes":%q,"owner":%s,"start_on":%s,"due_on":%s,"color":%q,
 		"workspace":{"gid":"w1"},"members":[{"gid":"me"}],"project_brief":%s}`,
 		p.notes, "<body>"+p.notes+"</body>", owner, jsonDate(p.startOn), jsonDate(p.dueOn), p.color, brief)
+}
+
+func jsonStr(v string) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 func jsonDate(d string) string {
@@ -69,6 +77,9 @@ func (p *projectServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "GET /projects/p1":
 		fmt.Fprintf(w, `{"data":%s}`, p.projectJSON())
 	case "PUT /projects/p1":
+		if fail(p.putStatus) {
+			return
+		}
 		var body struct{ Data map[string]any }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		p.puts = append(p.puts, body.Data)
