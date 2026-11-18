@@ -25,6 +25,7 @@ type Store interface {
 	app.NotificationStore
 	app.OutboxStore
 	app.QueryStore
+	app.GoalStore
 	app.QuickAddStore
 	sync.LocalStore
 

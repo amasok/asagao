@@ -239,6 +239,8 @@ type Model struct {
 	overviewOffset int
 	overview       *readmodel.ProjectOverview
 	newProjectName string // pickTeam: the project to create
+	// goals and portfolios (goals.go)
+	goals goalScreen
 
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
@@ -513,6 +515,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateOverview(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateGoals(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateProjects(msg); ok {
 		return m, cmd
 	}
@@ -712,6 +717,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleStatusKey(key)
 	case m.overviewView:
 		return m.handleOverviewKey(key)
+	case m.goals.open:
+		return m.handleGoalKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
 	case m.searching:

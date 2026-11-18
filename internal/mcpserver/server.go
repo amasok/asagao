@@ -115,6 +115,7 @@ func (s *Server) New() *mcp.Server {
 		Description: syncDesc}, s.sync)
 
 	s.addInboxTools(srv)
+	s.addGoalTools(srv)
 	s.addSearchTools(srv)
 	s.addAgentTools(srv)
 

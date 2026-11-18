@@ -31,6 +31,13 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
+		goals := &app.Goals{Store: st, Clock: m.deps.Now}
+		if !goals.Available(m.ctx) {
+			off[readmodel.PlanGoals] = true
+		}
+		if !goals.PortfoliosAvailable(m.ctx) {
+			off[readmodel.PlanPortfolios] = true
+		}
 		return planLoadedMsg{off: off}
 	}
 }

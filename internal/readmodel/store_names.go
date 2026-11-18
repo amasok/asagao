@@ -6,6 +6,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Names of the local cache that the entry points (d4b) and sync (e1) use without importing
@@ -45,6 +46,15 @@ const (
 	KeyTeams = "teams:"
 )
 
+// Keys of the sync state for goals and portfolios (#7).
+const (
+	// KeyGoals + workspace gid: when the goals and time periods of the workspace were last
+	// fetched.
+	KeyGoals = "goals:"
+	// KeyPortfolios + workspace gid: when my portfolios of the workspace were last fetched.
+	KeyPortfolios = "portfolios:"
+)
+
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not
 // fetched yet). Stored, so they must not change.
 const (
@@ -59,6 +69,29 @@ const (
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
 )
+
+// Features of #7 that a plan may lack (KeyPlanUnavailable). A 402 for them hides them for
+// PlanRecheckAfter only: they are then offered again (and tried again when shown), so a
+// workspace whose plan was upgraded, or whose trial started, gets them back by itself.
+const (
+	PlanGoals      = "goals"      // goals and time periods
+	PlanPortfolios = "portfolios" // portfolios
+
+	PlanRecheckAfter = 24 * time.Hour
+)
+
+// PlanOffFor reports whether a KeyPlanUnavailable value of a feature of #7 (when Asana
+// answered 402) still hides it at now: for PlanRecheckAfter. A value that is not a time
+// (or one in the future, from a clock that was ahead) does not hide it, so it is tried
+// again rather than hidden for good.
+func PlanOffFor(value string, now time.Time) bool {
+	at, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(at)
+	return age >= 0 && age < PlanRecheckAfter
+}
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
@@ -76,9 +109,11 @@ func PlanFeatureOf(kind string) string {
 // PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
 func PlanUnavailableMessage(feature string) string {
 	what := map[string]string{
-		PlanSections:  "セクションの作成・削除・並べ替え",
-		PlanTags:      "タグの名前・色の変更と削除",
-		PlanMySection: "マイタスクのセクション",
+		PlanSections:   "セクションの作成・削除・並べ替え",
+		PlanTags:       "タグの名前・色の変更と削除",
+		PlanMySection:  "マイタスクのセクション",
+		PlanGoals:      "ゴール",
+		PlanPortfolios: "ポートフォリオ",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
