@@ -30,9 +30,10 @@ const BriefFence = "asana-html"
 // briefBlockTags are the elements kept as HTML (at the top of the brief).
 var briefBlockTags = map[string]bool{"table": true, "object": true}
 
-// briefTags are the elements a kept block may hold, with the attributes each may have
-// (Asana's rich text for project briefs). Anything else is refused before it is queued:
-// Asana would reject it with 400.
+// briefTags are the elements a block written or changed here may hold, with the
+// attributes each may have besides data-* ones (Asana's rich text for project briefs).
+// Anything else is refused before it is queued: Asana would reject it with 400. A block as
+// Asana gave it is not checked (BriefFromMarkdown).
 var briefTags = map[string]map[string]bool{
 	"table":  {},
 	"tr":     {},
@@ -42,7 +43,8 @@ var briefTags = map[string]map[string]bool{
 		"data-asana-dynamic": true, "data-asana-project": true, "data-asana-tag": true},
 	"img": {"data-asana-gid": true, "data-asana-type": true, "src": true, "data-src-width": true, "data-src-height": true,
 		"data-thumbnail-url": true, "data-thumbnail-width": true, "data-thumbnail-height": true, "style": true, "alt": true},
-	"strong": {}, "em": {}, "b": {}, "i": {}, "u": {}, "s": {}, "code": {},
+	"strong": {}, "em": {}, "b": {}, "i": {}, "u": {}, "s": {}, "code": {}, "br": {}, "hr": {},
+	"ul": {}, "ol": {}, "li": {}, "blockquote": {}, "pre": {}, "h1": {}, "h2": {},
 }
 
 // The placeholder of a kept block while the rest is converted: private-use characters
@@ -144,8 +146,11 @@ func cutBriefBlocks(htmlText string) (string, []string) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			depth++
 			name := strings.ToLower(t.Name.Local)
+			if voidTags[name] { // no depth: HTML may not close it (<br>)
+				continue
+			}
+			depth++
 			if depth == 1 && name == "body" {
 				inBody = true
 			}
@@ -154,6 +159,9 @@ func cutBriefBlocks(htmlText string) (string, []string) {
 				start, blockDepth = at, depth
 			}
 		case xml.EndElement:
+			if voidTags[strings.ToLower(t.Name.Local)] {
+				continue
+			}
 			if start >= 0 && depth == blockDepth {
 				spans = append(spans, span{start, d.InputOffset()})
 				start = -1
@@ -178,12 +186,22 @@ func cutBriefBlocks(htmlText string) (string, []string) {
 }
 
 // BriefFromMarkdown converts editable Markdown to a brief's html_text and its plain text:
-// as a task description, with each asana-html block written as the HTML in it. A block
-// that Asana would refuse (not well-formed, or with an element or attribute a brief does
-// not take) is an error, so it is not queued.
-func BriefFromMarkdown(md string) (htmlText, plain string, err error) {
+// as a task description, with each asana-html block written as the HTML in it. original is
+// the brief's html_text the Markdown was made from ("" for a new brief): a block as it was
+// there is Asana's own and goes back unchecked. Any other block that Asana would refuse
+// (not well-formed, or with an element or attribute a brief does not take) is an error, so
+// it is not queued.
+func BriefFromMarkdown(md, original string) (htmlText, plain string, err error) {
 	rest, blocks := cutFences(normalizeNewlines(md))
+	_, kept := cutBriefBlocks(original)
+	asGiven := map[string]bool{}
+	for _, b := range kept {
+		asGiven[strings.TrimSpace(b)] = true
+	}
 	for i, raw := range blocks {
+		if asGiven[strings.TrimSpace(raw)] {
+			continue
+		}
 		if err := checkBriefHTML(raw); err != nil {
 			return "", "", fmt.Errorf("%d 番目の %s ブロック: %w", i+1, BriefFence, err)
 		}
@@ -278,37 +296,69 @@ func fenceCloses(line string, ch byte, n int) bool {
 	return len(t) >= n && strings.Trim(t, string(ch)) == ""
 }
 
-// checkBriefHTML checks that raw is well-formed XML of elements and attributes a brief
-// takes.
+// checkBriefHTML checks that raw is well-formed rich text of elements and attributes a
+// brief takes: every element closed (an HTML void element such as <br> may be written
+// without its end tag), each attribute one its element takes (or a data-* one).
 func checkBriefHTML(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("中身が空です")
 	}
+	if strings.Contains(raw, "<![CDATA[") {
+		return errors.New("CDATA はプロジェクトブリーフで使えません")
+	}
 	d := xml.NewDecoder(strings.NewReader("<x>" + raw + "</x>"))
+	d.Strict = false // HTML entities and void elements, as Asana writes them; tags are matched below
 	d.Entity = xml.HTMLEntity
+	var open []string
 	for {
-		tok, err := d.Token()
+		tok, err := d.RawToken()
 		if err == io.EOF {
-			return nil
+			break
 		}
 		if err != nil {
 			return fmt.Errorf("HTML として読めません (%v)", err)
 		}
-		st, ok := tok.(xml.StartElement)
-		if !ok || st.Name.Local == "x" && st.Name.Space == "" {
-			continue
-		}
-		attrs, known := briefTags[st.Name.Local]
-		if !known || st.Name.Space != "" {
-			return fmt.Errorf("<%s> はプロジェクトブリーフで使えません", st.Name.Local)
-		}
-		for _, a := range st.Attr {
-			if !attrs[a.Name.Local] || a.Name.Space != "" {
-				return fmt.Errorf("<%s> の属性 %s は使えません", st.Name.Local, a.Name.Local)
+		switch t := tok.(type) {
+		case xml.Comment, xml.Directive, xml.ProcInst: // <!-- -->, <!DOCTYPE>, <?xml ?>
+			return errors.New("コメント・<!...>・<?...?> はプロジェクトブリーフで使えません")
+		case xml.StartElement:
+			name := strings.ToLower(t.Name.Local)
+			if len(open) == 0 && name == "x" && t.Name.Space == "" {
+				open = append(open, name)
+				continue
 			}
+			attrs, known := briefTags[name]
+			if !known || t.Name.Space != "" {
+				return fmt.Errorf("<%s> はプロジェクトブリーフで使えません", t.Name.Local)
+			}
+			for _, a := range t.Attr {
+				an := strings.ToLower(a.Name.Local)
+				if a.Name.Space != "" || !attrs[an] && !strings.HasPrefix(an, "data-") {
+					return fmt.Errorf("<%s> の属性 %s は使えません", t.Name.Local, a.Name.Local)
+				}
+			}
+			if !voidTags[name] {
+				open = append(open, name)
+			}
+		case xml.EndElement:
+			name := strings.ToLower(t.Name.Local)
+			if voidTags[name] {
+				continue // <br></br>, <img ...></img>, or the end of a self-closed one
+			}
+			if len(open) == 0 || open[len(open)-1] != name {
+				return fmt.Errorf("</%s> の前に閉じていないタグがあります", t.Name.Local)
+			}
+			open = open[:len(open)-1]
 		}
 	}
+	if len(open) != 0 {
+		return fmt.Errorf("<%s> が閉じていません", open[len(open)-1])
+	}
+	return nil
 }
+
+// voidTags are the elements of a brief that HTML writes without an end tag.
+var voidTags = map[string]bool{"br": true, "hr": true, "img": true}
 
 // briefPlain is the text of a kept block, for the plain text of the brief: the cells of a
 // table separated by tabs, a row per line; an embed's text (its link).

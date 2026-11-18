@@ -20,7 +20,7 @@ func TaskFieldValues(t *model.Task) map[string]any {
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
 	}
-	values := map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked,
+	values := map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "start_on": t.StartOn, "assignee": assignee, "liked": t.Liked,
 		"resource_subtype": t.ResourceSubtype, "approval_status": t.ApprovalStatus}
 	if t.Partial {
 		delete(values, "approval_status") // not fetched

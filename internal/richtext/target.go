@@ -105,7 +105,7 @@ func hasLayoutTag(s string) bool {
 func (Converter) BriefMarkdown(htmlText string) string { return BriefToEditableMarkdown(htmlText, nil) }
 
 // ProjectBrief converts the body of a project brief to its html_text and plain text
-// (BriefFromMarkdown).
-func (Converter) ProjectBrief(md string) (htmlText, plain string, err error) {
-	return BriefFromMarkdown(md)
+// (BriefFromMarkdown; original is the html_text the body was made from).
+func (Converter) ProjectBrief(md, original string) (htmlText, plain string, err error) {
+	return BriefFromMarkdown(md, original)
 }

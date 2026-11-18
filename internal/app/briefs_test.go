@@ -45,7 +45,7 @@ type briefText struct{}
 func (briefText) BriefMarkdown(h string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(h, "<body>"), "</body>")
 }
-func (briefText) ProjectBrief(md string) (string, string, error) {
+func (briefText) ProjectBrief(md, _ string) (string, string, error) {
 	if strings.Contains(md, "bad") {
 		return "", "", errors.New("bad block")
 	}

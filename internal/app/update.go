@@ -14,27 +14,28 @@ import (
 func ParseDue(s string, now time.Time) (string, error) { return dates.Parse(s, now) }
 
 // UpdateTaskInput is what a user gives to change a task's fields. A nil field is left as
-// it is. Due is read by ParseDue ("" clears it), Assignee is "me", a user's gid or name
+// it is. Due and Start (the start date: it needs a due date, not before it) are read by
+// ParseDue ("" clears it), Assignee is "me", a user's gid or name
 // ("" unassigns), Subtype and Approval are read by task.ParseSubtype and
 // task.ParseApprovalStatus, and Notes is Markdown that replaces the description.
 type UpdateTaskInput struct {
-	Name, Notes, Due, Assignee, Subtype, Approval *string
+	Name, Notes, Due, Start, Assignee, Subtype, Approval *string
 	Completed, Liked                              *bool
 }
 
-// TaskUpdate is a change to a task's fields with every value already resolved: Due is
-// YYYY-MM-DD or "", Assignee a user's gid or "", Subtype and Approval are Asana's values
+// TaskUpdate is a change to a task's fields with every value already resolved: Due and
+// Start are YYYY-MM-DD or "", Assignee a user's gid or "", Subtype and Approval are Asana's values
 // (resource_subtype, approval_status). Notes is still Markdown; it is converted when the
 // update is applied. A nil field is left as it is.
 type TaskUpdate struct {
-	Name, Notes, Due, Assignee, Subtype, Approval *string
+	Name, Notes, Due, Start, Assignee, Subtype, Approval *string
 	Completed, Liked                              *bool
 }
 
 // Count is the number of fields the update changes.
 func (u TaskUpdate) Count() int {
 	n := 0
-	for _, s := range []*string{u.Name, u.Notes, u.Due, u.Assignee, u.Subtype, u.Approval} {
+	for _, s := range []*string{u.Name, u.Notes, u.Due, u.Start, u.Assignee, u.Subtype, u.Approval} {
 		if s != nil {
 			n++
 		}
@@ -49,7 +50,7 @@ func (u TaskUpdate) Count() int {
 
 // ResolveUpdate reads and checks the input without writing anything. An invalid value is
 // a *FieldError; the fields are checked in the order resource_subtype, approval_status,
-// due, assignee, and the first invalid one is returned. Only Assignee reads the store.
+// due, start_on, assignee, and the first invalid one is returned. Only Assignee reads the store.
 func (t *Tasks) ResolveUpdate(ctx context.Context, in UpdateTaskInput) (TaskUpdate, error) {
 	u := TaskUpdate{Name: in.Name, Notes: in.Notes, Completed: in.Completed, Liked: in.Liked}
 	if in.Subtype != nil {
@@ -73,6 +74,13 @@ func (t *Tasks) ResolveUpdate(ctx context.Context, in UpdateTaskInput) (TaskUpda
 		}
 		u.Due = &v
 	}
+	if in.Start != nil {
+		v, err := ParseDue(*in.Start, t.Clock())
+		if err != nil {
+			return TaskUpdate{}, &FieldError{Field: "start_on", Err: err}
+		}
+		u.Start = &v
+	}
 	if in.Assignee != nil {
 		v, err := t.resolveUser(ctx, *in.Assignee)
 		if err != nil {
@@ -86,10 +94,12 @@ func (t *Tasks) ResolveUpdate(ctx context.Context, in UpdateTaskInput) (TaskUpda
 // UpdateHere applies resolved changes to the task gid, locally and queued in the outbox,
 // in one transaction (the store's UpdateTaskLocal). An update that changes nothing writes
 // nothing and is not an error. The errors are the store's, as they are (an empty name, an
-// approval status on a task that is not an approval, a task not in the cache).
+// approval status on a task that is not an approval, a start date without a due date or
+// after it, a start date where the plan lacks it (*ErrPlanUnavailable), a task not in the
+// cache).
 func (t *Tasks) UpdateHere(ctx context.Context, gid string, u TaskUpdate) error {
 	changes := map[string]any{}
-	for key, v := range map[string]*string{"name": u.Name, "due_on": u.Due, "assignee": u.Assignee,
+	for key, v := range map[string]*string{"name": u.Name, "due_on": u.Due, "start_on": u.Start, "assignee": u.Assignee,
 		"resource_subtype": u.Subtype, "approval_status": u.Approval} {
 		if v != nil {
 			changes[key] = *v
