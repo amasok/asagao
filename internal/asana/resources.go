@@ -26,6 +26,7 @@ var (
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
 		"approval_status", "dependencies", "dependents", "assignee_section.name",
+		"custom_type.name", "custom_type_status_option.name",
 	}, customFieldValueFields)
 )
 
@@ -116,7 +117,7 @@ func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
 func (c *Client) UpdateTask(ctx context.Context, gid string, fields map[string]any) (*Task, error) {
 	var t Task
 	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(c.taskFields(false)), fields, &t)
-	t.Partial = c.plainTasks.Load()
+	c.tier().mark(&t)
 	return &t, err
 }
 
@@ -124,7 +125,7 @@ func (c *Client) UpdateTask(ctx context.Context, gid string, fields map[string]a
 func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, error) {
 	var t Task
 	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(c.taskFields(false)), fields, &t)
-	t.Partial = c.plainTasks.Load()
+	c.tier().mark(&t)
 	return &t, err
 }
 
@@ -285,7 +286,7 @@ func (c *Client) Users(ctx context.Context, workspaceGID string) ([]User, error)
 func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*Task, error) {
 	var t Task
 	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(c.taskFields(false)), fields, &t)
-	t.Partial = c.plainTasks.Load()
+	c.tier().mark(&t)
 	return &t, err
 }
 

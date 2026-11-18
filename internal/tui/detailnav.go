@@ -32,6 +32,7 @@ const (
 	itemCustomField   // sub: index into CustomFields
 	itemSubtype       // task type
 	itemApproval      // approval status
+	itemCustomStatus  // status of a custom task type (#59)
 	itemDependency    // sub: index into Dependencies
 	itemAddDependency //
 	itemDependent     // sub: index into Dependents
@@ -172,9 +173,11 @@ func (m *Model) activateItem() tea.Cmd {
 	case itemLike:
 		return m.toggleLike()
 	case itemSubtype:
-		return m.openSubtypePicker(d.TaskSummary)
+		return m.openSubtypePicker(*d)
 	case itemApproval:
 		return m.openApprovalPicker(d.TaskSummary)
+	case itemCustomStatus:
+		return m.openCustomStatusPicker(*d)
 	case itemDependency:
 		if it.sub < len(d.Dependencies) {
 			return m.openDependencyActions(d.TaskSummary, d.Dependencies[it.sub], false)

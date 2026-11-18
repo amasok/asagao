@@ -242,6 +242,11 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET approval_status = ? WHERE gid = ?", t.ApprovalStatus, t.GID); err != nil {
 			return err
 		}
+		if !t.NoCustomType { // fetched without its custom type: keep what is known
+			if err := upsertTaskCustomType(ctx, tx, t); err != nil {
+				return err
+			}
+		}
 	}
 	if err := upsertTaskDependencies(ctx, tx, t); err != nil {
 		return err

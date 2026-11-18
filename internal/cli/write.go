@@ -188,7 +188,7 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 // createOpts are the flags of `task create`.
 type createOpts struct {
 	name, project, section, due, start, assignee, notes, parent string
-	tags                                                 []string
+	tags                                                        []string
 	// names looks an assignee or (with --quick) a tag the cache lacks up in Asana (nil:
 	// the cache only).
 	names usecase.NameFinder
@@ -499,14 +499,28 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	depend.Flags().StringSlice("add-dependent", nil, "このタスクを待つタスク（gid）を追加")
 	depend.Flags().StringSlice("remove-dependent", nil, "このタスクを待つタスク（gid）を外す")
 
-	kind := a.writeCommand("type <gid> <task|milestone|approval>", "タスクの種類を変える（タスク / マイルストーン / 承認）", cobra.ExactArgs(2),
+	kind := a.writeCommand("type <gid> <task|milestone|approval|カスタムタイプ名>", "タスクの種類を変える（タスク / マイルストーン / 承認 / プロジェクトのカスタムタイプ）", cobra.ExactArgs(2),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			tasks := taskUseCases(st)
-			u, err := tasks.ResolveUpdate(cmd.Context(), usecase.UpdateTaskInput{Subtype: &args[1]})
+			u, err := tasks.ResolveUpdateFor(cmd.Context(), args[0], usecase.UpdateTaskInput{Subtype: &args[1]})
 			if err != nil {
 				return "", "", fieldErr(err)
 			}
-			return args[0], "種類を「" + task.SubtypeLabel(*u.Subtype) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
+			label := task.SubtypeLabel(*u.Subtype)
+			if u.CustomType != nil {
+				label = u.CustomTypeName
+			}
+			return args[0], "種類を「" + label + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
+		})
+
+	status := a.writeCommand("status <gid> <ステータス>", "カスタムタイプのタスクのステータスを変える（task show で選べるものが出ます）", cobra.ExactArgs(2),
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+			tasks := taskUseCases(st)
+			u, err := tasks.ResolveUpdateFor(cmd.Context(), args[0], usecase.UpdateTaskInput{CustomTypeStatus: &args[1]})
+			if err != nil {
+				return "", "", fieldErr(err)
+			}
+			return args[0], "ステータスを「" + u.CustomTypeStatusName + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
 
 	approve := a.writeCommand("approve <gid> [approved|rejected|changes_requested|pending]", "承認タスクの承認の状態を変える（省略時は承認）", cobra.RangeArgs(1, 2),
@@ -529,7 +543,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			}
 			return args[0], "承認の状態を「" + task.ApprovalLabel(*u.Approval) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
-	return []*cobra.Command{like, follow, project, duplicate, attach, detach, field, depend, kind, approve, a.taskStartCmd()}
+	return []*cobra.Command{like, follow, project, duplicate, attach, detach, field, depend, kind, status, approve, a.taskStartCmd()}
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {

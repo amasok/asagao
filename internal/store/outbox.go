@@ -82,13 +82,24 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 	if err := checkTaskDates(ctx, tx, gid, cur, changes, now); err != nil {
 		return err
 	}
+	if changes, err = customTypeChanges(ctx, tx, gid, cur, changes); err != nil {
+		return err
+	}
 	if IsLocalGID(gid) {
 		// Not on the server yet: fold the change into the pending create.
 		op, err := findUnsentCreate(ctx, tx, gid)
 		if err != nil {
 			return err
 		}
-		if op != nil {
+		// A custom type is set after the create (#59: a create may not take one), so it and
+		// every later edit of the task join the update entry, which is sent after it.
+		var update *Op
+		if op != nil && !task.TouchesCustomType(changes) {
+			if update, err = findUpdateOp(ctx, tx, gid); err != nil {
+				return err
+			}
+		}
+		if op != nil && update == nil && !task.TouchesCustomType(changes) {
 			maps.Copy(op.Payload, changes)
 			if err := saveOp(ctx, tx, op); err != nil {
 				return err
@@ -887,10 +898,10 @@ var TaskFieldValues = readmodel.TaskFieldValues
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
 	var completed, liked bool
-	var name, notes, htmlNotes, dueOn, startOn, assignee, modifiedAt, subtype, approval string
+	var name, notes, htmlNotes, dueOn, startOn, assignee, modifiedAt, subtype, approval, customType, customStatus string
 	err := tx.QueryRowContext(ctx, `SELECT completed, name, notes, html_notes, due_on, start_on, assignee_gid, modified_at, liked,
-		resource_subtype, approval_status FROM tasks WHERE gid = ?`, gid).
-		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &startOn, &assignee, &modifiedAt, &liked, &subtype, &approval)
+		resource_subtype, approval_status, custom_type_gid, custom_type_status_gid FROM tasks WHERE gid = ?`, gid).
+		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &startOn, &assignee, &modifiedAt, &liked, &subtype, &approval, &customType, &customStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", fmt.Errorf("task %s: %w", gid, ErrNotFound)
 	}
@@ -898,7 +909,8 @@ func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any,
 		return nil, "", err
 	}
 	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "start_on": startOn, "assignee": assignee, "liked": liked,
-		"resource_subtype": subtype, "approval_status": approval}, modifiedAt, nil
+		"resource_subtype": subtype, "approval_status": approval,
+		"custom_type": customType, "custom_type_status_option": customStatus}, modifiedAt, nil
 }
 
 // applyFields writes update_task fields to the tasks table.
@@ -938,8 +950,22 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 			like, _ := v.(bool)
 			_, err = tx.ExecContext(ctx, `UPDATE tasks SET num_likes = max(0, num_likes + CASE WHEN ? = liked THEN 0 WHEN ? THEN 1 ELSE -1 END),
 				liked = ? WHERE gid = ?`, like, like, like, gid)
-		case "name", "due_on", "start_on", "resource_subtype":
+		case "name", "due_on", "start_on":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET "+k+" = ? WHERE gid = ?", v, gid)
+		case "resource_subtype":
+			// A task of another kind has no custom type (applied after custom_type: sorted).
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET resource_subtype = ?1,
+				custom_type_gid = CASE WHEN ?1 = 'custom' THEN custom_type_gid ELSE '' END,
+				custom_type_status_gid = CASE WHEN ?1 = 'custom' THEN custom_type_status_gid ELSE '' END WHERE gid = ?2`, v, gid)
+		case "custom_type":
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET custom_type_gid = ?1,
+				custom_type_status_gid = CASE WHEN custom_type_gid = ?1 THEN custom_type_status_gid ELSE '' END WHERE gid = ?2`, v, gid)
+		case "custom_type_status_option":
+			// A status that completes the task (completion_state) is done in Asana, as an
+			// approval is (applied after custom_type: sorted). An unknown state leaves it.
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET custom_type_status_gid = ?1,
+				completed = COALESCE((SELECT CASE lower(completion_state) WHEN 'complete' THEN 1 WHEN 'incomplete' THEN 0 END
+					FROM custom_type_status_options WHERE gid = ?1), completed) WHERE gid = ?2`, v, gid)
 		case "approval_status":
 			// Asana completes an approval task once it is decided, and reopens it when pending.
 			_, err = tx.ExecContext(ctx, `UPDATE tasks SET approval_status = ?1,

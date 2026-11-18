@@ -458,4 +458,32 @@ CREATE TABLE workspace_custom_fields (
 	PRIMARY KEY (workspace_gid, field_gid)
 );
 `,
+	`
+-- Custom task types (#59): the type and status of a task whose resource_subtype is custom
+-- ('' for the other tasks), the types (custom_types) and their statuses, as tasks and
+-- projects name them, and the types each project offers (GET /custom_types?project=).
+-- completion_state is Asana's (Incomplete / Complete); a status only a task named has ''.
+ALTER TABLE tasks ADD COLUMN custom_type_gid TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN custom_type_status_gid TEXT NOT NULL DEFAULT '';
+CREATE TABLE custom_types (
+	gid  TEXT PRIMARY KEY,
+	name TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE custom_type_status_options (
+	gid              TEXT PRIMARY KEY,
+	custom_type_gid  TEXT NOT NULL,
+	position         INTEGER NOT NULL DEFAULT 0,
+	name             TEXT NOT NULL DEFAULT '',
+	color            TEXT NOT NULL DEFAULT '',
+	enabled          INTEGER NOT NULL DEFAULT 1,
+	completion_state TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX custom_type_status_options_type ON custom_type_status_options(custom_type_gid, position);
+CREATE TABLE project_custom_types (
+	project_gid     TEXT NOT NULL,
+	custom_type_gid TEXT NOT NULL,
+	position        INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (project_gid, custom_type_gid)
+);
+`,
 }

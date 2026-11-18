@@ -11,7 +11,7 @@ import (
 // updatable are the task fields a local edit may change (the keys of an update_task
 // payload), with whether the value is a bool (the others are strings).
 var updatable = map[string]bool{"completed": true, "name": false, "notes": false, "html_notes": false, "due_on": false, "start_on": false, "assignee": false, "liked": true,
-	"resource_subtype": false, "approval_status": false}
+	"resource_subtype": false, "approval_status": false, "custom_type": false, "custom_type_status_option": false}
 
 // ValidateFields checks the field changes of a local edit: at least one, each a field
 // that can be changed with a value of its type, a name that is not blank, and a task type
@@ -43,8 +43,13 @@ func ValidateFields(changes map[string]any) error {
 			}
 		}
 	}
-	if v, ok := changes["resource_subtype"].(string); ok && !slices.Contains(Subtypes, v) {
-		return fmt.Errorf("タスクの種類は %s のどれかです: %q", strings.Join(Subtypes, " / "), v)
+	if v, ok := changes["resource_subtype"].(string); ok && !slices.Contains(Subtypes, v) && v != SubtypeCustom {
+		return fmt.Errorf("タスクの種類は %s のどれかです: %q", strings.Join(append(slices.Clone(Subtypes), SubtypeCustom), " / "), v)
+	}
+	for _, k := range []string{"custom_type", "custom_type_status_option"} {
+		if v, ok := changes[k].(string); ok && strings.TrimSpace(v) == "" {
+			return fmt.Errorf("%s が空です（カスタムタイプをやめるときは、種類をタスク・マイルストーン・承認のどれかにしてください）", k)
+		}
 	}
 	if v, ok := changes["approval_status"].(string); ok && !slices.Contains(ApprovalStatuses, v) {
 		return fmt.Errorf("承認の状態は %s のどれかです: %q", strings.Join(ApprovalStatuses, " / "), v)
@@ -65,6 +70,57 @@ func CheckApproval(subtype string, changes map[string]any) error {
 		return errors.New("承認タスクではないため、承認の状態は設定できません（種類を「承認」にすると設定できます）")
 	}
 	return nil
+}
+
+// CustomTypeChange is a change of a task's custom task type (#59), as CheckCustomType
+// sees it: the type and status the task will have.
+type CustomTypeChange struct {
+	Subtype, Type, Status string
+}
+
+// CheckCustomType checks the custom task type fields of changes and says what the task's
+// type and status will be. subtype, typ and status are the task's now. A custom type is set
+// together with resource_subtype "custom" (or on a task that is custom already), and
+// resource_subtype "custom" needs a type. statusOf returns the type of a status ("" if it
+// is not known), so that a status of another type is refused. A status is not checked when
+// changes do not set one.
+func CheckCustomType(subtype, typ, status string, changes map[string]any, statusOf func(string) string) (CustomTypeChange, error) {
+	c := CustomTypeChange{Subtype: subtype, Type: typ, Status: status}
+	if v, ok := changes["resource_subtype"].(string); ok {
+		c.Subtype = v
+	}
+	newType, setsType := changes["custom_type"].(string)
+	newStatus, setsStatus := changes["custom_type_status_option"].(string)
+	if c.Subtype != SubtypeCustom {
+		if setsType || setsStatus {
+			return c, errors.New("カスタムタイプのタスクではないため、カスタムタイプとそのステータスは設定できません")
+		}
+		c.Type, c.Status = "", ""
+		return c, nil
+	}
+	if setsType {
+		if newType != c.Type {
+			c.Status = "" // the old type's status does not go with the new type
+		}
+		c.Type = newType
+	}
+	if c.Type == "" {
+		return c, errors.New("カスタムタイプを指定してください（resource_subtype が custom のタスクには種類が要ります）")
+	}
+	if setsStatus {
+		if of := statusOf(newStatus); of != c.Type {
+			return c, fmt.Errorf("ステータス %q は、このタスクのカスタムタイプのものではありません", newStatus)
+		}
+		c.Status = newStatus
+	}
+	return c, nil
+}
+
+// TouchesCustomType reports whether changes set a custom task type or its status.
+func TouchesCustomType(changes map[string]any) bool {
+	_, typ := changes["custom_type"]
+	_, status := changes["custom_type_status_option"]
+	return typ || status || changes["resource_subtype"] == SubtypeCustom
 }
 
 // CheckDates checks a task's dates after an edit (Asana's rules): a start date needs a due

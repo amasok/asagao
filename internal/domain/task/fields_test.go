@@ -31,7 +31,7 @@ func TestValidateFields(t *testing.T) {
 		{"empty name", map[string]any{"name": ""}, "タスク名が空です"},
 		{"every subtype", map[string]any{"resource_subtype": "milestone"}, ""},
 		{"default subtype", map[string]any{"resource_subtype": "default_task"}, ""},
-		{"unknown subtype", map[string]any{"resource_subtype": "section"}, `タスクの種類は default_task / milestone / approval のどれかです: "section"`},
+		{"unknown subtype", map[string]any{"resource_subtype": "section"}, `タスクの種類は default_task / milestone / approval / custom のどれかです: "section"`},
 		{"label is not a subtype", map[string]any{"resource_subtype": "承認"}, "タスクの種類は"},
 		{"every approval status", map[string]any{"approval_status": "changes_requested"}, ""},
 		{"unknown approval status", map[string]any{"approval_status": "done"}, `承認の状態は pending / approved / rejected / changes_requested のどれかです: "done"`},
