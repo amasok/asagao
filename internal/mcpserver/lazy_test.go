@@ -61,7 +61,8 @@ func TestListTasksFetchesUnfetchedProject(t *testing.T) {
 	}})
 	var out TasksOutput
 	call(t, cs, "list_tasks", map[string]any{"project": "仕事", "assignee": "any"}, &out)
-	if out.Count != 1 || out.Tasks[0].GID != "x1" || out.Note != "" {
+	if out.Count != 1 || out.Tasks[0].GID != "x1" || out.Note != "" || out.Fetched == nil || out.Fetched.Tasks != 1 ||
+		out.Fetched.Requests != int64(len(requests())) {
 		t.Fatalf("list_tasks = %+v (requests %v)", out, requests())
 	}
 	if s, _ := st.ProjectTaskState(context.Background(), "p2"); s != readmodel.TasksAll {
@@ -69,8 +70,9 @@ func TestListTasksFetchesUnfetchedProject(t *testing.T) {
 	}
 	// Cached now: listed again without asking Asana.
 	n := len(requests())
+	out = TasksOutput{}
 	call(t, cs, "list_tasks", map[string]any{"project": "仕事", "assignee": "any"}, &out)
-	if len(requests()) != n || out.Count != 1 {
+	if len(requests()) != n || out.Count != 1 || out.Fetched != nil {
 		t.Fatalf("second list_tasks asked Asana again: %v", requests()[n:])
 	}
 }

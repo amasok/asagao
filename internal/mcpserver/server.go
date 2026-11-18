@@ -224,6 +224,8 @@ type TasksOutput struct {
 	Count int                     `json:"count"`
 	// Note says which tasks are not in the cache yet (a project not fetched, #54).
 	Note string `json:"note,omitempty"`
+	// Fetched is what was fetched from Asana for the project first (#54): tasks, requests.
+	Fetched *sync.OpenResult `json:"fetched,omitempty"`
 }
 
 type GetTaskInput struct {
@@ -418,11 +420,12 @@ func (s *Server) listTasks(ctx context.Context, _ *mcp.CallToolRequest, in TaskF
 		return nil, TasksOutput{}, err
 	}
 	var note string
+	var fetched *sync.OpenResult
 	if f.ProjectGID != "" {
-		note = s.openProject(ctx, f.ProjectGID)
+		note, fetched = s.openProject(ctx, f.ProjectGID)
 	}
 	tasks, err := s.query().ListTasks(ctx, f)
-	return nil, TasksOutput{Tasks: tasks, Count: len(tasks), Note: note}, err
+	return nil, TasksOutput{Tasks: tasks, Count: len(tasks), Note: note, Fetched: fetched}, err
 }
 
 func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
@@ -436,7 +439,7 @@ func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 	f.Query = in.Query
 	var note string
 	if f.ProjectGID != "" {
-		note = s.openProject(ctx, f.ProjectGID)
+		note, _ = s.openProject(ctx, f.ProjectGID)
 	}
 	if !in.Remote {
 		tasks, err := s.query().ListTasks(ctx, f)

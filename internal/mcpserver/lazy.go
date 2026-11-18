@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/sync"
 )
 
 // Projects whose tasks are fetched when they are opened (#54): a tool that lists a
@@ -16,12 +17,14 @@ const openTimeout = 2 * time.Minute
 
 // openProject makes sure a project's tasks are cached before they are listed: it records
 // the project as one to sync and, if its tasks are not cached, fetches them now (with the
-// completed ones). It returns a note for the agent when tasks are still missing.
-func (s *Server) openProject(ctx context.Context, gid string) string {
+// completed ones). It returns a note for the agent when tasks are still missing, and what
+// was fetched (nil if nothing).
+func (s *Server) openProject(ctx context.Context, gid string) (string, *sync.OpenResult) {
 	state, err := s.Store.WantProject(ctx, gid)
 	if err != nil || state == readmodel.TasksAll {
-		return ""
+		return "", nil
 	}
+	var fetched *sync.OpenResult
 	syncer, err := s.getSyncer(ctx)
 	if err == nil {
 		octx, cancel := context.WithTimeout(ctx, openTimeout)
@@ -32,10 +35,13 @@ func (s *Server) openProject(ctx context.Context, gid string) string {
 			err = oerr
 		} else {
 			state = res.State
+			if res.Fetched {
+				fetched = &res
+			}
 		}
 	}
 	if err == nil && state == readmodel.TasksAll {
-		return ""
+		return "", fetched
 	}
 	what := "this project's tasks are"
 	if state == readmodel.TasksOpen {
@@ -43,9 +49,9 @@ func (s *Server) openProject(ctx context.Context, gid string) string {
 	}
 	if err != nil {
 		return fmt.Sprintf("%s not in the local cache yet and could not be fetched now (%v); the next sync fetches them. "+
-			"Only tasks cached otherwise (e.g. the user's own) are listed.", what, err)
+			"Only tasks cached otherwise (e.g. the user's own) are listed.", what, err), fetched
 	}
-	return what + " not in the local cache yet; the next sync fetches them."
+	return what + " not in the local cache yet; the next sync fetches them.", fetched
 }
 
 // unfetchedNote says how many projects a search of the cache did not look in.

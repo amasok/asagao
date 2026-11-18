@@ -81,7 +81,7 @@ func TestTaskListFetchesUnfetchedProject(t *testing.T) {
 	t.Setenv(auth.EnvToken, "test-pat")
 	srv, requests := lazyCLIServer(t)
 	stdout, stderr, err := runLazyCLI(t, srv.URL, "task", "list", "--project", "仕事")
-	if err != nil || !strings.Contains(stdout, "見積もりを出す") || stderr != "" {
+	if err != nil || !strings.Contains(stdout, "見積もりを出す") || !strings.Contains(stderr, "取得しました: タスク 1 件 / リクエスト ") {
 		t.Fatalf("task list: %v\nstdout:\n%s\nstderr:\n%s\nrequests %v", err, stdout, stderr, requests())
 	}
 	if s := lazyState(t, path, "p2"); s != readmodel.TasksAll {

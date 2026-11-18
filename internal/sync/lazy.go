@@ -373,7 +373,8 @@ type OpenResult struct {
 	// State is the project's tasks state afterwards (readmodel.Tasks*).
 	State string `json:"state"`
 	// Fetched: tasks were fetched now (otherwise they were cached already).
-	Fetched  bool  `json:"fetched"`
+	Fetched bool `json:"fetched"`
+	// Tasks is how many tasks (and subtasks) were fetched, each counted once.
 	Tasks    int   `json:"tasks"`
 	Requests int64 `json:"requests"`
 }
@@ -431,12 +432,12 @@ func (s *Syncer) OpenProject(ctx context.Context, projectGID string, withComplet
 	}
 	if withCompleted {
 		if err := s.pullCompleted(ctx, pl, mode, projectGID); err != nil {
-			out.Tasks = res.Tasks
+			out.Tasks = len(pl.keep)
 			return out, err
 		}
 		out.Fetched = true
 	}
-	out.Tasks = res.Tasks
+	out.Tasks = len(pl.keep) // each once (the completed ones' query returns changed incomplete ones too)
 	out.State, err = s.Store.ProjectTaskState(ctx, projectGID)
 	return out, err
 }

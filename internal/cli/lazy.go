@@ -38,6 +38,9 @@ func (a *app) openProject(cmd *cobra.Command, st Store, gid string, offline bool
 			err = oerr
 		} else {
 			state = res.State
+			if res.Fetched {
+				fmt.Fprintf(cmd.ErrOrStderr(), "（このプロジェクトのタスクを Asana から取得しました: タスク %d 件 / リクエスト %d 回）\n", res.Tasks, res.Requests)
+			}
 		}
 	}
 	if err == nil && state == readmodel.TasksAll {
