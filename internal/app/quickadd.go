@@ -104,6 +104,47 @@ func ReadQuickAdd(ctx context.Context, st QuickAddStore, line string, now time.T
 	return ParseQuickAdd(line, now, c), nil
 }
 
+// Why a @name or #name was not read when nothing in the cache matches it (a name Asana
+// may still know: ReadQuickAddFinding looks those up).
+const (
+	reasonNoUser = "一致するユーザーがいません"
+	reasonNoTag  = "そのタグはありません（新しいタグは作りません）"
+)
+
+// NameFinder looks users and tags the cache does not know up in Asana by name (typeahead)
+// and caches what it finds; the counts are how many it added. sync.Syncer satisfies it.
+type NameFinder interface {
+	FindUsers(ctx context.Context, query string) (int, error)
+	FindTags(ctx context.Context, query string) (int, error)
+}
+
+// ReadQuickAddFinding is ReadQuickAdd, except that a @name or #name that nothing in the
+// cache matches is looked up in Asana (find), and the line is read again with what was
+// found. Each token is looked up once. With find nil, or when Asana cannot be reached
+// (offline) or finds nothing new, the line is read with the cache only.
+func ReadQuickAddFinding(ctx context.Context, st QuickAddStore, find NameFinder, line string, now time.Time) (QuickAddResult, error) {
+	asked := map[string]bool{}
+	for {
+		r, err := ReadQuickAdd(ctx, st, line, now)
+		if err != nil || find == nil || r.Unread == "" || asked[r.Unread] {
+			return r, err
+		}
+		asked[r.Unread] = true
+		var n int
+		switch r.UnreadReason {
+		case reasonNoUser:
+			n, err = find.FindUsers(ctx, r.Unread[1:])
+		case reasonNoTag:
+			n, err = find.FindTags(ctx, r.Unread[1:])
+		default: // several matches, a second assignee, …: Asana would not help
+			return r, nil
+		}
+		if err != nil || n == 0 {
+			return r, nil
+		}
+	}
+}
+
 // ParseQuickAdd reads the assignee, due date and tags from the end of line (see the
 // package comment above). It never fails: what it cannot read stays in Name.
 func ParseQuickAdd(line string, now time.Time, c QuickAddCandidates) QuickAddResult {
@@ -271,7 +312,7 @@ func matchUser(q string, c QuickAddCandidates) (u readmodel.UserRef, isMe bool, 
 		}
 		return u, false, fmt.Sprintf("%d 人に一致します: %s", len(found), strings.Join(names, ", "))
 	}
-	return u, false, "一致するユーザーがいません"
+	return u, false, reasonNoUser
 }
 
 func displayName(u readmodel.UserContact) string {
@@ -303,7 +344,7 @@ func matchTag(q string, tags []readmodel.TagCount) (task.TagRef, string) {
 		}
 		return task.TagRef{}, fmt.Sprintf("%d 個のタグに一致します", len(found))
 	}
-	return task.TagRef{}, "そのタグはありません（新しいタグは作りません）"
+	return task.TagRef{}, reasonNoTag
 }
 
 // Read says what was read, for a status line or the CLI's output: "担当: 花子 / 期日:

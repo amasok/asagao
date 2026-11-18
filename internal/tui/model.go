@@ -160,6 +160,7 @@ type Model struct {
 	search    textinput.Model
 	searching bool // input has focus
 	query     string
+	remote    remoteFound // what Asana found for a search (remotesearch.go)
 	filter    filterMode
 
 	syncer      *sync.Syncer
@@ -379,6 +380,7 @@ func (m *Model) loadTasks() tea.Cmd {
 func (m *Model) loadList() tea.Cmd {
 	m.taskSeq++
 	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
+	found := m.remote.foundFor(query)
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.collapsedScope
 	expanded := make(map[string]bool, len(m.expanded))
@@ -399,7 +401,7 @@ func (m *Model) loadList() tea.Cmd {
 		if saved != nil {
 			rows, err = savedRows(m.ctx, st, *saved, query, filter, tag, field, now)
 		} else {
-			rows, err = queryRows(m.ctx, st, sc, query, filter, tag, field, now)
+			rows, err = queryRows(m.ctx, st, sc, query, filter, tag, field, now, found)
 		}
 		if err == nil {
 			rows, err = withSubtasks(m.ctx, st, rows, expanded, subCompleted)
@@ -607,6 +609,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchDetails(msg.gid)
 
+	case remoteSearchMsg:
+		return m, m.remoteSearchDone(msg)
 	case detailFetchedMsg:
 		if m.fetchingFor == msg.gid {
 			m.fetchingFor = ""

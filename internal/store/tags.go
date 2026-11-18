@@ -172,3 +172,42 @@ func reapplyTagOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
 	}
 	return nil
 }
+
+// AddTags caches tags found in Asana by name (typeahead, Issue #36) that the cache does not
+// have yet. A tag already cached is left as it is (the found record may lack its color),
+// and a tag deleted here but not yet in Asana stays deleted. It returns how many were added.
+func (s *Store) AddTags(ctx context.Context, tags []model.Tag) (int, error) {
+	added := 0
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var gids []string
+		for _, t := range tags {
+			if t.GID == "" {
+				continue
+			}
+			res, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, color) VALUES(?, ?, ?)
+				ON CONFLICT(gid) DO NOTHING`, t.GID, t.Name, t.Color)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return err
+			} else if n > 0 {
+				gids = append(gids, t.GID)
+			}
+		}
+		if len(gids) == 0 {
+			return nil
+		}
+		if err := reapplyTagEdits(ctx, tx, gids...); err != nil {
+			return err
+		}
+		// a tag deleted here (not yet in Asana) was deleted again: it was not added
+		args := make([]any, len(gids))
+		for i, g := range gids {
+			args[i] = g
+		}
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tags WHERE gid IN ("+
+			strings.TrimSuffix(strings.Repeat("?,", len(gids)), ",")+")", args...).Scan(&added)
+	})
+	return added, err
+}

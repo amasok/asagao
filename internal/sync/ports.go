@@ -82,6 +82,13 @@ type AsanaAPI interface {
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
 	Users(ctx context.Context, workspaceGID string) ([]model.User, error)
 	Workspaces(ctx context.Context) ([]model.Workspace, error)
+
+	// Finding what the cache does not have (search.go, Issue #36).
+	SearchTasks(ctx context.Context, workspaceGID, text string, completed *bool, limit int) ([]model.Ref, error)
+	TypeaheadTasks(ctx context.Context, workspaceGID, query string, count int) ([]model.Ref, error)
+	TypeaheadUsers(ctx context.Context, workspaceGID, query string, count int) ([]model.User, error)
+	TypeaheadTags(ctx context.Context, workspaceGID, query string, count int) ([]model.Tag, error)
+	TaskByCustomID(ctx context.Context, workspaceGID, customID string) (*model.Task, error)
 }
 
 // LocalStore is the part of the local cache that syncing uses. *store.Store satisfies it;
@@ -165,6 +172,10 @@ type LocalStore interface {
 	UpsertUser(ctx context.Context, u model.User) error
 	UpsertUsers(ctx context.Context, users []model.User) error
 	UpsertWorkspaces(ctx context.Context, ws []model.Workspace) error
+	// AddUsers and AddTags cache users and tags found by name that the cache lacks, and
+	// return how many they added (search.go).
+	AddUsers(ctx context.Context, users []model.User) (int, error)
+	AddTags(ctx context.Context, tags []model.Tag) (int, error)
 }
 
 // RichText rewrites rich text queued for a comment or a status update before #63 as it is

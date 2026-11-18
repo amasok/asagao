@@ -54,8 +54,11 @@ const (
 
 // GitLinkAction is what GitLink did, or would do, for one task referenced by a commit.
 type GitLinkAction struct {
-	Commit   string `json:"commit"`
-	TaskGID  string `json:"task_gid"`
+	Commit  string `json:"commit"`
+	TaskGID string `json:"task_gid"`
+	// CustomID is the task's custom ID, for a reference by it ("asana#ENG-123"). TaskGID is
+	// "" when the custom ID was not found.
+	CustomID string `json:"custom_id,omitempty"`
 	TaskName string `json:"task_name,omitempty"`
 	// Fixes is set when the commit says the task is fixed.
 	Fixes bool `json:"fixes"`
@@ -74,6 +77,9 @@ type GitLink struct {
 	Store GitLinkStore
 	Text  RichText
 	Clock Clock
+	// CustomIDs are the gids of the tasks referenced by custom ID (ResolveCustomIDs). A
+	// custom ID not in it is GitLinkNotFound.
+	CustomIDs map[string]string
 }
 
 // Apply handles the references in c. A task is handled once per commit: the comment it
@@ -96,7 +102,14 @@ func (g *GitLink) Apply(ctx context.Context, c GitCommit, dryRun bool) ([]GitLin
 }
 
 func (g *GitLink) apply(ctx context.Context, c GitCommit, ref commitref.Ref, dryRun bool) (GitLinkAction, error) {
-	act := GitLinkAction{Commit: c.SHA, TaskGID: ref.TaskGID, Fixes: ref.Fixes}
+	act := GitLinkAction{Commit: c.SHA, TaskGID: ref.TaskGID, CustomID: ref.CustomID, Fixes: ref.Fixes}
+	if ref.CustomID != "" {
+		if ref.TaskGID = g.CustomIDs[ref.CustomID]; ref.TaskGID == "" {
+			act.Result = GitLinkNotFound
+			return act, nil
+		}
+		act.TaskGID = ref.TaskGID
+	}
 	d, err := g.Store.GetTask(ctx, ref.TaskGID)
 	if errors.Is(err, readmodel.ErrNotFound) {
 		act.Result = GitLinkNotFound
@@ -190,4 +203,63 @@ func repoRune(r rune) rune {
 		return ' '
 	}
 	return r
+}
+
+// CustomIDFinder finds a task by its custom ID in Asana, caches it and remembers its gid
+// (readmodel.KeyCustomID). An ID Asana does not know is readmodel.ErrNotFound. sync.Syncer
+// satisfies it.
+type CustomIDFinder interface {
+	TaskByCustomID(ctx context.Context, customID string) (string, error)
+}
+
+// SyncStateReader reads the local cache's sync state (*store.Store).
+type SyncStateReader interface {
+	SyncState(ctx context.Context, key string) (string, error)
+}
+
+// CustomIDs returns the custom IDs the commits reference, each once.
+func CustomIDs(commits []GitCommit) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for _, c := range commits {
+		for _, r := range c.Refs() {
+			if r.CustomID != "" && !seen[r.CustomID] {
+				seen[r.CustomID] = true
+				ids = append(ids, r.CustomID)
+			}
+		}
+	}
+	return ids
+}
+
+// ResolveCustomIDs finds the gids of the tasks with the custom IDs (for GitLink.CustomIDs):
+// in Asana (find; nil when offline), or, when Asana cannot be asked, as found before. An ID
+// Asana does not know is left out (the task is then not found). After Asana fails once
+// (offline, out of time), it is not asked for the other IDs. The error is that failure,
+// for a warning: the IDs are resolved as far as they can be anyway. A time limit for Asana
+// belongs to find, not ctx: the gids found before are read with ctx.
+func ResolveCustomIDs(ctx context.Context, st SyncStateReader, find CustomIDFinder, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	var last error
+	for _, id := range ids {
+		if find != nil {
+			gid, err := find.TaskByCustomID(ctx, id)
+			if err == nil {
+				out[id] = gid
+				continue
+			}
+			if errors.Is(err, readmodel.ErrNotFound) {
+				continue
+			}
+			last, find = err, nil
+		}
+		gid, err := st.SyncState(ctx, readmodel.KeyCustomID+id)
+		if err != nil {
+			return out, err
+		}
+		if gid != "" {
+			out[id] = gid
+		}
+	}
+	return out, last
 }

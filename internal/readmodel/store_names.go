@@ -43,6 +43,9 @@ const (
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
+	// KeyCustomID + a task's custom ID ("ENG-123"): the gid Asana gave for it, so that a
+	// commit can name the task while offline once it was found (Issue #36).
+	KeyCustomID = "custom_id:"
 )
 
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not
@@ -58,6 +61,9 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
+	PlanSearch    = "search"     // the search API (premium only): typeahead is used instead
+	PlanTypeahead = "typeahead"  // typeahead: names and tasks are then looked up in the cache only
+	PlanCustomID  = "custom_id"  // tasks by custom ID: only the gids found before are used
 )
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
@@ -79,6 +85,9 @@ func PlanUnavailableMessage(feature string) string {
 		PlanSections:  "セクションの作成・削除・並べ替え",
 		PlanTags:      "タグの名前・色の変更と削除",
 		PlanMySection: "マイタスクのセクション",
+		PlanSearch:    "タスクの検索",
+		PlanTypeahead: "名前での検索 (typeahead)",
+		PlanCustomID:  "タスクの ID (custom ID) での取得",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
