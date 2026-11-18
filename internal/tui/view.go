@@ -45,13 +45,26 @@ func (m *Model) render() string {
 	} else if m.picker != nil {
 		body = m.renderPicker(m.width, bodyH)
 	} else if m.leader {
-		menu := m.renderMenu(m.width, bodyH-6) // the pane's border and title, and some of the body
-		menuH := min(len(menu)+3, bodyH-3)
-		body = lipgloss.JoinVertical(lipgloss.Left, m.renderBody(bodyH-menuH), m.pane("メニュー（キーを押す・esc で閉じる）", menu, m.width, menuH, true))
+		body = m.renderMenuPane(bodyH)
 	} else {
 		body = m.renderBody(bodyH)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+// renderMenuPane draws the open space menu below the task list (alone on a short screen),
+// one page of it when it is too high for the screen.
+func (m *Model) renderMenuPane(bodyH int) string {
+	menu, p, n, alone := m.currentMenuPage()
+	title := "メニュー（キーを押す・esc で閉じる）"
+	if n > 1 {
+		title = fmt.Sprintf("メニュー %d/%d（tab で次のページ・キーを押す・esc で閉じる）", p+1, n)
+	}
+	if alone {
+		return m.pane(title, menu, m.width, bodyH, true)
+	}
+	menuH := min(len(menu)+3, bodyH-3)
+	return lipgloss.JoinVertical(lipgloss.Left, m.renderBody(bodyH-menuH), m.pane(title, menu, m.width, menuH, true))
 }
 
 // --- layout ---
@@ -249,7 +262,11 @@ func (m *Model) renderFooter() string {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
 	if m.leader {
-		return " " + m.st.footer.Render("メニュー: キーを押してください（esc で閉じる）")
+		hint := "メニュー: キーを押してください（esc で閉じる）"
+		if _, _, n, _ := m.currentMenuPage(); n > 1 {
+			hint = "メニュー: キーを押してください（tab / j・k でページを切り替え・esc で閉じる）"
+		}
+		return ansi.Truncate(" "+m.st.footer.Render(hint), m.width, "…")
 	}
 	keys := m.footerHints()
 	var parts []string

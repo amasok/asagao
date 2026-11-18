@@ -217,47 +217,95 @@ func (m *Model) syncNow() tea.Cmd {
 
 // --- rendering ---
 
-// renderMenu draws the which-key style menu: the actions available here, grouped, in
+// menuLine is one line of the menu: a group title, an entry, or the blank between groups.
+type menuLine struct {
+	text  string
+	title bool
+}
+
+// menuPages lays out the which-key style menu: the actions available here, grouped, in
 // as many columns as it takes to be at most maxH lines high (labels are cut to fit the
-// columns when it has to be narrow).
-func (m *Model) renderMenu(w, maxH int) []string {
+// columns when it has to be narrow). When even the narrowest columns are too high, the
+// menu is split into pages of that many columns, turned with the menuNext/menuPrev keys,
+// so every entry can be seen on a short screen too.
+func (m *Model) menuPages(w, maxH int) [][]string {
+	maxH = max(1, maxH)
 	groups := map[string][]action{}
 	for _, a := range m.available() {
 		groups[a.group] = append(groups[a.group], a)
 	}
-	var lines []string
+	var lines []menuLine
 	for _, g := range groupOrder {
 		if len(groups[g]) == 0 {
 			continue
 		}
 		if len(lines) > 0 {
-			lines = append(lines, "")
+			lines = append(lines, menuLine{})
 		}
-		lines = append(lines, m.st.paneTitle.Render(g))
+		lines = append(lines, menuLine{text: m.st.paneTitle.Render(g), title: true})
 		for _, a := range groups[g] {
-			lines = append(lines, m.st.footerKey.Render(padRight(a.key, 2))+" "+a.label)
+			lines = append(lines, menuLine{text: m.st.footerKey.Render(padRight(a.key, 2)) + " " + a.label})
 		}
+	}
+	if len(lines) == 0 {
+		return [][]string{nil}
 	}
 	inner := w - 4
 	widest := 0
 	for _, l := range lines {
-		widest = max(widest, ansi.StringWidth(l))
+		widest = max(widest, ansi.StringWidth(l.text))
 	}
 	// as many columns as fit at full width, more (narrower) when still too high
 	n := max(1, min(len(lines), (inner+menuGap)/(widest+menuGap)))
-	for (len(lines)+n-1)/n > max(1, maxH) && (inner-menuGap*n)/(n+1) >= menuMinWidth {
+	for (len(lines)+n-1)/n > maxH && (inner-menuGap*n)/(n+1) >= menuMinWidth {
 		n++
 	}
-	h := (len(lines) + n - 1) / n
-	cw := min(widest, (inner-menuGap*(n-1))/n)
+	cw := max(1, min(widest, (inner-menuGap*(n-1))/n))
+	// the lowest columns that hold everything in n of them; maxH (and pages) when none do
+	h := min(maxH, (len(lines)+n-1)/n)
+	cols := flowMenu(lines, h)
+	for len(cols) > n && h < maxH {
+		h++
+		cols = flowMenu(lines, h)
+	}
+	var pages [][]string
+	for len(cols) > 0 {
+		k := min(n, len(cols))
+		pages = append(pages, joinMenuColumns(cols[:k], h, cw))
+		cols = cols[k:]
+	}
+	return pages
+}
+
+// flowMenu pours the menu lines into columns at most h high. A column does not start
+// with the blank between groups nor end with a group's title.
+func flowMenu(lines []menuLine, h int) [][]menuLine {
+	var cols [][]menuLine
+	for i := 0; i < len(lines); {
+		if lines[i].text == "" {
+			i++
+			continue
+		}
+		end := min(len(lines), i+h)
+		if end < len(lines) && end-1 > i && lines[end-1].title {
+			end--
+		}
+		cols = append(cols, lines[i:end])
+		i = end
+	}
+	return cols
+}
+
+// joinMenuColumns draws columns of width cw side by side, h lines high.
+func joinMenuColumns(cols [][]menuLine, h, cw int) []string {
 	out := make([]string, h)
-	for c := 0; c < n; c++ {
-		for r := 0; r < h; r++ {
+	for c, col := range cols {
+		for r := range h {
 			cell := ""
-			if i := c*h + r; i < len(lines) {
-				cell = ansi.Truncate(lines[i], cw, "…")
+			if r < len(col) {
+				cell = ansi.Truncate(col[r].text, cw, "…")
 			}
-			if c < n-1 {
+			if c < len(cols)-1 {
 				cell = padRight(cell, cw) + strings.Repeat(" ", menuGap)
 			}
 			out[r] += cell
@@ -266,10 +314,45 @@ func (m *Model) renderMenu(w, maxH int) []string {
 	return out
 }
 
-// menuGap is the space between the menu's columns; menuMinWidth the narrowest column.
+// menuLayout lays the menu out for the screen: below the task list when it fits there on
+// one page, otherwise alone in the body (the list would show only its title anyway), in
+// pages when it needs them.
+func (m *Model) menuLayout() (pages [][]string, alone bool) {
+	bodyH := max(3, m.height-2)
+	if bodyH-6 >= menuMinLines { // the pane's border and title, and some of the body
+		if pages := m.menuPages(m.width, bodyH-6); len(pages) == 1 {
+			return pages, false
+		}
+	}
+	return m.menuPages(m.width, bodyH-3), true
+}
+
+// currentMenuPage returns the lines of the menu page shown, its number, the count of
+// pages and whether the menu takes the whole body (menuLayout).
+func (m *Model) currentMenuPage() (lines []string, page, count int, alone bool) {
+	pages, alone := m.menuLayout()
+	p := min(max(0, m.menuPage), len(pages)-1)
+	return pages[p], p, len(pages), alone
+}
+
+// turnMenuPage moves to the next (+1) or previous (-1) page of the menu, round.
+func (m *Model) turnMenuPage(d int) {
+	_, p, n, _ := m.currentMenuPage()
+	m.menuPage = ((p+d)%n + n) % n
+}
+
+// menuNext and menuPrev turn the menu's pages; none of them is a menu key.
+var (
+	menuNext = []string{"tab", "j", "down", "pgdown", "ctrl+d"}
+	menuPrev = []string{"shift+tab", "k", "up", "pgup", "ctrl+u"}
+)
+
+// menuGap is the space between the menu's columns; menuMinWidth the narrowest column;
+// menuMinLines the fewest lines the menu gets beside the task list.
 const (
 	menuGap      = 3
 	menuMinWidth = 18
+	menuMinLines = 4
 )
 
 // layoutColumns places columns side by side, wrapping to more rows of columns when narrow.

@@ -140,12 +140,10 @@ func TestTUITagManager(t *testing.T) {
 func TestTUIHidesUnavailableFeatures(t *testing.T) {
 	st := fixtureStore(t)
 	h := openProjectList(t, st)
-	labels := func() string {
-		var out []string
-		for _, a := range h.m.available() {
-			out = append(out, a.label)
-		}
-		return strings.Join(out, "\n")
+	labels := func() string { // what the menu shows, on all its pages
+		s := strings.Join(menuScreens(t, h), "\n")
+		h.key("esc")
+		return s
 	}
 	if !strings.Contains(labels(), "セクションを追加") {
 		t.Fatalf("menu without セクションを追加:\n%s", labels())
@@ -155,14 +153,13 @@ func TestTUIHidesUnavailableFeatures(t *testing.T) {
 	}
 	h.run(h.m.loadOutbox())
 	s := labels()
-	h.key("space")
 	if strings.Contains(s, "セクションを追加") || strings.Contains(s, "空のセクションを削除") {
 		t.Errorf("unavailable entries still in the menu:\n%s", s)
 	}
 	if !strings.Contains(s, "セクション名を変更") || !strings.Contains(s, "タグの名前・色") {
 		t.Errorf("other entries gone:\n%s", s)
 	}
-	h.key("n")
+	h.key("space", "n")
 	if got := opKindsOf(h); len(got) != 0 || h.m.promptMode != promptNone {
 		t.Errorf("n still works: ops %v, prompt %v", got, h.m.promptMode)
 	}
