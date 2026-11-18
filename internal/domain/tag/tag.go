@@ -43,7 +43,6 @@ func CanonicalColor(c string) string {
 	return c
 }
 
-
 // NoColor are the words that mean "no color".
 var NoColor = []string{"", "none"}
 

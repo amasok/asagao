@@ -291,7 +291,9 @@ func currentQuarter(periods any, today string) string {
 	return ""
 }
 
-// legacyColors are the color names asagao offers (internal/domain/tag, project).
+// legacyColors are the color names asagao offered before #31 (internal/domain/tag,
+// project). light-brown stays on purpose: the probe records that Asana refuses it (400),
+// which is why asagao now offers light-yellow.
 var legacyColors = []string{
 	"dark-pink", "dark-green", "dark-blue", "dark-red", "dark-teal", "dark-brown", "dark-orange", "dark-purple", "dark-warm-gray",
 	"light-pink", "light-green", "light-blue", "light-red", "light-teal", "light-brown", "light-orange", "light-purple", "light-warm-gray",
