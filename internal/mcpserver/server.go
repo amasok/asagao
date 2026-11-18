@@ -37,6 +37,8 @@ const instructions = `Asana tasks from a local cache that asagao keeps in sync.
 - Task and project arguments accept a gid. Projects also accept a name or a unique part of it.
 - Dates are YYYY-MM-DD, or relative: today, tomorrow, yesterday, +7d, -3d.
 - Task names and comments are often in Japanese; search_tasks matches substrings.
+  search_tasks with remote=true also searches Asana, for tasks the cache lacks (projects that
+  are not synced, old completed tasks); what it finds is cached.
 - list_saved_searches and run_saved_search use the searches the user saved (asagao searches save).
 - list_inbox shows my Asana inbox notifications (what others did on my tasks); mark_notifications marks them read.
 - get_context returns the project and task of the repository the server runs in (.asana.json), if it has one.
@@ -84,7 +86,9 @@ func (s *Server) New() *mcp.Server {
 			"Filter by project/section, assignee, due date range, overdue, tag or completion."}, s.listTasks)
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_tasks", Annotations: readOnly,
 		Description: "Full-text search over task names, descriptions and comments in every synced project. " +
-			"Multiple words are ANDed. Includes completed tasks unless completion is set."}, s.searchTasks)
+			"Multiple words are ANDed. Includes completed tasks unless completion is set. " +
+			"Set remote=true to also search Asana for tasks the cache lacks (they are cached; " +
+			"without Asana's premium search, Asana matches the start of task names only)."}, s.searchTasks)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_task", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		Description: "Get one task with its description and comments as Markdown, subtasks, tags and attachments. " +
 			"Refreshes it from Asana when online (set offline=true to use only the cache)."}, s.getTask)
@@ -115,6 +119,7 @@ func (s *Server) New() *mcp.Server {
 		Description: syncDesc}, s.sync)
 
 	s.addInboxTools(srv)
+	s.addGoalTools(srv)
 	s.addSearchTools(srv)
 	s.addAgentTools(srv)
 	s.addTimeTrackingTools(srv)
@@ -192,7 +197,19 @@ type TaskFilterInput struct {
 
 type SearchInput struct {
 	Query string `json:"query" jsonschema:"words to search for in task names, descriptions and comments"`
+	// Remote also searches Asana (Issue #36).
+	Remote bool `json:"remote,omitempty" jsonschema:"also search Asana, for tasks the local cache lacks (needs to be online; found tasks are cached)"`
 	TaskFilterInput
+}
+
+// SearchOutput is TasksOutput with what the search in Asana did (remote only).
+type SearchOutput struct {
+	Tasks []readmodel.TaskSummary `json:"tasks"`
+	Count int                     `json:"count"`
+	// RemoteFound is how many tasks Asana found (before the other filters).
+	RemoteFound int `json:"remote_found,omitempty"`
+	// Note says how Asana was searched, or why it could not be.
+	Note string `json:"note,omitempty"`
 }
 
 type TasksOutput struct {
@@ -390,17 +407,72 @@ func (s *Server) listTasks(ctx context.Context, _ *mcp.CallToolRequest, in TaskF
 	return nil, TasksOutput{Tasks: tasks, Count: len(tasks)}, err
 }
 
-func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, TasksOutput, error) {
-	if in.Query == "" {
-		return nil, TasksOutput{}, errors.New("query is required")
+func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
+	if strings.TrimSpace(in.Query) == "" {
+		return nil, SearchOutput{}, errors.New("query is required")
 	}
 	f, err := s.filter(ctx, in.TaskFilterInput, "any", nil)
 	if err != nil {
-		return nil, TasksOutput{}, err
+		return nil, SearchOutput{}, err
 	}
 	f.Query = in.Query
-	tasks, err := s.query().ListTasks(ctx, f)
-	return nil, TasksOutput{Tasks: tasks, Count: len(tasks)}, err
+	if !in.Remote {
+		tasks, err := s.query().ListTasks(ctx, f)
+		return nil, SearchOutput{Tasks: tasks, Count: len(tasks)}, err
+	}
+	res, err := app.SearchWithAsana(ctx, s.query(), finder{s}, f)
+	if err != nil {
+		return nil, SearchOutput{}, err
+	}
+	out := SearchOutput{Tasks: res.Tasks, Count: len(res.Tasks), RemoteFound: res.Found}
+	switch {
+	case res.RemoteErr != nil:
+		out.Note = "Asana could not be searched; these are the local cache's matches only: " + res.RemoteErr.Error()
+	case res.ByName:
+		out.Note = "The workspace's plan lacks Asana's search API, so Asana matched the start of task names only (not descriptions or comments)."
+	}
+	return nil, out, nil
+}
+
+// finder searches Asana and looks names up there (app.TaskFinder, app.NameFinder) through
+// the server's syncer; offline, it fails and the cache is used alone.
+type finder struct{ s *Server }
+
+// remoteTimeout bounds one search in Asana, and nameTimeout one name lookup (a write
+// waits for it).
+const (
+	remoteTimeout = 30 * time.Second
+	nameTimeout   = 10 * time.Second
+)
+
+func (f finder) SearchTasks(ctx context.Context, text string, completed *bool, limit int) (readmodel.RemoteSearchResult, error) {
+	syncer, err := f.s.getSyncer(ctx)
+	if err != nil {
+		return readmodel.RemoteSearchResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
+	defer cancel()
+	return syncer.SearchTasks(ctx, text, completed, limit)
+}
+
+func (f finder) FindUsers(ctx context.Context, q string) (int, error) {
+	syncer, err := f.s.getSyncer(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, nameTimeout)
+	defer cancel()
+	return syncer.FindUsers(ctx, q)
+}
+
+func (f finder) FindTags(ctx context.Context, q string) (int, error) {
+	syncer, err := f.s.getSyncer(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, nameTimeout)
+	defer cancel()
+	return syncer.FindTags(ctx, q)
 }
 
 func (s *Server) filter(ctx context.Context, in TaskFilterInput, defaultAssignee string, defaultCompleted *bool) (readmodel.TaskFilter, error) {
@@ -519,7 +591,7 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 // --- write tools ---
 
 func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in CreateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now, Names: finder{s}}
 	gid, err := tasks.Create(ctx, app.CreateTaskInput{
 		Name: in.Name, Parent: in.Parent, Project: in.Project, Section: in.Section,
 		Due: in.DueOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
@@ -541,7 +613,7 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 // name (tag, follower, project) does not leave half of the update saved.
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
-	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: finder{s}}
 	changes, err := tasks.ResolveUpdate(ctx, app.UpdateTaskInput{
 		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Assignee: in.Assignee,
 		Subtype: in.ResourceSubtype, Approval: in.ApprovalStatus, Completed: in.Completed, Liked: in.Liked,

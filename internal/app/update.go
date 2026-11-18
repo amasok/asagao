@@ -74,7 +74,7 @@ func (t *Tasks) ResolveUpdate(ctx context.Context, in UpdateTaskInput) (TaskUpda
 		u.Due = &v
 	}
 	if in.Assignee != nil {
-		v, err := t.Store.ResolveUser(ctx, *in.Assignee)
+		v, err := t.resolveUser(ctx, *in.Assignee)
 		if err != nil {
 			return TaskUpdate{}, &FieldError{Field: "assignee", Err: err}
 		}

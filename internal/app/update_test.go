@@ -138,7 +138,7 @@ func TestUpdateInvalidInputWritesNothing(t *testing.T) {
 		t.Errorf("err = %v, want %v inside", err, errSubtype)
 	}
 	_, err = tasks.Update(context.Background(), "1", UpdateTaskInput{Assignee: ptr("誰か")})
-	if !errors.Is(err, errNotFound) || err.Error() != `assignee: user "誰か": not found` {
+	if !errors.Is(err, errNotFound) || err.Error() != `assignee: user "誰か": not found in local store` {
 		t.Errorf("err = %v", err)
 	}
 	_, err = tasks.Update(context.Background(), "1", UpdateTaskInput{Due: ptr("someday")})

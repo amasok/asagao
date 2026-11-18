@@ -21,5 +21,6 @@ type Store interface {
 	app.OutboxStore
 	app.QueryStore
 	app.TimeTrackingStore
+	app.GoalStore
 	sync.LocalStore
 }
