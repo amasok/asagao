@@ -90,3 +90,32 @@ func TestAttackLightBrownIsRefusedLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A rename together with a color: a same-color answer is no conflict, a changed name is
+// one (for the name only: the color is not reported as conflicting).
+func TestAttackTagNameAndColorTogether(t *testing.T) {
+	for _, c := range []struct {
+		name, asanaName, asanaColor string
+		conflicts                   int
+	}{
+		{"nothing changed there", "急ぎ", "blue", 0},
+		{"name changed there", "別名", "blue", 1},
+		{"color changed there", "急ぎ", "red", 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, s, st := setupSections(t)
+			ctx := context.Background()
+			_ = st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ", Color: "dark-blue"}})
+			f.mu.Lock()
+			f.tags["g1"].Name, f.tags["g1"].Color = c.asanaName, c.asanaColor
+			f.mu.Unlock()
+			if err := st.UpdateTagLocal(ctx, "g1", map[string]any{"name": "新", "color": "light-blue"}, now); err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.Push(ctx)
+			if err != nil || res.Conflicts != c.conflicts || res.Sent+res.Conflicts != 1 {
+				t.Fatalf("push = %+v, %v", res, err)
+			}
+		})
+	}
+}
