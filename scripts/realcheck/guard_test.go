@@ -156,3 +156,44 @@ func TestCheckMe(t *testing.T) {
 		}
 	}
 }
+
+// -syncbench may use a copy of the test config inside the run directory, nowhere else.
+func TestCheckEnvConfigCopyInRun(t *testing.T) {
+	home, bin := testTree(t, fileStore)
+	e := NewEnv(home, bin, "/usr/bin", "20260101-000000")
+	cfg := filepath.Join(e.Run, "config")
+	if err := os.MkdirAll(filepath.Join(cfg, "asagao"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"token.json", "config.toml"} {
+		if err := os.WriteFile(filepath.Join(cfg, "asagao", f), []byte(fileStore), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	use := func(e *Env, dir string) {
+		e.Config = dir
+		for i, kv := range e.Vars {
+			if strings.HasPrefix(kv, "XDG_CONFIG_HOME=") {
+				e.Vars[i] = "XDG_CONFIG_HOME=" + dir
+			}
+		}
+	}
+	use(&e, cfg)
+	if err := CheckEnv(e); err != nil {
+		t.Fatalf("copy in the run refused: %v", err)
+	}
+	for _, dir := range []string{filepath.Join(home, ".config"), filepath.Join(home, "asagao-test", "realcheck-runs", "other", "config")} {
+		e2 := NewEnv(home, bin, "/usr/bin", "20260101-000000")
+		use(&e2, dir)
+		if err := CheckEnv(e2); err == nil {
+			t.Errorf("config %s accepted", dir)
+		}
+	}
+}
+
+func TestParseBench(t *testing.T) {
+	vs := parseBench("main=/a, lazy=/b")
+	if len(vs) != 3 || vs[0].Bin != "/a" || vs[0].Offline || !vs[2].Eager || vs[2].Bin != "/b" || !vs[1].Offline {
+		t.Fatalf("%+v", vs)
+	}
+}
