@@ -250,7 +250,7 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 
 // sameTaskFields is outbox.SameTaskFields on the task as Asana returns it.
 func sameTaskFields(t model.Task, payload map[string]any) bool {
-	f := outbox.TaskFields{DueOn: t.DueOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
+	f := outbox.TaskFields{DueOn: t.DueOn, StartOn: t.StartOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
 	if t.Assignee != nil {
 		f.AssigneeGID = t.Assignee.GID
 	}

@@ -287,6 +287,7 @@ type CreateTaskInput struct {
 	Project  string   `json:"project,omitempty" jsonschema:"project gid or name; omit to create in My Tasks"`
 	Section  string   `json:"section,omitempty" jsonschema:"section gid or exact name (default: first section)"`
 	DueOn    string   `json:"due_on,omitempty" jsonschema:"due date (YYYY-MM-DD, today, tomorrow, +7d)"`
+	StartOn  string   `json:"start_on,omitempty" jsonschema:"start date (YYYY-MM-DD, today, +7d); needs due_on and must not be after it (paid plans)"`
 	Assignee string   `json:"assignee,omitempty" jsonschema:"\"me\", \"none\", a user gid or name (default: me when no project)"`
 	Notes    string   `json:"notes,omitempty" jsonschema:"description in Markdown (headings, **bold**, lists, links); converted to Asana rich text"`
 	Tags     []string `json:"tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids"`
@@ -297,7 +298,8 @@ type UpdateTaskInput struct {
 	Completed          *bool          `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
 	Name               *string        `json:"name,omitempty" jsonschema:"new name"`
 	Notes              *string        `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
-	DueOn              *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	DueOn              *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear (clear start_on too if the task has one)"`
+	StartOn            *string        `json:"start_on,omitempty" jsonschema:"new start date (YYYY-MM-DD, today, +7d), or empty string to clear; the task needs a due date (now or in due_on) on or after it (paid plans)"`
 	Assignee           *string        `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
 	AddTags            []string       `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
 	RemoveTags         []string       `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
@@ -598,12 +600,15 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now, Names: finder{s}}
 	gid, err := tasks.Create(ctx, app.CreateTaskInput{
 		Name: in.Name, Parent: in.Parent, Project: in.Project, Section: in.Section,
-		Due: in.DueOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
+		Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
 	})
 	var fe *app.FieldError
 	if errors.As(err, &fe) {
-		if fe.Field == "due" {
+		switch fe.Field {
+		case "due":
 			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", fe.Err)
+		case "start_on":
+			return nil, WriteOutput{}, fmt.Errorf("start_on: %w", fe.Err)
 		}
 		return nil, WriteOutput{}, fe.Err // the assignee's error is reported as the store gives it
 	}
@@ -619,7 +624,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	now := s.Now()
 	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: finder{s}}
 	changes, err := tasks.ResolveUpdate(ctx, app.UpdateTaskInput{
-		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Assignee: in.Assignee,
+		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee,
 		Subtype: in.ResourceSubtype, Approval: in.ApprovalStatus, Completed: in.Completed, Liked: in.Liked,
 	})
 	if fe := (*app.FieldError)(nil); errors.As(err, &fe) {
