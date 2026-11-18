@@ -283,3 +283,89 @@ func TestAttackTimeEntryOnOfflineTaskAfterCreate(t *testing.T) {
 	}
 	assertOutboxEmpty(t, st)
 }
+
+func twKey(ws string) string { return readmodel.PlanKey(readmodel.PlanTimeTracking, ws) }
+
+// A recent 402 hides the list without asking Asana; at 24 hours it is asked again, and an
+// answer forgets the 402. A value that is garbage or from the future does not hide it.
+func TestAttackPlanRecheckAfter24h(t *testing.T) {
+	ts, s, st := setupTimePush(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	cur := at
+	s.now = func() time.Time { return cur }
+	must(t, st.SetSyncState(ctx, twKey("w1"), at.Format(time.RFC3339)))
+	var pe *readmodel.PlanUnavailableError
+	for _, d := range []time.Duration{0, time.Hour, 24*time.Hour - time.Second} {
+		cur = at.Add(d)
+		if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
+			t.Fatalf("at +%v: %v", d, err)
+		}
+	}
+	if n := ts.count("GET "); n != 0 {
+		t.Fatalf("asked Asana while hidden: %v", ts.calls)
+	}
+	cur = at.Add(24 * time.Hour)
+	must(t, s.FetchTimeEntries(ctx, "t1"))
+	if n := ts.count("GET "); n != 1 {
+		t.Fatalf("not asked again at 24h: %v", ts.calls)
+	}
+	if v, _ := st.SyncState(ctx, twKey("w1")); v != "" {
+		t.Errorf("402 not forgotten after an answer: %q", v)
+	}
+	for _, v := range []string{"garbage", cur.Add(time.Hour).Format(time.RFC3339)} {
+		must(t, st.SetSyncState(ctx, twKey("w1"), v))
+		before := ts.count("GET ")
+		must(t, s.FetchTimeEntries(ctx, "t1"))
+		if ts.count("GET ") != before+1 {
+			t.Errorf("value %q hid the list", v)
+		}
+	}
+}
+
+// Still 402 after the recheck: it is hidden again from that moment.
+func TestAttackPlanRecheckStill402(t *testing.T) {
+	ts, s, st := setupTimePush(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	cur := at.Add(25 * time.Hour)
+	s.now = func() time.Time { return cur }
+	must(t, st.SetSyncState(ctx, twKey("w1"), at.Format(time.RFC3339)))
+	ts.unpaid = true
+	var pe *readmodel.PlanUnavailableError
+	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
+		t.Fatal(err)
+	}
+	cur = cur.Add(time.Hour)
+	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) || ts.count("GET ") != 1 {
+		t.Errorf("err %v, calls %v", err, ts.calls)
+	}
+}
+
+// A 402 in one workspace does not hide time tracking of a task in another.
+func TestAttackPlanPerWorkspace(t *testing.T) {
+	ts, s, st := setupTimePush(t)
+	ctx := context.Background()
+	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "B", Workspace: &asana.Ref{GID: "w2"}}}))
+	must(t, st.SetSyncState(ctx, twKey("w1"), time.Now().UTC().Format(time.RFC3339)))
+	var pe *readmodel.PlanUnavailableError
+	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
+		t.Fatalf("t1: %v", err)
+	}
+	if err := s.FetchTimeEntries(ctx, "t2"); err != nil {
+		t.Fatalf("t2 (another workspace): %v", err)
+	}
+	if n := ts.count("GET /tasks/t2/"); n != 1 {
+		t.Errorf("calls %v", ts.calls)
+	}
+	// and a 402 on t2 records w2 only
+	ts.unpaid = true
+	must(t, st.SetSyncState(ctx, twKey("w1"), ""))
+	_ = s.FetchTimeEntries(ctx, "t2")
+	if v, _ := st.SyncState(ctx, twKey("w2")); v == "" {
+		t.Error("w2 not recorded")
+	}
+	if v, _ := st.SyncState(ctx, twKey("w1")); v != "" {
+		t.Error("w1 recorded by a 402 of w2")
+	}
+}
