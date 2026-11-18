@@ -309,3 +309,26 @@ func TestAttackOtherBadRequestIsAnError(t *testing.T) {
 		t.Errorf("list = %v err = %v", l, err)
 	}
 }
+
+// The listing (CLI, MCP) always asks Asana, and an answer forgets the workspace's mark;
+// another workspace's mark is left alone.
+func TestAttackPlanMarkClearedPerWorkspace(t *testing.T) {
+	ctx := context.Background()
+	_, s, st, _ := setupTemplates(t)
+	key := func(ws string) string { return "plan_unavailable:project_templates:" + ws }
+	at := now.Add(-time.Hour).UTC().Format(time.RFC3339)
+	for _, ws := range []string{"w1", "w2"} {
+		if err := st.SetSyncState(ctx, key(ws), at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.ProjectTemplates(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SyncState(ctx, key("w1")); v != "" {
+		t.Errorf("w1 mark kept: %q", v)
+	}
+	if v, _ := st.SyncState(ctx, key("w2")); v != at {
+		t.Errorf("w2 mark = %q", v)
+	}
+}

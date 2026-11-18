@@ -37,26 +37,26 @@ func TestAttackTemplatesOfferedBoundaries(t *testing.T) {
 		{"garbage", "yesterday", true},
 		// The clock went back: a mark from the future must not hide it for more than
 		// the recheck time.
-		{"future within skew (4m)", now.Add(4 * time.Minute).Format(time.RFC3339), false},
-		{"future beyond skew (6m)", now.Add(6 * time.Minute).Format(time.RFC3339), true},
+		{"future within 4m", now.Add(4 * time.Minute).Format(time.RFC3339), true},
+		{"future 6m", now.Add(6 * time.Minute).Format(time.RFC3339), true},
 		{"future by 2 days", now.Add(48 * time.Hour).Format(time.RFC3339), true},
 	}
 	for _, c := range cases {
-		if got := PlanOffered(context.Background(), fakeState{key: c.mark}, readmodel.PlanTaskTemplates, "w1", now); got != c.want {
+		if got := TemplatesOffered(context.Background(), fakeState{key: c.mark}, readmodel.PlanTaskTemplates, "w1", now); got != c.want {
 			t.Errorf("%s: offered = %v, want %v", c.name, got, c.want)
 		}
 	}
-	if !PlanOffered(context.Background(), errState{}, readmodel.PlanTaskTemplates, "w1", now) {
+	if !TemplatesOffered(context.Background(), errState{}, readmodel.PlanTaskTemplates, "w1", now) {
 		t.Error("a store error hides the menu")
 	}
 	// The other feature's mark does not hide this one.
 	other := fakeState{readmodel.PlanKey(readmodel.PlanProjectTemplates, "w1"): now.Format(time.RFC3339)}
-	if !PlanOffered(context.Background(), other, readmodel.PlanTaskTemplates, "w1", now) {
+	if !TemplatesOffered(context.Background(), other, readmodel.PlanTaskTemplates, "w1", now) {
 		t.Error("project mark hid task templates")
 	}
 	// Another workspace's mark does not hide this one's.
 	ws2 := fakeState{readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2"): now.Format(time.RFC3339)}
-	if !PlanOffered(context.Background(), ws2, readmodel.PlanTaskTemplates, "w1", now) {
+	if !TemplatesOffered(context.Background(), ws2, readmodel.PlanTaskTemplates, "w1", now) {
 		t.Error("another workspace's mark hid it")
 	}
 }
