@@ -4,9 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"testing"
 
 	"github.com/zalando/go-keyring"
 )
+
+// In a test binary the keychain is go-keyring's in-memory mock, before any TestMain or test
+// runs: no test reads or writes the user's real entries (services asagao and asana-tui), and
+// an OAuth token found there is never refreshed against the real Asana (Issue #53).
+func init() {
+	if testing.Testing() {
+		keyring.MockInit()
+		keychainMocked = true
+	}
+}
+
+// keychainMocked is whether init put the mock in place (for its test).
+var keychainMocked bool
 
 // Keychain stores credentials as one JSON secret in macOS Keychain / Linux Secret Service.
 type Keychain struct {

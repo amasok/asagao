@@ -158,6 +158,12 @@ func importRule(from, to string) string {
 	if lt == layerTest {
 		return "packages with only tests are not imported"
 	}
+	if lt == layerTestSupport {
+		return "only tests import testguard (Issue #53)"
+	}
+	if lf == layerTestSupport {
+		return "testguard imports only the standard library"
+	}
 	switch lf {
 	case layerWire:
 		return ""
@@ -310,7 +316,7 @@ func unknownPackages(g *graph) []string {
 
 // stdOnly are the layers whose packages use the standard library only, even indirectly
 // (ADR 0004, decision 1).
-var stdOnly = []layer{layerDomain, layerApp, layerShared, layerCommon}
+var stdOnly = []layer{layerDomain, layerApp, layerShared, layerCommon, layerTestSupport}
 
 // indirectExternal reports, for each package in a stdOnly layer, the external modules it
 // reaches through the module's packages, with the shortest chain of imports. The walk does
@@ -429,6 +435,7 @@ type pkgInfo struct {
 	imports []string // the module's packages relative to the module; others as they are
 	dir     string
 	files   []string // non-test Go files, for any of goosList
+	tests   []string // test Go files (internal and external), for any of goosList
 }
 
 func (g *graph) packages() []string {
@@ -442,14 +449,16 @@ func (g *graph) packages() []string {
 
 // listedPackage is the part of `go list -json` that the checks read.
 type listedPackage struct {
-	ImportPath string
-	Dir        string
-	Standard   bool
-	GoFiles    []string
-	CgoFiles   []string
-	Imports    []string
-	Module     *struct{ Path string }
-	Error      *struct{ Err string }
+	ImportPath   string
+	Dir          string
+	Standard     bool
+	GoFiles      []string
+	CgoFiles     []string
+	TestGoFiles  []string
+	XTestGoFiles []string
+	Imports      []string
+	Module       *struct{ Path string }
+	Error        *struct{ Err string }
 }
 
 // loadModule runs `go list -deps -json ./...` at the module's root for each of goosList and
@@ -510,6 +519,11 @@ func loadModule(t *testing.T) *graph {
 						p.files = append(p.files, f)
 					}
 				}
+				for _, f := range slices.Concat(lp.TestGoFiles, lp.XTestGoFiles) {
+					if !slices.Contains(p.tests, f) {
+						p.tests = append(p.tests, f)
+					}
+				}
 			case lp.Module != nil:
 				g.modules[lp.ImportPath] = lp.Module.Path
 			default:
@@ -524,7 +538,7 @@ func loadModule(t *testing.T) *graph {
 }
 
 func goList(gocmd, dir, goos string) ([]listedPackage, error) {
-	cmd := exec.Command(gocmd, "list", "-deps", "-json=ImportPath,Dir,Standard,GoFiles,CgoFiles,Imports,Module,Error", "./...")
+	cmd := exec.Command(gocmd, "list", "-deps", "-json=ImportPath,Dir,Standard,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,Imports,Module,Error", "./...")
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), "GOOS="+goos, "GOWORK=off")
 	out, err := cmd.Output()
