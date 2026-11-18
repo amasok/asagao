@@ -389,6 +389,13 @@ func TestReplaceStoriesSkipsFailedEdits(t *testing.T) {
 	if text, _, _ := storyText(t, s, "c-me"); text != "元の文" {
 		t.Errorf("a failed edit was applied again: %q", text)
 	}
+	d, err := s.GetTask(ctx, "t1")
+	must(t, err)
+	for _, st := range d.Stories {
+		if st.GID == "c-me" && st.Pending {
+			t.Error("Asana's text of a comment whose edit failed is shown as not sent")
+		}
+	}
 	if _, err := s.GetAttachment(ctx, "a1"); err != nil {
 		t.Errorf("a failed delete hid the attachment: %v", err)
 	}

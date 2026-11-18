@@ -135,3 +135,26 @@ func TestDeleteAttachmentInTUI(t *testing.T) {
 		t.Errorf("the deleted attachment is still shown:\n%s", s)
 	}
 }
+
+// Deleting an image embedded in the description says so at the confirmation: the
+// description loses the image too.
+func TestDeleteInlineImageWarns(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "転居届を出す", DueOn: "2026-11-10", Assignee: &asana.Ref{GID: "me", Name: "Me"},
+		Notes:       "見取り図\nhttps://app.asana.com/app/asana/-/get_asset?asset_id=777",
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s2"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceAttachments(ctx, "t2", []asana.Attachment{{GID: "777", Name: "図.png"}}); err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{t: t, m: New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
+	h.run(h.m.Init())
+	h.cursorTo(itemAttachment)
+	h.key("enter", "j", "enter")
+	if s := h.screen(); !strings.Contains(s, "説明に埋め込まれたこの画像") {
+		t.Errorf("the confirmation does not say the image is in the description:\n%s", s)
+	}
+}

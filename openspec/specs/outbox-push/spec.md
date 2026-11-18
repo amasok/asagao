@@ -156,7 +156,7 @@ push は `<db>.push.lock` を取り、アカウントが記録と同じことを
 
 ### Requirement: コメントと添付の変更の送り方
 編集 (PUT /stories) と削除 (DELETE) は何度送っても同じなので、届いたか分からなければ照合せずに再送する (MUST, #34)。削除の 404 は「もう消えている」ので、済んだものとして消し、捨てた変更としては記録しない。編集の 404 は、ほかの操作と同じく捨てて記録する。
-根拠: sync/push.go (pushUpdateStory, pushDelete); TestPushEditAndDeleteComment, TestPushDeleteGoneIsDone, TestStoryEditsSafeToResend
+根拠: sync/push.go (pushUpdateStory, pushDeleteItem); TestPushEditAndDeleteComment, TestPushDeleteGoneIsDone, TestStoryEditsSafeToResend
 
 #### Scenario: もう消えているコメントを削除する
 - **WHEN** `delete_story` を送って 404 が返る

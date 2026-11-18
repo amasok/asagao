@@ -436,7 +436,7 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	case outbox.KindUpdateStory:
 		err = s.pushUpdateStory(ctx, op)
 	case outbox.KindDeleteStory, outbox.KindDeleteAttachment:
-		err = s.pushDelete(ctx, op)
+		err = s.pushDeleteItem(ctx, op)
 	case outbox.KindCreateStatus:
 		err = s.pushStatus(ctx, op)
 	case outbox.KindMarkNotification:
@@ -1080,10 +1080,10 @@ func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
 	return nil
 }
 
-// pushDelete deletes a comment or an attachment. Sending it twice is harmless: a 404 means
+// pushDeleteItem deletes a comment or an attachment. Sending it twice is harmless: a 404 means
 // it is gone already (deleted elsewhere, or by an earlier request whose answer was lost),
 // which is what was asked.
-func (s *Syncer) pushDelete(ctx context.Context, op outbox.Op) error {
+func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 	key, prefix := storyTarget(op.Kind)
 	gid, _ := op.Payload[key].(string)
 	real, _, err := s.Store.LocalResult(ctx, prefix, gid)

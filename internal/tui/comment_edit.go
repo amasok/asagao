@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -72,6 +73,9 @@ func (m *Model) handleItemPicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 			what := "このコメント"
 			if action == "delete-attachment" {
 				what = "この添付"
+				if slices.Contains(notesImages(d), gid) {
+					what = "説明に埋め込まれたこの画像" // the description loses it too
+				}
 			}
 			m.picker = &picker{kind: pickConfirmDel, title: what + "を削除しますか？（Asana に送ったあとは取り消せません）",
 				items: []pickerItem{{label: "やめる"}, {label: "削除する", value: item.value}}}
@@ -135,4 +139,12 @@ func (m *Model) applyCommentEdit(msg commentDoneMsg, text string) tea.Cmd {
 		}
 		return writeDoneMsg{status: "コメントを書き直しました"}
 	}
+}
+
+// notesImages returns the attachment gids of the images embedded in d's description.
+func notesImages(d *readmodel.TaskDetail) []string {
+	if d.HTMLNotes != "" {
+		return richtext.Images(d.HTMLNotes)
+	}
+	return readmodel.InlineAssets(d.Notes)
 }
