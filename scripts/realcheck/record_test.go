@@ -7,7 +7,7 @@ import (
 
 func TestGuardWrite(t *testing.T) {
 	c := &Created{Prefix: "asagao-realcheck-1", Projects: []string{"1000001"}, Tasks: []string{"2000002"},
-		Tags: []string{"3000003"}, Statuses: []string{"4000004"}, CustomFields: []string{"5000005"}}
+		Tags: []string{"3000003"}, Statuses: []string{"4000004"}, CustomFields: []string{"5000005"}, Briefs: []string{"9300003"}}
 	allowed := []struct {
 		m, p   string
 		fields []string
@@ -17,6 +17,7 @@ func TestGuardWrite(t *testing.T) {
 		{"DELETE", "/tags/3000003", nil},
 		{"DELETE", "/status_updates/4000004", nil},
 		{"DELETE", "/custom_fields/5000005", nil},
+		{"DELETE", "/project_briefs/9300003", nil},
 		{"POST", "/projects/1000001/addCustomFieldSetting", []string{"custom_field=5000005"}},
 		{"POST", "/custom_fields", []string{"workspace=" + TestWorkspace, "name=asagao-realcheck-1-date"}},
 	}
@@ -29,7 +30,8 @@ func TestGuardWrite(t *testing.T) {
 		m, p   string
 		fields []string
 	}{
-		{"DELETE", "/tasks/9999999", nil},            // not ours
+		{"DELETE", "/tasks/9999999", nil}, // not ours
+		{"DELETE", "/project_briefs/9999999", nil},
 		{"DELETE", "/projects/2000002", nil},         // a task gid used as a project
 		{"DELETE", "/tasks/2000002/../9999999", nil}, // path tricks
 		{"DELETE", "/users/2000002", nil},            // unknown kind
@@ -79,7 +81,7 @@ func TestGuardBody(t *testing.T) {
 	pre := "asagao-realcheck-1"
 	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"}, Tags: []string{"3000003"},
 		CustomFields: []string{"5000005"}, TimeEntries: []string{"6000006"}, Allocations: []string{"7000007"},
-		ProjectTemplates: []string{"8000008"}, Goals: []string{"9100001"}, Portfolios: []string{"9200002"}}
+		ProjectTemplates: []string{"8000008"}, Goals: []string{"9100001"}, Portfolios: []string{"9200002"}, Briefs: []string{"9300003"}}
 	named := func(n string, kv ...any) M {
 		d := M{"name": n}
 		for i := 0; i+1 < len(kv); i += 2 {
@@ -113,6 +115,8 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "1000001"}}},
 		{"POST", "/tags", named(pre+"-colors", "workspace", TestWorkspace)},
 		{"POST", "/tasks", named(pre+"-remote", "projects", []string{"1000001"})},
+		{"POST", "/projects/1000001/project_briefs", M{"data": M{"title": "x"}}},
+		{"PUT", "/project_briefs/9300003", M{"data": M{"html_text": "<body>x</body>"}}},
 		{"PUT", "/tags/3000003", M{"data": M{"color": "dark-red"}}},
 		{"PUT", "/projects/1000001", M{"data": M{"color": "none"}}},
 	}
@@ -132,6 +136,8 @@ func TestGuardBody(t *testing.T) {
 		{"PUT", "/tags/9999999", M{"data": M{"color": "red"}}},
 		{"POST", "/tags", named("urgent", "workspace", TestWorkspace)},
 		{"POST", "/tasks", named(pre+"-remote", "projects", []string{"9999999"})},
+		{"POST", "/projects/9999999/project_briefs", M{"data": M{"title": "x"}}},
+		{"PUT", "/project_briefs/9999999", M{"data": M{"title": "x"}}},
 		{"POST", "/tasks", named(pre+"-remote", "projects", []string{"1000001", "9999999"})},
 		{"POST", "/tasks", named(pre + "-remote")}, // no project: lands in My Tasks
 		{"POST", "/tasks", named("buy milk", "projects", []string{"1000001"})},
