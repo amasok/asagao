@@ -186,6 +186,9 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 		return errors.New("前と後は、どちらか一方だけ指定してください")
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
+		if err := refuseDeleted(ctx, tx, gid, parent, pos.Before, pos.After); err != nil {
+			return err
+		}
 		var current string
 		err := tx.QueryRowContext(ctx, "SELECT parent_gid FROM tasks WHERE gid = ?", gid).Scan(&current)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -306,6 +309,24 @@ func reapplySetParent(ctx context.Context, tx *sql.Tx, gid string) error {
 	}
 	_, err = tx.ExecContext(ctx, "UPDATE tasks SET parent_gid = ? WHERE gid = ?", parent.String, gid)
 	return err
+}
+
+// refuseDeleted refuses to use tasks whose delete is queued (or that go with one): Asana
+// would delete a task moved under them, and a place next to them does not last.
+func refuseDeleted(ctx context.Context, tx *sql.Tx, gids ...string) error {
+	for _, g := range gids {
+		if g == "" {
+			continue
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+deletedTasks+" WHERE gid = ?", g).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("タスク %s は削除を送る予定です (取り消すには outbox の削除を取り消してください)", g)
+		}
+	}
+	return nil
 }
 
 func scanStrings(rows *sql.Rows) ([]string, error) {

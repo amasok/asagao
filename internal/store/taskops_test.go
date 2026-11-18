@@ -247,3 +247,27 @@ func TestMoveTaskAtLocal(t *testing.T) {
 		}
 	}
 }
+
+// A task being deleted (or under one) is not a parent, a place, or moved: Asana would
+// delete what goes under it.
+func TestTaskOpsRefuseTasksBeingDeleted(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.DeleteTaskLocal(ctx, "t1", now); err != nil {
+		t.Fatal(err)
+	}
+	for name, f := range map[string]func() error{
+		"under it":              func() error { return s.SetParentLocal(ctx, "t2", "t1", Position{}, now) },
+		"under its subtask":     func() error { return s.SetParentLocal(ctx, "t2", "t1a", Position{}, now) },
+		"its subtask moved out": func() error { return s.SetParentLocal(ctx, "t1a", "t2", Position{}, now) },
+		"next to it":            func() error { return s.MoveTaskAtLocal(ctx, "t2", "p1", "s1", Position{Before: "t1"}, now) },
+		"it moved":              func() error { return s.MoveTaskAtLocal(ctx, "t1", "p1", "s2", Position{}, now) },
+	} {
+		if err := f(); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	if got := opKindsOf(t, s); len(got) != 1 {
+		t.Errorf("outbox %v", got)
+	}
+}

@@ -139,6 +139,9 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 		return errors.New("前と後は、どちらか一方だけ指定してください")
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
+		if err := refuseDeleted(ctx, tx, gid, pos.Before, pos.After); err != nil {
+			return err
+		}
 		for _, anchor := range []string{pos.Before, pos.After} {
 			if anchor == "" {
 				continue
