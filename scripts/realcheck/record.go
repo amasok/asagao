@@ -26,6 +26,7 @@ type Created struct {
 	ProjectTemplates []string
 	Goals            []string
 	Portfolios       []string
+	Briefs           []string
 	Jobs             []string // duplicate / template jobs: cleanup waits for them
 	// Deleted are "kind/gid" the run deleted itself (a deleted goal answers 403, not 404).
 	Deleted []string
@@ -95,6 +96,8 @@ func (c *Created) guardWrite(method, path string, fields []string) error {
 			list = c.Goals
 		case "portfolios":
 			list = c.Portfolios
+		case "project_briefs":
+			list = c.Briefs
 		}
 		if slices.Contains(list, parts[1]) {
 			return nil
@@ -147,6 +150,8 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 		fields = "parent.gid"
 	case "project_templates":
 		fields = "name"
+	case "project_briefs":
+		fields = "project.gid"
 	default:
 		fields = "name,workspace.gid"
 	}
@@ -158,6 +163,9 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 		Task *struct {
 			GID string `json:"gid"`
 		} `json:"task"`
+		Project *struct {
+			GID string `json:"gid"`
+		} `json:"project"`
 		Name      string `json:"name"`
 		Workspace struct {
 			GID string `json:"gid"`
@@ -175,6 +183,11 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 			return true, ""
 		}
 		return false, kind + " not on our project"
+	case "project_briefs":
+		if o.Project != nil && slices.Contains(c.Projects, o.Project.GID) {
+			return true, ""
+		}
+		return false, "brief not on our project"
 	case "time_tracking_entries":
 		if o.Task != nil && slices.Contains(c.Tasks, o.Task.GID) {
 			return true, ""
@@ -304,6 +317,7 @@ func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	del("time_tracking_entries", c.TimeEntries)
 	del("allocations", c.Allocations)
 	del("project_templates", c.ProjectTemplates)
+	del("project_briefs", c.Briefs)
 	del("portfolios", c.Portfolios)
 	del("goals", c.Goals)
 	del("projects", c.Projects)
@@ -322,6 +336,10 @@ func (c *Created) guardBody(method, path string, body M) error {
 	}
 	ok := false
 	switch {
+	case method == "POST" && len(parts) == 3 && parts[0] == "projects" && parts[2] == "project_briefs":
+		ok = ours(c.Projects, 1)
+	case method == "PUT" && len(parts) == 2 && parts[0] == "project_briefs":
+		ok = ours(c.Briefs, 1)
 	case method == "POST" && path == "/tasks":
 		// a task asagao has not seen (the remote search of #36): only in our projects
 		projects, _ := data["projects"].([]string)
