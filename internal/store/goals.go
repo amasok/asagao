@@ -276,6 +276,9 @@ func (s *Store) ListTimePeriods(ctx context.Context) ([]readmodel.TimePeriodView
 // resolveNamed finds the row of table whose gid or name is arg, else the only one whose
 // name contains it (what names it in errors).
 func (s *Store) resolveNamed(ctx context.Context, table, where, what, arg string) (string, error) {
+	if strings.TrimSpace(arg) == "" { // a part that is empty (or blank) would name every row
+		return "", fmt.Errorf("%s %q: %w", what, arg, ErrNotFound)
+	}
 	cond := ""
 	if where != "" {
 		cond = " AND " + where

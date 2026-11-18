@@ -66,6 +66,14 @@ func TestResolveGoalAndPortfolio(t *testing.T) {
 	if got, err := s.ResolvePortfolio(ctx, "pf2"); err != nil || got != "pf2" {
 		t.Errorf("gid of a nested one: %q, %v", got, err)
 	}
+	for _, blank := range []string{"", " ", "\t"} {
+		if g, err := s.ResolveGoal(ctx, blank); !errors.Is(err, ErrNotFound) {
+			t.Errorf("blank %q names %q, %v", blank, g, err)
+		}
+		if p, err := s.ResolvePortfolio(ctx, blank); !errors.Is(err, ErrNotFound) {
+			t.Errorf("blank portfolio %q names %q, %v", blank, p, err)
+		}
+	}
 }
 
 // Nested portfolios are kept while a portfolio of mine holds them, and go with it; my
