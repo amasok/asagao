@@ -38,6 +38,7 @@ const (
 	promptTimeEdit         // change a time tracking entry
 	promptTemplateProject  // name of a project made from a template (templates.go)
 	promptDuplicateProject // name of a project's copy
+	promptFieldOption      // a new option of an enum field (projectfields.go)
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -177,6 +178,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, cmd, true
 	}
 	if cmd, ok := m.updateSectionTags(msg); ok {
+		return m, cmd, true
+	}
+	if cmd, ok := m.updateProjectFields(msg); ok {
 		return m, cmd, true
 	}
 	if cmd, ok := m.updateTimeTracking(msg); ok {
@@ -388,6 +392,8 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.createSubtask(m.subtaskParent, value)
 		case promptNewTag:
 			return m, m.submitNewTag(value)
+		case promptFieldOption:
+			return m, m.submitNewOption(value)
 		case promptDuplicate:
 			return m, m.duplicate(value)
 		case promptAttach:

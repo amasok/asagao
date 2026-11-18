@@ -137,6 +137,16 @@ func (f *relationStore) ParseCustomFieldValue(_ context.Context, fieldGID string
 	return fmt.Sprintf("parsed(%v)", input), nil
 }
 
+func (f *relationStore) AddEnumOptionLocal(_ context.Context, fieldGID, name string, _ time.Time) (string, bool, error) {
+	return "opt-" + name, true, f.write("AddEnumOptionLocal", "%s %s", fieldGID, name)
+}
+
+func (f *relationStore) SyncState(context.Context, string) (string, error) { return "", nil }
+
+func (f *relationStore) TaskWorkspace(context.Context, string) (string, error) { return "w1", nil }
+
+func (f *relationStore) DefaultWorkspace(context.Context) (string, error) { return "w1", nil }
+
 func (f *relationStore) SetCustomFieldLocal(_ context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error) {
 	return "shown", f.write("SetCustomFieldLocal", "%s %s %v at=%s", taskGID, fieldGID, value, now.Format(time.TimeOnly))
 }
@@ -255,7 +265,7 @@ func TestRelationsApplyOrderAndClock(t *testing.T) {
 		Projects:     []Link{{"p-work", true}, {"p-home", false}},
 		Dependencies: []Dependency{{"t-1", "t-2", true}, {"t-3", "t-1", false}},
 	}
-	fields := []FieldValue{{readmodel.CustomFieldView{GID: "f-est"}, 3.5}, {readmodel.CustomFieldView{GID: "f-pri"}, nil}}
+	fields := []FieldValue{{Field: readmodel.CustomFieldView{GID: "f-est"}, Value: 3.5}, {Field: readmodel.CustomFieldView{GID: "f-pri"}}}
 	if err := r.Apply(context.Background(), "t-1", e, fields); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +295,7 @@ func TestRelationsApplyStopsAtTheFirstError(t *testing.T) {
 				Followers: []Link{{"u-sato", true}, {"u-me", true}}, Projects: []Link{{"p-work", true}, {"p-home", true}},
 				Dependencies: []Dependency{{"t-1", "t-2", true}, {"t-1", "t-3", true}},
 			}
-			fields := []FieldValue{{readmodel.CustomFieldView{GID: "f-est"}, 1.0}, {readmodel.CustomFieldView{GID: "f-pri"}, nil}}
+			fields := []FieldValue{{Field: readmodel.CustomFieldView{GID: "f-est"}, Value: 1.0}, {Field: readmodel.CustomFieldView{GID: "f-pri"}}}
 			if err := r.Apply(context.Background(), "t-1", e, fields); !errors.Is(err, errWrite) {
 				t.Fatalf("err = %v, want the store's", err)
 			}
@@ -308,7 +318,7 @@ func TestRelationsResolveFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	// sorted by name: 優先度 (U+512A) before 見積もり (U+898B)
-	want := []FieldValue{{st.fields["優先度"], "parsed(<nil>)"}, {st.fields["見積もり"], "parsed(3)"}}
+	want := []FieldValue{{Field: st.fields["優先度"], Value: "parsed(<nil>)"}, {Field: st.fields["見積もり"], Value: "parsed(3)"}}
 	if len(got) != 2 || got[0].Field.GID != want[0].Field.GID || got[0].Value != want[0].Value || got[1].Field.GID != want[1].Field.GID || got[1].Value != want[1].Value {
 		t.Errorf("got %+v, want %+v", got, want)
 	}

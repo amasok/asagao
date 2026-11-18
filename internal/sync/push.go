@@ -394,6 +394,9 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	if wait, err := s.waitsForSection(ctx, op); err != nil || wait {
 		return wait, err
 	}
+	if wait, err := s.waitsForField(ctx, op); err != nil || wait {
+		return wait, err
+	}
 	if op.Kind == outbox.KindDeleteSection { // Asana deletes only an empty section
 		if wait, err := s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID); err != nil || wait {
 			return wait, err
@@ -410,7 +413,8 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 			}
 		}
 	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject:
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject,
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
 		return false, nil
 	case outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return s.waitsForTag(ctx, op.TaskGID)
@@ -435,6 +439,24 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 // workspace's plan lacks the feature (402) also hides that feature from now on.
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	out, err := s.sendOp(ctx, op)
+	if isForbidden(err) {
+		err = s.fieldForbidden(ctx, op, err)
+	}
+	if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanCustomFields { // recorded per workspace
+		ws, _ := op.Payload["workspace"].(string)
+		if ws == "" {
+			ws, _ = s.Store.DefaultWorkspace(ctx)
+		}
+		if err == nil {
+			return out, s.clearPlanRefusal(ctx, feature, ws)
+		}
+		if refused, rerr := s.recordPlanRefusal(ctx, feature, ws, err); rerr != nil {
+			return out, rerr
+		} else if refused {
+			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
+		}
+		return out, err
+	}
 	if model.IsPaymentRequired(err) {
 		if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanTimeTracking {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
@@ -470,6 +492,10 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushMoveMySection(ctx, op)
 	case outbox.KindUpdateProject:
 		return s.pushUpdateProject(ctx, op)
+	case outbox.KindCreateEnumOption:
+		return s.pushCreateEnumOption(ctx, op)
+	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		err = s.pushFieldSetting(ctx, op)
 	case outbox.KindCreateTask:
 		return s.pushCreate(ctx, op)
 	case outbox.KindAddComment:
@@ -612,7 +638,8 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 			return ferr
 		}
 	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag:
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag,
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}

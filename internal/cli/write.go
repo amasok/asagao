@@ -429,13 +429,23 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 				return "", "", fmt.Errorf("値を指定してください（空にするなら --clear）")
 			}
 			relations := relationUseCases(st)
-			value, err := relations.ParseFieldValue(ctx, f.GID, input)
+			fv := usecase.FieldValue{Field: f}
+			if addOption, _ := cmd.Flags().GetBool("add-option"); addOption && input != nil {
+				if fv, err = relations.FieldOptions().ParseAdding(ctx, args[0], f, input); err != nil {
+					return "", "", err
+				}
+			} else if fv.Value, err = relations.ParseFieldValue(ctx, f.GID, input); err != nil {
+				if errors.Is(err, readmodel.ErrNotFound) && (f.Type == readmodel.CFEnum || f.Type == readmodel.CFMultiEnum) && f.CanAddOption {
+					return "", "", fmt.Errorf("%w（選択肢に足して設定するなら --add-option）", err)
+				}
+				return "", "", err
+			}
+			display, err := relations.FieldOptions().Set(ctx, args[0], fv)
 			if err != nil {
 				return "", "", err
 			}
-			display, err := relations.SetFieldHere(ctx, args[0], f.GID, value)
-			if err != nil {
-				return "", "", err
+			if len(fv.NewOptions) > 0 {
+				return args[0], fmt.Sprintf("「%s」を「%s」にしました（選択肢 %s を足しました。同期のときに Asana に送ります）", f.Name, display, strings.Join(fv.NewOptions, "、")), nil
 			}
 			if display == "" {
 				return args[0], fmt.Sprintf("「%s」を空にしました", f.Name), nil
@@ -443,11 +453,13 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			return args[0], fmt.Sprintf("「%s」を「%s」にしました", f.Name, display), nil
 		})
 	field.Flags().Bool("clear", false, "値を空にする")
+	field.Flags().Bool("add-option", false, "選択式のフィールドに無い選択肢なら、足して設定する（名前が完全に一致するものだけ既存とみなす）")
 	field.Example = `  asagao task field 1203455468597469 優先度 高
   asagao task field 1203455468597469 見積もり 3.5
   asagao task field 1203455468597469 ラベル "バグ,UI"     # 複数選択はカンマ区切り
   asagao task field 1203455468597469 締切 +7d
-  asagao task field 1203455468597469 優先度 --clear`
+  asagao task field 1203455468597469 優先度 --clear
+  asagao task field 1203455468597469 優先度 最優先 --add-option   # 無ければ選択肢に足す`
 	depend := a.writeCommand("depend <gid> [--add 待つタスク]... [--remove 待つタスク]... [--add-dependent タスク]... [--remove-dependent タスク]...",
 		"依存関係を追加 / 解除する（待つタスク・待たれるタスクを gid で）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {

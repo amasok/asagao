@@ -40,6 +40,15 @@ const (
 	KeyPlanUnavailable = "plan_unavailable:"
 	// KeyUserTaskList + workspace gid: the gid of my My Tasks list there.
 	KeyUserTaskList = "user_task_list:"
+	// KeyWorkspaceCustomFields + workspace gid: when the workspace's custom fields were last
+	// fetched (to add one to a project).
+	KeyWorkspaceCustomFields = "workspace_custom_fields:"
+	// KeyFieldOptionsLocked + field gid: when Asana refused to add an option to the field
+	// (403: e.g. its options are locked, or not ours to change). Adding is not offered.
+	KeyFieldOptionsLocked = "field_options_locked:"
+	// KeyProjectFieldsLocked + project gid: when Asana refused to add or remove a custom
+	// field of the project (403). It is not offered.
+	KeyProjectFieldsLocked = "project_fields_locked:"
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
@@ -89,6 +98,12 @@ const (
 	PlanPortfolios = "portfolios" // portfolios
 )
 
+// Features of #37 that a plan may lack (PlanKey).
+const (
+	// PlanCustomFields: adding options to custom fields and custom fields to projects.
+	PlanCustomFields = "custom_fields"
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -100,6 +115,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanMySection
 	case outbox.KindAddTimeEntry, outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
 		return PlanTimeTracking
+	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		return PlanCustomFields
 	}
 	return ""
 }
@@ -116,6 +133,7 @@ func PlanUnavailableMessage(feature string) string {
 		PlanCustomID:     "タスクの ID (custom ID) での取得",
 		PlanGoals:        "ゴール",
 		PlanPortfolios:   "ポートフォリオ",
+		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
@@ -133,6 +151,8 @@ const (
 	ResultSection = "section:"
 	// ResultTimeEntry maps a time tracking entry recorded offline to the one Asana created.
 	ResultTimeEntry = "time:"
+	// ResultEnumOption maps a custom field option created offline to the one Asana created.
+	ResultEnumOption = "enum_option:"
 )
 
 // ResetResult says what a reset with a backup did.

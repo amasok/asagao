@@ -648,6 +648,14 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := undoSectionOp(ctx, tx, op); err != nil {
 			return err
 		}
+	case OpCreateEnumOption:
+		if err := undoCreateEnumOption(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpAddFieldSetting, OpRemoveFieldSetting:
+		if err := undoFieldSettingOp(ctx, tx, op); err != nil {
+			return err
+		}
 	case OpUpdateProject:
 		// Restore the values from before the local edit.
 		if err := applyProjectFields(ctx, tx, op.TaskGID, op.Base); err != nil {
