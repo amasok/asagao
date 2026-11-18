@@ -30,6 +30,9 @@ CI は PR のときだけ ubuntu で `go vet`・`go test`・仕様の検証を�
 ## 守ること
 
 - **本物の Asana に書き込まない。** テストは `httptest` の偽サーバーを使う。
+  - 例外は、本物での確認 (#31・#47) のテスト用ワークスペース (gid `1220646164450270`) だけ。必ず `~/asagao-test/asagao` (設定・データ・トークンを `~/asagao-test` に分けたもの) を通す。
+  - 書き込むのは、確認のために作ったプロジェクトとその中のものだけ。ほかのユーザーのものには触らない。作ったものは最後に消す。
+  - 書き込みは無料プランで 150 回/分に収める。ふだんのトークン・keychain・`~/.config/asagao` には触らない。
 - **本物の `~/.local/share/asagao/store.db` を、作業中のブランチのビルドで開かない。** スキーマが進んで、元に戻せなくなる。動かして確かめるときは `XDG_DATA_HOME` と `XDG_CONFIG_HOME` を一時ディレクトリに向ける。
 - **マイグレーション** は `internal/store/schema.go` の末尾に足す。並行するブランチで番号がぶつかるので、取り込む順番はリーダーが決める。
 - **Asana から来た文字列は termsafe を通す。** 主な通り道は 3 つ: store の driver ラッパー (`termsafe_driver.go`)、JSON 列をデコードする場所 (`termsafe.Unmarshal`)、CLI の writer。新しく表示やエラーメッセージに出すときも通す。
