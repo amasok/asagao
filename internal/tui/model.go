@@ -270,9 +270,10 @@ type Model struct {
 	depTask       readmodel.TaskSummary // task for promptDepSearch
 	depDependents bool
 	// extras.go
-	dupSource      string // task to duplicate (promptDuplicate)
-	attachTask     string // task to attach a file to (promptAttach)
-	sectionProject string // project whose sections to choose from (detail project line)
+	dupSource      string        // task to duplicate (promptDuplicate)
+	attachTask     string        // task to attach a file to (promptAttach)
+	sectionProject string        // project whose sections to choose from (detail project line)
+	tmpl           templateState // templates.go
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -516,6 +517,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateProjects(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateTemplates(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateSearches(msg); ok {
 		return m, cmd
 	}
@@ -664,7 +668,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err == nil {
 			m.lastSync = msg.at
-			cmds = append(cmds, m.loadScopes(), m.loadTasks())
+			cmds = append(cmds, m.loadScopes(), m.loadTasks(), m.prefetchTemplates())
 			if gid := m.detailGID(); gid != "" {
 				cmds = append(cmds, m.loadDetail(gid), m.debounceDetail(gid))
 			}
@@ -737,7 +741,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "space":
 		m.leader = true
 		m.menuPage = 0
-		return m, nil
+		return m, m.prefetchTemplates() // the menu offers templates only when there are some
 	case "?":
 		m.showHelp = true
 		return m, nil

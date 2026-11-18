@@ -82,6 +82,14 @@ type AsanaAPI interface {
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
 	Users(ctx context.Context, workspaceGID string) ([]model.User, error)
 	Workspaces(ctx context.Context) ([]model.Workspace, error)
+
+	// Templates and jobs (#2).
+	TaskTemplates(ctx context.Context, projectGID string) ([]model.TaskTemplate, error)
+	ProjectTemplates(ctx context.Context, workspaceGID, teamGID string) ([]model.ProjectTemplate, error)
+	InstantiateTask(ctx context.Context, templateGID, name string) (*model.Job, error)
+	InstantiateProject(ctx context.Context, templateGID string, in model.ProjectFromTemplate) (*model.Job, error)
+	DuplicateProject(ctx context.Context, projectGID, name, teamGID string) (*model.Job, error)
+	Job(ctx context.Context, gid string) (*model.Job, error)
 }
 
 // LocalStore is the part of the local cache that syncing uses. *store.Store satisfies it;

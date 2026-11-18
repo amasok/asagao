@@ -31,6 +31,11 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
+		for _, f := range []string{readmodel.PlanTaskTemplates, readmodel.PlanProjectTemplates} {
+			if !app.TemplatesOffered(m.ctx, st, f, m.deps.Now()) {
+				off[f] = true
+			}
+		}
 		return planLoadedMsg{off: off}
 	}
 }

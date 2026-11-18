@@ -58,6 +58,11 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
+	// PlanTaskTemplates and PlanProjectTemplates: making tasks and projects from
+	// templates (#2). Unlike the others they are offered again a day after the 402
+	// (app.TemplateRecheck), since a trial or an upgrade may change them.
+	PlanTaskTemplates    = "task_templates"
+	PlanProjectTemplates = "project_templates"
 )
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
@@ -76,9 +81,11 @@ func PlanFeatureOf(kind string) string {
 // PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
 func PlanUnavailableMessage(feature string) string {
 	what := map[string]string{
-		PlanSections:  "セクションの作成・削除・並べ替え",
-		PlanTags:      "タグの名前・色の変更と削除",
-		PlanMySection: "マイタスクのセクション",
+		PlanSections:         "セクションの作成・削除・並べ替え",
+		PlanTags:             "タグの名前・色の変更と削除",
+		PlanMySection:        "マイタスクのセクション",
+		PlanTaskTemplates:    "タスクテンプレート",
+		PlanProjectTemplates: "プロジェクトテンプレート",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
