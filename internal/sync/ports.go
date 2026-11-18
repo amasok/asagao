@@ -19,6 +19,7 @@ type AsanaAPI interface {
 	ClockKnown() bool
 
 	AddComment(ctx context.Context, taskGID, text, htmlText string) (*model.Story, error)
+	CreateTimeEntry(ctx context.Context, taskGID string, minutes int, enteredOn string) (*model.TimeEntry, error)
 	AddDependencies(ctx context.Context, taskGID string, deps []string) error
 	AddFollowers(ctx context.Context, taskGID string, users []string) error
 	AddMembers(ctx context.Context, projectGID string, users []string) (*model.Project, error)
@@ -48,6 +49,7 @@ type AsanaAPI interface {
 	RemoveCustomFieldSetting(ctx context.Context, projectGID, fieldGID string) error
 	DeleteAttachment(ctx context.Context, gid string) error
 	DeleteStory(ctx context.Context, gid string) error
+	DeleteTimeEntry(ctx context.Context, gid string) error
 	DeleteTask(ctx context.Context, taskGID string) error
 	Dependencies(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	Dependents(ctx context.Context, taskGID string) ([]model.TaskRef, error)
@@ -55,10 +57,16 @@ type AsanaAPI interface {
 	Events(ctx context.Context, resource, token string) (model.EventPage, error)
 	InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos model.Position) error
 	FavoriteProjects(ctx context.Context, workspaceGID string) ([]model.Ref, error)
+	Goal(ctx context.Context, gid string) (*model.Goal, error)
+	GoalRelationships(ctx context.Context, goalGID string) ([]model.GoalRelationship, error)
+	Goals(ctx context.Context, workspaceGID string) ([]model.Goal, error)
 	MarkNotifications(ctx context.Context, workspaceGID string, gids []string, read bool) (failed []string, err error)
 	Me(ctx context.Context) (*model.User, error)
 	MyTeams(ctx context.Context, workspaceGID string) ([]model.Team, error)
 	Notifications(ctx context.Context, workspaceGID string, max int) ([]model.Notification, error)
+	Portfolio(ctx context.Context, gid string) (*model.Portfolio, error)
+	PortfolioItems(ctx context.Context, portfolioGID string) ([]model.PortfolioItem, error)
+	Portfolios(ctx context.Context, workspaceGID string) ([]model.Portfolio, error)
 	Project(ctx context.Context, gid string) (*model.Project, error)
 	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
@@ -73,20 +81,39 @@ type AsanaAPI interface {
 	SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*model.Project, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
 	Stories(ctx context.Context, taskGID string) ([]model.Story, error)
+	TimeEntries(ctx context.Context, taskGID string) ([]model.TimeEntry, error)
+	TimeEntry(ctx context.Context, gid string) (*model.TimeEntry, error)
 	Subtasks(ctx context.Context, taskGID string) ([]model.Task, error)
 	Tags(ctx context.Context, workspaceGID string) ([]model.Tag, error)
 	Task(ctx context.Context, gid string) (*model.Task, error)
 	TaskCounts(ctx context.Context, projectGID string) (*model.TaskCounts, error)
 	TaskDetail(ctx context.Context, gid string) (*model.Task, error)
+	TimePeriods(ctx context.Context, workspaceGID string) ([]model.TimePeriod, error)
 	Tasks(ctx context.Context, tq model.TaskQuery) ([]model.Task, error)
 	TasksByGID(ctx context.Context, gids []string) (tasks []model.Task, gone []string, err error)
 	UpdateProject(ctx context.Context, gid string, changes map[string]any) (*model.Project, error)
 	UpdateSection(ctx context.Context, gid, name string) (*model.Section, error)
 	UpdateStory(ctx context.Context, gid, text, htmlText string) (*model.Story, error)
+	UpdateTimeEntry(ctx context.Context, gid string, minutes int, enteredOn string) (*model.TimeEntry, error)
 	UpdateTask(ctx context.Context, gid string, fields map[string]any) (*model.Task, error)
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
 	Users(ctx context.Context, workspaceGID string) ([]model.User, error)
 	Workspaces(ctx context.Context) ([]model.Workspace, error)
+
+	// Finding what the cache does not have (search.go, Issue #36).
+	SearchTasks(ctx context.Context, workspaceGID, text string, completed *bool, limit int) ([]model.Ref, error)
+	TypeaheadTasks(ctx context.Context, workspaceGID, query string, count int) ([]model.Ref, error)
+	TypeaheadUsers(ctx context.Context, workspaceGID, query string, count int) ([]model.User, error)
+	TypeaheadTags(ctx context.Context, workspaceGID, query string, count int) ([]model.Tag, error)
+	TaskByCustomID(ctx context.Context, workspaceGID, customID string) (*model.Task, error)
+
+	// Templates and jobs (#2).
+	TaskTemplates(ctx context.Context, projectGID string) ([]model.TaskTemplate, error)
+	ProjectTemplates(ctx context.Context, workspaceGID, teamGID string) ([]model.ProjectTemplate, error)
+	InstantiateTask(ctx context.Context, templateGID, name string) (*model.Job, error)
+	InstantiateProject(ctx context.Context, templateGID string, in model.ProjectFromTemplate) (*model.Job, error)
+	DuplicateProject(ctx context.Context, projectGID, name, teamGID string) (*model.Job, error)
+	Job(ctx context.Context, gid string) (*model.Job, error)
 }
 
 // LocalStore is the part of the local cache that syncing uses. *store.Store satisfies it;
@@ -94,6 +121,7 @@ type AsanaAPI interface {
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
 	ApplyStory(ctx context.Context, gid, text, htmlText string) error
+	ApplyTimeEntry(ctx context.Context, e model.TimeEntry) error
 	ApplyTag(ctx context.Context, t model.Tag) error
 	ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error
 	CompleteCreateSection(ctx context.Context, id int64, local, real string) error
@@ -104,6 +132,7 @@ type LocalStore interface {
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
+	CompleteTimeEntry(ctx context.Context, id int64, localGID, taskGID string, e model.TimeEntry) error
 	CompleteDelete(ctx context.Context, id int64, gid string) error
 	TaskDeletesQueuedIn(ctx context.Context, sectionGID string) (bool, error)
 	// RemoveAttachmentFile deletes a local attachment file, only inside the store's
@@ -116,6 +145,8 @@ type LocalStore interface {
 	CountAttempt(ctx context.Context, id int64, now time.Time) error
 	CreateQueued(ctx context.Context, gid string) (bool, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
+	DeleteGoal(ctx context.Context, gid string) error
+	DeletePortfolio(ctx context.Context, gid string) error
 	DeleteGoneTasks(ctx context.Context, gids []string) (int64, error)
 	DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]readmodel.Discard, error)
 	DiscardGoneOp(ctx context.Context, id int64, reason string, now time.Time) (readmodel.Discard, error)
@@ -134,6 +165,7 @@ type LocalStore interface {
 	OutboxCounts(ctx context.Context) (pending, conflict, failed int, err error)
 	PendingNotificationMarks(ctx context.Context, op outbox.Op, limit int) ([]outbox.Op, error)
 	PendingOps(ctx context.Context) ([]outbox.Op, error)
+	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
 	PruneProjects(ctx context.Context, workspaceGID string, keep []model.Project) error
 	PruneResults(ctx context.Context, now time.Time) (int, error)
 	PruneTasks(ctx context.Context, keep map[string]bool) (int64, error)
@@ -147,8 +179,10 @@ type LocalStore interface {
 	ReplaceAttachments(ctx context.Context, taskGID string, atts []model.Attachment) error
 	ReplaceDependencies(ctx context.Context, taskGID string, deps, dependents []model.TaskRef) error
 	ReplaceFavoriteProjects(ctx context.Context, workspaceGID string, favorites []model.Ref) error
+	ReplaceGoals(ctx context.Context, workspaceGID string, goals []model.Goal) error
 	ReplaceLocalTagGID(ctx context.Context, local, real string) error
 	ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error
+	ReplacePortfolios(ctx context.Context, workspaceGID string, ps []model.Portfolio) error
 	ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error
 	ReplaceWorkspaceCustomFields(ctx context.Context, workspaceGID string, fields []model.CustomField) error
 	CompleteCreateEnumOption(ctx context.Context, id int64, local string, real model.EnumOption) error
@@ -157,15 +191,20 @@ type LocalStore interface {
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error
+	ReplaceTimeEntries(ctx context.Context, taskGID string, entries []model.TimeEntry, fetchedAt time.Time) error
 	ReplaceTeams(ctx context.Context, workspaceGID string, teams []model.Team) error
+	ReplaceTimePeriods(ctx context.Context, workspaceGID string, periods []model.TimePeriod) error
 	SafeToResend(ctx context.Context, op outbox.Op) (bool, error)
 	SaveProjectOverview(ctx context.Context, projectGID string, counts *model.TaskCounts, briefState string, brief *model.ProjectBrief, now time.Time) error
+	SaveGoal(ctx context.Context, g model.Goal, supports []model.GoalRelationship, now time.Time) error
+	SavePortfolio(ctx context.Context, p model.Portfolio, items []model.PortfolioItem, now time.Time) error
 	SetAttachmentPath(ctx context.Context, gid, path string) error
 	SetInboxState(ctx context.Context, st readmodel.InboxState) error
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
 	SetProjectArchivedLocal(ctx context.Context, projectGID string, archived bool) error
 	SetSyncState(ctx context.Context, key, value string) error
 	SyncState(ctx context.Context, key string) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error
 	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error
@@ -174,6 +213,10 @@ type LocalStore interface {
 	UpsertUser(ctx context.Context, u model.User) error
 	UpsertUsers(ctx context.Context, users []model.User) error
 	UpsertWorkspaces(ctx context.Context, ws []model.Workspace) error
+	// AddUsers and AddTags cache users and tags found by name that the cache lacks, and
+	// return how many they added (search.go).
+	AddUsers(ctx context.Context, users []model.User) (int, error)
+	AddTags(ctx context.Context, tags []model.Tag) (int, error)
 }
 
 // RichText rewrites rich text queued for a comment or a status update before #63 as it is

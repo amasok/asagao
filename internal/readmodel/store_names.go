@@ -52,6 +52,20 @@ const (
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
+	// KeyTimeEntries + task gid: when the task's time tracking entries were last fetched.
+	KeyTimeEntries = "time_entries:"
+	// KeyCustomID + a task's custom ID ("ENG-123"): the gid Asana gave for it, so that a
+	// commit can name the task while offline once it was found (Issue #36).
+	KeyCustomID = "custom_id:"
+)
+
+// Keys of the sync state for goals and portfolios (#7).
+const (
+	// KeyGoals + workspace gid: when the goals and time periods of the workspace were last
+	// fetched.
+	KeyGoals = "goals:"
+	// KeyPortfolios + workspace gid: when my portfolios of the workspace were last fetched.
+	KeyPortfolios = "portfolios:"
 )
 
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not
@@ -67,6 +81,25 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
+	PlanSearch    = "search"     // the search API (premium only): typeahead is used instead
+	PlanTypeahead = "typeahead"  // typeahead: names and tasks are then looked up in the cache only
+	PlanCustomID  = "custom_id"  // tasks by custom ID: only the gids found before are used
+)
+
+// Features of #6 that a plan may lack (PlanKey).
+const (
+	// PlanTimeTracking is the time tracking entries of tasks (#6).
+	PlanTimeTracking = "time_tracking"
+)
+
+// Features of #7 that a plan may lack (PlanKey).
+const (
+	PlanGoals      = "goals"      // goals and time periods
+	PlanPortfolios = "portfolios" // portfolios
+)
+
+// Features of #37 that a plan may lack (PlanKey).
+const (
 	// PlanCustomFields: adding options to custom fields and custom fields to projects.
 	PlanCustomFields = "custom_fields"
 )
@@ -80,6 +113,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanTags
 	case outbox.KindMoveMySection:
 		return PlanMySection
+	case outbox.KindAddTimeEntry, outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
+		return PlanTimeTracking
 	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
 		return PlanCustomFields
 	}
@@ -92,6 +127,12 @@ func PlanUnavailableMessage(feature string) string {
 		PlanSections:     "セクションの作成・削除・並べ替え",
 		PlanTags:         "タグの名前・色の変更と削除",
 		PlanMySection:    "マイタスクのセクション",
+		PlanTimeTracking: "タイムトラッキング (作業時間の記録)",
+		PlanSearch:       "タスクの検索",
+		PlanTypeahead:    "名前での検索 (typeahead)",
+		PlanCustomID:     "タスクの ID (custom ID) での取得",
+		PlanGoals:        "ゴール",
+		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
@@ -108,6 +149,8 @@ const (
 	ResultTag = "tag:"
 	// ResultSection maps a section created offline to the section Asana created.
 	ResultSection = "section:"
+	// ResultTimeEntry maps a time tracking entry recorded offline to the one Asana created.
+	ResultTimeEntry = "time:"
 	// ResultEnumOption maps a custom field option created offline to the one Asana created.
 	ResultEnumOption = "enum_option:"
 )

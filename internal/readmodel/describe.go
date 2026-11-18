@@ -10,6 +10,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/timetrack"
 )
 
 // Discard is a local change dropped because its target was deleted in Asana.
@@ -261,6 +262,12 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("コメント「%s」の削除", clip(str("text"), 40))
 	case outbox.KindDeleteAttachment:
 		return fmt.Sprintf("添付「%s」の削除", str("name"))
+	case outbox.KindAddTimeEntry:
+		return fmt.Sprintf("作業時間 %s (%s) の記録", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
+	case outbox.KindUpdateTimeEntry:
+		return fmt.Sprintf("作業時間を %s (%s) に変更", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
+	case outbox.KindDeleteTimeEntry:
+		return fmt.Sprintf("作業時間 %s (%s) の削除", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
 	case outbox.KindAddDependency:
 		return fmt.Sprintf("「%s」を待つ", dependencyName(op))
 	case outbox.KindRemoveDependency:
@@ -419,4 +426,17 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + "…"
+}
+
+// intOf reads a whole number from an outbox payload (JSON numbers decode as float64).
+func intOf(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	}
+	return 0
 }

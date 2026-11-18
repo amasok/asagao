@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: 操作の種類
-outbox の操作の種類は 33 個 (MUST): `update_task`、`create_task`、`add_comment`、`update_story`、`delete_story`、`move_task`、`move_my_section`、`delete_task`、`set_parent`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`delete_attachment`、`set_custom_field`、`create_enum_option`、`add_custom_field_setting`、`remove_custom_field_setting`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_section`、`delete_section`、`insert_section`、`update_tag`、`delete_tag`、`create_status`、`mark_notification`、`update_project`。
+outbox の操作の種類は 36 個 (MUST): `update_task`、`create_task`、`add_comment`、`update_story`、`delete_story`、`move_task`、`move_my_section`、`delete_task`、`set_parent`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`delete_attachment`、`set_custom_field`、`add_time_entry`、`update_time_entry`、`delete_time_entry`、`create_enum_option`、`add_custom_field_setting`、`remove_custom_field_setting`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_section`、`delete_section`、`insert_section`、`update_tag`、`delete_tag`、`create_status`、`mark_notification`、`update_project`。
 根拠: internal/domain/outbox/outbox.go (種類の定数。store の Op* はその別名)
 
 #### Scenario: タスクにタグを付ける

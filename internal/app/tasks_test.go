@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
-var errNotFound = errors.New("not found")
+// errNotFound is the store's "not in the cache" (Tasks looks such a user up in Asana).
+var errNotFound = readmodel.ErrNotFound
 
 // fakeStore records the calls Create makes, in order, and resolves names from its maps.
 type fakeStore struct {

@@ -26,6 +26,8 @@ import (
 type writeResult struct {
 	TaskGID   string `json:"task_gid,omitempty"`
 	CommentID string `json:"comment_gid,omitempty"`
+	// TimeEntryID is the time tracking entry `time add` recorded (a local gid until sent).
+	TimeEntryID string `json:"time_entry_gid,omitempty"`
 	// SectionGID is the section `section create` made (its Asana gid once sent).
 	SectionGID string           `json:"section_gid,omitempty"`
 	Sent       bool             `json:"sent"`
@@ -179,12 +181,15 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 type createOpts struct {
 	name, project, section, due, assignee, notes, parent string
 	tags                                                 []string
+	// names looks an assignee or (with --quick) a tag the cache lacks up in Asana (nil:
+	// the cache only).
+	names usecase.NameFinder
 }
 
 // createTask resolves every option and then creates the task locally. Nothing is written
 // when an option is invalid.
 func createTask(ctx context.Context, st Store, o createOpts, now time.Time) (string, error) {
-	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: o.names}
 	gid, err := tasks.Create(ctx, usecase.CreateTaskInput{
 		Name: o.name, Parent: o.parent, Project: o.project, Section: o.section,
 		Due: o.due, Assignee: o.assignee, Notes: o.notes, Tags: o.tags,
@@ -264,6 +269,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 				}
 			}
 			now := time.Now()
+			o.names = a.nameFinder(st)
 			var q *usecase.QuickAddResult
 			if quick {
 				if q, err = readQuickAdd(ctx, st, &o, now); err != nil {
@@ -526,6 +532,7 @@ func (a *app) taskAssignCmd() *cobra.Command {
 			}
 			defer st.Close()
 			tasks := taskUseCases(st)
+			tasks.Names = a.nameFinder(st)
 			if _, err := tasks.Update(ctx, args[0], usecase.UpdateTaskInput{Assignee: &args[1]}); err != nil {
 				return fieldErr(err)
 			}

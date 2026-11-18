@@ -55,11 +55,12 @@ type action struct {
 	group       string
 	label       string
 	ctx         keyCtx
-	needTask    bool   // needs a selected (or shown) task
-	needProject bool   // needs a project to be open
-	needInbox   bool   // only in the inbox (notifications)
-	plan        string // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
-	bulk        bool   // also acts on the marked tasks (bulk.go), so usable with them and no selection
+	needTask    bool                // needs a selected (or shown) task
+	needProject bool                // needs a project to be open
+	needInbox   bool                // only in the inbox (notifications)
+	plan        string              // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
+	bulk        bool                // also acts on the marked tasks (bulk.go), so usable with them and no selection
+	ready       func(m *Model) bool // offered only when it returns true (nil: always)
 	run         func(m *Model) tea.Cmd
 }
 
@@ -92,12 +93,14 @@ func (m *Model) actions() []action {
 		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
 		{id: "set_parent", key: "p", group: groupTask, label: "親タスクを付け替える", ctx: ctxTask, needTask: true, run: (*Model).openParentPicker},
 		{id: "delete_task", key: "Z", group: groupTask, label: "タスクを削除（確認あり）", ctx: ctxTask, needTask: true, run: (*Model).confirmDeleteTask},
+		{id: "time", key: "h", group: groupTask, label: "作業時間を見る / 記録する", ctx: ctxTask, needTask: true, plan: readmodel.PlanTimeTracking, run: (*Model).openTimeEntries},
 		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
 		// view
 		{id: "filter", key: "f", shortcut: []string{"f"}, group: groupView, label: "絞り込み（未完了・期限切れ…）", ctx: ctxAll, run: (*Model).openFilterPicker},
 		{id: "tag_filter", key: "T", shortcut: []string{"T"}, group: groupView, label: "タグで絞り込む", ctx: ctxAll, run: (*Model).openTagPicker},
+		{id: "search_asana", key: "g", group: groupView, label: "Asana でも検索（キャッシュにないタスク。/ で語を入れてから）", ctx: ctxAll, run: (*Model).searchAsana},
 		{id: "saved_search", key: "/", group: groupView, label: "保存した検索を呼び出す", ctx: ctxAll, run: (*Model).openSavedSearchPicker},
 		{id: "field_filter", key: "F", group: groupView, label: "カスタムフィールドで絞り込む", ctx: ctxAll, run: (*Model).openFieldFilterPicker},
 		{id: "view", key: "v", shortcut: []string{"v"}, group: groupView, label: "表示を切り替え（リスト→ボード→カレンダー）", ctx: ctxList | ctxBoard | ctxCalendar, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},
@@ -119,11 +122,16 @@ func (m *Model) actions() []action {
 		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
 		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
+		{id: "task_from_template", key: "G", group: groupProject, label: "テンプレートからタスクを作る（オンライン）", ctx: ctxList | ctxBoard, needProject: true, ready: (*Model).hasTaskTemplates, run: (*Model).startTaskFromTemplate},
+		{id: "project_from_template", key: "B", group: groupProject, label: "テンプレートからプロジェクトを作る（オンライン）", ctx: ctxAll, plan: readmodel.PlanProjectTemplates, ready: (*Model).hasProjectTemplates, run: (*Model).startProjectFromTemplate},
+		{id: "duplicate_project", key: "S", group: groupProject, label: "このプロジェクトを複製（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).startDuplicateProject},
 		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
-		{id: "project_fields", key: "G", group: groupProject, label: "カスタムフィールドを追加 / 外す", ctx: ctxAll, needProject: true, plan: readmodel.PlanCustomFields, run: (*Model).openProjectFields},
+		{id: "project_fields", key: "#", group: groupProject, label: "カスタムフィールドを追加 / 外す", ctx: ctxAll, needProject: true, plan: readmodel.PlanCustomFields, run: (*Model).openProjectFields},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
+		{id: "goals", key: "Q", group: groupProject, label: "ゴール（期間・進み具合）", ctx: ctxAll, plan: readmodel.PlanGoals, run: (*Model).openGoals},
+		{id: "portfolios", key: "l", group: groupProject, label: "ポートフォリオ（自分がオーナーのもの）", ctx: ctxAll, plan: readmodel.PlanPortfolios, run: (*Model).openPortfolios},
 		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other
 		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},
@@ -161,7 +169,8 @@ func (m *Model) available() []action {
 	var out []action
 	for _, a := range m.withBindings(m.actions()) {
 		if a.ctx&ctx == 0 || (a.needTask && !hasTask && !(a.bulk && hasMarked)) || (a.needProject && m.currentProject() == "") ||
-			(a.needInbox && m.currentScope().kind != scopeInbox) || (a.plan != "" && !m.planOK(a.plan)) {
+			(a.needInbox && m.currentScope().kind != scopeInbox) || (a.plan != "" && !m.planOK(a.plan)) ||
+			(a.ready != nil && !a.ready(m)) {
 			continue
 		}
 		out = append(out, a)

@@ -145,6 +145,8 @@ func (f *relationStore) SyncState(context.Context, string) (string, error) { ret
 
 func (f *relationStore) TaskWorkspace(context.Context, string) (string, error) { return "w1", nil }
 
+func (f *relationStore) DefaultWorkspace(context.Context) (string, error) { return "w1", nil }
+
 func (f *relationStore) SetCustomFieldLocal(_ context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error) {
 	return "shown", f.write("SetCustomFieldLocal", "%s %s %v at=%s", taskGID, fieldGID, value, now.Format(time.TimeOnly))
 }

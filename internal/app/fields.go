@@ -22,6 +22,7 @@ type FieldOptionStore interface {
 	AddEnumOptionLocal(ctx context.Context, fieldGID, name string, now time.Time) (gid string, created bool, err error)
 	SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
+	DefaultWorkspace(ctx context.Context) (string, error)
 	SyncState(ctx context.Context, key string) (string, error)
 }
 
@@ -82,6 +83,9 @@ func (u *FieldOptions) Addable(ctx context.Context, taskGID string, f readmodel.
 		return fmt.Errorf("カスタムフィールド「%s」は変更できません", f.Name)
 	}
 	ws, err := u.Store.TaskWorkspace(ctx, taskGID)
+	if err == nil && ws == "" { // neither the task's nor its project's is known
+		ws, err = u.Store.DefaultWorkspace(ctx)
+	}
 	if err != nil {
 		return err
 	}

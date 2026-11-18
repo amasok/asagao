@@ -195,7 +195,7 @@ func TestNewProjectAsksForTheTeam(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			created = body.Data
 			fmt.Fprint(w, `{"data":{"gid":"p9","name":"新規","workspace":{"gid":"w1"},"members":[{"gid":"me"}]}}`)
-		case "GET /projects/p9/sections":
+		case "GET /projects/p9/sections", "GET /project_templates", "GET /task_templates": // the menu looks for templates (templates.go)
 			fmt.Fprint(w, `{"data":[]}`)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL)

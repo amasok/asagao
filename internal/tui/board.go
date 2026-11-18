@@ -284,6 +284,13 @@ const (
 	// projectfields.go
 	pickProjectFields
 	pickRemoveField
+	// timetracking.go
+	pickTimeEntries // a task's time tracking entries
+	pickTimeAction  // edit / delete one entry
+	pickTimeDelete  // confirm deleting an entry
+	// templates.go
+	pickTaskTemplate
+	pickProjectTemplate
 )
 
 type pickerItem struct {
@@ -432,6 +439,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		if cmd, ok := m.handleSectionTagPicker(p, item); ok {
 			return m, cmd
 		}
+		if cmd, ok := m.handleTimePicker(p, item); ok {
+			return m, cmd
+		}
 		switch p.kind {
 		case pickDayTask:
 			return m, m.openTaskDetail(item.value)
@@ -457,6 +467,10 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.archive(item.value)
 		case pickTeam:
 			return m, m.createProjectInTeam(m.newProjectName, item.value)
+		case pickTaskTemplate:
+			return m, m.makeTaskFromTemplate(p.project, item.value)
+		case pickProjectTemplate:
+			return m, m.chooseProjectTemplate(item.value)
 		case pickReset:
 			return m, m.reset(item.value)
 		case pickDue:

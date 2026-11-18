@@ -28,6 +28,7 @@ type RelationStore interface {
 	SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error)
 	AddEnumOptionLocal(ctx context.Context, fieldGID, name string, now time.Time) (gid string, created bool, err error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
+	DefaultWorkspace(ctx context.Context) (string, error)
 	SyncState(ctx context.Context, key string) (string, error)
 }
 

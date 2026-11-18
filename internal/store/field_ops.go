@@ -524,28 +524,6 @@ func (s *Store) FieldSettingQueued(ctx context.Context, taskGID, fieldGID string
 	return n > 0, err
 }
 
-// TaskWorkspace returns the workspace of a task: its own, else its first project's, else
-// the default workspace.
-func (s *Store) TaskWorkspace(ctx context.Context, taskGID string) (string, error) {
-	var ws string
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF((SELECT workspace_gid FROM tasks WHERE gid = ?1), ''),
-		(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid WHERE m.task_gid = ?1 LIMIT 1), '')`,
-		taskGID).Scan(&ws)
-	if err != nil || ws != "" {
-		return ws, err
-	}
-	return s.DefaultWorkspace(ctx)
-}
-
-// ProjectWorkspace returns the workspace of a project.
-func (s *Store) ProjectWorkspace(ctx context.Context, projectGID string) (string, error) {
-	var ws string
-	if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", projectGID).Scan(&ws); err != nil {
-		return "", notFound(err, "project "+projectGID)
-	}
-	return ws, nil
-}
-
 // fieldWorkspace returns the workspace a field belongs to ("" if not known): from the
 // workspace's list, else from a project that has it.
 func fieldWorkspace(ctx context.Context, q dbQuerier, fieldGID string) (string, error) {
