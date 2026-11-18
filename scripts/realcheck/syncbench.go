@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -75,11 +77,11 @@ func (c *Check) syncbench(variants []benchVariant) {
 		if v.Eager {
 			tokenCopies = append(tokenCopies, filepath.Join(b.env.Config, "asagao", "token.json"))
 		}
-		first := b.run("sync")
+		first := b.run("--json", "sync")
 		var mine []M
 		_ = b.json(&mine, b.local("task", "list")...)
 		c.Rep.check(v.Name+": 最初の sync でマイタスクが全部ある", len(mine) == myOpen, fmt.Sprintf("キャッシュ %d / Asana %d", len(mine), myOpen))
-		second := b.run("sync")
+		second := b.run("--json", "sync")
 		var p1 []M
 		open := b.run("--json", "task", "list", "--project", projects[0])
 		_ = jsonInto(open.out, &p1)
@@ -87,7 +89,7 @@ func (c *Check) syncbench(variants []benchVariant) {
 		var p1all []M
 		_ = b.json(&p1all, b.local("task", "list", "--project", projects[0], "--all")...)
 		c.Rep.note(v.Name+": P1 を開いた直後のキャッシュ (完了も含む)", fmt.Sprintf("%d 件 (Asana は 25 件)", len(p1all)))
-		later := b.run("sync")
+		later := b.run("--json", "sync")
 		p1all = nil
 		_ = b.json(&p1all, b.local("task", "list", "--project", projects[0], "--all")...)
 		c.Rep.check(v.Name+": そのあとの sync で完了済みも入る", len(p1all) == 25, fmt.Sprintf("%d 件", len(p1all)))
@@ -99,7 +101,7 @@ func (c *Check) syncbench(variants []benchVariant) {
 			c.Rep.fail("Asana でタスクの名前を変える", err.Error())
 		}
 		time.Sleep(3 * time.Second)
-		events := b.run("sync")
+		events := b.run("--json", "sync")
 		var after []M
 		_ = b.json(&after, b.local("task", "list", "--project", projects[0])...)
 		c.Rep.check(v.Name+": 開いたプロジェクトは Events の差分で追える", slices.Contains(strs(get(anySlice(after), "#name")), newName),
@@ -149,6 +151,9 @@ func (r benchResult) cell() string {
 	if r.err != nil {
 		return "エラー " + oneLine(r.err.Error())
 	}
+	if r.requests < 0 {
+		return fmt.Sprintf("未計測・%.1f 秒", r.took.Seconds())
+	}
 	return fmt.Sprintf("%d 回・%.1f 秒", r.requests, r.took.Seconds())
 }
 
@@ -196,74 +201,46 @@ func (c *Check) newBench(v benchVariant) *bench {
 	return &bench{c: c, env: env, v: v}
 }
 
-// run runs the variant's asagao and counts its requests (HEADERS frames it wrote).
+// run runs the variant's asagao. The requests are what asagao itself says it sent.
 func (b *bench) run(args ...string) benchResult {
 	defer time.Sleep(b.c.R.Pause)
 	ctx, cancel := context.WithTimeout(b.c.ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, b.env.Bin, append([]string{"--no-context"}, args...)...)
-	// No GODEBUG=http2debug: Go would log the authorization header (the token).
+	// Never GODEBUG=http2debug: Go would log the authorization header (the token).
 	cmd.Env = slices.Clone(b.env.Vars)
 	cmd.Dir = b.env.Work
 	detach(cmd)
-	var out bytes.Buffer
-	errw := &http2Counter{}
-	cmd.Stdout, cmd.Stderr = &out, errw
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
 	start := time.Now()
 	err := cmd.Run()
-	errw.flush()
-	r := benchResult{out: out.Bytes(), took: time.Since(start), requests: errw.headers}
+	r := benchResult{out: out.Bytes(), took: time.Since(start), requests: asagaoRequests(out.Bytes(), errb.String())}
 	fmt.Fprintf(b.c.R.Log, "  $ asagao %s (%d requests, %s)\n", strings.Join(args, " "), r.requests, r.took.Round(time.Millisecond))
 	if err != nil {
-		r.err = fmt.Errorf("%w: %s", err, lastLines(errw.kept.String()))
+		r.err = fmt.Errorf("%w: %s", err, lastLines(errb.String()))
 	}
 	return r
 }
 
-// http2Counter is a child's stderr under GODEBUG=http2debug=2: it counts the HEADERS
-// frames written (one per request) and drops every http2 line as it comes. Those lines
-// include "encoding header "authorization" = "Bearer <token>"", so they are never kept,
-// not even in memory; only the other lines are (for an error's message).
-type http2Counter struct {
-	headers int
-	partial []byte
-	kept    bytes.Buffer
-}
+var requestsLine = regexp.MustCompile(`リクエスト (\d+) 回`)
 
-func (w *http2Counter) Write(p []byte) (int, error) {
-	w.partial = append(w.partial, p...)
-	for {
-		i := bytes.IndexByte(w.partial, '\n')
-		if i < 0 {
-			break
-		}
-		w.line(w.partial[:i])
-		w.partial = w.partial[i+1:]
+// asagaoRequests is the number of requests asagao says it sent: "requests" of
+// `--json sync`, or the stderr line of a project fetched when opened ("… / リクエスト M
+// 回"); 0 for a task list that fetched nothing (it says nothing then); -1 when asagao
+// does not say (main's build: not counted).
+func asagaoRequests(stdout []byte, stderr string) int {
+	var v struct {
+		Requests *int `json:"requests"`
 	}
-	if len(w.partial) > 1<<16 { // a very long line without a newline: judge it now
-		w.line(w.partial)
-		w.partial = nil
+	if json.Unmarshal(stdout, &v) == nil && v.Requests != nil {
+		return *v.Requests
 	}
-	return len(p), nil
-}
-
-func (w *http2Counter) flush() {
-	if len(w.partial) > 0 {
-		w.line(w.partial)
-		w.partial = nil
+	if m := requestsLine.FindStringSubmatch(stderr); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
 	}
-}
-
-func (w *http2Counter) line(l []byte) {
-	if bytes.Contains(l, []byte("wrote HEADERS")) {
-		w.headers++
-	}
-	lower := bytes.ToLower(l)
-	if bytes.Contains(l, []byte("http2:")) || bytes.Contains(lower, []byte("authorization")) || bytes.Contains(lower, []byte("bearer ")) {
-		return
-	}
-	w.kept.Write(l)
-	w.kept.WriteByte('\n')
+	return -1
 }
 
 func (b *bench) json(v any, args ...string) error {
@@ -281,7 +258,11 @@ func (b *bench) mcpListTasks(project string) benchResult {
 	var out M
 	start := time.Now()
 	err := r.Tool(b.c.ctx, "list_tasks", M{"project": project}, &out)
-	return benchResult{err: err, count: len(asArray(get(out, "tasks"))), took: time.Since(start), requests: -1}
+	n := -1 // main's build does not say
+	if f, ok := get(out, "fetched", "requests").(float64); ok {
+		n = int(f)
+	}
+	return benchResult{err: err, count: len(asArray(get(out, "tasks"))), took: time.Since(start), requests: n}
 }
 
 func jsonInto(b []byte, v any) error {
@@ -291,7 +272,7 @@ func jsonInto(b []byte, v any) error {
 	return nil
 }
 
-// lastLines is the end of what http2Counter kept.
+// lastLines is the end of a stderr, for an error message.
 func lastLines(s string) string {
 	var keep []string
 	for _, l := range strings.Split(s, "\n") {
