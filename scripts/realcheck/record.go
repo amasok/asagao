@@ -289,6 +289,12 @@ func gone(why string) bool {
 // then status updates, tags, custom fields and projects. It returns what was left behind.
 func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	r.Close() // no MCP server pushing while we delete
+	// Two calls per object (check, delete): 0.5 s apart stays under 150 a minute, and a
+	// hundred tasks fit well in the cleanup's time.
+	if r.Pause > 500*time.Millisecond {
+		defer func(p time.Duration) { r.Pause = p }(r.Pause)
+		r.Pause = 500 * time.Millisecond
+	}
 	r.waitJobs(ctx, c)
 	r.collect(ctx, c)
 	del := func(kind string, gids []string) {

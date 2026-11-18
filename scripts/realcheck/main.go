@@ -134,7 +134,7 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 		if p := recover(); p != nil && p != errStop {
 			rep.fail("panic", fmt.Sprint(p))
 		}
-		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		cctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 		defer cancel()
 		c.ctx = cctx
 		rep.group("片付け")
