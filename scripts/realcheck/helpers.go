@@ -66,6 +66,7 @@ func decode(data json.RawMessage) any {
 // same reports whether the cache and Asana agree and both are want. It returns a detail
 // for the report when they do not.
 func same(what string, cache, asana, want any) (bool, string) {
+	cache, asana, want = normalize(cache), normalize(asana), normalize(want)
 	ok := reflect.DeepEqual(cache, want) && reflect.DeepEqual(asana, want)
 	if ok {
 		return true, ""

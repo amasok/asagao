@@ -184,7 +184,8 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 		}
 		return false, fmt.Sprintf("name %q has no prefix %q", o.Name, c.Prefix)
 	}
-	if o.Workspace.GID != TestWorkspace {
+	// A custom field has no workspace to ask for; its gid was recorded when this run made it.
+	if kind != "custom_fields" && o.Workspace.GID != TestWorkspace {
 		return false, "workspace " + o.Workspace.GID
 	}
 	if !strings.HasPrefix(o.Name, c.Prefix) {
@@ -261,7 +262,7 @@ func (r *Runner) waitJobs(ctx context.Context, c *Created) {
 
 // gone reports whether an error from GET means the object does not exist (any more).
 func gone(why string) bool {
-	for _, s := range []string{"Not Found", "Unknown object", "does not exist", "not found"} {
+	for _, s := range []string{"Not Found", "Unknown object", "does not exist", "not found", "Not a recognized ID"} {
 		if strings.Contains(why, s) {
 			return true
 		}
@@ -343,7 +344,12 @@ func (c *Created) guardBody(method, path string, body M) error {
 	case method == "POST" && path == "/portfolios":
 		ok = data["workspace"] == TestWorkspace && data["public"] == false && prefixed
 	case method == "POST" && len(parts) == 3 && parts[0] == "portfolios" && (parts[2] == "addItem" || parts[2] == "removeItem"):
-		ok = ours(c.Portfolios, 1) && slices.Contains(c.Projects, fmt.Sprint(data["item"]))
+		item := fmt.Sprint(data["item"])
+		ok = ours(c.Portfolios, 1) && (slices.Contains(c.Projects, item) || slices.Contains(c.Portfolios, item))
+	case method == "POST" && len(parts) == 3 && parts[0] == "goals" &&
+		(parts[2] == "addSupportingRelationship" || parts[2] == "removeSupportingRelationship"):
+		res := fmt.Sprint(data["supporting_resource"])
+		ok = ours(c.Goals, 1) && (slices.Contains(c.Goals, res) || slices.Contains(c.Projects, res))
 	case method == "POST" && len(parts) == 3 && parts[0] == "project_templates" && parts[2] == "instantiateProject":
 		ok = ours(c.ProjectTemplates, 1) && prefixed && data["public"] != true
 	}

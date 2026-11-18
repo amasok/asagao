@@ -27,6 +27,9 @@ func (s *shapes) save(name, req string, out []byte, err error) any {
 	}
 	file := filepath.Join(s.dir, fmt.Sprintf("%02d-%s.json", s.n, name))
 	text := fmt.Sprintf("// %s\n%s\n", req, body)
+	if err != nil { // the status is in asagao's error ("asana: 400 …")
+		text = fmt.Sprintf("// %s\n// error: %s\n%s\n", req, oneLine(err.Error()), body)
+	}
 	if werr := os.WriteFile(file, []byte(text), 0o644); werr != nil {
 		s.c.Rep.fail("shape "+name, werr.Error())
 	}
@@ -152,6 +155,21 @@ func (c *Check) shapes(templates bool) {
 			s.write(step, "POST", "/projects/"+c.p+"/"+step, M{"data": M{"custom_field": eg}})
 		}
 	}
+	multi := s.write("custom-field-multi-create", "POST", "/custom_fields",
+		M{"data": M{"workspace": TestWorkspace, "name": pre + "-multi", "resource_subtype": "multi_enum",
+			"enum_options": []M{{"name": pre + "-x"}, {"name": pre + "-y"}}}})
+	if mg := str(multi, "data", "gid"); mg != "" {
+		c.Made.add(&c.Made.CustomFields, mg)
+		s.write("multi-addCustomFieldSetting", "POST", "/projects/"+c.p+"/addCustomFieldSetting", M{"data": M{"custom_field": mg}})
+		opt := ""
+		if a := asArray(get(multi, "data", "enum_options")); len(a) > 0 {
+			opt = str(a[0], "gid")
+		}
+		for i, v := range []any{[]string{opt}, nil, []string{}} {
+			s.write(fmt.Sprintf("put-task-custom-field-multi_enum-%d", i), "PUT", "/tasks/"+c.t1, M{"data": M{"custom_fields": M{mg: v}}})
+		}
+		s.write("multi-removeCustomFieldSetting", "POST", "/projects/"+c.p+"/removeCustomFieldSetting", M{"data": M{"custom_field": mg}})
+	}
 	s.get("workspace-custom-fields-page", ws+"/custom_fields", "opt_fields=name,resource_subtype,enum_options.name,enum_options.enabled", "limit=1")
 	for k, g := range c.cf {
 		var forms []any
@@ -188,11 +206,29 @@ func (c *Check) shapes(templates bool) {
 	s.get("goals", "/goals", "workspace="+TestWorkspace, "opt_fields=name,owner.name,status,due_on,start_on,time_period.display_name,current_status_update.title,metric.current_display_value,metric.target_value,metric.unit,metric.progress_source,html_notes,team.name,is_workspace_level,liked,num_likes")
 	s.get("goal-404", "/goals/1")
 	goalFields := "opt_fields=name,owner.name,status,due_on,start_on,time_period.display_name,current_status_update.title,metric,metric.current_display_value,metric.target_value,metric.unit,metric.progress_source,html_notes,notes,team.name,workspace.gid,is_workspace_level,liked,num_likes,followers.name"
+	periods := s.get("time-periods", "/time_periods", "workspace="+TestWorkspace, "opt_fields=display_name,start_on,end_on,period,parent")
+	quarter := currentQuarter(periods, time.Now().Format("2006-01-02"))
+	s.write("goal-create-no-period", "POST", "/goals", M{"data": M{"name": pre + "-goal-x", "workspace": TestWorkspace, "team": c.team}})
 	goal := s.write("goal-create", "POST", "/goals", M{"data": M{"name": pre + "-goal", "workspace": TestWorkspace, "team": c.team,
-		"owner": c.Me, "due_on": "2030-06-30", "start_on": "2030-01-01", "notes": "dummy goal"}})
+		"owner": c.Me, "time_period": quarter, "notes": "dummy goal"}})
+	if g := str(goal, "data", "gid"); g == "" { // a goal without a period in a failed POST is not made
+		c.Rep.note("ゴールを作る", "作れなかった (time_period "+quarter+")")
+	}
 	if gg := str(goal, "data", "gid"); gg != "" {
 		c.Made.add(&c.Made.Goals, gg)
 		s.get("goal", "/goals/"+gg, goalFields)
+		sub := s.write("subgoal-create", "POST", "/goals", M{"data": M{"name": pre + "-subgoal", "workspace": TestWorkspace, "team": c.team,
+			"owner": c.Me, "time_period": quarter}})
+		if sg := str(sub, "data", "gid"); sg != "" {
+			c.Made.add(&c.Made.Goals, sg)
+			s.write("goal-add-subgoal", "POST", "/goals/"+gg+"/addSupportingRelationship", M{"data": M{"supporting_resource": sg, "contribution_weight": 1}})
+			s.write("goal-add-project", "POST", "/goals/"+gg+"/addSupportingRelationship", M{"data": M{"supporting_resource": c.p}})
+			s.get("goal-relationships", "/goal_relationships", "supported_goal="+gg,
+				"opt_fields=supporting_resource.name,supporting_resource.resource_type,supported_goal.name,contribution_weight,resource_subtype")
+			s.get("goal-with-relationships", "/goals/"+gg, goalFields+",goal_relationships")
+			s.write("goal-remove-subgoal", "POST", "/goals/"+gg+"/removeSupportingRelationship", M{"data": M{"supporting_resource": sg}})
+			s.del("subgoal-delete", "/goals/"+sg)
+		}
 		s.write("goal-set-metric", "POST", "/goals/"+gg+"/setMetric", M{"data": M{"metric_type": "number", "unit": "none", "precision": 0,
 			"initial_number_value": 0, "target_number_value": 10, "progress_source": "manual"}})
 		s.get("goal-with-metric", "/goals/"+gg, goalFields)
@@ -205,13 +241,20 @@ func (c *Check) shapes(templates bool) {
 	if pg := str(pf, "data", "gid"); pg != "" {
 		c.Made.add(&c.Made.Portfolios, pg)
 		s.write("portfolio-add-item", "POST", "/portfolios/"+pg+"/addItem", M{"data": M{"item": c.p}})
+		inner := s.write("portfolio-nested-create", "POST", "/portfolios", M{"data": M{"name": pre + "-portfolio-inner", "workspace": TestWorkspace, "public": false}})
+		if ig := str(inner, "data", "gid"); ig != "" {
+			c.Made.add(&c.Made.Portfolios, ig)
+			s.write("portfolio-add-nested", "POST", "/portfolios/"+pg+"/addItem", M{"data": M{"item": ig}})
+			s.get("portfolio-items-nested", "/portfolios/"+pg+"/items", "opt_fields=name,resource_type,current_status_update.status_type,due_on,owner.name")
+			s.write("portfolio-remove-nested", "POST", "/portfolios/"+pg+"/removeItem", M{"data": M{"item": ig}})
+			s.del("portfolio-nested-delete", "/portfolios/"+ig)
+		}
 		s.get("portfolio", "/portfolios/"+pg, "opt_fields=name,owner.name,color,current_status_update.title,current_status_update.status_type,due_on,start_on,permalink_url,public,members.name,workspace.gid")
 		s.get("portfolio-items", "/portfolios/"+pg+"/items", "opt_fields=name,resource_type,current_status_update.status_type,due_on,owner.name")
 		s.get("portfolios-one", "/portfolios", "workspace="+TestWorkspace, "owner="+c.Me, "opt_fields=name,owner.name,color,current_status_update.title,current_status_update.status_type,due_on,start_on,permalink_url")
 		s.write("portfolio-remove-item", "POST", "/portfolios/"+pg+"/removeItem", M{"data": M{"item": c.p}})
 		s.del("portfolio-delete", "/portfolios/"+pg)
 	}
-	s.get("time-periods", "/time_periods", "workspace="+TestWorkspace, "opt_fields=display_name,start_on,end_on,period,parent")
 	alFields := "opt_fields=start_date,end_date,effort,assignee.name,parent.name,resource_subtype"
 	s.get("allocations-empty", "/allocations", "assignee="+c.Me, "workspace="+TestWorkspace, alFields)
 	al := s.write("allocation-create", "POST", "/allocations",
@@ -233,4 +276,14 @@ func (c *Check) shapes(templates bool) {
 	s.get("typeahead-tasks", ws+"/typeahead", "resource_type=task", "query="+pre, "opt_fields=name,completed")
 	_, _ = c.R.CLI(c.ctx, "sync")
 	c.Rep.note("shapes", fmt.Sprintf("%d 件を %s に保存", s.n, s.dir))
+}
+
+// currentQuarter is the gid of the quarter (period "Q1".."Q4") that contains today.
+func currentQuarter(periods any, today string) string {
+	for _, p := range asArray(get(periods, "data")) {
+		if strings.HasPrefix(str(p, "period"), "Q") && str(p, "start_on") <= today && today <= str(p, "end_on") {
+			return str(p, "gid")
+		}
+	}
+	return ""
 }

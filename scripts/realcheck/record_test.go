@@ -107,6 +107,9 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/goals/9100001/setMetric", M{"data": M{"metric_type": "number"}}},
 		{"POST", "/portfolios", named(pre+"-pf", "workspace", TestWorkspace, "public", false)},
 		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "1000001"}}},
+		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "9200002"}}}, // a nested one of ours
+		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "9100001"}}},
+		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "1000001"}}},
 	}
 	for _, a := range allowed {
 		if err := c.guardBody(a.m, a.p, a.b); err != nil {
@@ -139,6 +142,8 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/portfolios", named(pre+"-pf", "workspace", TestWorkspace)},    // public not false
 		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "9999999"}}}, // not our project
 		{"POST", "/portfolios/9999999/addItem", M{"data": M{"item": "1000001"}}},
+		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "9999999"}}}, // someone's goal
+		{"POST", "/goals/9999999/addSupportingRelationship", M{"data": M{"supporting_resource": "9100001"}}},
 	}
 	for _, r := range refused {
 		if err := c.guardBody(r.m, r.p, r.b); err == nil {
@@ -178,5 +183,20 @@ func TestGidsOfNothing(t *testing.T) {
 	}
 	if g := gids([]any{M{"gid": "1"}, M{"gid": "2"}}); len(g) != 2 || g[1] != "2" {
 		t.Errorf("gids = %v", g)
+	}
+}
+
+func TestCurrentQuarter(t *testing.T) {
+	periods := M{"data": []any{
+		M{"gid": "y", "period": "FY", "start_on": "2026-01-01", "end_on": "2026-12-31"},
+		M{"gid": "h", "period": "H2", "start_on": "2026-07-01", "end_on": "2026-12-31"},
+		M{"gid": "q3", "period": "Q3", "start_on": "2026-07-01", "end_on": "2026-09-30"},
+		M{"gid": "q4", "period": "Q4", "start_on": "2026-10-01", "end_on": "2026-12-31"},
+	}}
+	if g := currentQuarter(periods, "2026-11-18"); g != "q4" {
+		t.Fatalf("got %q", g)
+	}
+	if g := currentQuarter(periods, "2027-01-01"); g != "" {
+		t.Fatalf("got %q", g)
 	}
 }

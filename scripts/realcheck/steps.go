@@ -173,7 +173,7 @@ func (c *Check) writes() {
 				return false, d
 			}
 		}
-		if !strings.Contains(str(as, "html_notes"), "<strong>notes</strong>") || !strings.Contains(str(ca, "notes"), "**notes**") {
+		if !strings.Contains(str(as, "html_notes"), "<strong>notes</strong>") || str(ca, "notes") != str(as, "notes") {
 			return false, "説明: Asana " + str(as, "html_notes") + " / キャッシュ " + str(ca, "notes")
 		}
 		return true, ""
@@ -733,6 +733,9 @@ func (c *Check) customFields() {
 	for _, k := range kinds {
 		name := c.Made.Prefix + "-" + k
 		fields := []string{"workspace=" + TestWorkspace, "name=" + name, "resource_subtype=" + k}
+		if k == "number" {
+			fields = append(fields, "precision=0") // "precision: Missing input" without it
+		}
 		data, err := c.R.WriteAPI(c.ctx, c.Made, "POST", "/custom_fields", fields...)
 		if err != nil {
 			c.Rep.note("カスタムフィールドを作る ("+k+")", describe(nil, err))
