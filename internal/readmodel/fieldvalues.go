@@ -105,6 +105,11 @@ func CustomFieldAPIValue(fieldType string, v any) any {
 	if s, ok := v.(string); ok && fieldType == CFDate {
 		return map[string]any{"date": s}
 	}
+	if v == nil && fieldType == CFPeople {
+		// Asana clears people with an empty list; null is "400 people_value: Not an
+		// array" (found by scripts/realcheck, #31).
+		return []string{}
+	}
 	return v
 }
 
