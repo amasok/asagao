@@ -128,3 +128,22 @@ func TestTaskByCustomID(t *testing.T) {
 		}
 	}
 }
+
+// Asana answers 500 for some custom IDs it does not know: that is not retried (a hook would
+// wait for nothing).
+func TestTaskByCustomID500IsNotRetried(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"errors":[{"message":"Oops! An unexpected error occurred while processing this request."}]}`)
+	})
+	c.MaxRetries = 5
+	var apiErr *Error
+	if _, err := c.TaskByCustomID(context.Background(), "w1", "TEST-1"); !errors.As(err, &apiErr) || apiErr.Status != 500 {
+		t.Fatalf("err %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls %d", calls)
+	}
+}

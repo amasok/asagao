@@ -157,16 +157,30 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 	return add(ctx, found)
 }
 
+// ErrCustomIDUnavailable is returned by TaskByCustomID when the workspace's plan does not
+// give tasks by custom ID (Asana answered 402, now or before).
+var ErrCustomIDUnavailable = errors.New(readmodel.PlanUnavailableMessage(readmodel.PlanCustomID))
+
 // TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it,
 // remembers its gid (readmodel.KeyCustomID) and returns it. A custom ID Asana does not know
-// is readmodel.ErrNotFound (and forgotten).
+// is readmodel.ErrNotFound (and forgotten). A 402 is remembered (PlanCustomID): Asana is
+// then not asked again.
 func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, error) {
+	if no, err := s.planUnavailable(ctx, readmodel.PlanCustomID); err != nil {
+		return "", err
+	} else if no {
+		return "", ErrCustomIDUnavailable
+	}
 	ws, err := s.Store.DefaultWorkspace(ctx)
 	if err != nil {
 		return "", err
 	}
 	key := readmodel.KeyCustomID + customID
 	t, err := s.API.TaskByCustomID(ctx, ws, customID)
+	if model.IsPaymentRequired(err) {
+		s.markPlanUnavailable(ctx, readmodel.PlanCustomID)
+		return "", ErrCustomIDUnavailable
+	}
 	var apiErr *model.Error
 	if (errors.As(err, &apiErr) && apiErr.Status == 404) || (err == nil && t.GID == "") {
 		_ = s.Store.SetSyncState(ctx, key, "")

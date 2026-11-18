@@ -71,8 +71,8 @@ func Parse(msg string) []Ref {
 	index := map[string]int{}
 	for _, m := range refRE.FindAllStringSubmatchIndex(msg, -1) {
 		id := msg[m[8]:m[9]]
-		if m[9] < len(msg) && (isWordByte(msg[m[9]]) || msg[m[9]] == '-') {
-			continue // "#1234567890abc", "asana#ENG-1-2": not a reference
+		if m[9] < len(msg) && (isWordByte(msg[m[9]]) || msg[m[9]] == '-' && !isDigit(id[0])) {
+			continue // "#1234567890abc", "asana#ENG-1-2": not a reference ("#<gid>-x" is)
 		}
 		prefixed := m[6] >= 0
 		var ref Ref

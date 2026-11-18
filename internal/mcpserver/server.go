@@ -433,8 +433,12 @@ func (s *Server) searchTasks(ctx context.Context, _ *mcp.CallToolRequest, in Sea
 // the server's syncer; offline, it fails and the cache is used alone.
 type finder struct{ s *Server }
 
-// remoteTimeout bounds one search or lookup in Asana.
-const remoteTimeout = 30 * time.Second
+// remoteTimeout bounds one search in Asana, and nameTimeout one name lookup (a write
+// waits for it).
+const (
+	remoteTimeout = 30 * time.Second
+	nameTimeout   = 10 * time.Second
+)
 
 func (f finder) SearchTasks(ctx context.Context, text string, completed *bool, limit int) (readmodel.RemoteSearchResult, error) {
 	syncer, err := f.s.getSyncer(ctx)
@@ -451,7 +455,7 @@ func (f finder) FindUsers(ctx context.Context, q string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
+	ctx, cancel := context.WithTimeout(ctx, nameTimeout)
 	defer cancel()
 	return syncer.FindUsers(ctx, q)
 }
@@ -461,7 +465,7 @@ func (f finder) FindTags(ctx context.Context, q string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
+	ctx, cancel := context.WithTimeout(ctx, nameTimeout)
 	defer cancel()
 	return syncer.FindTags(ctx, q)
 }

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -87,5 +88,31 @@ func TestCustomIDsOfCommits(t *testing.T) {
 	}
 	if got := CustomIDs(commits); !slices.Equal(got, []string{"ENG-1", "ENG-2"}) {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// After Asana fails once (offline, out of time), the other IDs are not asked for: they are
+// resolved as found before.
+func TestResolveCustomIDsStopsAskingAfterAFailure(t *testing.T) {
+	ctx := context.Background()
+	remembered := customIDState{readmodel.KeyCustomID + "ENG-1": "t1", readmodel.KeyCustomID + "ENG-2": "t2"}
+	f := &fakeCustomIDs{err: context.DeadlineExceeded}
+	got, err := ResolveCustomIDs(ctx, remembered, f, []string{"ENG-1", "ENG-2"})
+	if !errors.Is(err, context.DeadlineExceeded) || !maps.Equal(got, map[string]string{"ENG-1": "t1", "ENG-2": "t2"}) {
+		t.Fatalf("got %v %v", got, err)
+	}
+	if !slices.Equal(f.calls, []string{"ENG-1"}) {
+		t.Fatalf("asked %v", f.calls)
+	}
+}
+
+// An answer from Asana about one ID (a 500 that Asana gives for some unknown IDs) does not
+// stop the others from being asked for.
+func TestResolveCustomIDsGoesOnAfterAnAnswer(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeCustomIDs{gids: map[string]string{"ENG-2": "t2"}, err: &model.Error{Status: 500}}
+	got, err := ResolveCustomIDs(ctx, customIDState{readmodel.KeyCustomID + "TEST-1": "t1"}, f, []string{"TEST-1", "ENG-2"})
+	if err == nil || !maps.Equal(got, map[string]string{"TEST-1": "t1", "ENG-2": "t2"}) || !slices.Equal(f.calls, []string{"TEST-1", "ENG-2"}) {
+		t.Fatalf("got %v %v calls %v", got, err, f.calls)
 	}
 }

@@ -50,8 +50,20 @@ Asana の検索 API が 402 を返したら `plan_unavailable:search` に覚え�
 
 ### Requirement: タスクの ID を gid に解決する
 `asana#<custom ID>` は Asana で引いてタスクをキャッシュに入れ、gid を `custom_id:<ID>` に覚える (MUST)。Asana に届かないとき (`--offline` を含む) は前に覚えた gid を使い、届かなかったことを警告に出す。hook は Asana を 3 秒だけ待つ。Asana がその ID を知らなければ「見つかりません」にし、覚えた gid を忘れる。
-根拠: app/gitlink.go (ResolveCustomIDs, GitLink.CustomIDs); sync/search.go (TaskByCustomID); cli/git.go (resolveCustomIDs); TestGitLinkByCustomID, TestResolveCustomIDs, TestTaskByCustomID, TestGitScanByCustomID
+根拠: app/gitlink.go (ResolveCustomIDs, GitLink.CustomIDs); sync/search.go (TaskByCustomID); cli/git.go (resolveCustomIDs); TestGitLinkByCustomID, TestResolveCustomIDs, TestResolveCustomIDsStopsAskingAfterAFailure, TestTaskByCustomID, TestGitScanByCustomID, TestGitScanHookCustomIDSlowAsana
+
+#### Scenario: Asana が遅い
+- **WHEN** hook が `asana#ENG-1` と `asana#ENG-2` (どちらも前に見つけた) のコミットを読み、Asana が 3 秒のうちに答えない
+- **THEN** 前に覚えた gid で両方のタスクにコメントを積み、Asana で引けなかったことを警告に出す
 
 #### Scenario: タスクの ID で完了にする
 - **WHEN** オンラインで、メッセージが `fixes asana#ENG-1 and see asana#ENG-404` のコミットを `git scan` する (ENG-1 は gitA、ENG-404 はない)
 - **THEN** gitA を完了にしてコメントし、ENG-404 は「見つかりません」と出る。あとでオフラインのときに `asana#ENG-1` を読んでも、覚えた gid で gitA にコメントを積む
+
+### Requirement: タスクの ID がないプラン
+custom ID でのタスクの取得に Asana が 402 を返したら `plan_unavailable:custom_id` に覚え、それからは Asana に聞かずに前に覚えた gid だけを使う (MUST)。
+根拠: sync/search.go (TaskByCustomID); TestTaskByCustomID
+
+#### Scenario: 402 のあと
+- **WHEN** custom ID の取得が 402 になったあと、もう一度 `asana#ENG-1` を読む
+- **THEN** Asana には聞かない

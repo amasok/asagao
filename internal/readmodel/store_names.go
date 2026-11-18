@@ -63,6 +63,7 @@ const (
 	PlanMySection = "my_section" // the sections of My Tasks
 	PlanSearch    = "search"     // the search API (premium only): typeahead is used instead
 	PlanTypeahead = "typeahead"  // typeahead: names and tasks are then looked up in the cache only
+	PlanCustomID  = "custom_id"  // tasks by custom ID: only the gids found before are used
 )
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
@@ -86,6 +87,7 @@ func PlanUnavailableMessage(feature string) string {
 		PlanMySection: "マイタスクのセクション",
 		PlanSearch:    "タスクの検索",
 		PlanTypeahead: "名前での検索 (typeahead)",
+		PlanCustomID:  "タスクの ID (custom ID) での取得",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }

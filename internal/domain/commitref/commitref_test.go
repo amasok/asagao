@@ -142,6 +142,7 @@ func TestParseCustomID(t *testing.T) {
 		{"must start with a letter", "asana#1A-2", nil},
 		{"digits after the dash", "asana#ENG-", nil},
 		{"no second dash", "asana#ENG-1-2", nil},
+		{"a gid may be followed by a dash", "fixes #" + a + "-hotfix asana#12-x", []Ref{{TaskGID: a, Fixes: true}, {TaskGID: "12"}}},
 		{"no letters after", "asana#ENG-12x", nil},
 		{"after a word", "xasana#ENG-1", nil},
 		{"too long", "asana#" + strings.Repeat("A", 70) + "-1", nil},

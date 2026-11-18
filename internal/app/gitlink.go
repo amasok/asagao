@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/commitref"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -234,8 +235,10 @@ func CustomIDs(commits []GitCommit) []string {
 
 // ResolveCustomIDs finds the gids of the tasks with the custom IDs (for GitLink.CustomIDs):
 // in Asana (find; nil when offline), or, when Asana cannot be asked, as found before. An ID
-// Asana does not know is left out (the task is then not found). The error is the last
-// failure to ask Asana, for a warning: the IDs are resolved as far as they can be anyway.
+// Asana does not know is left out (the task is then not found). After Asana fails once
+// (offline, out of time), it is not asked for the other IDs. The error is that failure,
+// for a warning: the IDs are resolved as far as they can be anyway. A time limit for Asana
+// belongs to find, not ctx: the gids found before are read with ctx.
 func ResolveCustomIDs(ctx context.Context, st SyncStateReader, find CustomIDFinder, ids []string) (map[string]string, error) {
 	out := map[string]string{}
 	var last error
@@ -250,6 +253,12 @@ func ResolveCustomIDs(ctx context.Context, st SyncStateReader, find CustomIDFind
 				continue
 			}
 			last = err
+			// Asana not reached (offline, out of time): not asked for the other IDs. An
+			// answer (a 500 that Asana gives for some unknown IDs) is about this ID only.
+			var apiErr *model.Error
+			if !errors.As(err, &apiErr) {
+				find = nil
+			}
 		}
 		gid, err := st.SyncState(ctx, readmodel.KeyCustomID+id)
 		if err != nil {
