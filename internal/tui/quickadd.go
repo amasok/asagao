@@ -19,9 +19,9 @@ import (
 // done is the message before the task's name ("タスクを作成しました: "); with keep the
 // selection stays where it is (the new task is not selected).
 func (m *Model) quickCreate(line string, now time.Time, in app.CreateHereInput, defaultDue, done string, keep bool) tea.Cmd {
-	ctx, st, tasks := m.ctx, m.deps.Store, m.tasks(now)
+	ctx, st, tasks, find := m.ctx, m.deps.Store, m.tasks(now), m.nameFinder()
 	return func() tea.Msg {
-		q, err := app.ReadQuickAdd(ctx, st, line, now)
+		q, err := app.ReadQuickAddFinding(ctx, st, find, line, now)
 		if err != nil {
 			return writeDoneMsg{err: err}
 		}

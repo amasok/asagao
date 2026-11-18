@@ -88,6 +88,9 @@ func TestListTasksFilters(t *testing.T) {
 		{"tag by name", TaskFilter{Tag: "買い物"}, []string{"t1"}},
 		{"subtasks of parent", TaskFilter{ParentGID: "t1"}, []string{"t1a"}},
 		{"limit", TaskFilter{AssigneeGID: "me", Limit: 1}, []string{"t2"}},
+		{"gids (found in Asana)", TaskFilter{GIDs: []string{"t1", "t4", "nope"}}, []string{"t1", "t4"}},
+		{"gids with other filters", TaskFilter{GIDs: []string{"t1", "t4"}, Completed: &f}, []string{"t1"}},
+		{"no gids keeps none", TaskFilter{GIDs: []string{}}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := s.ListTasks(ctx, tc.filter)

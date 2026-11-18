@@ -109,7 +109,20 @@ type TaskFilter struct {
 	FieldValue string
 	// Query is a full-text search over task name, notes and comments.
 	Query string
+	// GIDs, when not nil, keeps only these tasks (an empty list keeps none): the tasks a
+	// search in Asana found (Issue #36). Only set for one read, never saved, so it is left
+	// out of the JSON (which views_test.go fixes) when empty.
+	GIDs  []string `json:",omitempty"`
 	Limit int
+}
+
+// RemoteSearchResult is what a search in Asana found (Issue #36).
+type RemoteSearchResult struct {
+	// GIDs are the tasks found (now in the cache), in Asana's order.
+	GIDs []string
+	// ByName is set when the workspace's plan lacks the search API and typeahead was used:
+	// tasks were matched by the start of their name only, not by their description.
+	ByName bool
 }
 
 // TagCount is a tag with the number of incomplete tasks that have it.

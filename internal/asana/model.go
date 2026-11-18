@@ -32,6 +32,7 @@ type (
 	Notification       = model.Notification
 	WorkRef            = model.WorkRef
 	TaskRef            = model.TaskRef
+	TimeEntry          = model.TimeEntry
 	Error              = model.Error
 	BatchWrite         = model.BatchWrite
 	BatchWriteResult   = model.BatchWriteResult
