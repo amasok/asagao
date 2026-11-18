@@ -73,10 +73,11 @@ func (c *Check) dates() {
 	c.Rep.check("期日のないタスクに開始日だけは CLI で断る", err != nil, errText(err))
 	b, aerr := c.R.WriteBody(c.ctx, c.Made, "PUT", "/tasks/"+c.t3, M{"data": M{"start_on": "2030-04-01"}})
 	c.Rep.note("Asana: 期日のないタスクに start_on だけ", answer(b, aerr))
-	b, aerr = c.R.WriteBody(c.ctx, c.Made, "PUT", "/tasks/"+c.t2, M{"data": M{"due_on": nil}})
-	c.Rep.note("Asana: 開始日のあるタスクで due_on を null", answer(b, aerr))
+	// T2 has 2030-04-01 → 2030-04-05: a start after the due date first, then the due date cleared.
 	b, aerr = c.R.WriteBody(c.ctx, c.Made, "PUT", "/tasks/"+c.t2, M{"data": M{"start_on": "2030-04-09"}})
 	c.Rep.note("Asana: 期日より後の start_on", answer(b, aerr))
+	b, aerr = c.R.WriteBody(c.ctx, c.Made, "PUT", "/tasks/"+c.t2, M{"data": M{"due_on": nil}})
+	c.Rep.note("Asana: 開始日のあるタスクで due_on を null", answer(b, aerr))
 	_, _ = c.R.CLI(c.ctx, "sync")
 	c.reportDates("Asana に直接送ったあとの T2", c.t2)
 	c.syncClean("最後")
