@@ -35,6 +35,7 @@ func realMain() int {
 	probe := flag.Bool("probe", false, "only read: probe the paid features")
 	cleanupPrefix := flag.String("cleanup", "", "only delete what an earlier run left (its prefix, asagao-realcheck-<date>-<time>)")
 	syncBench := flag.String("syncbench", "", "compare the first sync of builds (#54): main=<bin>,lazy=<bin>")
+	webF := flag.String("web", "", "check custom types, task templates and custom IDs (#59, #2, #36) in the user's project: <project gid>,<typed task gid>")
 	briefF := flag.Bool("brief", false, "check project briefs (#60) instead of the outbox kinds")
 	dates := flag.Bool("dates", false, "check the start date of tasks (#57) instead of the outbox kinds")
 	features := flag.Bool("features", false, "check the features of #2, #6, #7, #36 and #37 instead of the outbox kinds")
@@ -67,7 +68,7 @@ func realMain() int {
 		}
 		prefix = *cleanupPrefix
 	}
-	c := &Check{R: r, Rep: rep, CleanupOnly: *cleanupPrefix != "", Made: &Created{Prefix: prefix}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF, SyncBench: *syncBench}
+	c := &Check{R: r, Rep: rep, CleanupOnly: *cleanupPrefix != "", Made: &Created{Prefix: prefix}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF, Web: *webF, SyncBench: *syncBench}
 	go func() {
 		// The first Ctrl-C stops the steps and cleanup runs; a second one leaves at once
 		// and says what is left in Asana.
@@ -153,6 +154,12 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 		c.dates()
 	case c.Brief:
 		c.brief()
+	case c.Web != "":
+		p, t, _ := strings.Cut(c.Web, ",")
+		if !gidRE.MatchString(p) || !gidRE.MatchString(t) {
+			c.must("-web", fmt.Errorf("want <project gid>,<task gid>: %q", c.Web))
+		}
+		c.web(p, t)
 	case c.SyncBench != "":
 		c.syncbench(parseBench(c.SyncBench))
 	default:
@@ -186,6 +193,7 @@ type Check struct {
 
 	Shapes, Templates, ColorsOnly, Features, Dates, Brief bool   // -shapes, -templates, -colors, -features, -dates, -brief
 	SyncBench                                             string // -syncbench
+	Web                                                   string // -web
 	CleanupOnly                                           bool   // -cleanup
 }
 
