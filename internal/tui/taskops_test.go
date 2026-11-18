@@ -17,7 +17,7 @@ func TestDeleteTaskAsksFirst(t *testing.T) {
 		t.Fatal("no task selected")
 	}
 	gid, name := sel.GID, sel.Name
-	h.key("space", "K")
+	h.key("space", "Z")
 	if p := h.m.picker; p == nil || p.kind != pickDeleteTask || !strings.Contains(p.title, name) {
 		t.Fatalf("no confirmation:\n%s", h.screen())
 	}
@@ -25,7 +25,7 @@ func TestDeleteTaskAsksFirst(t *testing.T) {
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
 		t.Fatalf("queued after やめる: %+v", ops)
 	}
-	h.key("space", "K", "j", "enter") // 削除する
+	h.key("space", "Z", "j", "enter") // 削除する
 	ops, _ := st.ListOps(ctx)
 	if len(ops) != 1 || ops[0].Kind != "delete_task" || ops[0].TaskGID != gid {
 		t.Fatalf("outbox %+v", ops)

@@ -14,7 +14,7 @@ asagao からタスクを消せず、サブタスクを別の親に移したり�
 - 並べ替え: `POST /sections/{gid}/addTask` の `insert_before` / `insert_after`。位置があれば、同じセクションの中でも積む。ローカルのキャッシュはセクションの中の順番を持たないので、順番は Asana にだけ反映する。
 - CLI: `task rm <gid>` (`--yes` がないと消えるものを出して止まる。`--dry-run` に対応)、`task parent <gid> (<親> | --none) [--before|--after]`、`task move <gid> [--section] --before|--after <gid>`。
 - MCP: `delete_task` (`dry_run` で消えるものだけを返す)、`set_parent`、`move_task` の `insert_before` / `insert_after`。
-- TUI: `space K` で削除 (確認してから積む)、`space p` で親の付け替え (同じプロジェクトの未完了タスクから選ぶ・親から外す)。
+- TUI: `space Z` で削除 (確認してから積む)、`space p` で親の付け替え (同じプロジェクトの未完了タスクから選ぶ・親から外す)。
 
 ## やらないこと
 
