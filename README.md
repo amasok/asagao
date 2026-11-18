@@ -141,6 +141,7 @@ asagao --offline  # 同期せず、ローカルストアだけで起動
 | **表示** | | |
 | `f` / `T` | 絞り込み / タグで絞り込む（一覧から選ぶ） | `f` / `T` |
 | `/` | 保存した検索を呼び出す（下の「保存した検索」。サイドバーで移動するか「解除」で戻る） | |
+| `g` | Asana でも検索（`/` で語を入れてから。[キャッシュにないタスクを探す](#キャッシュにないタスクを探す)） | |
 | `v` / `z` | 表示を切り替え（リスト→ボード→カレンダー） / 詳細を全画面 | `v` / `z` |
 | `-` / `_` / `+` | このセクションを折りたたむ / すべて折りたたむ / すべて開く | 同じ |
 | `b` / `<` / `>` | プロジェクト一覧を隠す / 詳細を狭く / 広く | 同じ |
@@ -182,6 +183,7 @@ asagao --offline  # 同期せず、ローカルストアだけで起動
 - 読めないもの（該当なし・複数に一致など）があれば、そこで止めて名前に残し、ステータス行（CLI は出力）に理由を出します。
 - 全角の `＠`・`＃` も同じに読みます。`\@`・`\#` と書くと、記号をそのまま名前に入れます。
 - 名前の途中の `due:明日` は読みません（末尾に書いてください。読まなかったことはステータス行に出ます）。
+- オンラインなら、キャッシュに一致する人・タグがないときだけ Asana にも名前で聞きます（[キャッシュにないタスクを探す](#キャッシュにないタスクを探す)）。
 
 ### 見た目とキーの設定
 
@@ -208,7 +210,7 @@ due = ["D", "ctrl+t"]
 | `sync status` | ローカルストアの状態 |
 | `task list` | タスク一覧（デフォルトは自分の未完了タスク。[`.asana.json`](#ai-エージェントから使う) があればそのプロジェクトの未完了タスク） |
 | `task show [<gid>] [--offline]` | タスク詳細（サブタスク・コメント込み）。オンラインなら最新を取得。gid を省くと `.asana.json` のタスク |
-| `search <キーワード>...` | タスク名・説明・コメントを全文検索 |
+| `search <キーワード>... [--remote]` | タスク名・説明・コメントを全文検索（`--remote` で Asana も。[キャッシュにないタスクを探す](#キャッシュにないタスクを探す)） |
 | `project list [--all] [--team チーム]` | プロジェクトとセクションの一覧（お気に入り → チームの順） |
 | `project show <プロジェクト> [--offline]` | プロジェクトの概要（説明・オーナー・期間・進み具合・最新のステータス・ブリーフ） |
 | `project edit <プロジェクト> [--notes] [--owner] [--start] [--due] [--color]` | 説明（マークダウン）・オーナー・開始日・期日・色を変える（オフラインでも積む） |
@@ -254,9 +256,19 @@ asagao task list --overdue                 # 期限切れ
 asagao task list --project 新居 --section 家具 --assignee any
 asagao task list --tag 日用品 --all        # 完了済みも含む
 asagao search 転居 届 --json               # 複数語は AND
+asagao search 請求書 --remote --all        # Asana でも探す
 ```
 
 日付は `YYYY-MM-DD` / `today` / `tomorrow` / `yesterday` / `+Nd` / `-Nd` で指定できます。
+
+### キャッシュにないタスクを探す
+
+検索はふだんローカルストアの中だけです。同期していないプロジェクトのタスクや、古い完了タスクは、Asana でも探すと見つかります。
+
+- CLI は `asagao search <語> --remote`、TUI は `/` で語を入れてから `space g`、MCP は `search_tasks` の `remote: true`。ローカルの結果のあとに、Asana で見つかったタスクを足します（ほかの絞り込みは両方に効きます）。見つかったタスクはキャッシュに入ります（同期の対象でないタスクは、次の全件同期で消えます）。
+- Asana の検索 API は有料プラン（premium 以上）だけです。Asana が 402 を返したら覚えておき、次からは typeahead（名前の先頭での検索）を使います。typeahead はタスク名だけを見るので、説明やコメントの語では見つかりません。typeahead も 402 なら、Asana では探しません。覚えたことは `asagao reset` で消えます。
+- オフラインのときや Asana に届かないときは、ローカルの結果だけを出し、探せなかった理由を添えます（CLI は標準エラー、`--json` の形は変わりません）。
+- 名前の解決: クイック追加の `@担当`・`#タグ`、`task assign`・`task create --assignee`、MCP の `create_task`・`update_task` の担当は、キャッシュに一致するものがないときだけ Asana に名前で聞き（typeahead）、見つかった人・タグをキャッシュに入れてから読み直します。オフラインならキャッシュだけで読みます。
 
 ### 保存した検索
 
@@ -286,6 +298,7 @@ asagao git install-hook            # コミットのたびに読む post-commit 
 asagao git uninstall-hook          # 入れた hook を外す
 ```
 
+- **タスクの ID（custom ID）**: Asana のタスク ID（`ENG-123` のような、プロジェクトの接頭辞と番号）は `asana#ENG-123` と書きます（`fixes asana#ENG-123` で完了）。`asana#` のない `ENG-123` や `UTF-8` は読みません。ID は Asana で引いてタスクの gid を覚えるので、一度見つけた ID はオフラインでも使えます。hook は Asana を 3 秒だけ待ちます。
 - **タスク ID と読む条件**: `#` のあとに **10 桁以上**の数字（Asana のタスク ID は 16 桁ほど）。`#123` のような短い番号は GitHub の Issue・PR 番号として読みません。短い ID は `asana#<タスクID>` と書きます。`#` の直前が英数字・`_`・`&`・`/`・`#` のとき（`abc#…`、`&#…;`、`owner/repo#…`）と、数字のすぐあとに英字が続くときは読みません。
 - **完了にするキーワード**: `fix` `fixes` `fixed` `close` `closes` `closed` `resolve` `resolves` `resolved`（大文字小文字は問わない）のあと、同じ行の空白か `:` に続く ID。GitHub と同じく、キーワードはすぐあとの 1 つにだけ効きます（`fixes #A, #B` は A を完了、B はコメントだけ）。`Revert "…"` のコミットはコメントだけで、完了にはしません（revert をさらに戻した `Reapply "…"` は、ふつうのコミットと同じく完了にします）。
 - コメントには、コミットの短い ID、リポジトリ名、メッセージ全文と、末尾に `asagao-git: <コミットの ID>` が入ります。**同じコミットを何度読んでも**、この行があるタスクには何もしません（コメントが二重にならず、あとで未完了に戻したタスクをまた完了にもしません）。メッセージの中に引用された `asagao-git: …` は数えません。このコンピューターで付けたコメントは、ローカルストアにも記録します（そのため、`outbox discard` で取り消したコメントは、同じコミットを読み直しても付け直しません）。オンラインなら、判断の前にタスクを Asana から取り直します。ただし、見分けるのはコミットの ID なので、rebase・amend・squash で ID が変わったコミットを範囲で読み直すと、もう一度コメントします（`fixes` なら、未完了に戻したタスクもまた完了にします）。範囲の scan は、まだ push していない新しいコミットに使ってください。
@@ -325,7 +338,7 @@ claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 | ツール | 内容 |
 |--------|------|
 | `list_tasks` | タスク一覧（デフォルトは自分の未完了。プロジェクト・セクション・担当者・期日・期限切れ・タグで絞り込み。`modified_within_days` で最近の更新） |
-| `search_tasks` | タスク名・説明・コメントを全文検索 |
+| `search_tasks` | タスク名・説明・コメントを全文検索（`remote: true` で Asana も探し、見つかったタスクをキャッシュに入れる） |
 | `get_task` | タスク詳細。説明とコメントをマークダウンで返す（サブタスク・タグ・添付込み。オンラインなら最新を取得） |
 | `get_attachment` | 添付ファイル。画像は画像として返すので、AI が中身を見られる |
 | `list_projects` | プロジェクトとセクション（お気に入り → チームの順。`team` で絞る） |
@@ -425,7 +438,7 @@ asagao agent-guide >> CLAUDE.md
 このリポジトリの作業は Asana で管理している。Asana の操作には `asagao` を使う。
 
 - 作業中のプロジェクト・タスクは `.asana.json` にある。最初に `asagao context --json` で確かめる。
-- 読む: `asagao task list --json`（.asana.json のプロジェクトの未完了タスク）、`asagao task show [<gid>] --json`（gid を省くと .asana.json のタスク）、`asagao task search <語> --json`。
+- 読む: `asagao task list --json`（.asana.json のプロジェクトの未完了タスク）、`asagao task show [<gid>] --json`（gid を省くと .asana.json のタスク）、`asagao search <語> --json`（`--remote` で Asana も探す）。
 - 書く前に、同じコマンドに `--dry-run` を付けて、何が変わるかを確かめる。`--dry-run` は Asana にも outbox にも何も書かない。
 - 書く: `asagao comment add <gid> <本文>`（進捗の報告）、`asagao task complete <gid>`、`asagao task create <名前> [--due <日付>]`（.asana.json のプロジェクトに作る）、`asagao task move <gid> --section <セクション>`。
 - 書き込みはオフラインでも受け付け、次の同期で送る。`--json` の `sent` が false なら未送信。勝手に再送したり `asagao outbox` を操作したりしない。
