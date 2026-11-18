@@ -351,7 +351,7 @@ func (c *Created) guardBody(method, path string, body M) error {
 		ok = ours(c.Projects, 1) && prefixed && data["public"] != true
 	case method == "POST" && path == "/goals":
 		ok = data["workspace"] == TestWorkspace && data["team"] == TestTeam && prefixed
-	case method == "POST" && len(parts) == 3 && parts[0] == "goals" && parts[2] == "setMetric":
+	case method == "POST" && len(parts) == 3 && parts[0] == "goals" && (parts[2] == "setMetric" || parts[2] == "setMetricCurrentValue"):
 		ok = ours(c.Goals, 1)
 	case method == "POST" && path == "/portfolios":
 		ok = data["workspace"] == TestWorkspace && data["public"] == false && prefixed

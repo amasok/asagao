@@ -220,6 +220,9 @@ func (c *Check) shapes(templates bool) {
 	if gg := str(goal, "data", "gid"); gg != "" {
 		c.Made.add(&c.Made.Goals, gg)
 		s.get("goal", "/goals/"+gg, goalFields)
+		// the default metric is a percentage 0 → 1: set it to 40% and read it back
+		s.write("goal-set-current-percentage", "POST", "/goals/"+gg+"/setMetricCurrentValue", M{"data": M{"current_number_value": 0.4}})
+		s.get("goal-percentage-40", "/goals/"+gg, goalFields)
 		sub := s.write("subgoal-create", "POST", "/goals", M{"data": M{"name": pre + "-subgoal", "workspace": TestWorkspace, "team": c.team,
 			"owner": c.Me, "time_period": quarter}})
 		if sg := str(sub, "data", "gid"); sg != "" {

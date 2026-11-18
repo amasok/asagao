@@ -105,6 +105,7 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/project_templates/8000008/instantiateProject", named(pre + "-p")},
 		{"POST", "/goals", named(pre+"-g", "workspace", TestWorkspace, "team", TestTeam)},
 		{"POST", "/goals/9100001/setMetric", M{"data": M{"metric_type": "number"}}},
+		{"POST", "/goals/9100001/setMetricCurrentValue", M{"data": M{"current_number_value": 0.4}}},
 		{"POST", "/portfolios", named(pre+"-pf", "workspace", TestWorkspace, "public", false)},
 		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "1000001"}}},
 		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "9200002"}}}, // a nested one of ours
@@ -146,6 +147,7 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/goals", named(pre+"-g", "workspace", TestWorkspace)}, // workspace-level goal
 		{"POST", "/goals", named("Revenue", "workspace", TestWorkspace, "team", TestTeam)},
 		{"POST", "/goals/9999999/setMetric", M{"data": M{}}},
+		{"POST", "/goals/9999999/setMetricCurrentValue", M{"data": M{}}},
 		{"POST", "/portfolios", named(pre+"-pf", "workspace", TestWorkspace)},    // public not false
 		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "9999999"}}}, // not our project
 		{"POST", "/portfolios/9999999/addItem", M{"data": M{"item": "1000001"}}},
