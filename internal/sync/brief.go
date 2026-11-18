@@ -88,7 +88,9 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 	case baseState != readmodel.BriefAvailable:
 		// made here, and Asana has one: this one (sent before, its answer lost), or one made
 		// there (or, before the brief was ever fetched, one that was there)
-		if same(title, text) {
+		// Sent before and maybe made (its answer lost, a 5xx: op.Verify): the title is
+		// enough, since Asana may write the text of tables and lists otherwise than here.
+		if same(title, text) || op.Verify && server.Title == title {
 			return sent, sentNotSaved(s.Store.CompleteBriefOp(ctx, op.ID, op.TaskGID, server))
 		}
 		conflict = true
@@ -125,7 +127,11 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 }
 
 // briefRefused reports whether err is Asana refusing the brief API: 402 (the plan lacks
-// it) or 403 (the preview API is not open to this workspace or user).
+// it) or 403 (the preview API is not open to this workspace or user). A 403 may also mean
+// that this one project is not ours to change; it is still recorded for the whole
+// workspace (as #60 asks), which then tries again after readmodel.PlanRecheckAfter: a
+// workspace where the preview is closed is not asked over and over, at the cost of hiding
+// the brief of its other projects for that while.
 func briefRefused(err error) bool {
 	return model.IsPaymentRequired(err) || isForbidden(err)
 }

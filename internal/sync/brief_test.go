@@ -370,3 +370,36 @@ func TestFetchOverviewKeepsUnsentBrief(t *testing.T) {
 		t.Fatalf("deleted brief back: %+v", o.Brief)
 	}
 }
+
+// A create sent before (its answer lost) whose brief Asana writes with another text (a
+// table, a list) is still found by its title: not a conflict (review of #60).
+func TestPushCreateBriefSentBeforeFoundByTitle(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "", "")
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "- 年内"), now); err != nil {
+		t.Fatal(err)
+	}
+	ops := briefOps(t, st)
+	if _, err := st.BeginSend(ctx, ops[0].ID, now); err != nil { // as if sent once, its answer lost
+		t.Fatal(err)
+	}
+	_ = st.MarkOpVerify(ctx, ops[0].ID, "")
+	bs.gid, bs.title, bs.text, bs.html = "b5", "目的", "年内", "<body><ul><li>年内</li></ul></body>"
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Conflicts != 0 || bs.calls["POST /projects/p1/project_briefs"] != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+}
+
+// A brief made in Asana with the same title, while one made here was never sent, is a
+// conflict: only an entry sent before (verify) is matched by its title alone.
+func TestPushCreateBriefNotSentSameTitleConflicts(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "", "")
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "こちら"), now); err != nil {
+		t.Fatal(err)
+	}
+	bs.gid, bs.title, bs.text, bs.html = "b5", "目的", "あちら", "<body>あちら</body>"
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+}

@@ -20,7 +20,7 @@ func TestBriefRoundTripKeepsTablesAndEmbeds(t *testing.T) {
 			t.Fatalf("markdown lacks %q:\n%s", want, md)
 		}
 	}
-	out, plain, err := BriefFromMarkdown(md)
+	out, plain, err := BriefFromMarkdown(md, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestBriefRoundTripKeepsTablesAndEmbeds(t *testing.T) {
 		}
 	}
 	// and again: a second round changes nothing
-	if again, _, _ := BriefFromMarkdown(BriefToEditableMarkdown(out, nil)); again != out {
+	if again, _, _ := BriefFromMarkdown(BriefToEditableMarkdown(out, nil), out); again != out {
 		t.Fatalf("second round:\n got %q\nwant %q", again, out)
 	}
 }
@@ -42,7 +42,7 @@ func TestBriefRoundTripKeepsTablesAndEmbeds(t *testing.T) {
 // Headings (h1, h2), rules and images are a brief's too, as in a task description.
 func TestBriefRoundTripLayout(t *testing.T) {
 	in := "<body><h1>A</h1><h2>B</h2>text<hr/><img data-asana-gid=\"55\"/>tail</body>"
-	out, _, err := BriefFromMarkdown(BriefToEditableMarkdown(in, nil))
+	out, _, err := BriefFromMarkdown(BriefToEditableMarkdown(in, nil), in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestBriefRoundTripLayout(t *testing.T) {
 // A table edited in place is sent as edited.
 func TestBriefTableEditedInPlace(t *testing.T) {
 	md := "x\n\n```asana-html\n<table><tr><td>new</td></tr></table>\n```\n"
-	out, _, err := BriefFromMarkdown(md)
+	out, _, err := BriefFromMarkdown(md, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestBriefFromMarkdownRefusesBadBlocks(t *testing.T) {
 		`<table onclick="x"><tr></tr></table>`, // not an attribute it takes
 		"",
 	} {
-		if _, _, err := BriefFromMarkdown("```asana-html\n" + raw + "\n```"); err == nil {
+		if _, _, err := BriefFromMarkdown("```asana-html\n"+raw+"\n```", ""); err == nil {
 			t.Errorf("%q: no error", raw)
 		}
 	}
@@ -83,7 +83,7 @@ func TestBriefFromMarkdownRefusesBadBlocks(t *testing.T) {
 // block, or HTML typed in a paragraph.
 func TestBriefFencesOnlyAtTop(t *testing.T) {
 	md := "````\n```asana-html\n<table></table>\n```\n````\n\n<table><tr><td>t</td></tr></table>"
-	out, _, err := BriefFromMarkdown(md)
+	out, _, err := BriefFromMarkdown(md, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,8 +99,55 @@ func TestBriefWithoutBlocksIsTaskNotes(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 	md := "**b** and *e*\n\n- x"
-	h, p, _ := BriefFromMarkdown(md)
+	h, p, _ := BriefFromMarkdown(md, "")
 	if h != TaskNotes.FromMarkdown(md) || p != TaskNotes.PlainFromMarkdown(md) {
 		t.Fatalf("got %q %q", h, p)
+	}
+}
+
+// A table as Asana gave it goes back unchecked, whatever it holds (a <br> without an end
+// tag, a list, attributes not in briefTags): editing only the text around it is not
+// refused, and the table is sent as it was. A table changed here is checked (review of #60).
+func TestBriefAsanaBlocksUnchecked(t *testing.T) {
+	table := `<table><tr><td style="x" data-foo="1">a<br>b</td><td><ul><li>c</li></ul><p>d</p></td></tr></table>`
+	orig := "<body><h1>見出し</h1>" + table + "</body>"
+	md := BriefToEditableMarkdown(orig, nil)
+	if !strings.Contains(md, "```asana-html\n"+table+"\n```") {
+		t.Fatalf("md:\n%s", md)
+	}
+	out, _, err := BriefFromMarkdown(strings.Replace(md, "# 見出し", "# 新しい見出し", 1), orig)
+	if err != nil {
+		t.Fatalf("an edit beside Asana's table refused: %v", err)
+	}
+	if !strings.Contains(out, table) || !strings.Contains(out, "<h1>新しい見出し</h1>") {
+		t.Fatalf("out = %q", out)
+	}
+	// the same table changed here is checked (style, <p>)
+	changed := strings.Replace(md, ">a<br>", ">A<br>", 1)
+	if _, _, err := BriefFromMarkdown(changed, orig); err == nil {
+		t.Fatalf("a changed block not checked: %v", err)
+	}
+	// the block of another brief (or a new one) is checked too
+	if _, _, err := BriefFromMarkdown(md, ""); err == nil {
+		t.Fatal("a block not from the brief passed unchecked")
+	}
+}
+
+// A block written here may use HTML's void elements and data-* attributes; tags must be
+// closed in order.
+func TestBriefCheckWrittenBlocks(t *testing.T) {
+	for raw, ok := range map[string]bool{
+		`<table><tr><td>a<br>b</td></tr></table>`:                              true,
+		`<table><tr><td>a<br/>b<hr/></td></tr></table>`:                        true,
+		`<table><tr><td data-cell-widths="150" data-x="1">a</td></tr></table>`: true,
+		`<table><tr><td><ul><li>x</li></ul></td></tr></table>`:                 true,
+		`<table><tr><td>a</tr></td></table>`:                                   false,
+		`<table><tr><td>a</td></tr>`:                                           false,
+		`<table><tr><td onclick="x">a</td></tr></table>`:                       false,
+	} {
+		_, _, err := BriefFromMarkdown("```asana-html\n"+raw+"\n```", "")
+		if (err == nil) != ok {
+			t.Errorf("%s: err = %v, want ok=%v", raw, err, ok)
+		}
 	}
 }

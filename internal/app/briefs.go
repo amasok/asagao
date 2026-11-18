@@ -25,7 +25,9 @@ type BriefStore interface {
 // refuse is an error.
 type BriefText interface {
 	BriefMarkdown(htmlText string) string
-	ProjectBrief(md string) (htmlText, plain string, err error)
+	// ProjectBrief converts md; original is the brief's html_text it was made from (its
+	// tables and embeds as they were there go back as they are).
+	ProjectBrief(md, original string) (htmlText, plain string, err error)
 }
 
 // Briefs is the use case of creating, changing and deleting a project's brief (#60): one
@@ -91,7 +93,7 @@ func (b *Briefs) SaveHere(ctx context.Context, gid string, in BriefInput) (bool,
 		e.Title, changed = *in.Title, true
 	}
 	if in.Markdown != nil && (o.Brief == nil || strings.TrimSpace(*in.Markdown) != strings.TrimSpace(b.Text.BriefMarkdown(cur.HTMLText))) {
-		if e.HTMLText, e.Text, err = b.Text.ProjectBrief(*in.Markdown); err != nil {
+		if e.HTMLText, e.Text, err = b.Text.ProjectBrief(*in.Markdown, cur.HTMLText); err != nil {
 			return false, &FieldError{Field: "brief", Err: err}
 		}
 		changed = true
