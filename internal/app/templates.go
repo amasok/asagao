@@ -26,5 +26,12 @@ func TemplatesOffered(ctx context.Context, st interface {
 	if err != nil {
 		return true
 	}
-	return now.Sub(at) >= TemplateRecheck
+	d := now.Sub(at)
+	// A mark more than templateSkew in the future: the clock went back, and the mark would
+	// hide templates for longer than TemplateRecheck. It is ignored.
+	return d >= TemplateRecheck || d < -templateSkew
 }
+
+// templateSkew is how far in the future a mark may be (another process's clock, a
+// second's rounding) and still count.
+const templateSkew = 5 * time.Minute

@@ -31,6 +31,8 @@ func TestTemplatesOffered(t *testing.T) {
 		{map[string]string{key: now.Add(-TemplateRecheck + time.Second).Format(time.RFC3339)}, false},
 		{map[string]string{key: now.Add(-TemplateRecheck).Format(time.RFC3339)}, true},
 		{map[string]string{key: now.Add(time.Minute).Format(time.RFC3339)}, false},
+		{map[string]string{key: now.Add(templateSkew + time.Second).Format(time.RFC3339)}, true},
+		{map[string]string{key: now.Add(48 * time.Hour).Format(time.RFC3339)}, true},
 		{map[string]string{key: "garbage"}, true},
 		{map[string]string{readmodel.KeyPlanUnavailable + readmodel.PlanProjectTemplates: now.Format(time.RFC3339)}, true},
 		{map[string]string{"err": "locked"}, true},
