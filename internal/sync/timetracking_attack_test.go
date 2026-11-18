@@ -257,3 +257,29 @@ func TestAttackTimeEntryEditOfDroppedAdd(t *testing.T) {
 		t.Errorf("PUT sent for an entry Asana never had: %v", ts.calls)
 	}
 }
+
+// An entry recorded on a task made offline is sent after the task's create, to the task's real gid.
+func TestAttackTimeEntryOnOfflineTaskAfterCreate(t *testing.T) {
+	ts, s, st := setupTimePush(t)
+	ctx := context.Background()
+	gid, err := st.CreateTaskLocal(ctx, store.NewTask{ProjectGID: "p1", Name: "new"}, now)
+	must(t, err)
+	_, err = st.AddTimeEntryLocal(ctx, gid, 15, "2026-11-12", meRef, now)
+	must(t, err)
+	for i := 0; i < 3; i++ {
+		if _, err := s.Push(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	real, _, _ := st.LocalResult(ctx, store.ResultTask, gid)
+	if real == "" {
+		t.Fatal("task not created")
+	}
+	if n := ts.count("POST /tasks/" + real + "/time_tracking_entries"); n != 1 {
+		t.Errorf("calls %v", ts.calls)
+	}
+	if n := ts.count("POST /tasks/local"); n != 0 {
+		t.Errorf("sent to the local gid: %v", ts.calls)
+	}
+	assertOutboxEmpty(t, st)
+}
