@@ -104,6 +104,12 @@ const (
 	PlanCustomFields = "custom_fields"
 )
 
+// Features of #57 that a plan may lack (PlanKey).
+const (
+	// PlanStartOn is the start dates of tasks (start_on).
+	PlanStartOn = "start_on"
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -134,6 +140,7 @@ func PlanUnavailableMessage(feature string) string {
 		PlanGoals:        "ゴール",
 		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
+		PlanStartOn:      "タスクの開始日",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
