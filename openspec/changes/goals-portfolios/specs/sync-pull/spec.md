@@ -9,9 +9,17 @@
 - **THEN** ゴールはキャッシュに入り、期間は前のものが残り、エラーが返る
 
 ### Requirement: プランにない機能は 1 日隠して、また試す
-`GET /goals` などが 402 を返したら、`plan_unavailable:goals` (ポートフォリオは `plan_unavailable:portfolios`) に時刻を記録し、その機能を 1 日 (PlanRecheckAfter) 隠す (MUST)。その間は Asana に問い合わせない。1 日たったら TUI のメニューや CLI に再び出し、開いたときにもう一度問い合わせる。答えが返れば記録を消す。時刻として読めない記録や未来の時刻は、隠さない。402 はエラーとして返さず、読む側が「プランで使えない」と伝える。
-根拠: internal/sync/goals.go (goalPlanOff, goalPlanRefused, goalPlanGranted); internal/readmodel/store_names.go (PlanOffFor); TestGoals402HidesThemForADay, TestGoalsPlanUnavailable, TestPlanOffFor, TestGoalsScreenOnline402
+`GET /goals` などが 402 を返したら、`plan_unavailable:<機能>:<ワークスペースの gid>` (readmodel.PlanKey) に時刻を記録し、そのワークスペースでその機能を 1 日 (PlanRecheckAfter) 隠して問い合わせない (MUST)。1 日たったら再び出して試し、答えが返れば記録を消す。402 はエラーにせず、読む側が「プランで使えない」と伝える。
+根拠: internal/sync/plan.go; internal/readmodel/plan.go; TestGoals402HidesThemForADay, TestGoals402IsPerWorkspace, TestPlanOffFor
 
 #### Scenario: お試しを始めたワークスペース
 - **WHEN** ゴールが 402 で隠れてから 1 日たち、Asana がゴールを返すようになっている
 - **THEN** TUI のメニューにゴールが戻り、開くとゴールが取れて、402 の記録が消える
+
+#### Scenario: 無料のワークスペースの 402
+- **WHEN** 別のワークスペース (無料) でゴールが 402 を返した記録がある
+- **THEN** 既定のワークスペース (有料の組織) ではゴールを隠さない。ワークスペースが消えれば、その記録も消える
+
+#### Scenario: 読めない記録
+- **WHEN** 記録が時刻として読めない、または未来の時刻である
+- **THEN** 隠さずに試す

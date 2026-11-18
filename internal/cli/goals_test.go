@@ -105,7 +105,7 @@ func TestGoalCommandsPlanUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(context.Background(), readmodel.KeyPlanUnavailable+readmodel.PlanGoals, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := st.SetSyncState(context.Background(), readmodel.PlanKey(readmodel.PlanGoals, "w1"), time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

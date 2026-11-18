@@ -6,7 +6,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"regexp"
 	"strings"
-	"time"
 )
 
 // Names of the local cache that the entry points (d4b) and sync (e1) use without importing
@@ -70,28 +69,11 @@ const (
 	PlanMySection = "my_section" // the sections of My Tasks
 )
 
-// Features of #7 that a plan may lack (KeyPlanUnavailable). A 402 for them hides them for
-// PlanRecheckAfter only: they are then offered again (and tried again when shown), so a
-// workspace whose plan was upgraded, or whose trial started, gets them back by itself.
+// Features of #7 that a plan may lack (PlanKey).
 const (
 	PlanGoals      = "goals"      // goals and time periods
 	PlanPortfolios = "portfolios" // portfolios
-
-	PlanRecheckAfter = 24 * time.Hour
 )
-
-// PlanOffFor reports whether a KeyPlanUnavailable value of a feature of #7 (when Asana
-// answered 402) still hides it at now: for PlanRecheckAfter. A value that is not a time
-// (or one in the future, from a clock that was ahead) does not hide it, so it is tried
-// again rather than hidden for good.
-func PlanOffFor(value string, now time.Time) bool {
-	at, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return false
-	}
-	age := now.Sub(at)
-	return age >= 0 && age < PlanRecheckAfter
-}
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {

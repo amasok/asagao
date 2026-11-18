@@ -109,7 +109,7 @@ func TestGoalsScreen(t *testing.T) {
 // Goals and portfolios that Asana refused with a 402 are not in the menu.
 func TestGoalsMenuHiddenByPlan(t *testing.T) {
 	st := goalsStore(t)
-	if err := st.SetSyncState(context.Background(), readmodel.KeyPlanUnavailable+readmodel.PlanGoals, testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.SetSyncState(context.Background(), readmodel.PlanKey(readmodel.PlanGoals, "w1"), testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	h := goalsHarness(t, st, func() time.Time { return testNow })

@@ -39,15 +39,11 @@ func (g *Goals) now() string {
 	return g.Clock().Format("2006-01-02")
 }
 
+// plan returns ErrPlanUnavailable while a recent 402 hides feature in the default
+// workspace (the one goals and portfolios are fetched from).
 func (g *Goals) plan(ctx context.Context, feature string) error {
-	v, err := g.Store.SyncState(ctx, readmodel.KeyPlanUnavailable+feature)
-	if err != nil {
-		return err
-	}
-	if readmodel.PlanOffFor(v, g.Clock()) {
-		return &ErrPlanUnavailable{Feature: feature}
-	}
-	return nil
+	ws, _ := g.Store.DefaultWorkspace(ctx) // none yet: nothing was refused
+	return planOffered(ctx, g.Store, feature, ws, g.Clock())
 }
 
 // Available reports whether goals can be offered.

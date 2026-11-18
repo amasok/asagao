@@ -135,6 +135,8 @@ func TestGoalsGoWithTheirWorkspaceAndReset(t *testing.T) {
 	must(t, s.ReplacePortfolios(ctx, "w1", []model.Portfolio{{GID: "pf"}}))
 	must(t, s.SavePortfolio(ctx, model.Portfolio{GID: "pf"}, []model.PortfolioItem{{GID: "p1", ResourceType: "project"}}, testNow))
 	must(t, s.SetSyncState(ctx, readmodel.KeyGoals+"w1", "x"))
+	must(t, s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1"), "x"))
+	must(t, s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w11"), "kept"))
 	must(t, s.UpsertWorkspaces(ctx, []model.Workspace{{GID: "w2", Name: "別"}}))
 	must(t, s.PruneWorkspaces(ctx, []model.Workspace{{GID: "w2"}}))
 	count := func() int {
@@ -146,8 +148,11 @@ func TestGoalsGoWithTheirWorkspaceAndReset(t *testing.T) {
 	if n := count(); n != 0 {
 		t.Fatalf("%d rows of a pruned workspace", n)
 	}
-	if v, _ := s.SyncState(ctx, readmodel.KeyGoals+"w1"); v != "" {
-		t.Fatalf("key of a pruned workspace: %q", v)
+	for key, want := range map[string]string{readmodel.KeyGoals + "w1": "", readmodel.PlanKey(readmodel.PlanGoals, "w1"): "",
+		readmodel.PlanKey(readmodel.PlanGoals, "w11"): "kept"} {
+		if v, _ := s.SyncState(ctx, key); v != want {
+			t.Fatalf("%s after pruning w1: %q", key, v)
+		}
 	}
 	must(t, s.ReplaceGoals(ctx, "w2", []model.Goal{{GID: "g1"}}))
 	must(t, s.SaveGoal(ctx, model.Goal{GID: "g1"}, []model.GoalRelationship{{SupportingResource: &model.SupportingWork{GID: "x"}}}, testNow))

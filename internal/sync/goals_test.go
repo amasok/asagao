@@ -198,7 +198,7 @@ func TestGoals402HidesThemForADay(t *testing.T) {
 	if err := s.FetchGoals(ctx); err != nil || f.count("/goals") != 2 {
 		t.Fatalf("not tried again: %d calls, %v", f.count("/goals"), err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanGoals); v != "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1")); v != "" {
 		t.Fatalf("the 402 is still recorded: %q", v)
 	}
 	if l, err := uc.List(ctx, ""); err != nil || len(l.Goals) != 2 {
@@ -331,5 +331,31 @@ func TestGoalsOffline(t *testing.T) {
 		if !errors.Is(err, ErrOffline) {
 			t.Fatalf("offline: %v", err)
 		}
+	}
+}
+
+// A 402 is recorded for the workspace it came from: one of another workspace (or an old
+// record without a workspace) does not hide goals here.
+func TestGoals402IsPerWorkspace(t *testing.T) {
+	s, st, f, now := setupGoals(t)
+	ctx := context.Background()
+	fresh := now.UTC().Format(time.RFC3339)
+	for _, key := range []string{readmodel.PlanKey(readmodel.PlanGoals, "w9"), readmodel.KeyPlanUnavailable + readmodel.PlanGoals} {
+		if err := st.SetSyncState(ctx, key, fresh); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !goalUC(st, now).Available(ctx) {
+		t.Fatal("hidden by another workspace's 402")
+	}
+	if err := s.FetchGoals(ctx); err != nil || f.count("/goals") != 1 {
+		t.Fatalf("not asked: %d calls, %v", f.count("/goals"), err)
+	}
+	f.set(func() { f.status["/goals"] = http.StatusPaymentRequired })
+	if err := s.FetchGoals(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1")); v != fresh {
+		t.Fatalf("402 recorded as %q for w1", v)
 	}
 }

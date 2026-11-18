@@ -548,6 +548,7 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) err
 				"DELETE FROM time_periods WHERE workspace_gid = ?",
 				"UPDATE portfolios SET mine = 0 WHERE workspace_gid = ?",
 				"DELETE FROM sync_state WHERE key IN ('" + readmodel.KeyGoals + "' || ?1, '" + readmodel.KeyPortfolios + "' || ?1)",
+				"DELETE FROM sync_state WHERE key GLOB '" + readmodel.KeyPlanUnavailable + "*:' || ?", // its 402s (readmodel.PlanKey)
 				"DELETE FROM workspaces WHERE gid = ?",
 			} {
 				if _, err := tx.ExecContext(ctx, q, gid); err != nil {

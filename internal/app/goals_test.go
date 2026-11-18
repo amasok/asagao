@@ -84,7 +84,7 @@ func TestGoalsPlanUnavailable(t *testing.T) {
 	st := goalStore(t)
 	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
 	uc := &app.Goals{Store: st, Clock: func() time.Time { return now }}
-	key := readmodel.KeyPlanUnavailable + readmodel.PlanGoals
+	key := readmodel.PlanKey(readmodel.PlanGoals, "w1")
 	if err := st.SetSyncState(ctx, key, now.Add(-time.Hour).Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}

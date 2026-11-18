@@ -106,7 +106,7 @@ func TestGoalToolsOffline(t *testing.T) {
 func TestGoalToolsHiddenByPlan(t *testing.T) {
 	ctx := context.Background()
 	st := seed(t)
-	if err := st.SetSyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanGoals, testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1"), testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	cs := connect(t, &Server{Store: st})
