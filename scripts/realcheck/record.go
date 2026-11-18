@@ -27,6 +27,8 @@ type Created struct {
 	Goals            []string
 	Portfolios       []string
 	Jobs             []string // duplicate / template jobs: cleanup waits for them
+	// Deleted are "kind/gid" the run deleted itself (a deleted goal answers 403, not 404).
+	Deleted []string
 }
 
 // recordJob records what a job (its start or a GET /jobs) says it makes, as soon as it
@@ -279,6 +281,9 @@ func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	del := func(kind string, gids []string) {
 		for i := len(gids) - 1; i >= 0; i-- { // subtasks and copies were added after parents
 			g := gids[i]
+			if slices.Contains(c.Deleted, kind+"/"+g) {
+				continue
+			}
 			ok, why := r.owned(ctx, c, kind, g)
 			if !ok {
 				if gone(why) {

@@ -64,6 +64,9 @@ func (s *shapes) del(name, path string) {
 	}
 	out, err := s.c.R.CLI(s.c.ctx, "api", "-X", "DELETE", path)
 	s.save(name, "DELETE "+path, out, err)
+	if err == nil {
+		s.c.Made.add(&s.c.Made.Deleted, strings.Trim(path, "/"))
+	}
 }
 
 // job polls GET /jobs/{gid} until it is done, saving the first and the last answer.
