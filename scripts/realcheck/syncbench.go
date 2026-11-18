@@ -59,12 +59,21 @@ func (c *Check) syncbench(variants []benchVariant) {
 	myOpen := c.asanaCount("/tasks", "assignee=me", "workspace="+TestWorkspace, "completed_since=now", "opt_fields=gid")
 	p1Open := 15
 
+	var tokenCopies []string
+	defer func() {
+		for _, f := range tokenCopies { // the copied token is not kept after the run
+			_ = os.Remove(f)
+		}
+	}()
 	rows := []string{"| | 最初の sync | 2 回目の sync | P1 を開く (task list --project) | P2 を開く (MCP list_tasks) |", "|---|---|---|---|---|"}
 	for _, v := range variants {
 		c.group("#54 遅延同期: " + v.Name)
 		b := c.newBench(v)
 		if b == nil {
 			continue
+		}
+		if v.Eager {
+			tokenCopies = append(tokenCopies, filepath.Join(b.env.Config, "asagao", "token.json"))
 		}
 		first := b.run("sync")
 		var mine []M
@@ -196,16 +205,64 @@ func (b *bench) run(args ...string) benchResult {
 	cmd.Env = append(slices.Clone(b.env.Vars), "GODEBUG=http2debug=2")
 	cmd.Dir = b.env.Work
 	detach(cmd)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	var out bytes.Buffer
+	errw := &http2Counter{}
+	cmd.Stdout, cmd.Stderr = &out, errw
 	start := time.Now()
 	err := cmd.Run()
-	r := benchResult{out: out.Bytes(), took: time.Since(start), requests: strings.Count(errb.String(), "wrote HEADERS")}
+	errw.flush()
+	r := benchResult{out: out.Bytes(), took: time.Since(start), requests: errw.headers}
 	fmt.Fprintf(b.c.R.Log, "  $ asagao %s (%d requests, %s)\n", strings.Join(args, " "), r.requests, r.took.Round(time.Millisecond))
 	if err != nil {
-		r.err = fmt.Errorf("%w: %s", err, lastLines(errb.String()))
+		r.err = fmt.Errorf("%w: %s", err, lastLines(errw.kept.String()))
 	}
 	return r
+}
+
+// http2Counter is a child's stderr under GODEBUG=http2debug=2: it counts the HEADERS
+// frames written (one per request) and drops every http2 line as it comes. Those lines
+// include "encoding header "authorization" = "Bearer <token>"", so they are never kept,
+// not even in memory; only the other lines are (for an error's message).
+type http2Counter struct {
+	headers int
+	partial []byte
+	kept    bytes.Buffer
+}
+
+func (w *http2Counter) Write(p []byte) (int, error) {
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexByte(w.partial, '\n')
+		if i < 0 {
+			break
+		}
+		w.line(w.partial[:i])
+		w.partial = w.partial[i+1:]
+	}
+	if len(w.partial) > 1<<16 { // a very long line without a newline: judge it now
+		w.line(w.partial)
+		w.partial = nil
+	}
+	return len(p), nil
+}
+
+func (w *http2Counter) flush() {
+	if len(w.partial) > 0 {
+		w.line(w.partial)
+		w.partial = nil
+	}
+}
+
+func (w *http2Counter) line(l []byte) {
+	if bytes.Contains(l, []byte("wrote HEADERS")) {
+		w.headers++
+	}
+	lower := bytes.ToLower(l)
+	if bytes.Contains(l, []byte("http2:")) || bytes.Contains(lower, []byte("authorization")) || bytes.Contains(lower, []byte("bearer ")) {
+		return
+	}
+	w.kept.Write(l)
+	w.kept.WriteByte('\n')
 }
 
 func (b *bench) json(v any, args ...string) error {
@@ -233,11 +290,11 @@ func jsonInto(b []byte, v any) error {
 	return nil
 }
 
-// lastLines is the end of a debug-heavy stderr without the http2 lines.
+// lastLines is the end of what http2Counter kept.
 func lastLines(s string) string {
 	var keep []string
 	for _, l := range strings.Split(s, "\n") {
-		if l != "" && !strings.Contains(l, "http2:") {
+		if l != "" {
 			keep = append(keep, l)
 		}
 	}

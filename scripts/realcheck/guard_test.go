@@ -197,3 +197,30 @@ func TestParseBench(t *testing.T) {
 		t.Fatalf("%+v", vs)
 	}
 }
+
+// The http2 debug lines (with the token in "authorization") are counted and dropped, never kept.
+func TestHTTP2CounterDropsTheToken(t *testing.T) {
+	w := &http2Counter{}
+	in := "2026/11/19 http2: Framer 0x1: wrote HEADERS flags=END_HEADERS stream=1 len=9\n" +
+		`2026/11/19 http2: Transport encoding header "authorization" = "Bearer 1/secret-token"` + "\n" +
+		"Authorization: Bearer 2/other-secret\n" +
+		"error: asana: 401 Not Authorized\n" +
+		"2026/11/19 http2: Framer 0x1: wrote HEADERS flags=END_STREAM stream=3 len=9\n" +
+		"bearer 3/partial-line-without-newline"
+	for _, chunk := range []string{in[:30], in[30:101], in[101:]} { // split mid-line
+		_, _ = w.Write([]byte(chunk))
+	}
+	w.flush()
+	kept := w.kept.String()
+	if w.headers != 2 {
+		t.Errorf("headers = %d, want 2", w.headers)
+	}
+	for _, secret := range []string{"secret", "Bearer", "bearer", "http2:"} {
+		if strings.Contains(kept, secret) || strings.Contains(lastLines(kept), secret) {
+			t.Errorf("kept %q contains %q", kept, secret)
+		}
+	}
+	if !strings.Contains(kept, "401 Not Authorized") {
+		t.Errorf("the error line was dropped: %q", kept)
+	}
+}
