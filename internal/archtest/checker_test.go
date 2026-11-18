@@ -56,6 +56,7 @@ func sample() map[string][]string {
 		"internal/mcpserver":       {"internal/app", "internal/auth", "internal/dates", "internal/richtext", "internal/store", "internal/sync", "github.com/modelcontextprotocol/go-sdk/mcp"},
 		"internal/cli":             {"internal/app", "internal/asana", "internal/auth", "internal/auth/tokenstore", "internal/browser", "internal/config", "internal/imageview", "internal/mcpserver", "internal/store", "internal/sync", "internal/tui", "github.com/spf13/cobra", "golang.org/x/oauth2", "golang.org/x/term"},
 		"internal/archtest":        nil,
+		"internal/testguard":       {"os", "os/exec", "testing"},
 	}
 }
 
@@ -116,6 +117,19 @@ func TestCheckerCatches(t *testing.T) {
 	}{
 		// A new import into a stdOnly layer also reports the external modules it brings in
 		// ("X reaches M: ..."). Cases that are not about that ignore those lines.
+		{"a package imports testguard outside its tests",
+			func(m map[string][]string) { m["internal/store"] = append(m["internal/store"], "internal/testguard") },
+			[]string{"internal/store → internal/testguard: only tests import testguard"}},
+		{"testguard imports a package of the module",
+			func(m map[string][]string) {
+				m["internal/testguard"] = append(m["internal/testguard"], "internal/termsafe")
+			},
+			[]string{"internal/testguard → internal/termsafe: testguard imports only the standard library"}},
+		{"testguard imports an external module",
+			func(m map[string][]string) {
+				m["internal/testguard"] = append(m["internal/testguard"], "github.com/zalando/go-keyring")
+			},
+			[]string{"internal/testguard → github.com/zalando/go-keyring: external modules are used only"}},
 		{"domain imports an adapter",
 			func(m map[string][]string) { m["internal/domain/task"] = []string{"internal/store"} },
 			[]string{"internal/domain/task → internal/store: domain imports only"}},
