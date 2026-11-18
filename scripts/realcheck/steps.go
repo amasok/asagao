@@ -113,7 +113,11 @@ func normalize(v any) any {
 	return v
 }
 
-func gids(v any) []any { return normalize(get(v, "#gid")).([]any) }
+// gids is the gids of an array (nil when there is none).
+func gids(v any) []any {
+	a, _ := normalize(get(v, "#gid")).([]any)
+	return a
+}
 
 func (c *Check) writes() {
 	pre := c.Made.Prefix

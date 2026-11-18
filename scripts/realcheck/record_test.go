@@ -169,3 +169,14 @@ func TestRecordJob(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestGidsOfNothing(t *testing.T) {
+	for _, v := range []any{nil, []any{}, M{}, "x"} {
+		if g := gids(v); g != nil {
+			t.Errorf("gids(%v) = %v", v, g)
+		}
+	}
+	if g := gids([]any{M{"gid": "1"}, M{"gid": "2"}}); len(g) != 2 || g[1] != "2" {
+		t.Errorf("gids = %v", g)
+	}
+}
