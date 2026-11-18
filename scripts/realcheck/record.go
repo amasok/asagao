@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -18,6 +19,10 @@ type Created struct {
 	Tags         []string
 	Statuses     []string
 	CustomFields []string
+	// Made by -shapes.
+	TimeEntries      []string
+	Allocations      []string
+	ProjectTemplates []string
 }
 
 func (c *Created) add(list *[]string, gid string) {
@@ -46,6 +51,12 @@ func (c *Created) guardWrite(method, path string, fields []string) error {
 			list = c.Statuses
 		case "custom_fields":
 			list = c.CustomFields
+		case "time_tracking_entries":
+			list = c.TimeEntries
+		case "allocations":
+			list = c.Allocations
+		case "project_templates":
+			list = c.ProjectTemplates
 		}
 		if slices.Contains(list, parts[1]) {
 			return nil
@@ -92,6 +103,10 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 	switch kind {
 	case "status_updates":
 		fields = "title,parent.gid"
+	case "time_tracking_entries":
+		fields = "task.gid"
+	case "allocations":
+		fields = "parent.gid"
 	default:
 		fields = "name,workspace.gid"
 	}
@@ -100,6 +115,9 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 		return false, err.Error()
 	}
 	var o struct {
+		Task *struct {
+			GID string `json:"gid"`
+		} `json:"task"`
 		Name      string `json:"name"`
 		Workspace struct {
 			GID string `json:"gid"`
@@ -111,11 +129,22 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 	if err := json.Unmarshal(data, &o); err != nil {
 		return false, err.Error()
 	}
-	if kind == "status_updates" {
+	switch kind {
+	case "status_updates", "allocations":
 		if o.Parent != nil && slices.Contains(c.Projects, o.Parent.GID) {
 			return true, ""
 		}
-		return false, "status update not on our project"
+		return false, kind + " not on our project"
+	case "time_tracking_entries":
+		if o.Task != nil && slices.Contains(c.Tasks, o.Task.GID) {
+			return true, ""
+		}
+		return false, "time entry not on our task"
+	case "project_templates":
+		if strings.HasPrefix(o.Name, c.Prefix) {
+			return true, "" // templates have a team, not a workspace field
+		}
+		return false, fmt.Sprintf("name %q has no prefix %q", o.Name, c.Prefix)
 	}
 	if o.Workspace.GID != TestWorkspace {
 		return false, "workspace " + o.Workspace.GID
@@ -214,6 +243,72 @@ func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	del("status_updates", c.Statuses)
 	del("tags", c.Tags)
 	del("custom_fields", c.CustomFields)
+	del("time_tracking_entries", c.TimeEntries)
+	del("allocations", c.Allocations)
+	del("project_templates", c.ProjectTemplates)
 	del("projects", c.Projects)
 	return left
+}
+
+// guardBody allows a write with a JSON body (`asagao api --input`) only on what this run
+// created; whatever it creates must carry the prefix (or belong to our project / task).
+func (c *Created) guardBody(method, path string, body M) error {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	data, _ := body["data"].(M)
+	name, _ := data["name"].(string)
+	prefixed := strings.HasPrefix(name, c.Prefix)
+	ours := func(list []string, i int) bool {
+		return len(parts) > i && gidRE.MatchString(parts[i]) && slices.Contains(list, parts[i])
+	}
+	ok := false
+	switch {
+	case method == "PUT" && len(parts) == 2 && parts[0] == "tasks":
+		ok = ours(c.Tasks, 1)
+	case method == "POST" && len(parts) == 3 && parts[0] == "tasks" &&
+		(parts[2] == "time_tracking_entries" || parts[2] == "addDependencies" || parts[2] == "removeDependencies"):
+		ok = ours(c.Tasks, 1)
+	case (method == "PUT" || method == "DELETE") && len(parts) == 2 && parts[0] == "time_tracking_entries":
+		ok = ours(c.TimeEntries, 1)
+	case method == "POST" && path == "/allocations":
+		ok = slices.Contains(c.Projects, fmt.Sprint(data["parent"])) && data["assignee"] == TestUser
+	case method == "PUT" && len(parts) == 2 && parts[0] == "allocations":
+		ok = ours(c.Allocations, 1)
+	case method == "POST" && len(parts) == 3 && parts[0] == "custom_fields" && parts[2] == "enum_options":
+		ok = ours(c.CustomFields, 1) && prefixed
+	case method == "POST" && path == "/custom_fields":
+		ok = data["workspace"] == TestWorkspace && prefixed
+	case method == "POST" && len(parts) == 3 && parts[0] == "projects" &&
+		(parts[2] == "addCustomFieldSetting" || parts[2] == "removeCustomFieldSetting"):
+		ok = ours(c.Projects, 1)
+	case method == "POST" && len(parts) == 3 && parts[0] == "projects" && (parts[2] == "saveAsTemplate" || parts[2] == "duplicate"):
+		ok = ours(c.Projects, 1) && prefixed && data["public"] != true
+	case method == "POST" && len(parts) == 3 && parts[0] == "project_templates" && parts[2] == "instantiateProject":
+		ok = ours(c.ProjectTemplates, 1) && prefixed && data["public"] != true
+	}
+	if !ok {
+		return fmt.Errorf("refusing %s %s: not something this run created", method, path)
+	}
+	return nil
+}
+
+// WriteBody sends body as is (`asagao api --input`) behind guardBody and returns the raw
+// output (Asana's JSON, also on errors) for the shape files.
+func (r *Runner) WriteBody(ctx context.Context, c *Created, method, path string, body M) ([]byte, error) {
+	if strings.Contains(path, "?") {
+		return nil, fmt.Errorf("refusing %s %s: no query on writes", method, path)
+	}
+	if err := c.guardBody(method, path, body); err != nil {
+		return nil, err
+	}
+	f, err := os.CreateTemp(r.Env.Work, "body-*.json")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Name())
+	if err := json.NewEncoder(f).Encode(body); err != nil {
+		f.Close()
+		return nil, err
+	}
+	f.Close()
+	return r.CLI(ctx, "api", "-X", method, path, "--input", f.Name())
 }

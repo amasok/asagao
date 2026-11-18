@@ -74,3 +74,65 @@ func TestToDiscard(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestGuardBody(t *testing.T) {
+	pre := "asagao-realcheck-1"
+	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"},
+		CustomFields: []string{"5000005"}, TimeEntries: []string{"6000006"}, Allocations: []string{"7000007"},
+		ProjectTemplates: []string{"8000008"}}
+	named := func(n string, kv ...any) M {
+		d := M{"name": n}
+		for i := 0; i+1 < len(kv); i += 2 {
+			d[kv[i].(string)] = kv[i+1]
+		}
+		return M{"data": d}
+	}
+	allowed := []struct {
+		m, p string
+		b    M
+	}{
+		{"PUT", "/tasks/2000002", M{"data": M{"custom_fields": M{"5000005": 1}}}},
+		{"POST", "/tasks/2000002/time_tracking_entries", M{"data": M{"duration_minutes": 15}}},
+		{"POST", "/tasks/2000002/addDependencies", M{"data": M{"dependencies": []string{"2000002"}}}},
+		{"PUT", "/time_tracking_entries/6000006", M{"data": M{"duration_minutes": 30}}},
+		{"POST", "/allocations", M{"data": M{"parent": "1000001", "assignee": TestUser}}},
+		{"PUT", "/allocations/7000007", M{"data": M{}}},
+		{"POST", "/custom_fields/5000005/enum_options", named(pre + "-b")},
+		{"POST", "/custom_fields", named(pre+"-enum", "workspace", TestWorkspace)},
+		{"POST", "/projects/1000001/addCustomFieldSetting", M{"data": M{"custom_field": "5000005"}}},
+		{"POST", "/projects/1000001/saveAsTemplate", named(pre+"-t", "public", false)},
+		{"POST", "/projects/1000001/duplicate", named(pre + "-d")},
+		{"POST", "/project_templates/8000008/instantiateProject", named(pre + "-p")},
+	}
+	for _, a := range allowed {
+		if err := c.guardBody(a.m, a.p, a.b); err != nil {
+			t.Errorf("%s %s refused: %v", a.m, a.p, err)
+		}
+	}
+	refused := []struct {
+		m, p string
+		b    M
+	}{
+		{"PUT", "/tasks/9999999", M{"data": M{}}},
+		{"PUT", "/projects/1000001", M{"data": M{}}}, // project edits go through asagao
+		{"POST", "/tasks/9999999/time_tracking_entries", M{"data": M{}}},
+		{"PUT", "/time_tracking_entries/9999999", M{"data": M{}}},
+		{"POST", "/allocations", M{"data": M{"parent": "9999999", "assignee": TestUser}}},
+		{"POST", "/allocations", M{"data": M{"parent": "1000001", "assignee": "42"}}},
+		{"POST", "/custom_fields/9999999/enum_options", named(pre + "-b")},
+		{"POST", "/custom_fields/5000005/enum_options", named("High")},
+		{"POST", "/custom_fields", named(pre+"-x", "workspace", "1")},
+		{"POST", "/custom_fields", named("Priority", "workspace", TestWorkspace)},
+		{"POST", "/projects/1000001/saveAsTemplate", named(pre+"-t", "public", true)},
+		{"POST", "/projects/9999999/duplicate", named(pre + "-d")},
+		{"POST", "/projects/1000001/duplicate", named("copy")},
+		{"POST", "/project_templates/9999999/instantiateProject", named(pre + "-p")},
+		{"POST", "/task_templates/1/instantiateTask", named(pre + "-x")},
+		{"DELETE", "/tasks/2000002", nil}, // deletes go through guardWrite
+	}
+	for _, r := range refused {
+		if err := c.guardBody(r.m, r.p, r.b); err == nil {
+			t.Errorf("%s %s %v allowed", r.m, r.p, r.b)
+		}
+	}
+}

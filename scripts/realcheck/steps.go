@@ -215,6 +215,9 @@ func (c *Check) writes() {
 	c.myTasks()
 	c.relations()
 	c.premium()
+	if c.Shapes {
+		c.shapes(c.Templates)
+	}
 
 	c.group("削除・アーカイブ (delete_task・archive)")
 	c.tool("delete_task T3", "delete_task", M{"gid": c.t3})
@@ -723,6 +726,7 @@ func (c *Check) customFields() {
 	if len(made) == 0 {
 		return
 	}
+	c.cf = made
 	c.syncClean("カスタムフィールドの設定")
 	set := M{}
 	want := map[string]any{"number": 42.0, "date": "2030-03-01", "people": []any{c.Me}}
