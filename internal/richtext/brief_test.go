@@ -68,8 +68,8 @@ func TestBriefTableEditedInPlace(t *testing.T) {
 // A block Asana would refuse is an error before anything is queued.
 func TestBriefFromMarkdownRefusesBadBlocks(t *testing.T) {
 	for _, raw := range []string{
-		"<table><tr><td>a</td></tr>",          // not closed
-		"<script>alert(1)</script>",           // not a brief's element
+		"<table><tr><td>a</td></tr>",           // not closed
+		"<script>alert(1)</script>",            // not a brief's element
 		`<table onclick="x"><tr></tr></table>`, // not an attribute it takes
 		"",
 	} {

@@ -106,4 +106,6 @@ func (Converter) BriefMarkdown(htmlText string) string { return BriefToEditableM
 
 // ProjectBrief converts the body of a project brief to its html_text and plain text
 // (BriefFromMarkdown).
-func (Converter) ProjectBrief(md string) (htmlText, plain string, err error) { return BriefFromMarkdown(md) }
+func (Converter) ProjectBrief(md string) (htmlText, plain string, err error) {
+	return BriefFromMarkdown(md)
+}

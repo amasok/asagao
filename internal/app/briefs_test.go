@@ -42,7 +42,9 @@ func (b *briefStore) UpdateProjectBriefLocal(_ context.Context, _ string, e read
 // briefText is a BriefText that marks what it converted.
 type briefText struct{}
 
-func (briefText) BriefMarkdown(h string) string { return strings.TrimSuffix(strings.TrimPrefix(h, "<body>"), "</body>") }
+func (briefText) BriefMarkdown(h string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(h, "<body>"), "</body>")
+}
 func (briefText) ProjectBrief(md string) (string, string, error) {
 	if strings.Contains(md, "bad") {
 		return "", "", errors.New("bad block")
