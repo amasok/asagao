@@ -87,7 +87,7 @@ func (f *templateServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"memberships": []any{map[string]any{"project": map[string]string{"gid": "p1", "name": "家"}, "section": map[string]string{"gid": "s1", "name": "未分類"}}}}
 	switch key {
 	case "GET /task_templates":
-		if r.URL.Query().Get("project") != "p1" {
+		if p := r.URL.Query().Get("project"); p != "p1" && p != "p2" {
 			http.Error(w, `{"errors":[{"message":"project"}]}`, 400)
 			return
 		}
@@ -223,7 +223,7 @@ func TestTaskTemplatesListAndPlan(t *testing.T) {
 	}
 	f.status["GET /task_templates"] = http.StatusPaymentRequired
 	_, err = s.TaskTemplates(ctx, "p1")
-	var pe *PlanError
+	var pe *TemplatePlanError
 	if !errors.As(err, &pe) || !model.IsPaymentRequired(err) || !strings.Contains(err.Error(), "タスクテンプレート") {
 		t.Fatalf("402 err = %v", err)
 	}
@@ -688,5 +688,38 @@ func TestJobAcceptedThenUnknown(t *testing.T) {
 				t.Errorf("%s: not found = %+v %v", tc, made, err)
 			}
 		}
+	}
+}
+
+// A 402 for the task templates of a project in another workspace marks that workspace,
+// not the default one.
+func TestTaskTemplatesPlanOfTheProjectsWorkspace(t *testing.T) {
+	ctx := context.Background()
+	f, s, st, _ := setupTemplates(t)
+	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w2", Name: "無料"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertProjects(ctx, "w2", []model.Project{{GID: "p2", Name: "趣味", Members: []model.Ref{{GID: "me"}}}}, "me"); err != nil {
+		t.Fatal(err)
+	}
+	f.status["GET /task_templates"] = http.StatusPaymentRequired
+	if _, err := s.TaskTemplates(ctx, "p2"); !model.IsPaymentRequired(err) {
+		t.Fatalf("err = %v", err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2")); v == "" {
+		t.Error("the project's workspace not marked")
+	}
+	if v := planMark(t, st, readmodel.PlanTaskTemplates); v != "" {
+		t.Errorf("the default workspace marked: %q", v)
+	}
+	// instantiateTask's 402 marks the template's project's workspace too.
+	f.status["POST /task_templates/tt1/instantiateTask"] = http.StatusPaymentRequired
+	delete(f.status, "GET /task_templates")
+	_ = st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2"), "")
+	if _, err := s.InstantiateTask(ctx, model.TaskTemplate{GID: "tt1", Name: "x", Project: &model.Ref{GID: "p2"}}, ""); !model.IsPaymentRequired(err) {
+		t.Fatalf("err = %v", err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2")); v == "" || planMark(t, st, readmodel.PlanTaskTemplates) != "" {
+		t.Errorf("instantiate marked the wrong workspace")
 	}
 }

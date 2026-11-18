@@ -26,9 +26,9 @@ import (
 // The job is waited for (GET /jobs/{gid}) up to jobWait. If it is still running, what is
 // there is stored and the result says so (Pending): the rest arrives with the next sync.
 //
-// A 402 marks the feature unavailable in the workspace (readmodel.PlanKey), so the TUI
-// stops offering it there for a day (readmodel.PlanValueOffered); a list that works again
-// clears the mark.
+// A 402 is recorded for the workspace (readmodel.PlanKey, plan.go), so the TUI stops
+// offering the feature there for readmodel.PlanRecheckAfter; a list that works again
+// forgets it.
 
 // Made is what a template or a duplicate made.
 type Made struct {
@@ -69,7 +69,7 @@ func (s *Syncer) TaskTemplates(ctx context.Context, projectGID string) ([]model.
 		return nil, ErrOffline
 	}
 	list, err := s.API.TaskTemplates(ctx, projectGID)
-	if err := s.notePlan(ctx, readmodel.PlanTaskTemplates, s.planWorkspace(ctx), err); err != nil {
+	if err := s.noteTemplatePlan(ctx, readmodel.PlanTaskTemplates, s.projectWorkspace(ctx, projectGID), err); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -94,7 +94,7 @@ func (s *Syncer) ProjectTemplates(ctx context.Context, teamGID string) ([]model.
 		// requires_workspace_received_organization): those of each team I am in.
 		list, err = s.teamProjectTemplates(ctx, ws)
 	}
-	if err := s.notePlan(ctx, readmodel.PlanProjectTemplates, ws, err); err != nil {
+	if err := s.noteTemplatePlan(ctx, readmodel.PlanProjectTemplates, ws, err); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -154,39 +154,45 @@ func needsTeam(err error) bool {
 	return false
 }
 
-// planWorkspace is the workspace whose plan a template's 402 is about: the default one,
-// where templates are listed and made (and which the TUI checks).
-func (s *Syncer) planWorkspace(ctx context.Context) string {
+// projectWorkspace is the workspace of a project, whose plan a 402 for its task templates
+// is about (the default workspace when the project is not cached).
+func (s *Syncer) projectWorkspace(ctx context.Context, projectGID string) string {
+	if ws, err := s.Store.ProjectWorkspace(ctx, projectGID); err == nil && ws != "" {
+		return ws
+	}
 	ws, _ := s.Store.DefaultWorkspace(ctx)
 	return ws
 }
 
-// notePlan records what err says about the plan of workspace workspaceGID: a 402 marks feature unavailable (and
-// is returned with a message saying so), a success clears the mark. Other errors are
+// noteTemplatePlan records what err says about the plan of workspace workspaceGID (the
+// three helpers of plan.go): a 402 records that feature is refused there and is returned
+// as a TemplatePlanError, which says so; an answer forgets an earlier 402. Other errors are
 // returned as they are.
-func (s *Syncer) notePlan(ctx context.Context, feature, workspaceGID string, err error) error {
-	key := readmodel.PlanKey(feature, workspaceGID)
-	switch {
-	case err == nil:
-		if v, _ := s.Store.SyncState(ctx, key); v != "" {
-			_ = s.Store.SetSyncState(ctx, key, "")
-		}
+func (s *Syncer) noteTemplatePlan(ctx context.Context, feature, workspaceGID string, err error) error {
+	if err == nil {
+		_ = s.clearPlanRefusal(ctx, feature, workspaceGID)
 		return nil
-	case model.IsPaymentRequired(err):
-		_ = s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
-		return &PlanError{Feature: feature, Err: err}
+	}
+	if refused, _ := s.recordPlanRefusal(ctx, feature, workspaceGID, err); refused {
+		return &TemplatePlanError{Feature: feature, Err: err}
 	}
 	return err
 }
 
-// PlanError is a 402 for a feature the workspace's plan lacks.
-type PlanError struct {
+// TemplatePlanError is a 402 for templates: the workspace's plan lacks them.
+type TemplatePlanError struct {
 	Feature string
 	Err     error
 }
 
-func (e *PlanError) Error() string { return readmodel.PlanUnavailableMessage(e.Feature) }
-func (e *PlanError) Unwrap() error { return e.Err }
+func (e *TemplatePlanError) Error() string {
+	what := map[string]string{
+		readmodel.PlanTaskTemplates:    "タスクテンプレート",
+		readmodel.PlanProjectTemplates: "プロジェクトテンプレート",
+	}[e.Feature]
+	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
+}
+func (e *TemplatePlanError) Unwrap() error { return e.Err }
 
 // PickTemplate finds a template by key in a list: its gid, its exact name, or the one
 // name that contains key (ignoring case). name returns a template's name.
@@ -241,8 +247,12 @@ func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, n
 	started := s.clock()
 	job, err := s.API.InstantiateTask(ctx, tmpl.GID, name)
 	if err != nil {
-		err = s.notePlan(ctx, readmodel.PlanTaskTemplates, s.planWorkspace(ctx), err)
-		var pe *PlanError
+		ws := ""
+		if tmpl.Project != nil {
+			ws = s.projectWorkspace(ctx, tmpl.Project.GID)
+		}
+		err = s.noteTemplatePlan(ctx, readmodel.PlanTaskTemplates, ws, err)
+		var pe *TemplatePlanError
 		if errors.As(err, &pe) || tmpl.Project == nil {
 			return nil, err
 		}
@@ -259,7 +269,7 @@ func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, n
 		if tmpl.Project == nil {
 			return nil, err
 		}
-		return s.foundTask(ctx, tmpl.Project.GID, name, started, err, jobAccepted)
+		return s.foundTask(ctx, tmpl.Project.GID, name, started, err, "")
 	}
 	if job.NewTask == nil {
 		return nil, jobError(job, "タスク")
@@ -299,7 +309,7 @@ func (s *Syncer) foundTask(ctx context.Context, projectGID, name string, started
 
 // findMadeTask looks for the task of that name created in the project since started
 // (twice, projectSettle apart). Not found, it is not made again (that could make a
-// duplicate): the error is notFound, wrapping cause.
+// duplicate): the error is notFound wrapping cause (cause alone if notFound is "").
 func (s *Syncer) findMadeTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*model.Task, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
@@ -319,6 +329,9 @@ func (s *Syncer) findMadeTask(ctx context.Context, projectGID, name string, star
 		case ambiguous:
 			return nil, fmt.Errorf("同じ名前のタスクが複数作られています。Asana で確認してください: %w", cause)
 		}
+	}
+	if notFound == "" {
+		return nil, cause
 	}
 	return nil, fmt.Errorf("%s: %w", notFound, cause)
 }
@@ -372,9 +385,9 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 	job, err := start()
 	if err != nil {
 		if feature != "" {
-			err = s.notePlan(ctx, feature, ws, err)
+			err = s.noteTemplatePlan(ctx, feature, ws, err)
 		}
-		var pe *PlanError
+		var pe *TemplatePlanError
 		if errors.As(err, &pe) {
 			return nil, err
 		}
@@ -389,7 +402,7 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 	if err != nil {
 		// Asana took the job but asagao does not know what it made yet: look for it.
 		err = fmt.Errorf("%s: %w", jobAccepted, err)
-		p, err := s.findCreatedProject(ctx, ws, name, started, err, jobAccepted)
+		p, err := s.findCreatedProject(ctx, ws, name, started, err, "")
 		if err != nil {
 			return nil, err
 		}

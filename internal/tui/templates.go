@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
@@ -18,7 +19,8 @@ import (
 // The templates are not cached in the store. They are fetched when the menu opens and
 // after each sync (at most every templateTTL), so the menu offers "from a template" only
 // when there is a template to choose: none (the plan lacks them, or none were made) hides
-// it, and so does a 402 (planOff, like the sections).
+// it, and so does a 402 in the workspace: for task templates, the project's (no list is
+// fetched while the mark counts); for project templates, the default one (planOff).
 
 const templateTTL = 10 * time.Minute
 
@@ -73,7 +75,7 @@ func (m *Model) prefetchTemplates() tea.Cmd {
 	}
 	now := m.deps.Now()
 	var cmds []tea.Cmd
-	if p := m.currentProject(); p != "" && m.planOK(readmodel.PlanTaskTemplates) {
+	if p := m.currentProject(); p != "" {
 		if c, ok := m.tmpl.task[p]; !ok || now.Sub(c.at) >= templateTTL {
 			cmds = append(cmds, m.fetchTaskTemplates(p, false))
 		}
@@ -93,8 +95,12 @@ func (m *Model) fetchTaskTemplates(project string, open bool) tea.Cmd {
 		m.tmpl.fetching = map[string]bool{}
 	}
 	m.tmpl.fetching[key] = true
-	syncer, ctx := m.syncer, m.ctx
+	syncer, ctx, st, now := m.syncer, m.ctx, m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
+		// A 402 in the project's workspace less than a day ago: not asked again yet.
+		if ws, _ := st.ProjectWorkspace(ctx, project); !open && !app.TemplatesOffered(ctx, st, readmodel.PlanTaskTemplates, ws, now) {
+			return taskTemplatesMsg{project: project, err: &sync.TemplatePlanError{Feature: readmodel.PlanTaskTemplates}, open: open}
+		}
 		list, err := syncer.TaskTemplates(ctx, project)
 		return taskTemplatesMsg{project: project, list: list, err: err, open: open}
 	}
@@ -319,8 +325,9 @@ func (m *Model) templateError(err error, feature string, open bool) bool {
 	if err == nil {
 		return false
 	}
-	var pe *sync.PlanError
-	if errors.As(err, &pe) {
+	var pe *sync.TemplatePlanError
+	// Task templates are hidden per project (no list), project templates by planOff.
+	if errors.As(err, &pe) && feature == readmodel.PlanProjectTemplates {
 		if m.planOff == nil {
 			m.planOff = map[string]bool{}
 		}

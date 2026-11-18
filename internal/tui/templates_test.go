@@ -101,8 +101,9 @@ func templateHarness(t *testing.T, online bool) (*harness, *templateFake, *store
 	f := &templateFake{gets: map[string]int{}}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	// The syncer stamps a 402 with the real clock, so the TUI's clock starts there too.
-	now := time.Now()
+	// The syncer stamps a 402 with the real clock, so the TUI's clock starts just after it
+	// (a record from the TUI's future would not count).
+	now := time.Now().Add(time.Minute)
 	if err := st.UpsertWorkspaces(context.Background(), []asana.Workspace{{GID: "w1", Name: "家"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -197,15 +198,25 @@ func TestTemplatesHiddenWithoutTemplates(t *testing.T) {
 			if v, _ := st.SyncState(context.Background(), readmodel.PlanKey(readmodel.PlanTaskTemplates, "w1")); v == "" {
 				t.Error("402 did not mark the plan")
 			}
-			// The mark survives loading the plan again, and is dropped a day later.
+			// After templateTTL Asana is not asked while the mark counts (the project's
+			// workspace)...
+			*now = now.Add(templateTTL)
 			h.run(h.m.loadPlan())
-			if h.m.planOK(readmodel.PlanTaskTemplates) {
-				t.Error("plan reloaded as available")
+			h.key("space", "esc")
+			if f.gets["GET /task_templates"] != gets {
+				t.Errorf("asked again within a day of the 402")
 			}
+			if h.m.planOK(readmodel.PlanProjectTemplates) {
+				t.Error("project templates offered after their 402")
+			}
+			// ...and is asked a day later, offering them once Asana has some.
+			f.status402 = false
 			*now = now.Add(25 * time.Hour)
 			h.run(h.m.loadPlan())
-			if !h.m.planOK(readmodel.PlanTaskTemplates) {
-				t.Error("still hidden a day later")
+			h.key("space")
+			if f.gets["GET /task_templates"] != gets+1 || !strings.Contains(h.screen(), "テンプレートからタスクを作る") ||
+				!strings.Contains(h.screen(), "テンプレートからプロジェクトを作る") {
+				t.Errorf("not offered a day later (%d gets):\n%s", f.gets["GET /task_templates"]-gets, h.screen())
 			}
 			continue
 		}
@@ -252,5 +263,21 @@ func TestTemplatesFailedFetchWaits(t *testing.T) {
 	h.key("space")
 	if !strings.Contains(h.screen(), "テンプレートからタスクを作る") {
 		t.Errorf("not offered after the fetch worked:\n%s", h.screen())
+	}
+}
+
+// A 402 in another workspace does not hide the task templates of this project's.
+func TestTemplatesMarkOfAnotherWorkspace(t *testing.T) {
+	h, _, st, now := templateHarness(t, true)
+	ctx := context.Background()
+	for _, f := range []string{readmodel.PlanTaskTemplates, readmodel.PlanProjectTemplates} {
+		if err := st.SetSyncState(ctx, readmodel.PlanKey(f, "w-free"), now.UTC().Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.run(h.m.loadPlan())
+	h.key("space")
+	if s := h.screen(); !strings.Contains(s, "テンプレートからタスクを作る") || !strings.Contains(s, "テンプレートからプロジェクトを作る") {
+		t.Fatalf("hidden by another workspace's mark:\n%s", s)
 	}
 }

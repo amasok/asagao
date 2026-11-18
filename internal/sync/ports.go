@@ -137,6 +137,7 @@ type LocalStore interface {
 	OutboxCounts(ctx context.Context) (pending, conflict, failed int, err error)
 	PendingNotificationMarks(ctx context.Context, op outbox.Op, limit int) ([]outbox.Op, error)
 	PendingOps(ctx context.Context) ([]outbox.Op, error)
+	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
 	PruneProjects(ctx context.Context, workspaceGID string, keep []model.Project) error
 	PruneResults(ctx context.Context, now time.Time) (int, error)
 	PruneTasks(ctx context.Context, keep map[string]bool) (int64, error)

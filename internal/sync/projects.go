@@ -84,7 +84,8 @@ func notMade(ctx context.Context, cause error) bool {
 }
 
 // findCreatedProject looks in Asana for the one project named name created since started
-// (twice, projectSettle apart). Not there, the error is notFound (wrapping cause).
+// (twice, projectSettle apart). Not there, the error is notFound wrapping cause (cause
+// alone if notFound is "").
 func (s *Syncer) findCreatedProject(ctx context.Context, ws, name string, started time.Time, cause error, notFound string) (*model.Project, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
@@ -109,6 +110,9 @@ func (s *Syncer) findCreatedProject(ctx context.Context, ws, name string, starte
 		case ambiguous:
 			return nil, fmt.Errorf("同じ名前のプロジェクトが複数あります。Asana で確認してください: %w", cause)
 		}
+	}
+	if notFound == "" {
+		return nil, cause
 	}
 	return nil, fmt.Errorf("%s: %w", notFound, cause)
 }
