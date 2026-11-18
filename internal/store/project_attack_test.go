@@ -79,3 +79,48 @@ func TestAttackResolveTeamBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// start/due combinations through UpdateProjectLocal (start counts from the cache when only due changes).
+func TestAttackProjectDateCombinations(t *testing.T) {
+	ctx := context.Background()
+	s := projectStore(t) // p1: due 2026-12-31, no start
+	ok := func(c map[string]any) {
+		t.Helper()
+		if err := s.UpdateProjectLocal(ctx, "p1", c, time.Now()); err != nil {
+			t.Errorf("%v rejected: %v", c, err)
+		}
+	}
+	bad := func(c map[string]any) {
+		t.Helper()
+		if err := s.UpdateProjectLocal(ctx, "p1", c, time.Now()); err == nil {
+			t.Errorf("%v accepted", c)
+		}
+	}
+	bad(map[string]any{"start_on": "2027-01-01"})                        // after due
+	ok(map[string]any{"start_on": "2026-12-31"})                         // same day
+	bad(map[string]any{"due_on": "2026-12-30"})                          // due before cached start
+	bad(map[string]any{"due_on": ""})                                    // start without due
+	ok(map[string]any{"start_on": "", "due_on": ""})                     // both cleared
+	bad(map[string]any{"start_on": "2026-01-01"})                        // start with no due
+	bad(map[string]any{"due_on": "2026/12/31"})                          // format
+	bad(map[string]any{"due_on": "2026-02-30"})                          // not a date
+	bad(map[string]any{"due_on": 20261231})                              // not a string
+	bad(map[string]any{"color": "red"})                                  // not an Asana color
+	ok(map[string]any{"start_on": "2026-01-01", "due_on": "2026-02-01"}) // both together
+}
+
+// A partial name that fits two teams is ambiguous; one that fits one resolves, case-insensitively.
+func TestAttackResolveTeamPartial(t *testing.T) {
+	ctx := context.Background()
+	s := projectStore(t)
+	must(t, s.ReplaceTeams(ctx, "w1", []asana.Team{{GID: "a", Name: "Dev Ops"}, {GID: "b", Name: "Dev Web"}, {GID: "c", Name: "Sales"}}))
+	if _, err := s.ResolveTeam(ctx, "dev"); !errors.Is(err, ErrAmbiguous) {
+		t.Errorf("dev: %v", err)
+	}
+	if g, err := s.ResolveTeam(ctx, "WEB"); err != nil || g != "b" {
+		t.Errorf("WEB: %q %v", g, err)
+	}
+	if _, err := s.ResolveTeam(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("nope: %v", err)
+	}
+}
