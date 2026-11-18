@@ -189,7 +189,14 @@ func (s *Syncer) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, erro
 	conflict := map[string]any{}
 	for k, v := range op.Payload {
 		want, _ := v.(string)
-		if !same(current[k], op.Base[k]) && current[k] != want {
+		cur, base := any(current[k]), op.Base[k]
+		if k == "color" { // no color is "" here and "none" in Asana's answers, like a project's
+			cur, base = noColor(cur), noColor(base)
+			if noColor(want) == "" {
+				want = ""
+			}
+		}
+		if !same(cur, base) && cur != any(want) {
 			conflict[k] = current[k]
 		}
 		if k == "color" && want == "" {
