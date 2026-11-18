@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -61,7 +63,12 @@ const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.
 	(SELECT count(*) FROM task_dependencies dp LEFT JOIN tasks bt ON bt.gid = dp.dependency_gid
 		LEFT JOIN task_refs br ON br.gid = dp.dependency_gid
 		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed) = 0),
-	t.assignee_section_gid, COALESCE((SELECT ms.name FROM my_task_sections ms WHERE ms.gid = t.assignee_section_gid), '')`
+	t.assignee_section_gid, COALESCE((SELECT ms.name FROM my_task_sections ms WHERE ms.gid = t.assignee_section_gid), ''),
+	t.custom_type_gid, COALESCE((SELECT ct.name FROM custom_types ct WHERE ct.gid = t.custom_type_gid), ''),
+	t.custom_type_status_gid, COALESCE(cs.name, ''), COALESCE(cs.color, ''), COALESCE(cs.completion_state, '')`
+
+// customStatusJoin joins the status of a task's custom type, for taskColumns.
+const customStatusJoin = " LEFT JOIN custom_type_status_options cs ON cs.gid = t.custom_type_status_gid"
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string
@@ -121,7 +128,7 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 
 	add("t.gid NOT IN " + deletedTasks) // their delete is queued
 
-	q := "SELECT " + taskColumns + " FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid"
+	q := "SELECT " + taskColumns + " FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid" + customStatusJoin
 	q += " WHERE " + strings.Join(where, " AND ")
 	if f.SortByModified {
 		q += " ORDER BY t.modified_at DESC, t.name"
@@ -160,11 +167,20 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 	for rows.Next() {
 		var t TaskSummary
 		var assigneeGID, assigneeName, mySection, mySectionName string
+		var customType, customTypeName, customStatus, customStatusName, customStatusColor, customStatusState string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
 			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending, &t.Liked, &t.NumLikes,
-			&t.ApprovalStatus, &t.OpenDependencies, &mySection, &mySectionName); err != nil {
+			&t.ApprovalStatus, &t.OpenDependencies, &mySection, &mySectionName,
+			&customType, &customTypeName, &customStatus, &customStatusName, &customStatusColor, &customStatusState); err != nil {
 			return nil, err
+		}
+		if t.ResourceSubtype == task.SubtypeCustom && customType != "" {
+			t.CustomType = &readmodel.CustomTypeRef{GID: customType, Name: customTypeName}
+			if customStatus != "" {
+				t.CustomTypeStatus = &readmodel.CustomTypeStatusView{GID: customStatus, Name: customStatusName, Color: customStatusColor,
+					Complete: model.CustomTypeStatusOption{CompletionState: customStatusState}.IsComplete()}
+			}
 		}
 		if mySection != "" && mySectionName != "" {
 			t.MySection = &SectionView{GID: mySection, Name: mySectionName}
@@ -255,7 +271,7 @@ func (s *Store) fillRelationsBatch(ctx context.Context, idx map[string]*TaskSumm
 
 // GetTask returns a task with notes, subtasks and stories from the store.
 func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
-	tasks, err := s.queryTasks(ctx, "SELECT "+taskColumns+" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid WHERE t.gid = ?", gid)
+	tasks, err := s.queryTasks(ctx, "SELECT "+taskColumns+" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid"+customStatusJoin+" WHERE t.gid = ?", gid)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +286,13 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		return nil, err
 	}
 	if d.CustomFields, err = s.taskCustomFields(ctx, gid); err != nil {
+		return nil, err
+	}
+	var projects []string
+	for _, m := range d.Memberships {
+		projects = append(projects, m.ProjectGID)
+	}
+	if d.CustomTypes, err = s.CustomTypes(ctx, projects); err != nil {
 		return nil, err
 	}
 	if d.Dependencies, err = s.taskDependencies(ctx, gid, false); err != nil {
@@ -292,7 +315,7 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		d.Parent = &TaskRef{GID: d.ParentGID, Name: name}
 	}
 	if d.Subtasks, err = s.queryTasks(ctx, "SELECT "+taskColumns+
-		" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid WHERE t.parent_gid = ? AND t.gid NOT IN "+deletedTasks+
+		" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid"+customStatusJoin+" WHERE t.parent_gid = ? AND t.gid NOT IN "+deletedTasks+
 		" ORDER BY t.created_at", gid); err != nil {
 		return nil, err
 	}

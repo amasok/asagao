@@ -617,7 +617,7 @@ func (m *Model) renderDetail(w int) string {
 		field(itemCompleted, "状態", done, "")
 	}
 	if subtype := d.ResourceSubtype; active || (subtype != "" && subtype != "default_task") {
-		label := task.SubtypeLabel(subtype)
+		label := readmodel.KindLabel(d.TaskSummary)
 		if subtype == "milestone" {
 			label = "◆ " + label
 		}
@@ -629,6 +629,13 @@ func (m *Model) renderDetail(w int) string {
 			status = "pending"
 		}
 		field(itemApproval, "承認", task.ApprovalLabel(status), "")
+	}
+	if d.ResourceSubtype == task.SubtypeCustom && d.CustomType != nil {
+		status := ""
+		if d.CustomTypeStatus != nil {
+			status = d.CustomTypeStatus.Name
+		}
+		field(itemCustomStatus, "ステータス", status, "なし")
 	}
 	if d.Parent != nil {
 		field(itemParent, "親タスク", d.Parent.Name, "")

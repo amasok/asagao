@@ -32,6 +32,7 @@ const (
 	itemCustomField   // sub: index into CustomFields
 	itemSubtype       // task type
 	itemApproval      // approval status
+	itemCustomStatus  // status of a custom task type (#59)
 	itemDependency    // sub: index into Dependencies
 	itemAddDependency //
 	itemDependent     // sub: index into Dependents

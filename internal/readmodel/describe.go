@@ -401,7 +401,8 @@ func dependencyName(op outbox.Op) string {
 }
 
 // TaskBadges are short marks for a task in a list: ◆ for a milestone, the approval status
-// of an approval task, and how many incomplete tasks it waits for.
+// of an approval task, the custom type and status of a custom one, and how many incomplete
+// tasks it waits for.
 func TaskBadges(t TaskSummary) string {
 	var parts []string
 	switch t.ResourceSubtype {
@@ -413,6 +414,13 @@ func TaskBadges(t TaskSummary) string {
 			status = "pending"
 		}
 		parts = append(parts, "["+task.ApprovalLabel(status)+"]")
+	case task.SubtypeCustom:
+		// A custom task type (#59) and its status: "[バグ: 対応中]".
+		if label := KindLabel(t); t.CustomTypeStatus != nil && t.CustomTypeStatus.Name != "" {
+			parts = append(parts, "["+label+": "+t.CustomTypeStatus.Name+"]")
+		} else {
+			parts = append(parts, "["+label+"]")
+		}
 	}
 	if t.OpenDependencies > 0 && !t.Completed {
 		parts = append(parts, fmt.Sprintf("[待ち%d]", t.OpenDependencies))

@@ -26,6 +26,7 @@ var (
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
 		"approval_status", "dependencies", "dependents", "assignee_section.name",
+		"custom_type.name", "custom_type_status_option.name",
 	}, customFieldValueFields)
 )
 

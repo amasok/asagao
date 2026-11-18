@@ -115,6 +115,10 @@ type Task struct {
 	CustomFields []CustomField `json:"custom_fields"`
 	// ApprovalStatus is pending / approved / rejected / changes_requested (approval tasks).
 	ApprovalStatus string `json:"approval_status"`
+	// CustomType and CustomTypeStatusOption are the custom task type and its status of a
+	// task whose ResourceSubtype is "custom" (#59); nil for the other tasks.
+	CustomType             *Ref `json:"custom_type"`
+	CustomTypeStatusOption *Ref `json:"custom_type_status_option"`
 	// Dependencies (tasks this one waits for) and Dependents (tasks waiting for this one)
 	// are nil when the response did not include them.
 	Dependencies []Ref `json:"dependencies"`
@@ -123,7 +127,8 @@ type Task struct {
 	// false when the response did not include it (it is then left as it is).
 	AssigneeSection OptionalRef `json:"assignee_section"`
 	// Partial is set when the task was fetched without the optional fields (see
-	// optionalTaskFields): its custom fields, dependencies and approval status are unknown.
+	// optionalTaskFields): its custom fields, dependencies, approval status and custom type
+	// are unknown.
 	Partial bool `json:"-"`
 }
 

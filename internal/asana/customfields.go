@@ -38,11 +38,12 @@ func (c *Client) CustomFieldSettings(ctx context.Context, projectGID string) ([]
 }
 
 // optionalTaskFields are task fields that some plans or workspaces may refuse (custom
-// fields, dependencies, approvals). If Asana refuses a task read with them (400 / 402), the
+// fields, dependencies, approvals, custom task types). If Asana refuses a task read with them (400 / 402), the
 // read is repeated without them, and so are later ones of this client: tasks still sync,
 // only without those fields (Task.Partial).
 func isOptionalTaskField(f string) bool {
-	for _, p := range []string{"custom_fields", "approval_status", "dependencies", "dependents", "assignee_section"} {
+	for _, p := range []string{"custom_fields", "approval_status", "dependencies", "dependents", "assignee_section",
+		"custom_type", "custom_type_status_option"} {
 		if f == p || strings.HasPrefix(f, p+".") {
 			return true
 		}
