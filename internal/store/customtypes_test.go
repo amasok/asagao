@@ -147,3 +147,14 @@ func TestMigrateStoreFromBeforeCustomTypes(t *testing.T) {
 		t.Fatalf("after migrating: %+v %+v", d.CustomType, d.CustomTypeStatus)
 	}
 }
+
+// A task read without its custom type (#59: the plan refused only those fields) keeps the
+// type it has in the cache, and its other optional fields are stored.
+func TestCustomTypeNotFetchedIsKept(t *testing.T) {
+	st, ctx := openTypes(t)
+	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "custom", ResourceSubtype: "custom", NoCustomType: true, ApprovalStatus: "",
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}}}}}))
+	if d, _ := st.GetTask(ctx, "t1"); d.CustomType == nil || d.CustomTypeStatus == nil || d.CustomTypeStatus.Name != "対応中" {
+		t.Fatalf("not fetched, yet dropped: %+v", d.TaskSummary)
+	}
+}

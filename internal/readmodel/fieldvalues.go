@@ -32,7 +32,9 @@ func TaskFieldValues(t *model.Task) map[string]any {
 	}
 	if t.Partial {
 		delete(values, "approval_status") // not fetched
-		delete(values, "custom_type")
+	}
+	if t.Partial || t.NoCustomType {
+		delete(values, "custom_type") // not fetched
 		delete(values, "custom_type_status_option")
 	}
 	return values

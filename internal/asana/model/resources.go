@@ -130,6 +130,9 @@ type Task struct {
 	// optionalTaskFields): its custom fields, dependencies, approval status and custom type
 	// are unknown.
 	Partial bool `json:"-"`
+	// NoCustomType is set when the task was fetched without its custom type and status
+	// (Asana refused those fields, #59; or Partial): they are unknown, not empty.
+	NoCustomType bool `json:"-"`
 }
 
 // TaskQuery selects tasks for GET /tasks. Exactly one of Project or (Assignee + Workspace) must be set.

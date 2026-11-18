@@ -20,7 +20,7 @@ func TestTaskByCustomIDRetries(t *testing.T) {
 		{"502 is not retried", []int{502}, 1, true},
 		{"503 is not retried", []int{503}, 1, true},
 		{"404 once", []int{404}, 1, true},
-		{"402: once more without the optional fields", []int{402}, 2, true},
+		{"402: again without the custom type fields, then without every optional field", []int{402}, 3, true},
 		{"403 once", []int{403}, 1, true},
 		{"429 then ok", []int{429, 429, 200}, 3, false},
 		{"429 forever stops at MaxRetries", []int{429}, 3, true}, // MaxRetries = 2

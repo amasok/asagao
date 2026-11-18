@@ -58,7 +58,7 @@ func customTypeRefused(op outbox.Op, err error) error {
 // answer without it (the field ignored) fails the entry instead of completing it, which
 // would lose the change silently. A task read without the optional fields is not checked.
 func customTypeApplied(op outbox.Op, t *model.Task) error {
-	if !domaintask.TouchesCustomType(op.Payload) || t == nil || t.Partial {
+	if !domaintask.TouchesCustomType(op.Payload) || t == nil || t.Partial || t.NoCustomType {
 		return nil
 	}
 	sent := taskUpdateFields(op)

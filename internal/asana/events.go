@@ -73,7 +73,7 @@ func (c *Client) TasksByGID(ctx context.Context, gids []string) (tasks []Task, g
 }
 
 func (c *Client) tasksBatch(ctx context.Context, gids []string) (tasks []Task, gone []string, err error) {
-	plain := c.plainTasks.Load()
+	tier := c.tier()
 	f := c.taskFields(false)
 	actions := make([]batchAction, len(gids))
 	for i, gid := range gids {
@@ -101,7 +101,7 @@ func (c *Client) tasksBatch(ctx context.Context, gids []string) (tasks []Task, g
 			if err := json.Unmarshal(r.Body, &env); err != nil {
 				return nil, nil, fmt.Errorf("asana: batch: decode task: %w", err)
 			}
-			env.Data.Partial = plain
+			tier.mark(&env.Data)
 			tasks = append(tasks, env.Data)
 		case r.StatusCode == http.StatusNotFound || r.StatusCode == http.StatusForbidden:
 			gone = append(gone, gids[i])
@@ -132,7 +132,7 @@ func (c *Client) Batch(ctx context.Context, writes []model.BatchWrite) ([]model.
 	if len(writes) > MaxBatchActions {
 		return nil, fmt.Errorf("asana: batch: %d requests (at most %d)", len(writes), MaxBatchActions)
 	}
-	plain := c.plainTasks.Load()
+	tier := c.tier()
 	actions := make([]batchAction, len(writes))
 	for i, w := range writes {
 		actions[i] = batchAction{Method: strings.ToLower(w.Method), RelativePath: w.Path, Data: w.Data}
@@ -166,7 +166,7 @@ func (c *Client) Batch(ctx context.Context, writes []model.BatchWrite) ([]model.
 		if err := json.Unmarshal(r.Body, &env); err != nil {
 			return nil, fmt.Errorf("asana: batch: decode task: %w", err)
 		}
-		env.Data.Partial = plain
+		tier.mark(&env.Data)
 		out[i].Task = &env.Data
 	}
 	return out, nil
