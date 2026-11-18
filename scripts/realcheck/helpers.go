@@ -95,3 +95,25 @@ func nilIfEmpty(s string) any {
 	}
 	return s
 }
+
+// renamedColors is what Asana's GET answers for each written color (measured with -colors;
+// the same table as internal/domain/tag, which this program does not import).
+var renamedColors = map[string]string{
+	"dark-pink": "hot-pink", "dark-green": "green", "dark-blue": "blue", "dark-red": "red",
+	"dark-teal": "aqua", "dark-brown": "yellow", "dark-orange": "orange", "dark-purple": "indigo",
+	"dark-warm-gray": "cool-gray", "light-pink": "magenta", "light-green": "yellow-green",
+	"light-blue": "blue", "light-red": "pink", "light-teal": "blue-green", "light-yellow": "yellow",
+	"light-orange": "yellow-orange", "light-purple": "purple", "light-warm-gray": "cool-gray",
+}
+
+// canonColor names a color as Asana's GET does; no color ("" / "none") is "".
+func canonColor(c string) string {
+	c = strings.ToLower(strings.TrimSpace(c))
+	if c == "none" {
+		return ""
+	}
+	if n, ok := renamedColors[c]; ok {
+		return n
+	}
+	return c
+}

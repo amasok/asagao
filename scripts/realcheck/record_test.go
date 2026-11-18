@@ -207,3 +207,11 @@ func TestCurrentQuarter(t *testing.T) {
 		t.Fatalf("got %q", g)
 	}
 }
+
+func TestCanonColor(t *testing.T) {
+	for in, want := range map[string]string{"dark-red": "red", "red": "red", "none": "", "": "", " Light-Blue ": "blue"} {
+		if got := canonColor(in); got != want {
+			t.Errorf("canonColor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

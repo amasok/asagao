@@ -530,11 +530,13 @@ func (c *Check) tagIs(name, tagName string, color any) {
 	ok1, d1 := same("name", str(ca, "name"), str(as, "name"), tagName)
 	// Asana may rename old color names (as dark-green → green for projects): the cache must
 	// follow Asana; only "no color" is checked against what was asked.
-	want := normalize(get(as, "color"))
+	// The cache keeps the PUT's echo (dark-red), Asana's GET the new name (red): compare
+	// them as asagao does (tag.CanonicalColor), no color as "".
+	want := canonColor(str(as, "color"))
 	if color == nil {
-		want = nil
+		want = ""
 	}
-	ok2, d2 := same("color", normalize(get(ca, "color")), normalize(get(as, "color")), want)
+	ok2, d2 := same("color", canonColor(str(ca, "color")), canonColor(str(as, "color")), want)
 	c.Rep.check(name, ok1 && ok2, d1+" "+d2)
 	c.Rep.note(name+": Asana の色", fmt.Sprintf("%v (頼んだのは %v)", get(as, "color"), color))
 }
@@ -780,8 +782,13 @@ func (c *Check) customFields() {
 	}
 	c.tool("update_task custom_fields = null (number・date)", "update_task", M{"gid": c.t1, "custom_fields": clear})
 	c.syncClean("set_custom_field null")
-	delete(made, "people")
-	c.cfValues("カスタムフィールドを空にした", made, map[string]any{"number": nil, "date": nil})
+	cleared := map[string]string{}
+	for k, g := range made {
+		if k != "people" {
+			cleared[k] = g
+		}
+	}
+	c.cfValues("カスタムフィールドを空にした", cleared, map[string]any{"number": nil, "date": nil})
 	if g, ok := c.cf["people"]; ok {
 		// Asana rejects null for people ("Not an array"); fixed in feat-fields-37 (#37).
 		c.gate()
