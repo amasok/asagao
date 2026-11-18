@@ -48,12 +48,16 @@ type BriefInput struct {
 // ErrEmptyBrief: a new brief needs a title or a body.
 var ErrEmptyBrief = errors.New("ブリーフのタイトルも本文も空です")
 
+// ErrBriefForbidden: Asana does not let us read or change this project's brief (it
+// answered 403; the overview asks again when it is opened).
+var ErrBriefForbidden = errors.New(readmodel.BriefForbiddenMessage)
+
 // ErrNoBrief: the project has no brief (to delete).
 var ErrNoBrief = errors.New("このプロジェクトにはブリーフがありません")
 
-// Available returns nil when the project's brief can be changed here, and
-// ErrPlanUnavailable while Asana refuses the brief API in its workspace (402 or 403, for
-// readmodel.PlanRecheckAfter) or the cache says it does not give this project's brief.
+// Available returns nil when the project's brief can be changed here: ErrPlanUnavailable
+// while a 402 hides the brief API in its workspace (for readmodel.PlanRecheckAfter), and
+// ErrBriefForbidden when the cache says Asana does not give this project's brief (403).
 func (b *Briefs) Available(ctx context.Context, projectGID string) error {
 	ws, err := b.Store.ProjectWorkspace(ctx, projectGID)
 	if err != nil {
@@ -66,8 +70,8 @@ func (b *Briefs) Available(ctx context.Context, projectGID string) error {
 	if err != nil {
 		return err
 	}
-	if o.BriefState == readmodel.BriefUnavailable {
-		return &ErrPlanUnavailable{Feature: readmodel.PlanProjectBrief}
+	if o.BriefState == readmodel.BriefUnavailable { // a 403 for this project
+		return ErrBriefForbidden
 	}
 	return nil
 }

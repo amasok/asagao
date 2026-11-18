@@ -222,7 +222,7 @@ func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) er
 			}
 		case briefRefused(err):
 			state, brief = readmodel.BriefUnavailable, nil
-			_ = s.briefRefusal(ctx, projectGID, err) // recorded for the workspace
+			_ = s.briefRefusal(ctx, projectGID, err) // 402: for the workspace; 403: this project
 		default:
 			state, brief = "", nil // keep the cached brief
 			if fail == nil {

@@ -108,15 +108,15 @@ func TestBriefAttackConflictLinesTermsafe(t *testing.T) {
 	}
 }
 
-// 402/403 on the first GET (not a write) also marks the workspace only, and a later
-// success clears it.
+// 402 on the first GET (not a write) also marks the workspace only, and a later success
+// clears it. (A 403 marks the project only: TestPushBriefForbiddenIsThisProjectOnly.)
 func TestBriefAttackRefusalOnGetAndClear(t *testing.T) {
 	ctx := context.Background()
 	bs, s, st := setupBrief(t, "目的", "年内")
 	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "春"), now); err != nil {
 		t.Fatal(err)
 	}
-	bs.status["GET /project_briefs/b1"] = http.StatusForbidden
+	bs.status["GET /project_briefs/b1"] = http.StatusPaymentRequired
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("%+v %v", res, err)
 	}

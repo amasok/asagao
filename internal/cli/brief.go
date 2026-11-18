@@ -156,7 +156,7 @@ func (a *app) printBrief(cmd *cobra.Command, st Store, gid string) error {
 		}
 		fmt.Fprintln(w, out.Markdown)
 	case o.BriefState == "unavailable":
-		return errors.New("このプロジェクトのブリーフは Asana から取得できません（プランか、API がプレビューのため）")
+		return errors.New("このプロジェクトのブリーフは Asana から取得できません（プランにないか、権限がないか、API がプレビューのため）")
 	case o.BriefState == "":
 		return errors.New("ブリーフはまだ取得していません（オンラインで、もう一度実行してください）")
 	default:

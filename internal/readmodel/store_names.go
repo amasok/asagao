@@ -106,10 +106,14 @@ const (
 
 // Features of #60 that a plan may lack (PlanKey).
 const (
-	// PlanProjectBrief is a project's brief (a preview API): Asana answered 402 or 403 to
-	// reading or writing one in the workspace.
+	// PlanProjectBrief is a project's brief (a preview API): Asana answered 402 to reading
+	// or writing one in the workspace.
 	PlanProjectBrief = "project_brief"
 )
+
+// BriefForbiddenMessage says that Asana does not let us read or change one project's
+// brief (it answered 403; BriefUnavailable).
+const BriefForbiddenMessage = "このプロジェクトのブリーフは、Asana が読み書きを許していません (403。権限がないか、API がプレビューのため)。概要を開き直すと、もう一度確かめます"
 
 // Features of #57 that a plan may lack (PlanKey).
 const (
@@ -152,8 +156,8 @@ func PlanUnavailableMessage(feature string) string {
 		PlanProjectBrief: "プロジェクトブリーフ (概要のページ)",
 		PlanStartOn:      "タスクの開始日",
 	}[feature]
-	if feature == PlanProjectBrief { // a preview API: refused with 402 or 403
-		return "このワークスペースでは、" + what + "を API で使えません (Asana が 402 か 403 を返しました。しばらくしてから、もう一度試します)"
+	if feature == PlanProjectBrief { // tried again after PlanRecheckAfter
+		return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"
 	}
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }

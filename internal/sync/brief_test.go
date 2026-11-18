@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	gosync "sync"
 	"testing"
 	"time"
@@ -321,31 +322,74 @@ func TestPushCreateBriefAnswerLost(t *testing.T) {
 	}
 }
 
-// 402 or 403 for the brief fails the change with a message that says so, and marks the
-// workspace (not other workspaces) so that the brief is not offered there for a while.
-func TestPushBriefRefused(t *testing.T) {
-	for _, status := range []int{http.StatusPaymentRequired, http.StatusForbidden} {
-		ctx := context.Background()
-		bs, s, st := setupBrief(t, "目的", "年内")
-		if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "春"), now); err != nil {
-			t.Fatal(err)
-		}
-		bs.status["PUT /project_briefs/b1"] = status
-		res, err := s.Push(ctx)
-		if err != nil || res.Failed != 1 {
-			t.Fatalf("%d: push = %+v %v", status, res, err)
-		}
-		ops := briefOps(t, st)
-		if len(ops) != 1 || ops[0].State != store.OpFailed {
-			t.Fatalf("%d: ops = %+v", status, ops)
-		}
-		v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1"))
-		if !readmodel.PlanOffFor(v, now) {
-			t.Fatalf("%d: workspace not marked (%q)", status, v)
-		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanProjectBrief); v != "" {
-			t.Fatalf("%d: marked for every workspace", status)
-		}
+// 402 for the brief fails the change with a message that says so, and marks the
+// workspace (not other workspaces, nor every workspace) so that the brief is not offered
+// there for a while.
+func TestPushBriefRefusedByPlan(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "目的", "年内")
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "春"), now); err != nil {
+		t.Fatal(err)
+	}
+	bs.status["PUT /project_briefs/b1"] = http.StatusPaymentRequired
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	ops := briefOps(t, st)
+	if len(ops) != 1 || ops[0].State != store.OpFailed || !strings.Contains(ops[0].LastError, "402") {
+		t.Fatalf("ops = %+v", ops)
+	}
+	v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1"))
+	if !readmodel.PlanOffFor(v, now) {
+		t.Fatalf("workspace not marked (%q)", v)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanProjectBrief); v != "" {
+		t.Fatal("marked for every workspace")
+	}
+}
+
+// 403 for the brief (a project we may not change) fails the change with its reason and
+// makes this project's brief unavailable, without marking the workspace: the briefs of
+// its other projects stay (lead's review of #60). Opening the overview asks again.
+func TestPushBriefForbiddenIsThisProjectOnly(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "目的", "年内")
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "春"), now); err != nil {
+		t.Fatal(err)
+	}
+	bs.status["PUT /project_briefs/b1"] = http.StatusForbidden
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 1 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	ops := briefOps(t, st)
+	if len(ops) != 1 || ops[0].State != store.OpFailed || !strings.Contains(ops[0].LastError, "403") {
+		t.Fatalf("ops = %+v", ops)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); v != "" {
+		t.Fatalf("workspace marked by a 403: %q", v)
+	}
+	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefUnavailable || o.Brief != nil {
+		t.Fatalf("overview = %+v", o)
+	}
+	// the overview asks again (no workspace mark), and gets it back
+	if err := s.FetchProjectOverview(ctx, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefAvailable {
+		t.Fatalf("after refetch = %+v", o)
+	}
+	// a 403 when reading it is this project's too
+	bs.status["GET /project_briefs/b1"] = http.StatusForbidden
+	if err := s.FetchProjectOverview(ctx, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); v != "" {
+		t.Fatalf("workspace marked by a 403 on GET: %q", v)
+	}
+	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefUnavailable {
+		t.Fatalf("after GET 403 = %+v", o)
 	}
 }
 

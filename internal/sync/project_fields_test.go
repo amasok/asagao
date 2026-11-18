@@ -328,8 +328,8 @@ func TestFetchProjectOverview(t *testing.T) {
 			t.Fatalf("%d: brief %+v counts %+v", status, o.Brief, o.Counts)
 		}
 	}
-	// The refusal is recorded for the workspace (#60), and the brief is not asked for there
-	// for a while; forget it to go on.
+	// The 402 is recorded for the workspace (#60; a 403 only for the project), and the
+	// brief is not asked for there for a while; forget it to go on.
 	key := readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")
 	if v, _ := st.SyncState(ctx, key); v == "" {
 		t.Fatal("refusal not recorded for the workspace")

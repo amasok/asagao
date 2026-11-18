@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,9 +13,9 @@ import (
 )
 
 // A project's brief (#60) is created, changed and deleted through the outbox
-// (update_project_brief). It is a preview API: a 402 or 403 for it is recorded per
-// workspace (readmodel.PlanProjectBrief) and hides it for a while, as a 402 hides other
-// features (plan.go).
+// (update_project_brief). It is a preview API: a 402 for it is recorded per workspace
+// (readmodel.PlanProjectBrief) and hides it for a while, as a 402 hides other features
+// (plan.go); a 403 makes this one project's brief unavailable (briefRefusal).
 
 // serverBrief returns the brief project p has in Asana (nil: none).
 func (s *Syncer) serverBrief(ctx context.Context, p *model.Project) (*model.ProjectBrief, error) {
@@ -126,30 +125,36 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 	return sent, sentNotSaved(s.Store.CompleteBriefOp(ctx, op.ID, op.TaskGID, result))
 }
 
-// briefRefused reports whether err is Asana refusing the brief API: 402 (the plan lacks
-// it) or 403 (the preview API is not open to this workspace or user). A 403 may also mean
-// that this one project is not ours to change; it is still recorded for the whole
-// workspace (as #60 asks), which then tries again after readmodel.PlanRecheckAfter: a
-// workspace where the preview is closed is not asked over and over, at the cost of hiding
-// the brief of its other projects for that while.
+// briefRefused reports whether err is Asana refusing the brief API: 402 (the workspace's
+// plan lacks it) or 403 (this project's brief is not ours to read or change, or the
+// preview API is not open to us).
 func briefRefused(err error) bool {
 	return model.IsPaymentRequired(err) || isForbidden(err)
 }
 
-// briefRefusal records a refusal of the brief API (briefRefused) for the project's
-// workspace, and says so in the error; other errors are returned as they are.
+// briefRefusal records a refusal of the brief API (briefRefused) and says so in the error;
+// other errors are returned as they are. A 402 is the workspace's plan: it is recorded for
+// the workspace (readmodel.PlanKey), which hides the brief there for a while. A 403 is
+// recorded for this project only (its brief is BriefUnavailable until the overview gets it
+// again): a project we may not change must not hide the briefs of the others. (Whether the
+// preview API answers 403 for a whole workspace is to be seen on the real Asana.)
 func (s *Syncer) briefRefusal(ctx context.Context, projectGID string, err error) error {
-	if !briefRefused(err) {
-		return err
-	}
-	ws, wsErr := s.Store.ProjectWorkspace(ctx, projectGID)
-	if wsErr == nil && ws != "" {
-		if serr := s.Store.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, ws), s.clock().UTC().Format(time.RFC3339)); serr != nil {
+	switch {
+	case model.IsPaymentRequired(err):
+		ws, wsErr := s.Store.ProjectWorkspace(ctx, projectGID)
+		if wsErr == nil && ws != "" {
+			if serr := s.Store.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, ws), s.clock().UTC().Format(time.RFC3339)); serr != nil {
+				return serr
+			}
+		}
+		return fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(readmodel.PlanProjectBrief), err)
+	case isForbidden(err):
+		if serr := s.Store.SaveProjectOverview(ctx, projectGID, nil, readmodel.BriefUnavailable, nil, s.clock()); serr != nil {
 			return serr
 		}
+		return fmt.Errorf("%s: %w", readmodel.BriefForbiddenMessage, err)
 	}
-	return fmt.Errorf("このワークスペースでは、プロジェクトブリーフ (概要のページ) を API で使えません (Asana が %d を返しました): %w",
-		statusOf(err), err)
+	return err
 }
 
 // clearBriefRefusal forgets an earlier refusal of the brief API in the project's
@@ -169,12 +174,4 @@ func (s *Syncer) briefHidden(ctx context.Context, projectGID string) (bool, erro
 		return false, nil
 	}
 	return s.planHidden(ctx, readmodel.PlanProjectBrief, ws)
-}
-
-func statusOf(err error) int {
-	var apiErr *model.Error
-	if errors.As(err, &apiErr) {
-		return apiErr.Status
-	}
-	return 0
 }

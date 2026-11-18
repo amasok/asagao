@@ -90,8 +90,8 @@ func TestBriefCreate(t *testing.T) {
 	}
 }
 
-// A body the converter refuses is a FieldError; a refused workspace or an unavailable brief
-// is ErrPlanUnavailable; deleting a brief that is not there is ErrNoBrief. Nothing written.
+// A body the converter refuses is a FieldError; a workspace refused with 402 is
+// ErrPlanUnavailable, a project's brief refused with 403 ErrBriefForbidden; deleting a brief that is not there is ErrNoBrief. Nothing written.
 func TestBriefRefusals(t *testing.T) {
 	ctx := context.Background()
 	st, briefs := newBriefs(withBrief)
@@ -112,8 +112,8 @@ func TestBriefRefusals(t *testing.T) {
 		t.Fatalf("after a day: %v", err)
 	}
 	st.edits = nil
-	st.overview = readmodel.ProjectOverview{GID: "p1", BriefState: readmodel.BriefUnavailable}
-	if _, err := briefs.SaveHere(ctx, "p1", BriefInput{Title: ptr("x")}); !errors.As(err, &pe) {
+	st.overview = readmodel.ProjectOverview{GID: "p1", BriefState: readmodel.BriefUnavailable} // a 403 for p1
+	if _, err := briefs.SaveHere(ctx, "p1", BriefInput{Title: ptr("x")}); !errors.Is(err, ErrBriefForbidden) || errors.As(err, &pe) {
 		t.Fatalf("unavailable: %v", err)
 	}
 	st.overview = readmodel.ProjectOverview{GID: "p1", BriefState: readmodel.BriefNone}
