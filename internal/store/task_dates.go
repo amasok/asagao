@@ -93,3 +93,47 @@ func taskWorkspace(ctx context.Context, q dbQuerier, taskGID string) (string, er
 	}
 	return ws, err
 }
+
+// WithdrawStartOn takes the start date out of entry id (an update_task or create_task
+// Asana refused because the workspace's plan lacks start dates), so the rest of the
+// change can still be sent: the start date is recorded as a dropped change with reason
+// (PendingDiscards), the task's local start date goes back to what it was, and the entry
+// is put back in the queue. An update that changed nothing else is removed (rest is nil).
+func (s *Store) WithdrawStartOn(ctx context.Context, id int64, reason string, now time.Time) (rest *Op, d Discard, err error) {
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		op, err := getOpTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		v, ok := op.Payload["start_on"]
+		if !ok {
+			_, err := tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending' WHERE id = ? AND state = 'sending'", id)
+			rest = op
+			return err
+		}
+		start := Op{ID: op.ID, Kind: OpUpdateTask, TaskGID: op.TaskGID, Payload: map[string]any{"start_on": v},
+			Base: map[string]any{"start_on": op.Base["start_on"]}}
+		if d, err = recordDiscard(ctx, tx, &start, reason, now); err != nil {
+			return err
+		}
+		was, _ := op.Base["start_on"].(string) // a create had none
+		delete(op.Payload, "start_on")
+		delete(op.Base, "start_on")
+		if op.Kind == OpUpdateTask && len(op.Payload) == 0 {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id); err != nil {
+				return err
+			}
+		} else {
+			op.State = OpPending
+			if err := saveOp(ctx, tx, op); err != nil {
+				return err
+			}
+			rest = op
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET start_on = ? WHERE gid = ?", was, op.TaskGID); err != nil {
+			return err
+		}
+		return reapplyUpdates(ctx, tx, op.TaskGID) // a later edit's start date stays shown
+	})
+	return rest, d, err
+}

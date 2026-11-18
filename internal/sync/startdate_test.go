@@ -189,17 +189,27 @@ func TestPushStartOn402(t *testing.T) {
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-01"}, now); err != nil {
 		t.Fatal(err)
 	}
-	res, _ := s.Push(ctx)
-	if res.Failed != 1 {
-		t.Fatalf("push = %+v", res)
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || res.Sent != 0 || len(res.Discarded) != 1 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	if d := res.Discarded[0]; !strings.Contains(d.Reason, "タスクの開始日") || !strings.Contains(d.Summary, "開始日を 2026-12-01") {
+		t.Fatalf("discard = %+v", d)
 	}
 	key := readmodel.PlanKey(readmodel.PlanStartOn, "w1")
 	if v, _ := st.SyncState(ctx, key); !readmodel.PlanOffFor(v, now) {
 		t.Fatalf("402 not recorded for w1: %q", v)
 	}
+	// Only the start date was changed: the entry is gone, and so is the local start date.
 	ops, _ := st.ListOps(ctx)
-	if len(ops) != 1 || !strings.Contains(ops[0].LastError, "タスクの開始日") {
+	if len(ops) != 0 {
 		t.Fatalf("ops = %+v", ops)
+	}
+	if d, _ := st.GetTask(ctx, "t1"); d.StartOn != "" || d.Pending {
+		t.Fatalf("t1 after the 402: start %q pending %v", d.StartOn, d.Pending)
+	}
+	if ds, _ := st.PendingDiscards(ctx); len(ds) != 1 {
+		t.Fatalf("pending discards = %+v", ds)
 	}
 	// While it is recorded, another start date is refused before it is queued.
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-03"}, now); err == nil {
@@ -212,11 +222,6 @@ func TestPushStartOn402(t *testing.T) {
 	s.now = func() time.Time { return later }
 	if err := st.SetSyncState(ctx, key, now.Add(-readmodel.PlanRecheckAfter).UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
-	}
-	for _, op := range ops {
-		if err := st.DiscardOp(ctx, op.ID); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-02"}, later); err != nil {
 		t.Fatal(err)
@@ -266,4 +271,114 @@ func TestPushCreateWithStartOn(t *testing.T) {
 		t.Fatalf("created %v", f.created)
 	}
 	_ = gid
+}
+
+// A 402 for the start date does not hold back the rest of the change (#57 review): the
+// start date is dropped and reported, the rest is sent.
+func TestPushStartOn402KeepsTheRest(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10", "start_on": "2026-11-30"})
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	f.plan402 = true
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "詳細設計", "start_on": "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || res.Sent != 1 || len(res.Discarded) != 1 {
+		t.Fatalf("push = %+v, %v (puts %v)", res, err, f.puts)
+	}
+	if f.task["name"] != "詳細設計" || f.task["start_on"] != "2026-11-30" {
+		t.Fatalf("server task = %v", f.task)
+	}
+	if d, _ := st.GetTask(ctx, "t1"); d.Name != "詳細設計" || d.StartOn != "2026-11-30" || d.Pending {
+		t.Fatalf("t1 = name %q start %q pending %v", d.Name, d.StartOn, d.Pending)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("ops = %+v", ops)
+	}
+}
+
+func TestPushCreateStartOn402(t *testing.T) {
+	f, s, st := setupStart(t, nil)
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	f.plan402 = true
+	gid, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "見積もり", ProjectGID: "p1", DueOn: "2026-12-10", StartOn: "2026-12-01"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || res.Sent != 1 || len(res.Discarded) != 1 {
+		t.Fatalf("push = %+v, %v (created %v)", res, err, f.created)
+	}
+	if _, ok := f.created["start_on"]; ok || f.created["name"] != "見積もり" || f.created["due_on"] != "2026-12-10" {
+		t.Fatalf("created %v", f.created)
+	}
+	real, err := st.RealGID(ctx, gid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := st.GetTask(ctx, real); d == nil || d.StartOn != "" || d.DueOn != "2026-12-10" {
+		t.Fatalf("created task = %+v", d)
+	}
+}
+
+// The due date changed in Asana after the start date was queued so that Asana would
+// refuse it (400): it is not sent, but dropped with the reason, and the rest is sent.
+func TestPushStartOnDueChangedInAsana(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		server map[string]any
+		want   string
+	}{
+		{"due removed", map[string]any{"due_on": nil}, "期日が外された"},
+		{"due moved before the start", map[string]any{"due_on": "2026-11-20"}, "期日が 2026-11-20 になり"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
+			ctx := context.Background()
+			if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-01", "name": "改名"}, now); err != nil {
+				t.Fatal(err)
+			}
+			for k, v := range tc.server {
+				f.task[k] = v
+			}
+			res, err := s.Push(ctx)
+			if err != nil || res.Sent != 1 || res.Failed != 0 || len(res.Discarded) != 1 {
+				t.Fatalf("push = %+v, %v", res, err)
+			}
+			if !strings.Contains(res.Discarded[0].Reason, tc.want) {
+				t.Errorf("reason = %q", res.Discarded[0].Reason)
+			}
+			for _, put := range f.puts {
+				if _, ok := put["start_on"]; ok {
+					t.Errorf("start date sent: %v", put)
+				}
+			}
+			if f.task["name"] != "改名" {
+				t.Errorf("the rest was not sent: %v", f.task)
+			}
+			if d, _ := st.GetTask(ctx, "t1"); d.StartOn != "" {
+				t.Errorf("local start date kept: %q", d.StartOn)
+			}
+		})
+	}
+}
+
+// Clearing a start date that Asana no longer has (its due date was removed too) sends
+// nothing: there is nothing to clear, and Asana wants a due date with it.
+func TestPushStartOnClearAlreadyGone(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10", "start_on": "2026-12-01"})
+	ctx := context.Background()
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": ""}, now); err != nil {
+		t.Fatal(err)
+	}
+	f.task["due_on"], f.task["start_on"] = nil, nil
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 0 || len(f.puts) != 0 {
+		t.Fatalf("push = %+v, %v (puts %v)", res, err, f.puts)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("ops = %+v", ops)
+	}
 }
