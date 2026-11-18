@@ -34,9 +34,17 @@ outbox の操作の種類は 20 個 (MUST): `update_task`、`create_task`、`add
 - **WHEN** サブタスクを別の親に移し、送る前に古い親のままの内容を取り込む
 - **THEN** キャッシュでは新しい親の下のままで、送ると `setParent` に新しい親が入る
 
+### Requirement: オフラインで作った親への付け替え
+新しい親がオフラインで作ったタスクなら、`set_parent` はその作成が送れるまで待つ (MUST)。作成が失敗しても待ち続け、捨てない。その作成を取り消したとき、または Asana で消えていたとして捨てたときは、そのタスクを親にする `set_parent` も取り消し、子を元の親に戻す。
+根拠: sync/push.go (waitsForCreate); store/taskops.go (undoSetParentsTo); store/outbox.go (discardLocalTask); store/discard.go (DiscardDeletedTask); TestPushSetParentWaitsForTheParentsCreate, TestParentCreatedOfflineGoesAway
+
+#### Scenario: 親の作成が失敗する
+- **WHEN** オフラインで作った親の下へ既存のタスクを移し、親の作成が 400 で失敗する
+- **THEN** `set_parent` は送られず `pending` のまま残り、捨てた変更の記録も増えない
+
 ### Requirement: セクションの中の位置
-`move_task` は任意で `insert_before` / `insert_after` (移す先のセクションにあるほかのタスク) を持ち、`addTask` にそのまま渡す (MUST)。位置があれば、今と同じセクションへの移動でも積む。続けての移動では最後の位置を使う。ローカルの gid の目印は送るときに本物の gid に引き、引けなければ位置を付けずに送る。
-根拠: store/outbox.go (MoveTaskAtLocal); sync/push.go (pushMove, position); sync/batch.go; TestMoveTaskAtLocal, TestPushMoveToAPlace
+`move_task` は任意で `insert_before` / `insert_after` (移す先のセクションにあるほかのタスク) を持ち、`addTask` にそのまま渡す (MUST)。位置があれば、今と同じセクションへの移動でも積む。位置付きの移動は、それまでの同じタスクの移動をまとめたうえで列の末尾に積み直し、batch に入れず 1 件ずつ送る。ローカルの gid の目印は送るときに本物の gid に引き、引けなければ位置を付けずに送る。
+根拠: store/outbox.go (MoveTaskAtLocal); store/taskops.go (requeue); sync/push.go (pushMove, position); sync/batch.go; TestMoveTaskAtLocal, TestMoveToAPlaceGoesToTheEndOfTheQueue, TestPushMoveToAPlace
 
 #### Scenario: 同じセクションで並べ替える
 - **WHEN** タスクを、同じセクションのタスクの後ろに置く

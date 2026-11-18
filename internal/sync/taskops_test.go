@@ -163,21 +163,63 @@ func TestPushMoveToAPlace(t *testing.T) {
 	if c := `POST /sections/s1/addTask {"data":{"insert_after":"t2","task":"t1"}}`; !hasCall(ws, c) {
 		t.Errorf("no %s in\n%s", c, strings.Join(ws.calls, "\n"))
 	}
-	// two moves next to each other go in one batch
-	ws.calls = nil
-	if err := st.MoveTaskAtLocal(ctx, "t1", "p1", "s2", store.Position{}, now); err != nil {
+	// moves to a place go one by one, in order: a batch keeps the order of one task's
+	// changes only, and the second is next to the task the first moves
+	ws.calls, ws.outer = nil, nil
+	if err := st.MoveTaskAtLocal(ctx, "t2", "p1", "s2", store.Position{}, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.MoveTaskAtLocal(ctx, "t2", "p1", "s2", store.Position{Before: "t1"}, now); err != nil {
+	if err := st.MoveTaskAtLocal(ctx, "t1", "p1", "s2", store.Position{After: "t2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MoveTaskAtLocal(ctx, "t2", "p1", "s2", store.Position{After: "t1"}, now); err != nil {
 		t.Fatal(err)
 	}
 	if res, err := s.Push(ctx); err != nil || res.Sent != 2 {
 		t.Fatalf("push = %+v %v\n%v", res, err, ws.calls)
 	}
-	if !slices.ContainsFunc(ws.outer, func(c string) bool { return c == "POST /batch" }) {
-		t.Errorf("not batched: %v", ws.outer)
+	if slices.Contains(ws.outer, "POST /batch") {
+		t.Errorf("batched: %v", ws.outer)
 	}
-	if c := `POST /sections/s2/addTask {"data":{"insert_before":"t1","task":"t2"}}`; !hasCall(ws, c) {
-		t.Errorf("no %s in\n%s", c, strings.Join(ws.calls, "\n"))
+	first := slices.Index(ws.calls, `POST /sections/s2/addTask {"data":{"insert_after":"t2","task":"t1"}}`)
+	second := slices.Index(ws.calls, `POST /sections/s2/addTask {"data":{"insert_after":"t1","task":"t2"}}`)
+	if first < 0 || second < first {
+		t.Errorf("not sent one by one in order:\n%s", strings.Join(ws.calls, "\n"))
+	}
+}
+
+// #32: a parent created offline whose create failed keeps the parent change waiting, as
+// a subtask's create waits; it is not dropped as deleted in Asana.
+func TestPushSetParentWaitsForTheParentsCreate(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	status := 0
+	ws.hook = func(rw http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == "/tasks" {
+			rw.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(rw, `{"errors":[{"message":"bad"}]}`)
+			return true
+		}
+		return taskOpsHook(ws, &status)(rw, r)
+	}
+	ctx := context.Background()
+	parent, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "親", ProjectGID: "p1"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetParentLocal(ctx, "t1", parent, store.Position{}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ops, _ := st.ListOps(ctx)
+	if len(ops) != 2 || ops[0].State != "failed" || ops[1].Kind != "set_parent" || ops[1].State != "pending" {
+		t.Fatalf("outbox %+v", ops)
+	}
+	if ds, _ := st.PendingDiscards(ctx); len(ds) != 0 {
+		t.Errorf("discards %+v", ds)
+	}
+	if slices.ContainsFunc(ws.calls, func(c string) bool { return strings.Contains(c, "setParent") }) {
+		t.Errorf("sent before its parent exists: %v", ws.calls)
 	}
 }

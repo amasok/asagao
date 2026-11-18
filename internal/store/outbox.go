@@ -208,6 +208,12 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
+		if !pos.IsZero() && op.ID != 0 {
+			// A place is next to a task that may have moved since: go after those moves.
+			if err := requeue(ctx, tx, op, now); err != nil {
+				return err
+			}
+		}
 		op.Payload["section"] = sectionGID
 		op.Payload["section_name"] = sectionName
 		delete(op.Payload, "insert_before") // the last move says where
@@ -645,6 +651,9 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 // change queued for them. counted is whether the parent's num_subtasks includes it
 // (CreateTaskLocal counts subtasks; a local duplicate does not).
 func discardLocalTask(ctx context.Context, tx *sql.Tx, gid string, counted bool) error {
+	if err := undoSetParentsTo(ctx, tx, gid); err != nil {
+		return err
+	}
 	rows, err := tx.QueryContext(ctx, "SELECT gid FROM tasks WHERE parent_gid = ? AND gid LIKE 'local:%'", gid)
 	if err != nil {
 		return err

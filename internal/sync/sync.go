@@ -470,8 +470,9 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	// Stories stored after this (a comment sent meanwhile) are newer than the list (#40).
-	storiesFrom := s.clock()
+	// Stories created after this (a comment sent meanwhile) are newer than the list (#40).
+	// Asana's clock, as created_at, with a margin.
+	storiesFrom := s.serverNow().Add(-clockSkew)
 	stories, err := s.API.Stories(ctx, taskGID)
 	if err != nil {
 		return err

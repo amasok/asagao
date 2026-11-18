@@ -254,6 +254,12 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
+		if !pos.IsZero() && op.ID != 0 {
+			// A place is next to a task that may have moved since: go after those moves.
+			if err := requeue(ctx, tx, op, now); err != nil {
+				return err
+			}
+		}
 		op.Payload = map[string]any{"parent": parent, "parent_name": parentName}
 		if pos.Before != "" {
 			op.Payload["insert_before"] = pos.Before
@@ -307,6 +313,8 @@ func reapplySetParent(ctx context.Context, tx *sql.Tx, gid string) error {
 	if err != nil {
 		return err
 	}
+	// Only the parent: the parents' subtask counts are the local ones (SetParentLocal
+	// counted the change) until a pull of the parent itself brings Asana's.
 	_, err = tx.ExecContext(ctx, "UPDATE tasks SET parent_gid = ? WHERE gid = ?", parent.String, gid)
 	return err
 }
@@ -324,6 +332,39 @@ func refuseDeleted(ctx context.Context, tx *sql.Tx, gids ...string) error {
 		}
 		if n > 0 {
 			return fmt.Errorf("タスク %s は削除を送る予定です (取り消すには outbox の削除を取り消してください)", g)
+		}
+	}
+	return nil
+}
+
+// requeue takes entry op out of its place in the queue: saving it adds it at the end
+// (with its base), after the changes queued since.
+func requeue(ctx context.Context, tx *sql.Tx, op *Op, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID); err != nil {
+		return err
+	}
+	op.ID, op.CreatedAt = 0, formatTime(now)
+	return nil
+}
+
+// undoSetParentsTo discards the parent changes that put a task under gid, which is going
+// away (a task never sent, discarded or dropped): the tasks go back to their parents.
+func undoSetParentsTo(ctx context.Context, tx *sql.Tx, gid string) error {
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND json_extract(payload, '$.parent') = ? ORDER BY id", OpSetParent, gid)
+	if err != nil {
+		return err
+	}
+	ids, err := scanIDs(rows)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		op, err := getOpTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := discardOpTx(ctx, tx, op); err != nil {
+			return err
 		}
 	}
 	return nil
