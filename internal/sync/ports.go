@@ -153,6 +153,8 @@ type LocalStore interface {
 	DeleteGoneTasks(ctx context.Context, gids []string) (int64, error)
 	DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]readmodel.Discard, error)
 	DiscardGoneOp(ctx context.Context, id int64, reason string, now time.Time) (readmodel.Discard, error)
+	// WithdrawStartOn takes a start date the plan lacks out of an entry (#57).
+	WithdrawStartOn(ctx context.Context, id int64, reason string, now time.Time) (*outbox.Op, readmodel.Discard, error)
 	DropNotificationMarks(ctx context.Context, also int64) (int, error)
 	FitQueuedRichText(ctx context.Context, fit func(target rich.Target, html string) (fitted, plain string, changed bool)) (int, error)
 	GetAttachment(ctx context.Context, gid string) (*readmodel.AttachmentView, error)

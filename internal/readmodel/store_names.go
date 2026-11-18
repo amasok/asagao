@@ -107,6 +107,12 @@ const (
 	PlanCustomFields = "custom_fields"
 )
 
+// Features of #57 that a plan may lack (PlanKey).
+const (
+	// PlanStartOn is the start dates of tasks (start_on).
+	PlanStartOn = "start_on"
+)
+
 // Features of #59 that a plan may lack (PlanKey).
 const (
 	// PlanCustomTypes is custom task types (Starter and above): their list and setting them.
@@ -143,6 +149,7 @@ func PlanUnavailableMessage(feature string) string {
 		PlanGoals:        "ゴール",
 		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
+		PlanStartOn:      "タスクの開始日",
 		PlanCustomTypes:  "カスタムタイプ (タスクの種類とステータス)",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"

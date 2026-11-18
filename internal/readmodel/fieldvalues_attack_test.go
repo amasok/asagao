@@ -93,14 +93,14 @@ func TestMovedValuesMatchOldStore(t *testing.T) {
 }
 
 func TestTaskFieldValuesAttack(t *testing.T) {
-	tk := &model.Task{Name: "n", Notes: "o", Completed: true, Liked: true, DueOn: "2024-01-01", ApprovalStatus: "approved", ResourceSubtype: "approval", Assignee: &model.Ref{GID: "9"}}
+	tk := &model.Task{Name: "n", Notes: "o", Completed: true, Liked: true, DueOn: "2024-01-01", StartOn: "2023-12-25", ApprovalStatus: "approved", ResourceSubtype: "approval", Assignee: &model.Ref{GID: "9"}}
 	v := TaskFieldValues(tk)
-	if v["approval_status"] != "approved" || v["assignee"] != "9" || v["completed"] != true || v["due_on"] != "2024-01-01" || len(v) != 11 || v["custom_type"] != "" {
+	if v["approval_status"] != "approved" || v["assignee"] != "9" || v["completed"] != true || v["due_on"] != "2024-01-01" || v["start_on"] != "2023-12-25" || len(v) != 12 || v["custom_type"] != "" {
 		t.Errorf("%v", v)
 	}
 	tk.Partial, tk.Assignee = true, nil
 	v = TaskFieldValues(tk)
-	if _, ok := v["approval_status"]; ok || v["assignee"] != "" || len(v) != 8 {
+	if _, ok := v["approval_status"]; ok || v["assignee"] != "" || v["start_on"] != "2023-12-25" || len(v) != 9 {
 		t.Errorf("partial: %v", v)
 	}
 }

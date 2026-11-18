@@ -580,7 +580,9 @@ func (m *Model) renderDetail(w int) string {
 	}
 	field(itemAssignee, "担当", assignee, "未割り当て")
 	field(itemDue, "期日", longDue(d.DueOn, d.DueAt), "なし")
-	if d.StartOn != "" {
+	if m.startOffered {
+		field(itemStart, "開始日", d.StartOn, "なし")
+	} else if d.StartOn != "" { // the plan lacks start dates (a recent 402): shown, not offered
 		b.WriteString(m.st.label.Render(padRight("開始日", labelW)) + " " + d.StartOn + "\n")
 	}
 	for i, ms := range d.Memberships {

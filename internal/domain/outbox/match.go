@@ -14,6 +14,7 @@ import (
 // TaskFields are the fields of a task in Asana that a create sets besides the name.
 type TaskFields struct {
 	DueOn       string
+	StartOn     string
 	AssigneeGID string // "" for none
 	Notes       string
 	HTMLNotes   string
@@ -25,7 +26,7 @@ type TaskFields struct {
 // notes.
 func SameTaskFields(t TaskFields, payload map[string]any) bool {
 	str := func(k string) string { v, _ := payload[k].(string); return v }
-	if str("due_on") != t.DueOn {
+	if str("due_on") != t.DueOn || str("start_on") != t.StartOn {
 		return false
 	}
 	if str("assignee") != t.AssigneeGID {

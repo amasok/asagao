@@ -292,6 +292,7 @@ const (
 	// templates.go
 	pickTaskTemplate
 	pickProjectTemplate
+	pickStart // a task's start date (startdate.go)
 )
 
 type pickerItem struct {
@@ -479,6 +480,11 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 				return m, m.startDuePrompt(p.task)
 			}
 			return m, m.setDue(p.task, item.value)
+		case pickStart:
+			if item.value == "?" {
+				return m, m.startStartPrompt(p.task)
+			}
+			return m, m.setStart(p.task, item.value)
 		case pickFilter:
 			var f int
 			fmt.Sscan(item.value, &f)

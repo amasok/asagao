@@ -183,15 +183,7 @@ func (s *Store) DeleteTimeEntryLocal(ctx context.Context, gid string, now time.T
 // TaskWorkspace returns the workspace of a task: its own, else the one of its first
 // project ("" if neither is known).
 func (s *Store) TaskWorkspace(ctx context.Context, taskGID string) (string, error) {
-	var ws string
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(t.workspace_gid, ''),
-		(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid
-			WHERE m.task_gid = t.gid ORDER BY m.rowid LIMIT 1), '')
-		FROM tasks t WHERE t.gid = ?`, taskGID).Scan(&ws)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
-	}
-	return ws, err
+	return taskWorkspace(ctx, s.db, taskGID)
 }
 
 // WorkspaceGIDs returns the gids of the workspaces in the cache: the ones listed, and the
