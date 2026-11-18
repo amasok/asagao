@@ -64,8 +64,8 @@ func (a *app) syncCmd() *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), "  → `asagao outbox list` で確認してください")
 				}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d / 取得したタスク %d / 削除 %d（%s）\n",
-				kind, res.Workspaces, res.Projects, res.Tasks, res.Pruned, res.Duration.Round(100*time.Millisecond))
+			fmt.Fprintf(cmd.OutOrStdout(), "同期しました（%s）: ワークスペース %d / プロジェクト %d（ほかに一覧だけ %d）/ 取得したタスク %d / 削除 %d / リクエスト %d（%s）\n",
+				kind, res.Workspaces, res.Projects, res.Listed, res.Tasks, res.Pruned, res.Requests, res.Duration.Round(100*time.Millisecond))
 			if inbox, err := query(st).InboxState(ctx); err == nil && !inbox.Available() {
 				fmt.Fprintln(cmd.ErrOrStderr(), sync.InboxUnavailableMessage(inbox, a.cfg.Auth.Scopes))
 			}

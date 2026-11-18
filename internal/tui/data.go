@@ -94,7 +94,7 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 		names = append(names, "その他")
 		keys = append(keys, "other")
 		// Empty sections are shown too (as in Asana), so they can be renamed, moved or deleted.
-		return groupKeyedKeep(tasks, names, keys, func(t readmodel.TaskSummary) int {
+		rows := groupKeyedKeep(tasks, names, keys, func(t readmodel.TaskSummary) int {
 			for _, m := range t.Memberships {
 				if m.ProjectGID == sc.project {
 					if i, ok := index[m.SectionGID]; ok {
@@ -103,7 +103,11 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 				}
 			}
 			return other
-		}, func(b int) bool { return b != other }), nil
+		}, func(b int) bool { return b != other })
+		if !sc.fetched { // only the tasks cached otherwise (e.g. mine) are listed
+			rows = append([]row{{header: unfetchedNote, note: true}}, rows...)
+		}
+		return rows, nil
 
 	default: // My Tasks
 		me, err := queryOf(st).MeGID(ctx)

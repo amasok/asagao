@@ -50,7 +50,11 @@ func (a *app) projectCmd() *cobra.Command {
 					group = g
 					fmt.Fprintf(out, "[%s]\n", g)
 				}
-				fmt.Fprintf(out, "%s  (%s)\n", p.Name, p.GID)
+				mark := ""
+				if p.Unfetched {
+					mark = "  [タスク未取得]"
+				}
+				fmt.Fprintf(out, "%s  (%s)%s\n", p.Name, p.GID, mark)
 				for _, s := range p.Sections {
 					fmt.Fprintf(out, "  - %s  (%s)\n", s.Name, s.GID)
 				}

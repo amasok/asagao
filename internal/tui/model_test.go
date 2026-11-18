@@ -48,6 +48,7 @@ func fixtureStore(t *testing.T) *store.Store {
 	}
 	must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "新居プロジェクト", Members: []asana.Ref{{GID: "me"}}}}, "me"))
+	must(st.SetSyncState(ctx, store.KeyProjectTasks+"p1", "all")) // its tasks are synced (#54)
 	must(st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "家具"}, {GID: "s2", Name: "手続き"}}))
 	in := func(sec string) []asana.Membership {
 		return []asana.Membership{{Project: ref("p1", ""), Section: ref(sec, "")}}

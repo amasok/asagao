@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +35,8 @@ type Config struct {
 	CompletedDays int
 	// AllProjects syncs every project in the workspace instead of only projects you are a member of.
 	AllProjects bool
+	// LazyProjects: see settings.SyncConfig.LazyProjects.
+	LazyProjects bool
 }
 
 type Syncer struct {
@@ -59,6 +60,10 @@ type Syncer struct {
 	// outbox (they stay protected from being overwritten) and Push refuses to send.
 	// Used by the read-only MCP server, so an agent cannot send what the user queued.
 	PullOnly bool
+	// DeferCompleted makes Run leave the completed tasks of what it fetches for the first
+	// time (My Tasks, a project opened) to FetchCompleted (Result.CompletedPending), so that
+	// the incomplete ones can be shown first. Without it, Run fetches them last.
+	DeferCompleted bool
 	// accountOK is set once Asana answered as the account the local data belongs to, so
 	// Push asks /users/me only once per Syncer (see checkPushAccount).
 	accountOK atomic.Bool
@@ -83,15 +88,22 @@ type Result struct {
 	Full bool `json:"full"`
 	// Poll: every project was fetched with modified_since (see PollInterval). Otherwise
 	// projects were brought up to date from their events.
-	Poll       bool          `json:"poll"`
-	Events     int           `json:"events"`              // events read
-	Fallbacks  int           `json:"fallbacks,omitempty"` // projects fetched again because their events could not be used
-	Push       PushResult    `json:"push"`
-	Workspaces int           `json:"workspaces"`
-	Projects   int           `json:"projects"`
-	Tasks      int           `json:"tasks"`
-	Pruned     int64         `json:"pruned"`
-	Duration   time.Duration `json:"duration_ns"`
+	Poll       bool       `json:"poll"`
+	Events     int        `json:"events"`              // events read
+	Fallbacks  int        `json:"fallbacks,omitempty"` // projects fetched again because their events could not be used
+	Push       PushResult `json:"push"`
+	Workspaces int        `json:"workspaces"`
+	Projects   int        `json:"projects"` // projects whose tasks were synced
+	// Listed is the projects only listed: their tasks are fetched once opened (#54).
+	Listed int `json:"listed"`
+	// CompletedPending: completed tasks of what was fetched for the first time are still to
+	// fetch (Syncer.DeferCompleted): call FetchCompleted.
+	CompletedPending bool `json:"completed_pending,omitempty"`
+	// Requests is how many HTTP requests were sent to Asana (if the client counts them).
+	Requests int64         `json:"requests"`
+	Tasks    int           `json:"tasks"`
+	Pruned   int64         `json:"pruned"`
+	Duration time.Duration `json:"duration_ns"`
 }
 
 func (s *Syncer) clock() time.Time {
@@ -120,7 +132,18 @@ func (s *Syncer) serverNow() time.Time {
 // that way too. A full sync fetches everything in the retention window and removes tasks
 // Asana no longer returns. It runs when forced, on the first sync, or when the last one is
 // older than FullSyncInterval.
+//
+// Only the projects to sync are fetched this way (see lazy.go): the others are listed, and
+// their tasks are fetched once they are opened (OpenProject). What is fetched for the first
+// time comes with its incomplete tasks first; the completed ones are fetched last.
 func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
+	n := s.requests()
+	res, err := s.run(ctx, forceFull)
+	res.Requests = s.requests() - n
+	return res, err
+}
+
+func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	started := s.clock()
 	res := Result{Full: forceFull}
 
@@ -194,21 +217,10 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
-	completedSince := stamp.AddDate(0, 0, -s.Cfg.CompletedDays)
-	keep := map[string]bool{}
-	tokens := map[string]string{} // project gid -> events token, saved once everything is stored
-	var withSubtasks []string
-
-	upsert := func(tasks []model.Task) error {
-		for _, t := range tasks {
-			keep[t.GID] = true
-			if t.NumSubtasks > 0 {
-				withSubtasks = append(withSubtasks, t.GID)
-			}
-		}
-		res.Tasks += len(tasks)
-		return s.Store.UpsertTasks(ctx, tasks)
-	}
+	mode := s.newMode(stamp)
+	mode.full, mode.poll, mode.modifiedSince = res.Full, res.Poll, modifiedSince
+	pl := newPull(&res)
+	upsert := func(tasks []model.Task) error { return s.upsert(ctx, pl, tasks) }
 
 	if err := s.Store.UpsertUser(ctx, *me); err != nil {
 		return res, err
@@ -252,16 +264,7 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		if err := s.syncWorkspaceCustomFields(ctx, w.GID, res.Poll); err != nil {
 			return res, err
 		}
-		// My Tasks may hold tasks in no project, which no project's events report: they are
-		// fetched with modified_since on every sync (one request, only what changed).
-		s.progress("ワークスペース %s: 自分のタスク", w.Name)
-		mine, err := s.API.Tasks(ctx, model.TaskQuery{
-			Assignee: "me", Workspace: w.GID, CompletedSince: completedSince, ModifiedSince: modifiedSince,
-		})
-		if err != nil {
-			return res, fmt.Errorf("%s の担当タスクの取得: %w", w.Name, err)
-		}
-		if err := upsert(mine); err != nil {
+		if err := s.pullMyTasks(ctx, pl, w, mode, lastSync.IsZero()); err != nil {
 			return res, err
 		}
 
@@ -277,93 +280,19 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				return res, err
 			}
 		}
+		// Read after the favorites were fetched: a new favorite is fetched by this sync.
+		states, err := s.Store.ProjectTaskStates(ctx)
+		if err != nil {
+			return res, err
+		}
 		for _, p := range projects {
-			if !s.Cfg.AllProjects && !slices.ContainsFunc(p.Members, func(r model.Ref) bool { return r.GID == me.GID }) {
+			if !s.toSync(p, me.GID, states) {
+				res.Listed++
 				continue
 			}
 			s.progress("プロジェクト %s", p.Name)
-			ev, err := s.readEvents(ctx, p.GID)
-			if err != nil {
+			if err := s.pullProject(ctx, pl, projectRef{p.GID, p.Name, w.GID}, states[p.GID], mode); err != nil {
 				return res, err
-			}
-			res.Events += ev.count
-			// Without usable events, the project is fetched like a poll: in full the first time
-			// (nothing is known before the new token), else what changed since the last sync.
-			fetch, since := res.Poll, modifiedSince
-			if ev.fallback {
-				res.Fallbacks++
-				fetch = true
-				if ev.fresh {
-					since = time.Time{}
-				}
-			}
-			sections := func() error {
-				secs, err := s.API.Sections(ctx, p.GID)
-				if err != nil {
-					return fmt.Errorf("%s のセクションの取得: %w", p.Name, err)
-				}
-				return s.Store.ReplaceSections(ctx, p.GID, secs)
-			}
-			statuses := func() error {
-				if updates, err := s.API.StatusUpdates(ctx, p.GID); err == nil { // project status
-					return s.Store.ReplaceStatusUpdates(ctx, p.GID, updates)
-				}
-				return nil
-			}
-			fetchProject := func(since time.Time) error {
-				if err := sections(); err != nil {
-					return err
-				}
-				if err := statuses(); err != nil {
-					return err
-				}
-				tasks, err := s.API.Tasks(ctx, model.TaskQuery{
-					Project: p.GID, CompletedSince: completedSince, ModifiedSince: since,
-				})
-				if err != nil {
-					return fmt.Errorf("%s のタスクの取得: %w", p.Name, err)
-				}
-				return upsert(tasks)
-			}
-			if fetch {
-				if err := fetchProject(since); err != nil {
-					return res, err
-				}
-			} else {
-				if ev.sections {
-					if err := sections(); err != nil {
-						return res, err
-					}
-				}
-				if ev.statuses {
-					if err := statuses(); err != nil {
-						return res, err
-					}
-				}
-			}
-			if err := s.syncCustomFields(ctx, p.GID, res.Full || ev.fields); err != nil {
-				return res, err
-			}
-			if err := s.syncCustomTypes(ctx, p.GID, w.GID, res.Full || ev.fields); err != nil {
-				return res, err
-			}
-			if err := s.applyEvents(ctx, ev, keep, upsert, &withSubtasks); err != nil {
-				var fe *eventFetchError
-				if !errors.As(err, &fe) || isNetworkError(err) || model.IsUnauthorized(err) {
-					return res, fmt.Errorf("%s の変更の取得: %w", p.Name, err)
-				}
-				// Asana could not give the changed tasks (a 5xx or 429 that outlasted the
-				// retries, a task that always fails): like unusable events, fetch the project
-				// with modified_since instead, which covers the changes the events named.
-				if !fetch {
-					res.Fallbacks++
-					if err := fetchProject(modifiedSince); err != nil {
-						return res, err
-					}
-				}
-			}
-			if ev.token != "" {
-				tokens[p.GID] = ev.token
 			}
 			res.Projects++
 		}
@@ -374,40 +303,28 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 	if st, err := s.Store.InboxState(ctx); err != nil {
 		return res, err
 	} else if st.Available() {
-		if err := s.fetchNotificationTargets(ctx, keep, res.Full, modifiedSince, upsert); err != nil {
+		if err := s.fetchNotificationTargets(ctx, pl.keep, res.Full, modifiedSince, upsert); err != nil {
 			return res, err
 		}
+	}
+	// The subtasks, then the events tokens and the tasks states (see finishPull).
+	if err := s.finishPull(ctx, pl); err != nil {
+		return res, err
+	}
+	// The completed tasks of what was fetched for the first time, after every incomplete
+	// one (or later, by FetchCompleted).
+	if s.DeferCompleted {
+		if res.CompletedPending, err = s.completedPending(ctx); err != nil {
+			return res, err
+		}
+	} else if err := s.pullCompleted(ctx, pl, mode, ""); err != nil {
+		return res, err
 	}
 
-	// Subtasks are not returned by GET /tasks?project=, so fetch them per parent.
-	// upsert appends subtasks that have subtasks of their own, so nested levels are fetched too.
-	fetched := map[string]bool{}
-	for i := 0; i < len(withSubtasks); i++ {
-		gid := withSubtasks[i]
-		if fetched[gid] {
-			continue
-		}
-		fetched[gid] = true
-		subs, err := s.API.Subtasks(ctx, gid)
-		if err != nil {
-			return res, fmt.Errorf("サブタスクの取得 (%s): %w", gid, err)
-		}
-		if err := upsert(subs); err != nil {
-			return res, err
-		}
-	}
-
-	// The events tokens are saved only now, after the subtasks of the tasks they reported:
-	// if anything failed, the next sync reads the same events again.
-	for gid, token := range tokens {
-		if err := s.Store.SetSyncState(ctx, readmodel.KeyEvents+gid, token); err != nil {
-			return res, err
-		}
-	}
 	// An account always has a workspace: an empty list is a broken answer, and pruning by
 	// it would delete every task. The full sync is then done again next time.
 	if res.Full && len(workspaces) > 0 {
-		if res.Pruned, err = s.Store.PruneTasks(ctx, keep); err != nil {
+		if res.Pruned, err = s.Store.PruneTasks(ctx, pl.keep); err != nil {
 			return res, err
 		}
 		if err := s.Store.SetSyncState(ctx, keyLastFullSync, stamp.UTC().Format(time.RFC3339)); err != nil {

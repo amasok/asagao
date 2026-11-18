@@ -448,6 +448,7 @@ const KeyTeams = readmodel.KeyTeams
 var projectKeys = []struct{ prefix, isProject string }{
 	{KeyCustomFields, "1"},
 	{KeyEvents, "1"},
+	{KeyProjectTasks, "1"},
 	{KeyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
 }
 
@@ -548,6 +549,7 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) err
 				"DELETE FROM teams WHERE workspace_gid = ?",
 				"DELETE FROM project_favorites WHERE workspace_gid = ?",
 				"DELETE FROM sync_state WHERE key = '" + KeyTeams + "' || ?",
+				"DELETE FROM sync_state WHERE key = '" + KeyMyTasks + "' || ?",
 				"DELETE FROM goal_supports WHERE goal_gid IN (SELECT gid FROM goals WHERE workspace_gid = ?)",
 				"DELETE FROM goals WHERE workspace_gid = ?",
 				"DELETE FROM time_periods WHERE workspace_gid = ?",

@@ -96,6 +96,7 @@ type scope struct {
 	status   string // latest status update type of the project
 	group    string // the sidebar heading it is under (readmodel.ProjectGroup)
 	notice   string // scopeRecent: why the inbox is not shown (inbox.go)
+	fetched  bool   // scopeProject: its tasks are cached (lazy.go)
 }
 
 // row is one line of the task list: a group header or a task.
@@ -171,6 +172,7 @@ type Model struct {
 	busyRetries int  // busy syncs in a row (the retry waits longer each time)
 	lastSync    time.Time
 	fetchingFor string // gid whose details are being fetched
+	opening     string // project whose tasks are being fetched (lazy.go)
 
 	status   string // transient message for the footer
 	showHelp bool
@@ -452,6 +454,7 @@ func (m *Model) startSync() tea.Cmd {
 			if err != nil {
 				return syncDoneMsg{err: err, at: now()}
 			}
+			s.DeferCompleted = true // the incomplete tasks are shown first (fetchCompleted)
 			syncer = s
 		}
 		res, err := syncer.Run(m.ctx, false)
@@ -688,7 +691,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = loginHelp
 		}
 		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
-		if m.syncAgain {
+		if msg.err == nil && msg.res.CompletedPending {
+			cmds = append(cmds, m.fetchCompleted()) // syncs again (syncAgain) after it
+		} else if m.syncAgain {
 			m.syncAgain = false
 			cmds = append(cmds, m.startSync())
 		}
@@ -710,6 +715,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	}
+	if model, cmd, ok := m.updateLazy(msg); ok {
+		return model, cmd
 	}
 	if model, cmd, ok := m.updateWrite(msg); ok {
 		return model, cmd
@@ -941,7 +949,7 @@ func (m *Model) setProjects(ps []readmodel.ProjectView) {
 	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, m.inboxScope()}
 	for _, p := range ps {
 		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status,
-			group: readmodel.ProjectGroup(p)})
+			group: readmodel.ProjectGroup(p), fetched: !p.Unfetched})
 	}
 	m.scopes = scopes
 	m.scopeCursor = 0
@@ -970,7 +978,7 @@ func (m *Model) moveScope(delta int) tea.Cmd {
 	m.saved = nil // the sidebar leaves a saved search
 	m.listCursor, m.listOffset = 0, 0
 	m.boardCol, m.boardRow, m.boardColOffset = 0, 0, 0
-	return m.loadTasks()
+	return tea.Batch(m.loadTasks(), m.openProjectLater())
 }
 
 // setRows replaces the list, keeping the selected task if it is still there.
