@@ -10,6 +10,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/domain/timetrack"
 )
 
 // Discard is a local change dropped because its target was deleted in Asana.
@@ -201,7 +202,7 @@ func DescribeOp(op outbox.Op) string {
 	switch op.Kind {
 	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection,
-		outbox.KindUpdateTag, outbox.KindDeleteTag:
+		outbox.KindUpdateTag, outbox.KindDeleteTag, outbox.KindCreateEnumOption:
 		return what
 	}
 	name := op.TaskName
@@ -261,6 +262,12 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("コメント「%s」の削除", clip(str("text"), 40))
 	case outbox.KindDeleteAttachment:
 		return fmt.Sprintf("添付「%s」の削除", str("name"))
+	case outbox.KindAddTimeEntry:
+		return fmt.Sprintf("作業時間 %s (%s) の記録", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
+	case outbox.KindUpdateTimeEntry:
+		return fmt.Sprintf("作業時間を %s (%s) に変更", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
+	case outbox.KindDeleteTimeEntry:
+		return fmt.Sprintf("作業時間 %s (%s) の削除", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
 	case outbox.KindAddDependency:
 		return fmt.Sprintf("「%s」を待つ", dependencyName(op))
 	case outbox.KindRemoveDependency:
@@ -306,6 +313,12 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("タグ「%s」の削除", str("name"))
 	case outbox.KindMoveMySection:
 		return fmt.Sprintf("マイタスクのセクション「%s」への移動", str("section_name"))
+	case outbox.KindCreateEnumOption:
+		return fmt.Sprintf("カスタムフィールド「%s」に選択肢「%s」を追加", str("field_name"), str("name"))
+	case outbox.KindAddFieldSetting:
+		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトに追加", str("field_name"))
+	case outbox.KindRemoveFieldSetting:
+		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトから外す", str("field_name"))
 	case outbox.KindUpdateProject:
 		var parts []string
 		for _, k := range []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"} {
@@ -413,4 +426,17 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + "…"
+}
+
+// intOf reads a whole number from an outbox payload (JSON numbers decode as float64).
+func intOf(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	}
+	return 0
 }

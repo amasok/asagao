@@ -94,6 +94,32 @@ const (
 	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
 	// start_on, due_on, color); base: their values before the local edit.
 	KindUpdateProject = "update_project"
+
+	// Time tracking entries of a task (#6). task_gid holds the task.
+	//
+	// KindAddTimeEntry records time on the task as the logged-in user. payload: entry (its
+	// local gid), duration_minutes, entered_on ("YYYY-MM-DD").
+	KindAddTimeEntry = "add_time_entry"
+	// KindUpdateTimeEntry changes an entry. payload: entry (gid, "local:..." while its
+	// add_time_entry is being sent or checked), duration_minutes, entered_on; base: both
+	// before the local edit.
+	KindUpdateTimeEntry = "update_time_entry"
+	// KindDeleteTimeEntry deletes an entry. payload: entry, duration_minutes, entered_on
+	// (for the outbox list); base: the entry as it was stored (to put it back if discarded).
+	KindDeleteTimeEntry = "delete_time_entry"
+
+	// Custom fields themselves (#37).
+	//
+	// KindCreateEnumOption adds an option to an enum or multi_enum field. The outbox
+	// task_gid column holds the option's gid ("local:...", replaced once Asana created it:
+	// the values that use it wait for it). payload: field, field_name, name. It is matched
+	// by name in Asana before it is sent and when it is verified (never created twice).
+	KindCreateEnumOption = "create_enum_option"
+	// KindAddFieldSetting adds an existing custom field to a project, KindRemoveFieldSetting
+	// removes it. The outbox task_gid column holds the project gid. payload: field,
+	// field_name; base (remove only): position, is_important (to restore).
+	KindAddFieldSetting    = "add_custom_field_setting"
+	KindRemoveFieldSetting = "remove_custom_field_setting"
 )
 
 // SectionRefKeys are the payload keys that may hold a section gid, so that a section

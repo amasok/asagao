@@ -82,3 +82,45 @@ func readTasks(c *Client, detail bool, read func(fields []string) ([]Task, error
 	}
 	return tasks, err
 }
+
+// customFieldFields are the fields of a custom field definition (GET /custom_fields/{gid},
+// a workspace's list), with its enum options.
+var customFieldFields = []string{
+	"name", "resource_subtype", "precision", "is_formula_field", "is_value_read_only",
+	"enum_options.name", "enum_options.color", "enum_options.enabled",
+}
+
+// CustomField reads one custom field definition with its enum options.
+func (c *Client) CustomField(ctx context.Context, gid string) (*CustomField, error) {
+	var f CustomField
+	_, err := c.do(ctx, http.MethodGet, "/custom_fields/"+url.PathEscape(gid), fields(customFieldFields), nil, &f)
+	return &f, err
+}
+
+// WorkspaceCustomFields lists the custom fields of a workspace (to add one to a project).
+// Without custom fields (e.g. a free plan) Asana may answer 402.
+func (c *Client) WorkspaceCustomFields(ctx context.Context, workspaceGID string) ([]CustomField, error) {
+	return list[CustomField](ctx, c, "/workspaces/"+url.PathEscape(workspaceGID)+"/custom_fields", fields(customFieldFields))
+}
+
+// CreateEnumOption adds an option named name to an enum or multi_enum field (at the end).
+func (c *Client) CreateEnumOption(ctx context.Context, fieldGID, name string) (*EnumOption, error) {
+	var o EnumOption
+	_, err := c.do(ctx, http.MethodPost, "/custom_fields/"+url.PathEscape(fieldGID)+"/enum_options",
+		fields([]string{"name", "color", "enabled"}), map[string]any{"name": name}, &o)
+	return &o, err
+}
+
+// AddCustomFieldSetting adds the custom field fieldGID to a project.
+func (c *Client) AddCustomFieldSetting(ctx context.Context, projectGID, fieldGID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/addCustomFieldSetting", nil,
+		map[string]any{"custom_field": fieldGID}, nil)
+	return err
+}
+
+// RemoveCustomFieldSetting removes the custom field fieldGID from a project.
+func (c *Client) RemoveCustomFieldSetting(ctx context.Context, projectGID, fieldGID string) error {
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/removeCustomFieldSetting", nil,
+		map[string]any{"custom_field": fieldGID}, nil)
+	return err
+}

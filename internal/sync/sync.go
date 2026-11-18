@@ -249,6 +249,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 		if err := s.syncTeamsAndFavorites(ctx, w, res.Poll); err != nil {
 			return res, err
 		}
+		if err := s.syncWorkspaceCustomFields(ctx, w.GID, res.Poll); err != nil {
+			return res, err
+		}
 		// My Tasks may hold tasks in no project, which no project's events report: they are
 		// fetched with modified_since on every sync (one request, only what changed).
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -69,10 +70,24 @@ func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*mode
 // looks twice, projectSettle apart. If it is still not there, the project is not created
 // again (that could make a duplicate); the error says to check after the next sync.
 func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*model.Project, error) {
-	var apiErr *model.Error
-	if (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil {
+	if notMade(ctx, cause) {
 		return nil, cause // not created
 	}
+	return s.findCreatedProject(ctx, ws, name, started, cause,
+		"プロジェクトが作成されたか、まだ分かりません。次の同期の後に一覧に無ければ、もう一度作成してください")
+}
+
+// notMade reports whether a failed request surely made nothing: Asana refused it (4xx),
+// it was not sent, or ctx ended before.
+func notMade(ctx context.Context, cause error) bool {
+	var apiErr *model.Error
+	return (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil
+}
+
+// findCreatedProject looks in Asana for the one project named name created since started
+// (twice, projectSettle apart). Not there, the error is notFound wrapping cause (cause
+// alone if notFound is "").
+func (s *Syncer) findCreatedProject(ctx context.Context, ws, name string, started time.Time, cause error, notFound string) (*model.Project, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
 			if err := s.wait(ctx, projectSettle); err != nil {
@@ -97,7 +112,10 @@ func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, star
 			return nil, fmt.Errorf("同じ名前のプロジェクトが複数あります。Asana で確認してください: %w", cause)
 		}
 	}
-	return nil, fmt.Errorf("プロジェクトが作成されたか、まだ分かりません。次の同期の後に一覧に無ければ、もう一度作成してください: %w", cause)
+	if notFound == "" {
+		return nil, cause
+	}
+	return nil, fmt.Errorf("%s: %w", notFound, cause)
 }
 
 const projectSettle = 5 * time.Second
@@ -221,7 +239,11 @@ func (s *Syncer) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, 
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
 		sv, known := current[k]
-		if known && !same(sv, op.Base[k]) && !same(sv, local) {
+		base := op.Base[k]
+		if k == "color" { // "none" ≡ "", and Asana renames the written names (dark-red is red)
+			sv, base, local = canonColor(sv), canonColor(base), canonColor(local)
+		}
+		if known && !same(sv, base) && !same(sv, local) {
 			conflicts[k] = sv
 		}
 	}
@@ -262,6 +284,15 @@ func projectFieldValues(p *model.Project) map[string]any {
 		owner = p.Owner.GID
 	}
 	return map[string]any{"notes": p.Notes, "owner": owner, "start_on": p.StartOn, "due_on": p.DueOn, "color": p.Color}
+}
+
+// canonColor compares colors as Asana's GET names them (tag.CanonicalColor): no color
+// ("" / "none") is "", and a written name is its new name (dark-red is red).
+func canonColor(v any) any {
+	if s, ok := v.(string); ok {
+		return tag.CanonicalColor(s)
+	}
+	return v
 }
 
 func nullIfEmpty(s string) any {

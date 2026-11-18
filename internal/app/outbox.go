@@ -131,7 +131,8 @@ func refreshTarget(op outbox.Op) string {
 		outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindUpdateProject, // task_gid is a section / project
 		outbox.KindMarkNotification,                                                  // task_gid is a notification
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, // a section
-		outbox.KindUpdateTag, outbox.KindDeleteTag: // a tag
+		outbox.KindUpdateTag, outbox.KindDeleteTag, // a tag
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting: // an option / a project
 		return ""
 	}
 	return op.TaskGID

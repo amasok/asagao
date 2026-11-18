@@ -189,7 +189,15 @@ func (s *Syncer) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, erro
 	conflict := map[string]any{}
 	for k, v := range op.Payload {
 		want, _ := v.(string)
-		if !same(current[k], op.Base[k]) && current[k] != want {
+		cur, base := any(current[k]), op.Base[k]
+		cmpWant := any(want)
+		if k == "color" { // "none" ≡ "", and Asana renames the written names, like a project's
+			cur, base, cmpWant = canonColor(cur), canonColor(base), canonColor(want)
+			if cmpWant == "" {
+				want = ""
+			}
+		}
+		if !same(cur, base) && cur != cmpWant {
 			conflict[k] = current[k]
 		}
 		if k == "color" && want == "" {

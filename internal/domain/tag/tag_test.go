@@ -1,6 +1,9 @@
 package tag
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestNormalizeColor(t *testing.T) {
 	for in, want := range map[string]string{"dark-green": "dark-green", " Light-Blue ": "light-blue", "none": "", "": ""} {
@@ -13,5 +16,28 @@ func TestNormalizeColor(t *testing.T) {
 		if _, err := NormalizeColor(bad); err == nil {
 			t.Errorf("NormalizeColor(%q) accepted", bad)
 		}
+	}
+}
+
+// The colors as the real Asana takes and answers them (scripts/realcheck, #31).
+func TestColorsAsAsanaTakesThem(t *testing.T) {
+	if slices.Contains(Colors, "light-brown") || !slices.Contains(Colors, "light-yellow") {
+		t.Fatalf("Colors = %v: Asana refuses light-brown and takes light-yellow", Colors)
+	}
+	for in, want := range map[string]string{
+		"dark-red": "red", "DARK-RED": "red", "red": "red", "dark-blue": "blue", "light-blue": "blue",
+		"light-yellow": "yellow", "dark-brown": "yellow", "none": "", "": "", " None ": "",
+	} {
+		if got := CanonicalColor(in); got != want {
+			t.Errorf("CanonicalColor(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, c := range Colors {
+		if CanonicalColor(c) == c {
+			t.Errorf("%s has no new name", c)
+		}
+	}
+	if _, err := NormalizeColor("light-brown"); err == nil {
+		t.Error("light-brown accepted")
 	}
 }

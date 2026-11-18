@@ -16,6 +16,8 @@ type Error struct {
 	Errors []struct {
 		Message string `json:"message"`
 		Help    string `json:"help"`
+		// Error is a code some errors have (e.g. requires_workspace_received_organization).
+		Error string `json:"error,omitempty"`
 	} `json:"errors"`
 	// Sync is the new sync token of a 412 from GET /events (see SyncToken).
 	Sync string `json:"sync"`

@@ -219,6 +219,60 @@ func TestPushUpdateProjectConflict(t *testing.T) {
 	}
 }
 
+// A project without a color is "" here but "none" in Asana's answer (a project just made,
+// found by scripts/realcheck #31): the same value, so editing it is not a conflict.
+func TestPushUpdateProjectNoColorIsNone(t *testing.T) {
+	for _, c := range []struct{ stored, asana string }{{"", "none"}, {"none", ""}} {
+		t.Run(c.stored+"/"+c.asana, func(t *testing.T) {
+			ctx := context.Background()
+			ps, s, st := setupProject(t)
+			ps.color = c.stored
+			p, _ := s.API.Project(ctx, "p1")
+			if err := s.saveProject(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			ps.color = c.asana
+			if err := st.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "dark-green", "due_on": "2030-01-20"}, now); err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.Push(ctx)
+			if err != nil || res.Sent != 1 || res.Conflicts != 0 || ps.color != "dark-green" {
+				ops, _ := st.ListOps(ctx)
+				t.Fatalf("push = %+v %v color=%q ops=%+v", res, err, ps.color, ops)
+			}
+		})
+	}
+}
+
+// Asana renames the written color names (dark-green comes back as green, scripts/realcheck
+// #31): a project the cache has as dark-green is not a conflict with Asana's green.
+func TestPushUpdateProjectRenamedColorIsSame(t *testing.T) {
+	ctx := context.Background()
+	ps, s, st := setupProject(t)
+	ps.color = "dark-green"
+	p, _ := s.API.Project(ctx, "p1")
+	if err := s.saveProject(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	ps.color = "green"
+	if err := st.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "dark-red"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Conflicts != 0 {
+		ops, _ := st.ListOps(ctx)
+		t.Fatalf("push = %+v %v ops=%+v", res, err, ops)
+	}
+	// A real change there (green → red) is still a conflict.
+	ps.color = "red"
+	if err := st.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "light-blue"}, now); err != nil {
+		t.Fatal(err)
+	}
+	ps.color = "indigo" // dark-purple, set in Asana meanwhile
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
+		t.Fatalf("real change: push = %+v %v", res, err)
+	}
+}
+
 // A project deleted in Asana drops the edit (recorded), like a renamed section's.
 func TestPushUpdateProjectGone(t *testing.T) {
 	ctx := context.Background()

@@ -51,10 +51,12 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 | `internal/termsafe` | 共通 | 同じ | なし | 端末の制御文字の除去 |
 | `internal/settings` | 共有の型 | (d4b で `internal/config` の `Config` などの型と `Default` を移した。config に別名) | なし | 設定の型と既定値。ファイルや TOML は読まない |
 | `internal/xdg` | 共通 | (d3 で `internal/config` の `ConfigDir`・`DataDir`・`CacheDir` の決まりを移した) | なし | ツールのフォルダの場所 (XDG)。環境変数とホームディレクトリだけを読む |
+| `internal/testguard` | テストの支え | (#53 で足した) | なし | テストの前に HOME と XDG のフォルダを一時フォルダに向ける。テストのあるパッケージは、どれも `TestMain` から `testguard.Main` (または `Run`) を呼ぶ。import してよいのはテストのファイルだけ (archtest で確かめる) |
 | `internal/tui` | 入り口 | 同じ | bubbletea、bubbles、lipgloss、glamour、x/ansi | 画面 |
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
 | `internal/cli` | 入り口 | 同じ | cobra、bubbletea、MCP go-sdk、x/term、go-runewidth | コマンド |
 | `internal/wire` | 組み立て | 同じ (d4 で `internal/cli/root.go` から移した。cmd/asagao が `cli.Wiring` で cli に渡す) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |
+| `scripts/realcheck` | 共通 (標準ライブラリだけ) | 同じ | なし | 本物の Asana での確認 (#31)。asagao の実行ファイル (CLI・MCP) を外から動かすので、asagao のパッケージは import しない |
 
 `domain/rich` などの名前は、その段階の PR で決め直してよい (ADR にする)。
 

@@ -99,6 +99,9 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 	switch op.Kind {
 	case outbox.KindCreateSection:
 		return s.findCreatedSection(ctx, op)
+	case outbox.KindCreateEnumOption:
+		m, err := s.findEnumOption(ctx, op)
+		return sent, m, err
 	case outbox.KindCreateTask:
 		tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), since)
 		if err != nil || !ok {
@@ -183,6 +186,9 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 			return sent, m, nil
 		}
 		return sent, matched, s.Store.CompleteComment(ctx, op.ID, str("story_gid"), op.TaskGID, st)
+
+	case outbox.KindAddTimeEntry:
+		return s.findTimeEntry(ctx, op, byMe, recent)
 
 	case outbox.KindUploadAttachment:
 		atts, err := s.API.Attachments(ctx, op.TaskGID)

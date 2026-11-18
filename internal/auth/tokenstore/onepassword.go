@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"testing"
 )
 
 // OnePassword stores the refresh token (or a Personal Access Token) and client secret in a
@@ -130,6 +131,10 @@ func (o *OnePassword) op(ctx context.Context, stdin []byte, args ...string) ([]b
 	}
 	if o.run != nil {
 		return o.run(ctx, stdin, args...)
+	}
+	if testing.Testing() {
+		// A test gives its own run: the real op would read or write the user's vault.
+		return nil, errors.New("1Password CLI (op) is not run in tests (Issue #53)")
 	}
 	if _, err := exec.LookPath("op"); err != nil {
 		return nil, errors.New("1Password CLI (op) not found: install it and enable the desktop app integration (https://developer.1password.com/docs/cli/get-started/)")

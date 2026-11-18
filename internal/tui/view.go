@@ -42,6 +42,8 @@ func (m *Model) render() string {
 		body = m.renderStatuses(m.width, bodyH)
 	} else if m.overviewView {
 		body = m.renderOverview(m.width, bodyH)
+	} else if m.goals.open {
+		body = m.renderGoals(m.width, bodyH)
 	} else if m.picker != nil {
 		body = m.renderPicker(m.width, bodyH)
 	} else if m.leader {

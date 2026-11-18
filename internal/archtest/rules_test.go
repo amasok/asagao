@@ -30,6 +30,9 @@ const (
 	layerShared  layer = "shared"  // types only (asana/model, readmodel): the standard library
 	layerCommon  layer = "common"  // termsafe, xdg: the standard library only
 	layerTest    layer = "test"    // packages with only tests: nothing may import them
+	// testguard: the standard library only, imported by the tests of every package
+	// (guard_test.go) and by nothing else.
+	layerTestSupport layer = "testsupport"
 )
 
 // layers assigns every package of the module to a layer. A key ending in "/..." covers the
@@ -59,6 +62,9 @@ var layers = map[string]layer{
 	"internal/termsafe": layerCommon,
 	"internal/xdg":      layerCommon,
 
+	// The real-Asana check drives the asagao binary from outside: standard library only.
+	"scripts/realcheck": layerCommon,
+
 	"internal/tui":       layerEntry,
 	"internal/cli":       layerEntry,
 	"internal/mcpserver": layerEntry,
@@ -67,6 +73,8 @@ var layers = map[string]layer{
 	"cmd/asagao":    layerWire,
 
 	"internal/archtest": layerTest,
+
+	"internal/testguard": layerTestSupport,
 }
 
 // adapterExceptions are the adapters that may import other adapters (rule 3): the parts of
