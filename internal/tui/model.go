@@ -234,6 +234,12 @@ type Model struct {
 	calMonth time.Time // month of calTasks
 	calTasks map[string][]readmodel.TaskSummary
 
+	// timeline (timeline.go)
+	timeline bool
+	tlStart  time.Time // first day shown (zero: a week before today)
+	tlDayW   int       // columns per day (0: the default)
+	tlFollow string    // the task the timeline last scrolled to
+
 	// projects (projects.go)
 	statusView         bool
 	statusOffset       int
@@ -771,13 +777,18 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.search.Focus()
 	case "esc", "backspace", "q":
 		return m, m.back(key)
-	case "tab":
-		if !m.zoom {
+	case "tab", "shift+tab":
+		switch {
+		case m.zoom:
+		case m.timelineActive(): // no detail pane next to the timeline
+			if m.focus == paneSidebar {
+				m.focus = paneList
+			} else {
+				m.focus = paneSidebar
+			}
+		case key == "tab":
 			m.focus = (m.focus + 1) % 3
-		}
-		return m, nil
-	case "shift+tab":
-		if !m.zoom {
+		default:
 			m.focus = (m.focus + 2) % 3
 		}
 		return m, nil
@@ -808,6 +819,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ctxCalendar:
 		return m.handleCalendarKey(key)
 	case ctxList:
+		if m.timelineActive() {
+			if cmd, ok := m.handleTimelineKey(key); ok {
+				return m, cmd
+			}
+		}
 		half := max(1, m.listHeight()/2)
 		switch key {
 		case "j", "down":

@@ -112,6 +112,7 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "9100001"}}},
 		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "1000001"}}},
 		{"POST", "/tags", named(pre+"-colors", "workspace", TestWorkspace)},
+		{"POST", "/tasks", named(pre+"-remote", "projects", []string{"1000001"})},
 		{"PUT", "/tags/3000003", M{"data": M{"color": "dark-red"}}},
 		{"PUT", "/projects/1000001", M{"data": M{"color": "none"}}},
 	}
@@ -130,6 +131,10 @@ func TestGuardBody(t *testing.T) {
 		{"PUT", "/projects/9999999", M{"data": M{"color": "red"}}},
 		{"PUT", "/tags/9999999", M{"data": M{"color": "red"}}},
 		{"POST", "/tags", named("urgent", "workspace", TestWorkspace)},
+		{"POST", "/tasks", named(pre+"-remote", "projects", []string{"9999999"})},
+		{"POST", "/tasks", named(pre+"-remote", "projects", []string{"1000001", "9999999"})},
+		{"POST", "/tasks", named(pre + "-remote")}, // no project: lands in My Tasks
+		{"POST", "/tasks", named("buy milk", "projects", []string{"1000001"})},
 		{"POST", "/tasks/9999999/time_tracking_entries", M{"data": M{}}},
 		{"PUT", "/time_tracking_entries/9999999", M{"data": M{}}},
 		{"POST", "/allocations", M{"data": M{"parent": "9999999", "assignee": TestUser}}},

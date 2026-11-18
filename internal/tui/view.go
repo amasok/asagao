@@ -93,7 +93,13 @@ func (m *Model) paneWidths() (int, int, int) {
 	return side, rest - detail, detail
 }
 
-func (m *Model) listHeight() int { return max(1, m.height-2-3) } // header, footer, borders, title
+func (m *Model) listHeight() int {
+	h := m.height - 2 - 3 // header, footer, borders, title
+	if m.timelineActive() && !m.zoom {
+		h -= 2 // the timeline's month and day rows
+	}
+	return max(1, h)
+}
 
 func (m *Model) layoutDetail() {
 	_, _, dw := m.paneWidths()
@@ -134,6 +140,20 @@ func (m *Model) renderBody(h int) string {
 		}
 		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
 		return lipgloss.JoinHorizontal(lipgloss.Top, side, m.renderCalendar(m.width-sw, h))
+	}
+	if m.timelineActive() && !m.zoom {
+		// Like the board, the timeline takes the list and detail area.
+		if m.narrow() {
+			if m.focus == paneSidebar {
+				return m.pane("プロジェクト", m.sidebarLines(m.width-4, h-3), m.width, h, true)
+			}
+			return m.renderTimeline(m.width, h)
+		}
+		if sw == 0 {
+			return m.renderTimeline(m.width, h)
+		}
+		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
+		return lipgloss.JoinHorizontal(lipgloss.Top, side, m.renderTimeline(m.width-sw, h))
 	}
 	if m.boardActive() && !m.zoom {
 		// The board takes the list and detail area; enter opens the zoomed detail.
@@ -218,6 +238,9 @@ func (m *Model) renderHeader() string {
 	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
+	}
+	if m.timelineActive() {
+		left += "  " + m.st.headerFilter.Render("[タイムライン]")
 	}
 	if m.calendarActive() {
 		left += "  " + m.st.headerFilter.Render("[カレンダー]")
