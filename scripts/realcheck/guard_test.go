@@ -213,3 +213,19 @@ func TestAsagaoRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPrefix(t *testing.T) {
+	for p, ok := range map[string]bool{
+		"asagao-realcheck-20261119-051348":    true,
+		"asagao-realcheck-":                   false, // every run's leftovers at once
+		"asagao-realcheck-2026":               false,
+		"asagao":                              false,
+		"":                                    false,
+		"asagao-realcheck-20261119-051348-P1": false,
+		"x asagao-realcheck-20261119-051348":  false,
+	} {
+		if runPrefix.MatchString(p) != ok {
+			t.Errorf("%q: %v", p, !ok)
+		}
+	}
+}

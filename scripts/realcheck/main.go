@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ func realMain() int {
 	bin := flag.String("bin", filepath.Join(home, "asagao-test", "bin", "asagao-realcheck"), "asagao built from this branch")
 	out := flag.String("out", "", "write the report (Markdown) here as well (default: the run directory)")
 	probe := flag.Bool("probe", false, "only read: probe the paid features")
+	cleanupPrefix := flag.String("cleanup", "", "only delete what an earlier run left (its prefix, asagao-realcheck-<date>-<time>)")
 	syncBench := flag.String("syncbench", "", "compare the first sync of builds (#54): main=<bin>,lazy=<bin>")
 	briefF := flag.Bool("brief", false, "check project briefs (#60) instead of the outbox kinds")
 	dates := flag.Bool("dates", false, "check the start date of tasks (#57) instead of the outbox kinds")
@@ -57,7 +59,15 @@ func realMain() int {
 
 	rep := &Report{}
 	r := &Runner{Env: env, Pause: *pause, Log: os.Stderr}
-	c := &Check{R: r, Rep: rep, Made: &Created{Prefix: "asagao-realcheck-" + runID}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF, SyncBench: *syncBench}
+	prefix := "asagao-realcheck-" + runID
+	if *cleanupPrefix != "" {
+		if !runPrefix.MatchString(*cleanupPrefix) {
+			fmt.Fprintln(os.Stderr, "realcheck: -cleanup takes a run's prefix like asagao-realcheck-20261119-051348")
+			return 2
+		}
+		prefix = *cleanupPrefix
+	}
+	c := &Check{R: r, Rep: rep, CleanupOnly: *cleanupPrefix != "", Made: &Created{Prefix: prefix}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF, SyncBench: *syncBench}
 	go func() {
 		// The first Ctrl-C stops the steps and cleanup runs; a second one leaves at once
 		// and says what is left in Asana.
@@ -100,6 +110,16 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 	}
 	c.team = TestTeam
 	c.ctx = ctx
+	if c.CleanupOnly {
+		// What a stopped run left: collected by its prefix (typeahead, the projects' tasks)
+		// and deleted with the same checks as any cleanup.
+		rep.group("片付けだけ (" + c.Made.Prefix + ")")
+		left := r.Cleanup(ctx, c.Made)
+		rep.check("前の実行が残したものを全部消した", len(left) == 0, strings.Join(left, "\n"))
+		rep.note("消したもの", fmt.Sprintf("projects %d / tasks %d / tags %d", len(c.Made.Projects), len(c.Made.Tasks), len(c.Made.Tags)))
+		c.leftovers()
+		return rep.exitCode()
+	}
 
 	c.group("sync (受信トレイ・依存関係・承認の取得)")
 	c.syncClean("最初の同期 (全件)")
@@ -141,6 +161,9 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 	return rep.exitCode()
 }
 
+// runPrefix is the prefix of one run (-cleanup takes nothing broader).
+var runPrefix = regexp.MustCompile(`^asagao-realcheck-[0-9]{8}-[0-9]{6}$`)
+
 // errStop aborts the write steps (a step whose result the next ones need failed).
 var errStop = fmt.Errorf("stop")
 
@@ -163,6 +186,7 @@ type Check struct {
 
 	Shapes, Templates, ColorsOnly, Features, Dates, Brief bool   // -shapes, -templates, -colors, -features, -dates, -brief
 	SyncBench                                             string // -syncbench
+	CleanupOnly                                           bool   // -cleanup
 }
 
 func (c *Check) group(name string) { c.Rep.group(name) }
