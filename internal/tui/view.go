@@ -45,7 +45,7 @@ func (m *Model) render() string {
 	} else if m.picker != nil {
 		body = m.renderPicker(m.width, bodyH)
 	} else if m.leader {
-		menu := m.renderMenu(m.width)
+		menu := m.renderMenu(m.width, bodyH-6) // the pane's border and title, and some of the body
 		menuH := min(len(menu)+3, bodyH-3)
 		body = lipgloss.JoinVertical(lipgloss.Left, m.renderBody(bodyH-menuH), m.pane("メニュー（キーを押す・esc で閉じる）", menu, m.width, menuH, true))
 	} else {
@@ -745,9 +745,17 @@ func (m *Model) renderDetail(w int) string {
 			if c.Pending {
 				meta += "  " + m.st.today.Render("（未送信）")
 			}
-			b.WriteString(meta + "\n")
+			if idx := storyIndex(d.Stories, c.GID); active && idx >= 0 && m.isMyComment(c) {
+				// my own comment: enter rewrites or deletes it
+				row(item(itemComment, idx), meta+m.st.dim.Render("  （enter で編集・削除）"))
+			} else {
+				b.WriteString(meta + "\n")
+			}
 			text := m.withImages(m.markdown(textMarkdown(c.HTMLText, c.Text), max(10, w-2)), max(10, w-2), imageNo)
 			b.WriteString(indentLines(text, 2) + "\n")
+			if r := readmodel.ReactionsLine(c.Reactions); r != "" {
+				b.WriteString("  " + m.st.dim.Render(ansi.Truncate(r, max(1, w-2), "…")) + "\n")
+			}
 		}
 	case d.DetailsFetchedAt == "":
 		b.WriteString(m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")

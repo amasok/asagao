@@ -133,7 +133,7 @@ func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDet
 		add(label, key)
 	}
 	switch d.Kind {
-	case outbox.KindAddComment:
+	case outbox.KindAddComment, outbox.KindUpdateStory:
 		addRich("コメント", "text", "html_text")
 	case outbox.KindCreateStatus:
 		add("タイトル", "title")
@@ -227,7 +227,17 @@ func DescribeChange(op outbox.Op) string {
 	case outbox.KindAddComment:
 		return fmt.Sprintf("コメント「%s」", clip(str("text"), 40))
 	case outbox.KindMoveTask:
+		if str("insert_before") != "" || str("insert_after") != "" {
+			return fmt.Sprintf("セクション「%s」への移動 (並び順の指定あり)", str("section_name"))
+		}
 		return fmt.Sprintf("セクション「%s」への移動", str("section_name"))
+	case outbox.KindDeleteTask:
+		return "タスクの削除"
+	case outbox.KindSetParent:
+		if str("parent") == "" {
+			return "親タスクから外す"
+		}
+		return fmt.Sprintf("「%s」のサブタスクにする", str("parent_name"))
 	case outbox.KindAddTag:
 		return fmt.Sprintf("タグ「%s」の追加", str("tag_name"))
 	case outbox.KindRemoveTag:
@@ -245,6 +255,12 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("プロジェクト「%s」からの削除", str("project_name"))
 	case outbox.KindUploadAttachment:
 		return fmt.Sprintf("添付「%s」", str("name"))
+	case outbox.KindUpdateStory:
+		return fmt.Sprintf("コメントを「%s」に編集", clip(str("text"), 40))
+	case outbox.KindDeleteStory:
+		return fmt.Sprintf("コメント「%s」の削除", clip(str("text"), 40))
+	case outbox.KindDeleteAttachment:
+		return fmt.Sprintf("添付「%s」の削除", str("name"))
 	case outbox.KindAddDependency:
 		return fmt.Sprintf("「%s」を待つ", dependencyName(op))
 	case outbox.KindRemoveDependency:

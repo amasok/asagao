@@ -349,4 +349,9 @@ CREATE TABLE my_task_sections (
 CREATE INDEX my_task_sections_workspace ON my_task_sections(workspace_gid, position);
 DELETE FROM sync_state WHERE key = 'last_full_sync';
 `,
+	`
+-- The emoji reactions on a comment (#34): JSON [{emoji_base, variant, count, reacted}] as
+-- Asana's reaction_summary; '' until the comments are fetched again.
+ALTER TABLE stories ADD COLUMN reactions TEXT NOT NULL DEFAULT '';
+`,
 }

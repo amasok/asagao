@@ -100,6 +100,7 @@ func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	if err != nil {
 		return fail(err)
 	}
+	cp.SetAttachmentDir(filepath.Join(dir, "attachments")) // never the real files
 	before, err := cp.ListOps(ctx)
 	if err != nil {
 		return fail(errors.Join(err, cp.Close()))

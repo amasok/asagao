@@ -1,5 +1,12 @@
 package readmodel
 
+import (
+	"fmt"
+	"strings"
+
+	"github.com/amasok/asagao/internal/asana/model"
+)
+
 type MembershipView struct {
 	ProjectGID  string `json:"project_gid"`
 	ProjectName string `json:"project_name"`
@@ -50,7 +57,12 @@ type StoryView struct {
 	Pending         bool     `json:"pending"`
 	// HTMLText is the comment as Asana rich text (empty for comments posted offline).
 	HTMLText string `json:"html_text,omitempty"`
+	// Reactions are the emoji reactions on the comment, as Asana last returned them.
+	Reactions []Reaction `json:"reactions,omitempty"`
 }
+
+// Reaction is one emoji's reactions on a comment (Asana's reaction_summary item).
+type Reaction = model.Reaction
 
 type TaskDetail struct {
 	TaskSummary
@@ -139,4 +151,38 @@ type FieldOption struct {
 	Option    string `json:"option"`
 	Color     string `json:"color,omitempty"`
 	Tasks     int    `json:"tasks"` // incomplete tasks with this value
+}
+
+// ReactionsLine shows a comment's reactions in one line, e.g. "👍 2  🎉 1" ("" for none).
+// The emoji the user reacted with is marked with "*".
+func ReactionsLine(rs []Reaction) string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if r.Count <= 0 {
+			continue
+		}
+		emoji := r.Variant
+		if emoji == "" {
+			emoji = r.EmojiBase
+		}
+		mark := ""
+		if r.Reacted {
+			mark = "*"
+		}
+		parts = append(parts, fmt.Sprintf("%s%s %d", emoji, mark, r.Count))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// DeletePlan is what deleting a task does: the task, its subtasks (counted with theirs),
+// and the changes queued for them, which are dropped with it.
+type DeletePlan struct {
+	GID      string `json:"gid"`
+	Name     string `json:"name"`
+	Subtasks int    `json:"subtasks"`
+	// Queued is the number of queued changes to the task or its subtasks that are dropped
+	// (once the delete is sent; at once for a task never sent).
+	Queued int `json:"queued"`
+	// Local: the task was never sent to Asana, so it is removed at once and nothing is queued.
+	Local bool `json:"local"`
 }

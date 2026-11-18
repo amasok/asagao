@@ -335,8 +335,15 @@ func (s *Store) ReplaceLocalAttachment(ctx context.Context, local, real, viewURL
 }
 
 func replaceLocalAttachment(ctx context.Context, tx *sql.Tx, local, real, viewURL string) error {
+	var parent string
+	if err := tx.QueryRowContext(ctx, "SELECT COALESCE((SELECT parent_gid FROM attachments WHERE gid = ?), '')", local).Scan(&parent); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE attachments SET gid = ?, view_url = ? WHERE gid = ?", real, viewURL, local); err != nil {
 		return err
 	}
-	return recordResult(ctx, tx, ResultAttachment, local, real)
+	if err := recordResult(ctx, tx, ResultAttachment, local, real); err != nil {
+		return err
+	}
+	return reapplyAttachmentDeletes(ctx, tx, parent)
 }

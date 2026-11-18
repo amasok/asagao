@@ -379,10 +379,18 @@ func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 // maxStepsPerEntry bounds how often Push handles one entry (see Push).
 const maxStepsPerEntry = 4
 
-// waitsForCreate reports whether op belongs to a task (or, for a subtask's create, a
-// parent) created offline whose create is still queued or failed. It waits instead of
-// failing, and goes out once the create is sent (or is discarded with it).
+// waitsForCreate reports whether op belongs to a task (or, for a subtask's create or a
+// parent change, a parent) created offline whose create is still queued or failed. It
+// waits instead of failing, and goes out once the create is sent (or is discarded with
+// it). An edit or delete of a comment or attachment not created in Asana yet waits for
+// its create too.
 func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
+	if key, prefix := storyTarget(op.Kind); key != "" {
+		g, _ := op.Payload[key].(string)
+		if _, waiting, err := s.Store.LocalResult(ctx, prefix, g); err != nil || waiting {
+			return waiting, err
+		}
+	}
 	if wait, err := s.waitsForSection(ctx, op); err != nil || wait {
 		return wait, err
 	}
@@ -390,12 +398,24 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	switch op.Kind {
 	case outbox.KindCreateTask:
 		gid, _ = op.Payload["parent"].(string)
+	case outbox.KindSetParent: // the task, and the new parent
+		if parent, _ := op.Payload["parent"].(string); parent != "" {
+			if wait, err := s.createQueued(ctx, parent); err != nil || wait {
+				return wait, err
+			}
+		}
 	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject:
 		return false, nil
 	case outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return s.waitsForTag(ctx, op.TaskGID)
 	}
+	return s.createQueued(ctx, gid)
+}
+
+// createQueued reports whether gid is a task created offline whose create (or duplicate)
+// is still in the outbox, in any state.
+func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 	if !localgid.IsLocal(gid) {
 		return false, nil
 	}
@@ -453,10 +473,18 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushRelation(ctx, op)
 	case outbox.KindAddDependency, outbox.KindRemoveDependency:
 		err = s.pushDependency(ctx, op)
+	case outbox.KindDeleteTask:
+		err = s.pushDelete(ctx, op)
+	case outbox.KindSetParent:
+		err = s.pushSetParent(ctx, op)
 	case outbox.KindDuplicateTask:
 		err = s.pushDuplicate(ctx, op)
 	case outbox.KindUploadAttachment:
 		err = s.pushUpload(ctx, op)
+	case outbox.KindUpdateStory:
+		err = s.pushUpdateStory(ctx, op)
+	case outbox.KindDeleteStory, outbox.KindDeleteAttachment:
+		err = s.pushDeleteItem(ctx, op)
 	case outbox.KindCreateStatus:
 		err = s.pushStatus(ctx, op)
 	case outbox.KindMarkNotification:
@@ -600,9 +628,15 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 				return ferr
 			}
 		} else {
-			if op.Kind == outbox.KindAddDependency || op.Kind == outbox.KindRemoveDependency {
-				// the other task is missing, or private to someone else
+			switch op.Kind { // the other task is missing, or private to someone else
+			case outbox.KindAddDependency, outbox.KindRemoveDependency:
 				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			case outbox.KindSetParent:
+				reason = "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			case outbox.KindMoveTask:
+				if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
+					reason = "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+				}
 			}
 			var d readmodel.Discard
 			d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
@@ -914,13 +948,84 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 	if err != nil {
 		return err
 	}
-	if err := s.API.AddTaskToSection(ctx, section, op.TaskGID); err != nil {
+	pos, err := s.position(ctx, op)
+	if err != nil {
+		return err
+	}
+	if err := s.API.InsertTaskInSection(ctx, section, op.TaskGID, pos); err != nil {
 		return err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 		return sentNotSaved(err)
 	}
 	if t, err := s.API.Task(ctx, op.TaskGID); err == nil { // else the next sync refreshes it
+		s.refresh(ctx, *t)
+	}
+	return nil
+}
+
+// position is where op puts its task (insert_before / insert_after), with the real gid of
+// a task created offline. One whose create has not gone out (it failed) is left out:
+// the task still goes to its section or parent.
+func (s *Syncer) position(ctx context.Context, op outbox.Op) (model.Position, error) {
+	var pos model.Position
+	for _, p := range []struct {
+		key string
+		to  *string
+	}{{"insert_before", &pos.Before}, {"insert_after", &pos.After}} {
+		gid, _ := op.Payload[p.key].(string)
+		if gid == "" {
+			continue
+		}
+		real, err := s.Store.RealGID(ctx, gid)
+		if err != nil {
+			return pos, err
+		}
+		if !localgid.IsLocal(real) {
+			*p.to = real
+		}
+	}
+	return pos, nil
+}
+
+// pushDelete deletes a task in Asana. A 404 means it is gone already (deleted by this
+// entry sent before, or by someone else): done either way. Push has checked that the
+// account is the one the store belongs to (checkPushAccount), so the 404 is not another
+// account's view.
+func (s *Syncer) pushDelete(ctx context.Context, op outbox.Op) error {
+	if localgid.IsLocal(op.TaskGID) {
+		return &model.Error{Status: 404} // its create failed
+	}
+	if err := s.API.DeleteTask(ctx, op.TaskGID); err != nil && !isNotFound(err) {
+		return err
+	}
+	return sentNotSaved(s.Store.CompleteDelete(ctx, op.ID, op.TaskGID))
+}
+
+// pushSetParent sends a parent change. Repeating it is harmless.
+func (s *Syncer) pushSetParent(ctx context.Context, op outbox.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	parent, _ := op.Payload["parent"].(string)
+	if parent, err = s.Store.RealGID(ctx, parent); err != nil {
+		return err
+	}
+	if localgid.IsLocal(task) || localgid.IsLocal(parent) {
+		return &model.Error{Status: 404} // its create failed
+	}
+	pos, err := s.position(ctx, op)
+	if err != nil {
+		return err
+	}
+	if err := s.API.SetParent(ctx, task, parent, pos); err != nil {
+		return err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	if t, err := s.API.Task(ctx, task); err == nil { // else the next sync refreshes it
 		s.refresh(ctx, *t)
 	}
 	return nil
@@ -1079,6 +1184,72 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 		return err
 	}
 	return sentNotSaved(s.Store.CompleteUpload(ctx, op.ID, local, att.GID, att.ViewURL))
+}
+
+// storyTarget returns, for an edit or a delete of a comment or attachment, the payload key
+// of its gid and the prefix under which a local one's result is recorded ("" otherwise).
+func storyTarget(kind string) (key, prefix string) {
+	switch kind {
+	case outbox.KindUpdateStory, outbox.KindDeleteStory:
+		return "story", readmodel.ResultStory
+	case outbox.KindDeleteAttachment:
+		return "attachment", readmodel.ResultAttachment
+	}
+	return "", ""
+}
+
+// pushUpdateStory edits a comment; sending it twice is harmless (PUT). A comment deleted
+// in Asana answers 404: the edit is dropped (dropGone).
+func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
+	gid, _ := op.Payload["story"].(string)
+	real, _, err := s.Store.LocalResult(ctx, readmodel.ResultStory, gid)
+	if err != nil {
+		return err
+	}
+	if real == "" {
+		return &model.Error{Status: 404} // its add_comment was dropped
+	}
+	text, _ := op.Payload["text"].(string)
+	htmlText, _ := op.Payload["html_text"].(string)
+	st, err := s.API.UpdateStory(ctx, real, text, htmlText)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	_ = s.Store.ApplyStory(ctx, real, st.Text, st.HTMLText) // the next fetch fixes a failure
+	return nil
+}
+
+// pushDeleteItem deletes a comment or an attachment. Sending it twice is harmless: a 404 means
+// it is gone already (deleted elsewhere, or by an earlier request whose answer was lost),
+// which is what was asked.
+func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
+	key, prefix := storyTarget(op.Kind)
+	gid, _ := op.Payload[key].(string)
+	real, _, err := s.Store.LocalResult(ctx, prefix, gid)
+	if err != nil {
+		return err
+	}
+	if real != "" { // "": its create was dropped, so there is nothing in Asana to delete
+		if op.Kind == outbox.KindDeleteStory {
+			err = s.API.DeleteStory(ctx, real)
+		} else {
+			err = s.API.DeleteAttachment(ctx, real)
+		}
+		if err != nil && !isNotFound(err) {
+			return err
+		}
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	// The copy an upload kept until it was sent (store.DeleteAttachmentLocal): no longer needed.
+	if path, _ := op.Payload["path"].(string); path != "" {
+		_ = s.Store.RemoveAttachmentFile(path) // only inside the attachments folder
+	}
+	return nil
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.

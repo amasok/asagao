@@ -19,6 +19,8 @@ func TestStoredValues(t *testing.T) {
 		KindRemoveProject:    "remove_project",
 		KindDuplicateTask:    "duplicate_task",
 		KindUploadAttachment: "upload_attachment",
+		KindDeleteTask:       "delete_task",
+		KindSetParent:        "set_parent",
 		KindAddDependency:    "add_dependency",
 		KindRemoveDependency: "remove_dependency",
 		KindSetCustomField:   "set_custom_field",

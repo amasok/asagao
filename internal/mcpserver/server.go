@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -131,8 +132,10 @@ func (s *Server) New() *mcp.Server {
 				"its type (milestone / approval), an approval's status, or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
-			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
-				"project is needed only when the task is in more than one project."}, s.moveTask)
+			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"), " +
+				"or to a place in a section: insert_before / insert_after put it just before / after another task " +
+				"(without section, in that task's section). project is needed only when the task is in more than one project."}, s.moveTask)
+		s.addTaskOpTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "rename_section", Annotations: write(false),
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
 		s.addSectionTagTools(srv, write)
@@ -155,6 +158,15 @@ func (s *Server) New() *mcp.Server {
 				"Ask the user before choosing for a conflict."}, s.resolveOutbox)
 		mcp.AddTool(srv, &mcp.Tool{Name: "add_comment", Annotations: write(false),
 			Description: "Add a comment to a task."}, s.addComment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "update_comment", Annotations: write(true),
+			Description: "Rewrite one of my own comments (gid from get_task comments, where mine is true). The new Markdown text replaces the whole comment. " +
+				"Comments by other people cannot be changed."}, s.updateComment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "delete_comment", Annotations: write(true),
+			Description: "Delete one of my own comments (gid from get_task comments, where mine is true). It cannot be undone once sent: " +
+				"ask the user before deleting."}, s.deleteComment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "delete_attachment", Annotations: write(true),
+			Description: "Delete an attachment of a task (gid from get_task attachments). It cannot be undone once sent: " +
+				"ask the user before deleting."}, s.deleteAttachment)
 	}
 	return srv
 }
@@ -208,6 +220,11 @@ type CommentOutput struct {
 	CreatedAt string `json:"created_at"`
 	Markdown  string `json:"markdown"`
 	Pending   bool   `json:"pending"`
+	// Mine is set for my own comments: only these can be changed (update_comment,
+	// delete_comment).
+	Mine bool `json:"mine,omitempty"`
+	// Reactions are the emoji reactions on the comment (reacted: I am one of them).
+	Reactions []readmodel.Reaction `json:"reactions,omitempty"`
 }
 
 type ListProjectsInput struct {
@@ -287,10 +304,12 @@ type UploadAttachmentInput struct {
 }
 
 type MoveTaskInput struct {
-	GID     string `json:"gid" jsonschema:"task gid"`
-	Section string `json:"section" jsonschema:"destination section gid or exact name"`
-	Project string `json:"project,omitempty" jsonschema:"project gid or name; only needed if the task is in several projects"`
-	MyTasks bool   `json:"my_tasks,omitempty" jsonschema:"move within the sections of My Tasks (e.g. Today / Later; see list_my_sections) instead of a project's; the task must be assigned to me"`
+	GID          string `json:"gid" jsonschema:"task gid"`
+	Section      string `json:"section,omitempty" jsonschema:"destination section gid or exact name (needed unless insert_before / insert_after is given)"`
+	Project      string `json:"project,omitempty" jsonschema:"project gid or name; only needed if the task is in several projects"`
+	MyTasks      bool   `json:"my_tasks,omitempty" jsonschema:"move within the sections of My Tasks (e.g. Today / Later; see list_my_sections) instead of a project's; the task must be assigned to me"`
+	InsertBefore string `json:"insert_before,omitempty" jsonschema:"gid of a task of the section to put it just before (not with my_tasks)"`
+	InsertAfter  string `json:"insert_after,omitempty" jsonschema:"gid of a task of the section to put it just after (not with my_tasks)"`
 }
 
 type RenameSectionInput struct {
@@ -306,6 +325,15 @@ type TagsOutput struct {
 type AddCommentInput struct {
 	GID  string `json:"gid" jsonschema:"task gid"`
 	Text string `json:"text" jsonschema:"comment in Markdown (converted to Asana rich text)"`
+}
+
+type UpdateCommentInput struct {
+	GID  string `json:"gid" jsonschema:"comment gid, from get_task comments; must be my own comment (mine: true)"`
+	Text string `json:"text" jsonschema:"the whole new comment in Markdown (converted to Asana rich text)"`
+}
+
+type DeleteInput struct {
+	GID string `json:"gid" jsonschema:"gid of the comment (from get_task comments; my own only) or of the attachment (from get_task task.attachments)"`
 }
 
 type ResolveOutboxInput struct {
@@ -395,13 +423,16 @@ func (s *Server) getTask(ctx context.Context, _ *mcp.CallToolRequest, in GetTask
 	out.Task = d
 	out.DescriptionMarkdown = editableMarkdown(d.HTMLNotes, d.Notes)
 	out.Comments = []CommentOutput{}
+	me, _ := s.query().MeGID(ctx) // "" before the first sync: nothing is mine
 	for _, st := range d.Stories {
 		if st.Type != "comment" {
 			continue
 		}
-		c := CommentOutput{GID: st.GID, CreatedAt: st.CreatedAt, Markdown: editableMarkdown(st.HTMLText, st.Text), Pending: st.Pending}
+		c := CommentOutput{GID: st.GID, CreatedAt: st.CreatedAt, Markdown: editableMarkdown(st.HTMLText, st.Text), Pending: st.Pending,
+			Reactions: st.Reactions}
 		if st.CreatedBy != nil {
 			c.Author = st.CreatedBy.Name
+			c.Mine = me != "" && st.CreatedBy.GID == me
 		}
 		out.Comments = append(out.Comments, c)
 	}
@@ -562,12 +593,15 @@ func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTa
 		if in.Project != "" {
 			return nil, WriteOutput{}, fmt.Errorf("my_tasks and project cannot be used together")
 		}
+		if in.InsertBefore != "" || in.InsertAfter != "" {
+			return nil, WriteOutput{}, fmt.Errorf("insert_before / insert_after cannot be used with my_tasks")
+		}
 		if err := sections.MoveMine(ctx, in.GID, in.Section); err != nil {
 			return nil, WriteOutput{}, err
 		}
 		return nil, s.push(ctx, in.GID), nil
 	}
-	if err := sections.Move(ctx, in.GID, in.Project, in.Section); err != nil {
+	if err := sections.MoveAt(ctx, in.GID, in.Project, in.Section, model.Position{Before: in.InsertBefore, After: in.InsertAfter}); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
@@ -588,6 +622,30 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
+}
+
+func (s *Server) updateComment(ctx context.Context, _ *mcp.CallToolRequest, in UpdateCommentInput) (*mcp.CallToolResult, WriteOutput, error) {
+	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	if err := comments.Edit(ctx, in.GID, in.Text); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, ""), nil
+}
+
+func (s *Server) deleteComment(ctx context.Context, _ *mcp.CallToolRequest, in DeleteInput) (*mcp.CallToolResult, WriteOutput, error) {
+	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	if err := comments.Delete(ctx, in.GID); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, ""), nil
+}
+
+func (s *Server) deleteAttachment(ctx context.Context, _ *mcp.CallToolRequest, in DeleteInput) (*mcp.CallToolResult, WriteOutput, error) {
+	copies := app.Copies{Store: s.Store, Clock: s.Now}
+	if err := copies.Detach(ctx, in.GID); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, ""), nil
 }
 
 // accountChangedNote explains sync.ErrAccountChanged to the model. Resetting is left to

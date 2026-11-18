@@ -21,6 +21,9 @@ import (
 type Store struct {
 	db   *sql.DB
 	path string // the database file (the push lock file lives next to it)
+	// attachmentDir is where the attachment files the store may delete are (see
+	// SetAttachmentDir; "" for the cache's).
+	attachmentDir string
 }
 
 // Open opens (creating if needed) the database at path with 0600 permissions and migrates it.

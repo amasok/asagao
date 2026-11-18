@@ -106,6 +106,11 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if !real(section) {
 			return e, false, nil
 		}
+		if str("insert_before") != "" || str("insert_after") != "" {
+			// A place is next to another task, which an action of the same batch may move:
+			// the batch keeps the order of one task's changes only. Sent alone, in order.
+			return e, false, nil
+		}
 		e.write = model.BatchWrite{Method: http.MethodPost, Path: "/sections/" + url.PathEscape(section) + "/addTask", Data: map[string]any{"task": task}}
 		e.refresh = true
 	case outbox.KindAddTag, outbox.KindRemoveTag:

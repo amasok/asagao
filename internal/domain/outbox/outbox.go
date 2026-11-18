@@ -14,7 +14,9 @@ const (
 	KindUpdateTask = "update_task"
 	KindCreateTask = "create_task"
 	KindAddComment = "add_comment"
-	KindMoveTask   = "move_task" // payload: project, section, section_name; base: section
+	// KindMoveTask moves a task to a section. payload: project, section, section_name, and
+	// insert_before / insert_after (a task of the section, optional: where in it); base: section.
+	KindMoveTask = "move_task"
 
 	// KindRenameSection renames a section. The outbox task_gid column holds the section gid.
 	// payload: name; base: name (before the local edit).
@@ -50,6 +52,14 @@ const (
 	KindDuplicateTask    = "duplicate_task"  // task_gid: the local copy; payload: source, name
 	KindUploadAttachment = "upload_attachment"
 
+	// KindDeleteTask deletes a task (and its subtasks) in Asana. Until it is sent the task
+	// stays in the store, hidden; discarding the entry shows it again. payload: name.
+	KindDeleteTask = "delete_task"
+	// KindSetParent makes a task a subtask of another, or a top-level task (parent "").
+	// payload: parent, parent_name, insert_before / insert_after (a sibling, optional);
+	// base: parent (before the local change).
+	KindSetParent = "set_parent"
+
 	KindAddDependency    = "add_dependency"    // payload: dependency, dependency_name
 	KindRemoveDependency = "remove_dependency" // payload: dependency, dependency_name
 
@@ -61,6 +71,20 @@ const (
 	// holds the notification gid. payload: read bool, workspace, name (what it is about, for
 	// the outbox list); base: read (before the local change).
 	KindMarkNotification = "mark_notification"
+
+	// Comment and attachment edits (#34). task_gid holds the task the comment or the
+	// attachment belongs to.
+	//
+	// KindUpdateStory edits one of the user's comments. payload: story (gid, "local:..."
+	// while its add_comment is being sent or checked), text, html_text; base: text,
+	// html_text (before the local edit).
+	KindUpdateStory = "update_story"
+	// KindDeleteStory deletes one of the user's comments. payload: story, text (for the
+	// outbox list); base: the comment as it was stored (to put it back if discarded).
+	KindDeleteStory = "delete_story"
+	// KindDeleteAttachment deletes an attachment. payload: attachment, name; base: the
+	// attachment as it was stored.
+	KindDeleteAttachment = "delete_attachment"
 
 	// KindMoveMySection moves a task to another section of the user's My Tasks list.
 	// payload: section, section_name, workspace; base: section (before the local move).

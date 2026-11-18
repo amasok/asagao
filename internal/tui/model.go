@@ -154,6 +154,7 @@ type Model struct {
 	taskSeq    int // drops stale task loads
 
 	detail     *readmodel.TaskDetail
+	detailMe   string // the logged-in user when detail was loaded: their comments can be changed
 	detailView viewport.Model
 
 	search    textinput.Model
@@ -331,6 +332,7 @@ type (
 	detailLoadedMsg struct {
 		gid string
 		d   *readmodel.TaskDetail
+		me  string // the logged-in user ("" before the first sync)
 		err error
 	}
 	detailDebounceMsg struct{ gid string }
@@ -413,7 +415,8 @@ func (m *Model) loadDetail(gid string) tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		d, err := queryOf(st).GetTask(m.ctx, gid)
-		return detailLoadedMsg{gid: gid, d: d, err: err}
+		me, _ := queryOf(st).MeGID(m.ctx) // whose comments can be changed
+		return detailLoadedMsg{gid: gid, d: d, me: me, err: err}
 	}
 }
 
@@ -585,7 +588,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			keepScroll := m.detail != nil && m.detail.GID == msg.gid
-			m.detail = msg.d
+			m.detail, m.detailMe = msg.d, msg.me
 			m.placeCursorAfterLoad(keepScroll)
 			m.refreshDetailView()
 			m.detailCursor = clamp(m.detailCursor, 0, len(m.detailItems)-1)

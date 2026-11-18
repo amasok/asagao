@@ -134,6 +134,8 @@ asagao --offline  # 同期せず、ローカルストアだけで起動
 | `c` / `C` | コメント（1 行 / エディタ） | `c` / `C` |
 | `L` / `w` | いいね / フォロワーを追加・外す | |
 | `P` | ほかのプロジェクトに追加 / 外す | |
+| `p` | 親タスクを付け替える（同じプロジェクトのタスクから選ぶ・親から外す） | |
+| `Z` | タスクを削除（サブタスクも。確認してから積む。送るまでは「未送信の変更」から取り消せる） | |
 | `D` / `A` | 複製 / ファイルを添付 | |
 | `i` / `o` | 画像を全画面で見る / ブラウザで開く | `i` / `o` |
 | **表示** | | |
@@ -215,6 +217,9 @@ due = ["D", "ctrl+t"]
 | `task create <名前> [--project] [--section] [--due] [--assignee] [--notes]` | タスクを作成（プロジェクト未指定なら `.asana.json` のプロジェクト、それもなければ自分に割り当て） |
 | `task create --quick <名前 @担当 期日 #タグ>` | 名前の末尾の担当・期日・タグを読んで作成（[クイック追加](#クイック追加)） |
 | `task move <gid> --section <セクション> [--project]` | 別のセクションへ移動 |
+| `task move <gid> [--section <セクション>] --before\|--after <gid>` | セクションの中で、指定したタスクの前 / 後に置く（並び順は Asana にだけ反映） |
+| `task parent <gid> <親の gid> [--before\|--after <gid>]` / `task parent <gid> --none` | 親タスクを付け替える / 親から外す |
+| `task rm <gid> --yes` | タスクをサブタスクごと削除（`--yes` がないと内容を出して止まる。送るまでは `outbox discard` で取り消せる） |
 | `task assign <gid> <me\|none\|名前>` | 担当者を変更 |
 | `task tag <gid> --add <タグ> --remove <タグ>` | タグを付ける / 外す（ないタグは作る） |
 | `task like <gid> [--off]` | いいね / 取り消し |
@@ -330,7 +335,9 @@ claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 | `update_task` | 完了 / 未完了・名前・説明（マークダウン）・期日・担当者・タグ・フォロワー・いいね・所属プロジェクトを変更（`--read-only` では無効） |
 | `duplicate_task` / `upload_attachment` | 複製 / ファイルを添付（添付できるフォルダは下記。`--read-only` では無効） |
 | `resolve_outbox` | 送れなかった変更を解決（こちらを採用 / Asana を採用 / 再送 / 取り消し。`--read-only` では無効） |
-| `move_task` | 別のセクションへ移動（`--read-only` では無効） |
+| `move_task` | 別のセクションへ移動・セクションの中で並べ替え（`insert_before` / `insert_after`。`--read-only` では無効） |
+| `set_parent` | 親タスクを付け替える / 親から外す（`--read-only` では無効） |
+| `delete_task` | タスクをサブタスクごと削除（`dry_run` で消えるものを確かめられる。`--read-only` では無効） |
 | `rename_section` | セクションの名前を変更（`--read-only` では無効） |
 | `list_tags` | タグとタスク数 |
 | `list_saved_searches` / `run_saved_search` | 保存した検索の一覧 / 名前を指定して実行（読み取りだけ。保存・削除は CLI から） |

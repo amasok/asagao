@@ -146,6 +146,16 @@ type Story struct {
 	HTMLText        string    `json:"html_text"`
 	CreatedBy       *Ref      `json:"created_by"`
 	CreatedAt       time.Time `json:"created_at"`
+	// ReactionSummary is the emoji reactions on a comment, one entry per emoji.
+	ReactionSummary []Reaction `json:"reaction_summary,omitempty"`
+}
+
+// Reaction is one emoji's reactions on a story (an item of its reaction_summary).
+type Reaction struct {
+	EmojiBase string `json:"emoji_base"`
+	Variant   string `json:"variant,omitempty"` // the emoji as shown (e.g. with a skin tone)
+	Count     int    `json:"count"`
+	Reacted   bool   `json:"reacted,omitempty"` // the logged-in user is one of them
 }
 
 type Attachment struct {
@@ -170,6 +180,13 @@ type StatusUpdate struct {
 	Author     *Ref      `json:"author"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+// Position is where in a list (a section's tasks, a parent's subtasks) a task goes: just
+// before or just after another task of it. Zero: Asana's default (the end, for addTask).
+type Position struct{ Before, After string }
+
+// IsZero reports whether p leaves the place to Asana.
+func (p Position) IsZero() bool { return p.Before == "" && p.After == "" }
 
 // OptionalRef is a reference that a response may leave out (Set false), give as null
 // (Set, Ref nil) or give (Set, Ref).
