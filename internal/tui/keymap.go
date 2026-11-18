@@ -87,6 +87,8 @@ func (m *Model) actions() []action {
 		{id: "followers", key: "w", group: groupTask, label: "フォロワーを追加 / 外す", ctx: ctxTask, needTask: true, run: (*Model).openFollowers},
 		{id: "projects", key: "P", group: groupTask, label: "ほかのプロジェクトに追加 / 外す", ctx: ctxTask, needTask: true, run: (*Model).openProjects},
 		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
+		{id: "set_parent", key: "p", group: groupTask, label: "親タスクを付け替える", ctx: ctxTask, needTask: true, run: (*Model).openParentPicker},
+		{id: "delete_task", key: "K", group: groupTask, label: "タスクを削除（確認あり）", ctx: ctxTask, needTask: true, run: (*Model).confirmDeleteTask},
 		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
@@ -218,14 +220,24 @@ func (m *Model) renderMenu(w int) []string {
 		if len(groups[g]) == 0 {
 			continue
 		}
-		col := []string{m.st.paneTitle.Render(g)}
-		for _, a := range groups[g] {
-			col = append(col, m.st.footerKey.Render(padRight(a.key, 2))+" "+a.label)
+		// a long group goes on in a column of its own, so the menu stays short enough
+		// for the screen
+		for i, a := range groups[g] {
+			if i%menuRows == 0 {
+				title := ""
+				if i == 0 {
+					title = m.st.paneTitle.Render(g)
+				}
+				cols = append(cols, []string{title})
+			}
+			cols[len(cols)-1] = append(cols[len(cols)-1], m.st.footerKey.Render(padRight(a.key, 2))+" "+a.label)
 		}
-		cols = append(cols, col)
 	}
 	return layoutColumns(cols, w-4)
 }
+
+// menuRows is the most actions in one column of the menu.
+const menuRows = 12
 
 // layoutColumns places columns side by side, wrapping to more rows of columns when narrow.
 func layoutColumns(cols [][]string, w int) []string {

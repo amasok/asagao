@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -128,8 +129,10 @@ func (s *Server) New() *mcp.Server {
 				"its type (milestone / approval), an approval's status, or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
-			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"). " +
-				"project is needed only when the task is in more than one project."}, s.moveTask)
+			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"), " +
+				"or to a place in a section: insert_before / insert_after put it just before / after another task " +
+				"(without section, in that task's section). project is needed only when the task is in more than one project."}, s.moveTask)
+		s.addTaskOpTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "rename_section", Annotations: write(false),
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
 		mcp.AddTool(srv, &mcp.Tool{Name: "duplicate_task", Annotations: write(false),
@@ -281,9 +284,11 @@ type UploadAttachmentInput struct {
 }
 
 type MoveTaskInput struct {
-	GID     string `json:"gid" jsonschema:"task gid"`
-	Section string `json:"section" jsonschema:"destination section gid or exact name"`
-	Project string `json:"project,omitempty" jsonschema:"project gid or name; only needed if the task is in several projects"`
+	GID          string `json:"gid" jsonschema:"task gid"`
+	Section      string `json:"section,omitempty" jsonschema:"destination section gid or exact name (needed unless insert_before / insert_after is given)"`
+	Project      string `json:"project,omitempty" jsonschema:"project gid or name; only needed if the task is in several projects"`
+	InsertBefore string `json:"insert_before,omitempty" jsonschema:"gid of a task of the section to put it just before"`
+	InsertAfter  string `json:"insert_after,omitempty" jsonschema:"gid of a task of the section to put it just after"`
 }
 
 type RenameSectionInput struct {
@@ -549,7 +554,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 
 func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	sections := app.Sections{Store: s.Store, Clock: s.Now}
-	if err := sections.Move(ctx, in.GID, in.Project, in.Section); err != nil {
+	if err := sections.MoveAt(ctx, in.GID, in.Project, in.Section, model.Position{Before: in.InsertBefore, After: in.InsertAfter}); err != nil {
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil

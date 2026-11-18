@@ -18,6 +18,7 @@ type Store interface {
 	app.StatusStore
 	app.RelationStore
 	app.SectionStore
+	app.TaskOpsStore
 	app.CopyStore
 	app.NotificationStore
 	app.OutboxStore

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
+	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -506,12 +507,15 @@ func (a *app) taskAssignCmd() *cobra.Command {
 }
 
 func (a *app) taskMoveCmd() *cobra.Command {
-	var project, section string
+	var project, section, before, after string
 	cmd := &cobra.Command{
-		Use:     "move <gid> --section <セクション>",
-		Short:   "タスクを別のセクションに移動する",
-		Example: `  asagao task move 1203455468597469 --section Done`,
-		Args:    cobra.ExactArgs(1),
+		Use:   "move <gid> (--section <セクション> | --before <gid> | --after <gid>)",
+		Short: "タスクを別のセクションに移動する・セクションの中で並べ替える",
+		Long: "--before / --after は、セクションの中でそのタスクの前 / 後に置きます。\n" +
+			"--section がなければ、そのタスクのセクションに移します。並び順は Asana にだけ反映されます。",
+		Example: `  asagao task move 1203455468597469 --section Done
+  asagao task move 1203455468597469 --after 1203455468591111`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)
@@ -520,15 +524,22 @@ func (a *app) taskMoveCmd() *cobra.Command {
 			}
 			defer st.Close()
 			sections := &usecase.Sections{Store: st, Clock: time.Now}
-			if err := sections.Move(ctx, args[0], project, section); err != nil {
+			if err := sections.MoveAt(ctx, args[0], project, section, model.Position{Before: before, After: after}); err != nil {
 				return err
 			}
-			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "移動しました: → "+section)
+			msg := "移動しました: → " + section
+			if section == "" {
+				msg = "並び順を変えました"
+			}
+			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, msg)
 		},
 	}
 	cmd.Flags().StringVar(&section, "section", "", "移動先のセクション（gid または名前）")
 	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（タスクが複数のプロジェクトに入っている場合）")
-	_ = cmd.MarkFlagRequired("section")
+	cmd.Flags().StringVar(&before, "before", "", "このタスクの前に置く（gid）")
+	cmd.Flags().StringVar(&after, "after", "", "このタスクの後に置く（gid）")
+	cmd.MarkFlagsMutuallyExclusive("before", "after")
+	cmd.MarkFlagsOneRequired("section", "before", "after")
 	return a.addDryRunFlag(cmd)
 }
 
