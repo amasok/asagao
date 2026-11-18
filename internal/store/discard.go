@@ -24,9 +24,14 @@ type Discard = readmodel.Discard
 // Each dropped change is recorded (see PendingDiscards).
 func (s *Store) DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]Discard, error) {
 	var out []Discard
+	var files []string
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		// tasks moved under it go back to their parents, not away with it
 		if err := undoSetParentsTo(ctx, tx, taskGID); err != nil {
+			return err
+		}
+		var err error
+		if files, err = taskTreeFiles(ctx, tx, taskGID, false); err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE sub(gid) AS (
@@ -70,7 +75,13 @@ func (s *Store) DiscardDeletedTask(ctx context.Context, taskGID, reason string, 
 		}
 		return err
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	for _, f := range files {
+		_ = s.RemoveAttachmentFile(f) // only inside the attachments folder
+	}
+	return out, nil
 }
 
 // DiscardGoneOp drops one entry whose target other than its task (a section, project,

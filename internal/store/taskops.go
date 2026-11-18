@@ -143,15 +143,7 @@ func (s *Store) CompleteDelete(ctx context.Context, id int64, gid string) error 
 // removeTaskTree removes task gid, its subtasks, their dependencies and the changes queued
 // for them. It returns the local attachment files they had, to delete once it is saved.
 func removeTaskTree(ctx context.Context, tx *sql.Tx, gid string) ([]string, error) {
-	fileRows, err := tx.QueryContext(ctx, `WITH RECURSIVE sub(gid) AS (
-			SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid)
-		SELECT local_path FROM attachments WHERE parent_gid IN (SELECT gid FROM sub) AND local_path <> ''
-		UNION SELECT json_extract(payload, '$.path') FROM outbox WHERE task_gid IN (SELECT gid FROM sub)
-			AND kind IN (?, ?) AND json_extract(payload, '$.path') <> ''`, gid, OpUploadAttachment, OpDeleteAttachment)
-	if err != nil {
-		return nil, err
-	}
-	files, err := scanStrings(fileRows)
+	files, err := taskTreeFiles(ctx, tx, gid, true)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +178,30 @@ func removeTaskTree(ctx context.Context, tx *sql.Tx, gid string) ([]string, erro
 		_, err = tx.ExecContext(ctx, "UPDATE tasks SET num_subtasks = max(0, num_subtasks - 1) WHERE gid = ?", parent)
 	}
 	return files, err
+}
+
+// taskTreeFiles lists the local attachment files of task gid and its subtasks: downloaded
+// ones, and the copies kept by their queued attachment deletes and (with uploads) uploads.
+// Without uploads, a file a queued upload still refers to is left out: the upload is
+// recorded as a dropped change that shows where its copy is, to get the file back.
+func taskTreeFiles(ctx context.Context, tx *sql.Tx, gid string, uploads bool) ([]string, error) {
+	q := `WITH RECURSIVE sub(gid) AS (
+			SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid),
+		ups(path) AS (SELECT json_extract(payload, '$.path') FROM outbox
+			WHERE task_gid IN (SELECT gid FROM sub) AND kind = ? AND json_extract(payload, '$.path') <> '')
+		SELECT local_path FROM attachments WHERE parent_gid IN (SELECT gid FROM sub) AND local_path <> ''
+		UNION SELECT json_extract(payload, '$.path') FROM outbox WHERE task_gid IN (SELECT gid FROM sub)
+			AND kind = ? AND json_extract(payload, '$.path') <> ''`
+	if uploads {
+		q += ` UNION SELECT path FROM ups`
+	} else {
+		q += ` EXCEPT SELECT path FROM ups`
+	}
+	rows, err := tx.QueryContext(ctx, q, gid, OpUploadAttachment, OpDeleteAttachment)
+	if err != nil {
+		return nil, err
+	}
+	return scanStrings(rows)
 }
 
 // SetParentLocal makes task gid a subtask of parent ("" for a top-level task), at pos

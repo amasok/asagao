@@ -83,3 +83,56 @@ func TestCompleteDeleteRemovesAttachmentFiles(t *testing.T) {
 		}
 	}
 }
+
+// A task found deleted in Asana takes the files of its attachments along (inside the
+// attachments folder), except the copy of an upload not sent: the dropped upload is
+// recorded with where that copy is, to get the file back.
+func TestDiscardDeletedTaskRemovesAttachmentFiles(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	cache, other := t.TempDir(), t.TempDir()
+	s.SetAttachmentDir(cache)
+	write := func(p string) string {
+		must(t, os.WriteFile(p, []byte("x"), 0o600))
+		return p
+	}
+	downloaded := write(filepath.Join(cache, "a1.png"))
+	subDownloaded := write(filepath.Join(cache, "a2.png"))
+	outside := write(filepath.Join(other, "大事なファイル.txt"))
+	kept := write(filepath.Join(cache, "kept.txt"))
+	must(t, s.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "a"}, {GID: "a3", Name: "c"}}))
+	must(t, s.ReplaceAttachments(ctx, "t1a", []asana.Attachment{{GID: "a2", Name: "b"}}))
+	must(t, s.SetAttachmentPath(ctx, "a1", downloaded))
+	must(t, s.SetAttachmentPath(ctx, "a2", subDownloaded))
+	must(t, s.SetAttachmentPath(ctx, "a3", outside))
+	local, err := s.UploadAttachmentLocal(ctx, "t1", write(filepath.Join(other, "原本.txt")), cache, now)
+	must(t, err)
+	up, err := s.GetAttachment(ctx, local)
+	must(t, err)
+	_, err = s.db.Exec(`INSERT INTO outbox(kind, task_gid, payload, base, base_modified_at, state, conflict, created_at)
+		VALUES('delete_attachment', 't1', json_object('attachment', 'local:x', 'path', ?), '{}', '', 'pending', '{}', '')`, kept)
+	must(t, err)
+	ds, err := s.DiscardDeletedTask(ctx, "t1", "gone", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown string
+	for _, d := range ds {
+		if d.Kind == OpUploadAttachment {
+			shown, _ = d.Payload["path"].(string)
+		}
+	}
+	if shown != up.LocalPath {
+		t.Fatalf("the dropped upload shows %q, want %q", shown, up.LocalPath)
+	}
+	for _, f := range []string{downloaded, subDownloaded, kept} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("%s stays: %v", f, err)
+		}
+	}
+	for _, f := range []string{outside, up.LocalPath} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("%s is gone: %v", f, err)
+		}
+	}
+}
