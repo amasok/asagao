@@ -38,16 +38,53 @@ func (c *Client) CustomFieldSettings(ctx context.Context, projectGID string) ([]
 }
 
 // optionalTaskFields are task fields that some plans or workspaces may refuse (custom
-// fields, dependencies, approvals). If Asana refuses a task read with them (400 / 402), the
+// fields, dependencies, approvals, custom task types). If Asana refuses a task read with them (400 / 402), the
 // read is repeated without them, and so are later ones of this client: tasks still sync,
 // only without those fields (Task.Partial).
 func isOptionalTaskField(f string) bool {
-	for _, p := range []string{"custom_fields", "approval_status", "dependencies", "dependents", "assignee_section"} {
+	for _, p := range []string{"custom_fields", "approval_status", "dependencies", "dependents", "assignee_section",
+		"custom_type", "custom_type_status_option"} {
 		if f == p || strings.HasPrefix(f, p+".") {
 			return true
 		}
 	}
 	return false
+}
+
+// isCustomTypeField reports whether f is one of the custom task type fields (#59), which a
+// plan without custom types may refuse alone: they are left out first (fieldTier).
+func isCustomTypeField(f string) bool {
+	for _, p := range []string{"custom_type", "custom_type_status_option"} {
+		if f == p || strings.HasPrefix(f, p+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// fieldTier is which optional task fields a request leaves out: none, the custom type
+// fields, or all of them (plain).
+type fieldTier struct{ plain, noCustomTypes bool }
+
+func (c *Client) tier() fieldTier {
+	return fieldTier{plain: c.plainTasks.Load(), noCustomTypes: c.noCustomTypes.Load()}
+}
+
+// fields returns f without the fields the tier leaves out.
+func (t fieldTier) fields(f []string) []string {
+	switch {
+	case t.plain:
+		return slices.DeleteFunc(slices.Clone(f), isOptionalTaskField)
+	case t.noCustomTypes:
+		return slices.DeleteFunc(slices.Clone(f), isCustomTypeField)
+	}
+	return f
+}
+
+// mark records on a task what was left out of its request.
+func (t fieldTier) mark(task *Task) {
+	task.Partial = t.plain
+	task.NoCustomType = t.plain || t.noCustomTypes
 }
 
 // taskFields returns the fields to request for tasks (detail: with enum options).
@@ -56,29 +93,40 @@ func (c *Client) taskFields(detail bool) []string {
 	if detail {
 		f = taskDetailFields
 	}
-	if !c.plainTasks.Load() {
-		return f
-	}
-	return slices.DeleteFunc(slices.Clone(f), isOptionalTaskField)
+	return c.tier().fields(f)
 }
 
 // readTasks runs a task read with the fields to request, without the optional ones if
-// Asana refused them. Only reads are repeated (a write might be applied twice).
+// Asana refused them: first without the custom type fields only (a plan without custom
+// types, #59, keeps its custom fields and dependencies), then without all of them. Only
+// reads are repeated (a write might be applied twice).
 func readTasks(c *Client, detail bool, read func(fields []string) ([]Task, error)) ([]Task, error) {
-	plain := c.plainTasks.Load()
-	tasks, err := read(c.taskFields(detail))
-	var apiErr *Error
-	if err != nil && !plain && errors.As(err, &apiErr) && (apiErr.Status == http.StatusBadRequest || apiErr.Status == http.StatusPaymentRequired) {
-		f := slices.DeleteFunc(slices.Clone(c.taskFields(detail)), isOptionalTaskField)
-		if again, err2 := read(f); err2 == nil { // they were the problem: leave them out from now on
-			c.plainTasks.Store(true)
-			tasks, err, plain = again, nil, true
+	f := TaskFields
+	if detail {
+		f = taskDetailFields
+	}
+	tier := c.tier()
+	tasks, err := read(tier.fields(f))
+	refused := func(err error) bool {
+		var apiErr *Error
+		return err != nil && errors.As(err, &apiErr) && (apiErr.Status == http.StatusBadRequest || apiErr.Status == http.StatusPaymentRequired)
+	}
+	if refused(err) && !tier.plain && !tier.noCustomTypes {
+		next := fieldTier{noCustomTypes: true}
+		if again, err2 := read(next.fields(f)); err2 == nil { // they were the problem: leave them out from now on
+			c.noCustomTypes.Store(true)
+			tasks, err, tier = again, nil, next
 		}
 	}
-	if plain {
-		for i := range tasks {
-			tasks[i].Partial = true
+	if refused(err) && !tier.plain {
+		next := fieldTier{plain: true}
+		if again, err2 := read(next.fields(f)); err2 == nil {
+			c.plainTasks.Store(true)
+			tasks, err, tier = again, nil, next
 		}
+	}
+	for i := range tasks {
+		tier.mark(&tasks[i])
 	}
 	return tasks, err
 }

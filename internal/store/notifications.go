@@ -375,7 +375,7 @@ func (s *Store) TaskSummaries(ctx context.Context, gids []string) (map[string]Ta
 		for i, g := range chunk {
 			args[i] = g
 		}
-		tasks, err := s.queryTasks(ctx, "SELECT "+taskColumns+" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid WHERE t.gid IN (?"+
+		tasks, err := s.queryTasks(ctx, "SELECT "+taskColumns+" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid"+customStatusJoin+" WHERE t.gid IN (?"+
 			strings.Repeat(", ?", len(chunk)-1)+")", args...)
 		if err != nil {
 			return nil, err

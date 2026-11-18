@@ -37,3 +37,9 @@ type (
 	BatchWrite         = model.BatchWrite
 	BatchWriteResult   = model.BatchWriteResult
 )
+
+// Custom task types (#59).
+type (
+	CustomType             = model.CustomType
+	CustomTypeStatusOption = model.CustomTypeStatusOption
+)

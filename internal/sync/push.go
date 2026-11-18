@@ -365,6 +365,10 @@ func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 		return false, err // offline, cancelled or logged out: keep the rest for later
 	case isNotFound(err): // what it changes was deleted in Asana
 		return false, s.dropGone(ctx, op, err, drops)
+	case errors.As(err, new(*customTypeWithdrawn)): // Asana did not take the custom type (#59)
+		var w *customTypeWithdrawn
+		errors.As(err, &w)
+		return s.withdrawCustomType(ctx, op, w, res)
 	case errors.As(err, new(*startOnWithdrawn)): // the plan or the due date does not allow the start date
 		var w *startOnWithdrawn
 		errors.As(err, &w)
@@ -472,7 +476,9 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 		return out, err
 	}
-	if withStart {
+	if withStart && !errors.As(err, new(*customTypeWithdrawn)) {
+		// A 402 to an entry with a custom type takes out the custom type first (#59),
+		// the more likely cause: the start date is tried again with the rest.
 		return out, s.startOnOutcome(ctx, startWS, op, out, err)
 	}
 	if model.IsPaymentRequired(err) {
@@ -866,7 +872,7 @@ func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	if reason := startOnBlocked(op.Payload, server); reason != "" {
 		return sent, &startOnWithdrawn{reason: reason}
 	}
-	fields := withDue(apiFields(op.Payload), server)
+	fields := withDue(taskUpdateFields(op), server)
 	if len(fields) == 0 { // only cleared a start date Asana does not have
 		if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 			return sent, sentNotSaved(err)
@@ -875,6 +881,10 @@ func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	}
 	t, err := s.API.UpdateTask(ctx, op.TaskGID, fields)
 	if err != nil {
+		return sent, s.customTypeRefused(ctx, op, err)
+	}
+	if err := customTypeApplied(op, t); err != nil {
+		s.refresh(ctx, *t) // the rest was applied: show Asana's task
 		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {

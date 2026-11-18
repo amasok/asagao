@@ -136,7 +136,7 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
 				"assignee, tags, followers, likes, custom fields, dependencies (tasks it waits for / that wait for it), " +
-				"its type (milestone / approval), an approval's status, or the projects it is in. Only the fields you pass are changed. " +
+				"its type (milestone / approval / a custom type of its projects), an approval's status, a custom type's status, or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"), " +
@@ -308,7 +308,9 @@ type UpdateTaskInput struct {
 	RemoveFollowers    []string       `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
 	AddProjects        []string       `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
 	RemoveProjects     []string       `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
-	ResourceSubtype    *string        `json:"resource_subtype,omitempty" jsonschema:"task type: default_task, milestone or approval"`
+	ResourceSubtype    *string        `json:"resource_subtype,omitempty" jsonschema:"task type: default_task, milestone or approval, or the name of a custom type (see get_task custom_types)"`
+	CustomType         *string        `json:"custom_type,omitempty" jsonschema:"custom task type, by name or gid, of those get_task lists in custom_types (sets resource_subtype to custom)"`
+	CustomTypeStatus   *string        `json:"custom_type_status,omitempty" jsonschema:"status of the task's custom type (or of custom_type, if given), by name or gid"`
 	ApprovalStatus     *string        `json:"approval_status,omitempty" jsonschema:"for an approval task: pending, approved, rejected or changes_requested"`
 	AddDependencies    []string       `json:"add_dependencies,omitempty" jsonschema:"gids of tasks this task should wait for (be blocked by)"`
 	RemoveDependencies []string       `json:"remove_dependencies,omitempty" jsonschema:"gids of tasks this task should stop waiting for"`
@@ -623,9 +625,10 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
 	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: finder{s}}
-	changes, err := tasks.ResolveUpdate(ctx, app.UpdateTaskInput{
+	changes, err := tasks.ResolveUpdateFor(ctx, in.GID, app.UpdateTaskInput{
 		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee,
 		Subtype: in.ResourceSubtype, Approval: in.ApprovalStatus, Completed: in.Completed, Liked: in.Liked,
+		CustomType: in.CustomType, CustomTypeStatus: in.CustomTypeStatus,
 	})
 	if fe := (*app.FieldError)(nil); errors.As(err, &fe) {
 		switch fe.Field {
@@ -633,7 +636,9 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", fe.Err)
 		case "assignee":
 			return nil, WriteOutput{}, fe.Err // as the store says it
-		default: // resource_subtype, approval_status: the argument names
+		case "custom_type_status_option":
+			return nil, WriteOutput{}, fmt.Errorf("custom_type_status: %w", fe.Err)
+		default: // resource_subtype, approval_status, custom_type: the argument names
 			return nil, WriteOutput{}, fmt.Errorf("%s: %w", fe.Field, fe.Err)
 		}
 	}

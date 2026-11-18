@@ -363,7 +363,29 @@ func printTaskDetail(w io.Writer, d *readmodel.TaskDetail) {
 		row("親タスク", d.Parent.Name+" ("+d.Parent.GID+")")
 	}
 	if d.ResourceSubtype != "" && d.ResourceSubtype != "default_task" {
-		row("種類", task.SubtypeLabel(d.ResourceSubtype))
+		row("種類", readmodel.KindLabel(d.TaskSummary))
+	}
+	if d.ResourceSubtype == task.SubtypeCustom && d.CustomTypeStatus != nil {
+		row("ステータス", d.CustomTypeStatus.Name)
+	}
+	if d.ResourceSubtype == task.SubtypeCustom && d.CustomType != nil {
+		for _, c := range d.CustomTypes {
+			if c.GID != d.CustomType.GID || len(c.Statuses) == 0 {
+				continue
+			}
+			var names []string
+			for _, st := range c.Statuses {
+				names = append(names, st.Name)
+			}
+			row("ステータスの候補", strings.Join(names, " / ")+"（task status で変える）")
+		}
+	}
+	if len(d.CustomTypes) > 0 && d.ResourceSubtype != task.SubtypeCustom {
+		var names []string
+		for _, c := range d.CustomTypes {
+			names = append(names, c.Name)
+		}
+		row("カスタムタイプ", strings.Join(names, " / ")+"（task type で変える）")
 	}
 	if d.ResourceSubtype == "approval" {
 		status := d.ApprovalStatus

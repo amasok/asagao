@@ -9,6 +9,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	domaintask "github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -93,7 +94,10 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 	real := func(gid string) bool { return gid != "" && !localgid.IsLocal(gid) }
 	switch op.Kind {
 	case outbox.KindUpdateTask:
-		e.write = model.BatchWrite{Method: http.MethodPut, Path: taskPath, Data: apiFields(op.Payload), Task: true}
+		if domaintask.TouchesCustomType(op.Payload) {
+			return e, false, nil // sent alone: a 402 there records that the plan lacks custom types
+		}
+		e.write = model.BatchWrite{Method: http.MethodPut, Path: taskPath, Data: taskUpdateFields(op), Task: true}
 		e.check = true
 	case outbox.KindSetCustomField:
 		if str("field") == "" {

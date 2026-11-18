@@ -266,6 +266,7 @@ const (
 	pickFieldFilter // filter by a custom field option
 	pickSubtype     // task type (deps.go)
 	pickApproval    // approval status
+	pickTypeStatus  // status of a custom task type (deps.go)
 	pickDepAction   // open / remove a linked task
 	pickDepTarget   // a task to link
 	pickSavedSearch // a saved search to show (searches.go)

@@ -33,6 +33,9 @@ const (
 	KeyLastSync = "last_sync"
 	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
 	KeyCustomFields = "custom_fields:"
+	// KeyCustomTypes + project gid: when the custom task types the project offers were
+	// last fetched (#59).
+	KeyCustomTypes = "custom_types:"
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
 	KeyEvents = "events:"
 	// KeyPlanUnavailable + a PlanFeature: when Asana refused that feature because the
@@ -110,6 +113,12 @@ const (
 	PlanStartOn = "start_on"
 )
 
+// Features of #59 that a plan may lack (PlanKey).
+const (
+	// PlanCustomTypes is custom task types (Starter and above): their list and setting them.
+	PlanCustomTypes = "custom_types"
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -141,6 +150,7 @@ func PlanUnavailableMessage(feature string) string {
 		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
 		PlanStartOn:      "タスクの開始日",
+		PlanCustomTypes:  "カスタムタイプ (タスクの種類とステータス)",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }

@@ -11,12 +11,19 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // UpdateTaskLocal makes fakeStore a TaskStore; the Create tests never reach it.
 func (f *fakeStore) UpdateTaskLocal(_ context.Context, gid string, changes map[string]any, now time.Time) error {
 	f.log("UpdateTaskLocal %s %v", gid, changes)
 	return nil
+}
+
+// TaskKind makes fakeStore a TaskStore: the task has the custom types of f.kind (#59).
+func (f *fakeStore) TaskKind(_ context.Context, gid string) (readmodel.TaskKind, error) {
+	f.log("TaskKind %s", gid)
+	return f.kind, nil
 }
 
 // updateStore records the updates and can fail them.
