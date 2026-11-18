@@ -150,6 +150,15 @@ func (s *Server) New() *mcp.Server {
 				"Ask the user before choosing for a conflict."}, s.resolveOutbox)
 		mcp.AddTool(srv, &mcp.Tool{Name: "add_comment", Annotations: write(false),
 			Description: "Add a comment to a task."}, s.addComment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "update_comment", Annotations: write(true),
+			Description: "Rewrite one of my own comments (gid from get_task comments, where mine is true). The new Markdown text replaces the whole comment. " +
+				"Comments by other people cannot be changed."}, s.updateComment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "delete_comment", Annotations: write(true),
+			Description: "Delete one of my own comments (gid from get_task comments, where mine is true). It cannot be undone once sent: " +
+				"ask the user before deleting."}, s.deleteComment)
+		mcp.AddTool(srv, &mcp.Tool{Name: "delete_attachment", Annotations: write(true),
+			Description: "Delete an attachment of a task (gid from get_task attachments). It cannot be undone once sent: " +
+				"ask the user before deleting."}, s.deleteAttachment)
 	}
 	return srv
 }
@@ -203,6 +212,11 @@ type CommentOutput struct {
 	CreatedAt string `json:"created_at"`
 	Markdown  string `json:"markdown"`
 	Pending   bool   `json:"pending"`
+	// Mine is set for my own comments: only these can be changed (update_comment,
+	// delete_comment).
+	Mine bool `json:"mine,omitempty"`
+	// Reactions are the emoji reactions on the comment (reacted: I am one of them).
+	Reactions []readmodel.Reaction `json:"reactions,omitempty"`
 }
 
 type ListProjectsInput struct {
@@ -301,6 +315,15 @@ type AddCommentInput struct {
 	Text string `json:"text" jsonschema:"comment in Markdown (converted to Asana rich text)"`
 }
 
+type UpdateCommentInput struct {
+	GID  string `json:"gid" jsonschema:"comment gid, from get_task comments; must be my own comment (mine: true)"`
+	Text string `json:"text" jsonschema:"the whole new comment in Markdown (converted to Asana rich text)"`
+}
+
+type DeleteInput struct {
+	GID string `json:"gid" jsonschema:"gid of the comment (from get_task comments; my own only) or of the attachment (from get_task task.attachments)"`
+}
+
 type ResolveOutboxInput struct {
 	ID     int64  `json:"id" jsonschema:"outbox entry id (from sync_status)"`
 	Action string `json:"action" jsonschema:"keep_local (overwrite Asana with the local value), keep_remote (drop the local change), retry (send a failed entry again) or discard (drop it)"`
@@ -386,13 +409,16 @@ func (s *Server) getTask(ctx context.Context, _ *mcp.CallToolRequest, in GetTask
 	out.Task = d
 	out.DescriptionMarkdown = editableMarkdown(d.HTMLNotes, d.Notes)
 	out.Comments = []CommentOutput{}
+	me, _ := s.query().MeGID(ctx) // "" before the first sync: nothing is mine
 	for _, st := range d.Stories {
 		if st.Type != "comment" {
 			continue
 		}
-		c := CommentOutput{GID: st.GID, CreatedAt: st.CreatedAt, Markdown: editableMarkdown(st.HTMLText, st.Text), Pending: st.Pending}
+		c := CommentOutput{GID: st.GID, CreatedAt: st.CreatedAt, Markdown: editableMarkdown(st.HTMLText, st.Text), Pending: st.Pending,
+			Reactions: st.Reactions}
 		if st.CreatedBy != nil {
 			c.Author = st.CreatedBy.Name
+			c.Mine = me != "" && st.CreatedBy.GID == me
 		}
 		out.Comments = append(out.Comments, c)
 	}
@@ -570,6 +596,30 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 		return nil, WriteOutput{}, err
 	}
 	return nil, s.push(ctx, in.GID), nil
+}
+
+func (s *Server) updateComment(ctx context.Context, _ *mcp.CallToolRequest, in UpdateCommentInput) (*mcp.CallToolResult, WriteOutput, error) {
+	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	if err := comments.Edit(ctx, in.GID, in.Text); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, ""), nil
+}
+
+func (s *Server) deleteComment(ctx context.Context, _ *mcp.CallToolRequest, in DeleteInput) (*mcp.CallToolResult, WriteOutput, error) {
+	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	if err := comments.Delete(ctx, in.GID); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, ""), nil
+}
+
+func (s *Server) deleteAttachment(ctx context.Context, _ *mcp.CallToolRequest, in DeleteInput) (*mcp.CallToolResult, WriteOutput, error) {
+	copies := app.Copies{Store: s.Store, Clock: s.Now}
+	if err := copies.Detach(ctx, in.GID); err != nil {
+		return nil, WriteOutput{}, err
+	}
+	return nil, s.push(ctx, ""), nil
 }
 
 // accountChangedNote explains sync.ErrAccountChanged to the model. Resetting is left to

@@ -90,6 +90,14 @@ CLI と MCP は、プロジェクトを gid・完全な名前・一意な部分�
 - **WHEN** MCP の `upload_attachment` に、許していないフォルダのファイルを渡す
 - **THEN** エラーを返し、outbox に積まない
 
+### Requirement: 削除は確かめてから行う
+コメントと添付の削除は、送ったあと取り消せないので、入り口ごとに確かめる (MUST, #34)。CLI の `comment delete` と `task detach` は `--yes` がなければ止まる (`--dry-run` では要らない)。TUI は「やめる」を既定にした確認を出す。MCP の `delete_comment`・`delete_attachment`・`update_comment` は破壊的な操作の印を付け、利用者に確かめるよう説明に書く。CLI の `task show` と MCP の `get_task` は、使う gid と、MCP では自分のコメントかどうか (`mine`) を示す。
+根拠: cli/write.go, tui/comment_edit.go, mcpserver/server.go; TestCommentEditDeleteDetach, TestCommentEditDryRun, TestRewriteAndDeleteMyComment, TestCommentEditTools
+
+#### Scenario: CLI で --yes なしに削除する
+- **WHEN** `asagao comment delete <gid>` を `--yes` なしで実行する
+- **THEN** エラーで止まり、outbox に何も積まない
+
 ### Requirement: プロジェクトの作成とアーカイブはオンラインだけ
 プロジェクトの作成・アーカイブ・メンバーの変更は outbox に積まず、その場で Asana に送る (MUST)。
 根拠: cli/project.go:130-230; tui/projects.go:270-280; internal/sync/projects.go; TestProjectCommandsOffline, TestCreateProjectDroppedConnectionPCClockAhead

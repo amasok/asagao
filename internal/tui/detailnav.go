@@ -36,6 +36,7 @@ const (
 	itemAddDependency //
 	itemDependent     // sub: index into Dependents
 	itemAddDependent  //
+	itemComment       // sub: index into Stories (my own comments only: they can be changed)
 )
 
 type detailItem struct {
@@ -193,7 +194,11 @@ func (m *Model) activateItem() tea.Cmd {
 		return m.openProjects()
 	case itemAttachment:
 		if it.sub < len(d.Attachments) {
-			return m.openAttachment(d.Attachments[it.sub])
+			return m.openAttachmentActions(d.Attachments[it.sub])
+		}
+	case itemComment:
+		if it.sub < len(d.Stories) {
+			return m.openCommentActions(d.Stories[it.sub])
 		}
 	case itemAddAttachment:
 		return m.startAttach()

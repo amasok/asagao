@@ -715,9 +715,17 @@ func (m *Model) renderDetail(w int) string {
 			if c.Pending {
 				meta += "  " + m.st.today.Render("（未送信）")
 			}
-			b.WriteString(meta + "\n")
+			if idx := storyIndex(d.Stories, c.GID); active && idx >= 0 && m.isMyComment(c) {
+				// my own comment: enter rewrites or deletes it
+				row(item(itemComment, idx), meta+m.st.dim.Render("  （enter で編集・削除）"))
+			} else {
+				b.WriteString(meta + "\n")
+			}
 			text := m.withImages(m.markdown(textMarkdown(c.HTMLText, c.Text), max(10, w-2)), max(10, w-2), imageNo)
 			b.WriteString(indentLines(text, 2) + "\n")
+			if r := readmodel.ReactionsLine(c.Reactions); r != "" {
+				b.WriteString("  " + m.st.dim.Render(ansi.Truncate(r, max(1, w-2), "…")) + "\n")
+			}
 		}
 	case d.DetailsFetchedAt == "":
 		b.WriteString(m.st.dim.Width(w).Render("コメントは未取得です（オンライン時に自動で取得します）") + "\n")
