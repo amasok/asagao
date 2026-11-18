@@ -77,7 +77,7 @@ func fieldInput(f readmodel.CustomFieldView) string {
 
 // showFieldPicker opens the chooser of an enum field (multi_enum: toggles, stays open).
 func (m *Model) showFieldPicker(t readmodel.TaskSummary, f readmodel.CustomFieldView) {
-	if len(f.Options) == 0 {
+	if len(f.Options) == 0 && !f.CanAddOption {
 		m.status = fmt.Sprintf("「%s」の選択肢がまだ取得されていません（同期すると選べます）", f.Name)
 		return
 	}
@@ -108,6 +108,9 @@ func (m *Model) showFieldPicker(t readmodel.TaskSummary, f readmodel.CustomField
 			p.cursor = i
 		}
 		p.items = append(p.items, item)
+	}
+	if f.CanAddOption {
+		p.items = append(p.items, pickerItem{label: "＋ 選択肢を足して設定する…", value: newOptionValue})
 	}
 	if !multi {
 		none := pickerItem{label: "（空にする）", value: ""}
@@ -150,6 +153,10 @@ func (m *Model) setField(t readmodel.TaskSummary, f readmodel.CustomFieldView, v
 // updated at once, so quick toggles build on each other; the changes are saved one at a
 // time (a toggle made while one is being saved is saved after it, with every toggle so far).
 func (m *Model) toggleFieldOption(p *picker, item pickerItem) tea.Cmd {
+	if item.value == newOptionValue {
+		m.picker = nil
+		return m.startNewOption(p.task, p.field)
+	}
 	var gids []string
 	for i := range p.items {
 		it := &p.items[i]
@@ -157,7 +164,7 @@ func (m *Model) toggleFieldOption(p *picker, item pickerItem) tea.Cmd {
 			it.checked = !it.checked
 			it.label = map[bool]string{true: "[✓] ", false: "[ ] "}[it.checked] + strings.TrimPrefix(strings.TrimPrefix(it.label, "[✓] "), "[ ] ")
 		}
-		if it.checked {
+		if it.checked && it.value != newOptionValue {
 			gids = append(gids, it.value)
 		}
 	}

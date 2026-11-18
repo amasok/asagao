@@ -31,6 +31,9 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
+		if !(&app.ProjectFields{Store: st}).Available(m.ctx) {
+			off[readmodel.PlanCustomFields] = true
+		}
 		return planLoadedMsg{off: off}
 	}
 }

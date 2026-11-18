@@ -111,7 +111,7 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_project", "create_section", "create_status_update", "create_task", "delete_attachment", "delete_comment", "delete_section", "delete_tag", "delete_task", "duplicate_task", "get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_my_sections", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_section", "move_task", "rename_section", "resolve_outbox", "run_saved_search", "search_tasks", "set_parent", "sync", "sync_status", "update_comment", "update_project", "update_tag", "update_task", "upload_attachment"}},
+		{false, []string{"add_comment", "create_project", "create_section", "create_status_update", "create_task", "delete_attachment", "delete_comment", "delete_section", "delete_tag", "delete_task", "duplicate_task", "get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_my_sections", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_section", "move_task", "rename_section", "resolve_outbox", "run_saved_search", "search_tasks", "set_parent", "sync", "sync_status", "update_comment", "update_project", "update_project_custom_fields", "update_tag", "update_task", "upload_attachment"}},
 		{true, []string{"get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_my_sections", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "run_saved_search", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})

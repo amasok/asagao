@@ -94,6 +94,19 @@ const (
 	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
 	// start_on, due_on, color); base: their values before the local edit.
 	KindUpdateProject = "update_project"
+
+	// Custom fields themselves (#37).
+	//
+	// KindCreateEnumOption adds an option to an enum or multi_enum field. The outbox
+	// task_gid column holds the option's gid ("local:...", replaced once Asana created it:
+	// the values that use it wait for it). payload: field, field_name, name, and existing
+	// (the gids of the options with that name before the request, set when it is sent).
+	KindCreateEnumOption = "create_enum_option"
+	// KindAddFieldSetting adds an existing custom field to a project, KindRemoveFieldSetting
+	// removes it. The outbox task_gid column holds the project gid. payload: field,
+	// field_name; base (remove only): position, is_important (to restore).
+	KindAddFieldSetting    = "add_custom_field_setting"
+	KindRemoveFieldSetting = "remove_custom_field_setting"
 )
 
 // SectionRefKeys are the payload keys that may hold a section gid, so that a section

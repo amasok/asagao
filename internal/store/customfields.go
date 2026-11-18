@@ -115,6 +115,11 @@ func formatNumber(v float64, precision int) string {
 
 // cfDisplay is the text of a value set locally.
 func (s *Store) cfDisplay(ctx context.Context, q dbQuerier, d fieldDef, v any) string {
+	return valueDisplay(ctx, q, d, v)
+}
+
+// valueDisplay is the text of a value set locally (people's names read with q).
+func valueDisplay(ctx context.Context, q dbQuerier, d fieldDef, v any) string {
 	switch x := v.(type) {
 	case nil:
 		return ""
@@ -158,6 +163,12 @@ func upsertFieldDef(ctx context.Context, tx *sql.Tx, f model.CustomField) error 
 		for _, o := range f.EnumOptions {
 			views = append(views, EnumOptionView{GID: o.GID, Name: o.Name, Color: o.Color, Enabled: o.Enabled == nil || *o.Enabled})
 		}
+		// Options added offline stay until Asana created them (or they are discarded).
+		local, err := localOptions(ctx, tx, f.GID)
+		if err != nil {
+			return err
+		}
+		views = append(views, local...)
 		b, err := json.Marshal(views)
 		if err != nil {
 			return err
@@ -233,7 +244,7 @@ func (s *Store) ReplaceProjectCustomFields(ctx context.Context, projectGID strin
 				return err
 			}
 		}
-		return nil
+		return reapplyFieldSettingOps(ctx, tx, projectGID)
 	})
 }
 
@@ -399,10 +410,25 @@ func (s *Store) taskCustomFields(ctx context.Context, gid string) ([]CustomField
 		view := d.view(v, display, important[field])
 		if d.Type == CFEnum || d.Type == CFMultiEnum {
 			view.Options = d.enabledOptions(v)
+			if view.Editable && d.OptionsKnown {
+				view.CanAddOption, err = s.optionsAddable(ctx, field)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 		out = append(out, view)
 	}
 	return out, rows.Err()
+}
+
+// optionsAddable reports whether options can be added to a field: unless Asana refused it
+// before (402 for the plan, 403 for this field).
+func (s *Store) optionsAddable(ctx context.Context, fieldGID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM sync_state WHERE key IN (?, ?) AND value <> ''",
+		readmodel.KeyPlanUnavailable+readmodel.PlanCustomFields, readmodel.KeyFieldOptionsLocked+fieldGID).Scan(&n)
+	return n == 0, err
 }
 
 // ResolveCustomField finds a custom field of a task by gid or name (exact, ignoring case,

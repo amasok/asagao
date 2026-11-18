@@ -122,6 +122,7 @@ func (m *Model) actions() []action {
 		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
+		{id: "project_fields", key: "G", group: groupProject, label: "カスタムフィールドを追加 / 外す", ctx: ctxAll, needProject: true, plan: readmodel.PlanCustomFields, run: (*Model).openProjectFields},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
 		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other

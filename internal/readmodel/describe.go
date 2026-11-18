@@ -201,7 +201,7 @@ func DescribeOp(op outbox.Op) string {
 	switch op.Kind {
 	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection,
-		outbox.KindUpdateTag, outbox.KindDeleteTag:
+		outbox.KindUpdateTag, outbox.KindDeleteTag, outbox.KindCreateEnumOption:
 		return what
 	}
 	name := op.TaskName
@@ -306,6 +306,12 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("タグ「%s」の削除", str("name"))
 	case outbox.KindMoveMySection:
 		return fmt.Sprintf("マイタスクのセクション「%s」への移動", str("section_name"))
+	case outbox.KindCreateEnumOption:
+		return fmt.Sprintf("カスタムフィールド「%s」に選択肢「%s」を追加", str("field_name"), str("name"))
+	case outbox.KindAddFieldSetting:
+		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトに追加", str("field_name"))
+	case outbox.KindRemoveFieldSetting:
+		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトから外す", str("field_name"))
 	case outbox.KindUpdateProject:
 		var parts []string
 		for _, k := range []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"} {

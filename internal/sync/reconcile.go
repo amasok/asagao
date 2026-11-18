@@ -99,6 +99,9 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 	switch op.Kind {
 	case outbox.KindCreateSection:
 		return s.findCreatedSection(ctx, op)
+	case outbox.KindCreateEnumOption:
+		m, err := s.findEnumOption(ctx, op)
+		return sent, m, err
 	case outbox.KindCreateTask:
 		tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), since)
 		if err != nil || !ok {

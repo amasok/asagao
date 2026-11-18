@@ -40,6 +40,15 @@ const (
 	KeyPlanUnavailable = "plan_unavailable:"
 	// KeyUserTaskList + workspace gid: the gid of my My Tasks list there.
 	KeyUserTaskList = "user_task_list:"
+	// KeyWorkspaceCustomFields + workspace gid: when the workspace's custom fields were last
+	// fetched (to add one to a project).
+	KeyWorkspaceCustomFields = "workspace_custom_fields:"
+	// KeyFieldOptionsLocked + field gid: when Asana refused to add an option to the field
+	// (403: e.g. its options are locked, or not ours to change). Adding is not offered.
+	KeyFieldOptionsLocked = "field_options_locked:"
+	// KeyProjectFieldsLocked + project gid: when Asana refused to add or remove a custom
+	// field of the project (403). It is not offered.
+	KeyProjectFieldsLocked = "project_fields_locked:"
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
@@ -58,6 +67,8 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
+	// PlanCustomFields: adding options to custom fields and custom fields to projects.
+	PlanCustomFields = "custom_fields"
 )
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
@@ -69,6 +80,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanTags
 	case outbox.KindMoveMySection:
 		return PlanMySection
+	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		return PlanCustomFields
 	}
 	return ""
 }
@@ -76,9 +89,10 @@ func PlanFeatureOf(kind string) string {
 // PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
 func PlanUnavailableMessage(feature string) string {
 	what := map[string]string{
-		PlanSections:  "セクションの作成・削除・並べ替え",
-		PlanTags:      "タグの名前・色の変更と削除",
-		PlanMySection: "マイタスクのセクション",
+		PlanSections:     "セクションの作成・削除・並べ替え",
+		PlanTags:         "タグの名前・色の変更と削除",
+		PlanMySection:    "マイタスクのセクション",
+		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
@@ -94,6 +108,8 @@ const (
 	ResultTag = "tag:"
 	// ResultSection maps a section created offline to the section Asana created.
 	ResultSection = "section:"
+	// ResultEnumOption maps a custom field option created offline to the one Asana created.
+	ResultEnumOption = "enum_option:"
 )
 
 // ResetResult says what a reset with a backup did.

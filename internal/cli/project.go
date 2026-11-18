@@ -61,7 +61,7 @@ func (a *app) projectCmd() *cobra.Command {
 	list.Flags().BoolVar(&all, "all", false, "参加していないプロジェクトも表示する")
 	list.Flags().StringVar(&team, "team", "", "このチームのプロジェクトだけ（gid または名前。部分一致可）")
 	cmd.AddCommand(list, a.projectTeamsCmd(), a.projectShowCmd(), a.projectEditCmd(), a.projectStatusCmd(),
-		a.projectCreateCmd(), a.projectArchiveCmd(), a.projectMembersCmd())
+		a.projectCreateCmd(), a.projectArchiveCmd(), a.projectMembersCmd(), a.projectFieldsCmd())
 	return cmd
 }
 

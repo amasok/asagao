@@ -39,6 +39,7 @@ var resultKinds = map[string][]string{
 	ResultStatus:     {OpCreateStatus},
 	ResultTag:        nil,
 	ResultSection:    {OpCreateSection},
+	ResultEnumOption: {OpCreateEnumOption},
 }
 
 // resultTables are, per mapping prefix, the local gids in the rows that would still carry
@@ -51,12 +52,27 @@ var resultTables = map[string][]string{
 	ResultStatus:     {localIn("status_updates", "gid")},
 	ResultTag:        {localIn("tags", "gid"), localIn("task_tags", "tag_gid")},
 	ResultSection:    {localIn("sections", "gid"), localIn("task_memberships", "section_gid")},
+	// An option is stored inside JSON: in the field's options, and in the tasks' values.
+	ResultEnumOption: {localInJSON("custom_fields", "enum_options", "$.gid"), localInJSON("task_custom_fields", "value", "")},
 }
 
 // localIn selects the local gids in a column (substr, not LIKE: "_" and "%" are literal).
 func localIn(table, column string) string {
 	return "SELECT DISTINCT " + column + " FROM " + table + " WHERE substr(" + column + ", 1, " +
 		strconv.Itoa(len(LocalPrefix)) + ") = '" + LocalPrefix + "'"
+}
+
+// localInJSON selects the local gids in a JSON column: the strings of an array or the
+// value itself, or (path set) the strings at path in each element of an array.
+func localInJSON(table, column, path string) string {
+	elem := "j.value"
+	if path != "" {
+		elem = "json_extract(j.value, '" + path + "')"
+	}
+	column = table + "." + column
+	return "SELECT DISTINCT " + elem + " FROM " + table + ", json_each(CASE WHEN json_valid(" + column + ") THEN " +
+		"(CASE WHEN json_type(" + column + ") = 'array' THEN " + column + " ELSE json_array(json(" + column + ")) END) ELSE '[]' END) j " +
+		"WHERE typeof(" + elem + ") = 'text' AND substr(" + elem + ", 1, " + strconv.Itoa(len(LocalPrefix)) + ") = '" + LocalPrefix + "'"
 }
 
 // PruneResults deletes the mappings from local gids (things created offline) to the
@@ -149,7 +165,7 @@ type stateChange struct {
 func planPruneResults(ctx context.Context, tx *sql.Tx, now time.Time) ([]stateChange, int, error) {
 	var changes []stateChange
 	deleted := 0
-	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag)
+	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag, ResultEnumOption)
 	if err != nil {
 		return nil, 0, err
 	}

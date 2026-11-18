@@ -354,4 +354,14 @@ DELETE FROM sync_state WHERE key = 'last_full_sync';
 -- Asana's reaction_summary; '' until the comments are fetched again.
 ALTER TABLE stories ADD COLUMN reactions TEXT NOT NULL DEFAULT '';
 `,
+	`
+-- The custom fields of each workspace (#37), to add one to a project. Their definitions
+-- are in custom_fields.
+CREATE TABLE workspace_custom_fields (
+	workspace_gid TEXT NOT NULL,
+	field_gid     TEXT NOT NULL,
+	position      INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (workspace_gid, field_gid)
+);
+`,
 }

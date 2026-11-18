@@ -26,6 +26,8 @@ type RelationStore interface {
 	ResolveCustomField(ctx context.Context, taskGID, arg string) (readmodel.CustomFieldView, error)
 	ParseCustomFieldValue(ctx context.Context, fieldGID string, input any, now time.Time) (any, error)
 	SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error)
+	AddEnumOptionLocal(ctx context.Context, fieldGID, name string, now time.Time) (gid string, created bool, err error)
+	SyncState(ctx context.Context, key string) (string, error)
 }
 
 // Relations is the use cases on a task's relations: its tags, followers, other projects,
@@ -75,9 +77,12 @@ func (e RelationEdit) Empty() bool {
 }
 
 // FieldValue is a custom field and the value to set it to, in the stored form (nil clears).
+// NewOptions are options of an enum / multi_enum field to add first and set it to (with
+// Value's, for multi_enum; see FieldOptions.ParseAdding).
 type FieldValue struct {
-	Field readmodel.CustomFieldView
-	Value any
+	Field      readmodel.CustomFieldView
+	Value      any
+	NewOptions []string
 }
 
 // Resolve resolves every name in the input without writing anything, in the order tags,
@@ -138,11 +143,28 @@ func (r *Relations) Resolve(ctx context.Context, taskGID string, in RelationsInp
 // values (ParseFieldValue), without writing anything. They are read in the order of their
 // names; the first that fails is a *FieldError with Field "custom_fields".
 func (r *Relations) ResolveFields(ctx context.Context, taskGID string, in map[string]any) ([]FieldValue, error) {
+	return r.ResolveFieldsAdding(ctx, taskGID, in, false)
+}
+
+// ResolveFieldsAdding is ResolveFields; with addOptions, an option name of an enum /
+// multi_enum field that the field does not have is an option to add (see
+// FieldOptions.ParseAdding). Nothing is written.
+func (r *Relations) ResolveFieldsAdding(ctx context.Context, taskGID string, in map[string]any, addOptions bool) ([]FieldValue, error) {
 	var out []FieldValue
 	for _, name := range slices.Sorted(maps.Keys(in)) {
 		f, err := r.Store.ResolveCustomField(ctx, taskGID, name)
 		if err != nil {
 			return nil, &FieldError{Field: "custom_fields", Err: err}
+		}
+		if addOptions && in[name] != nil && (f.Type == readmodel.CFEnum || f.Type == readmodel.CFMultiEnum) {
+			fv, err := r.FieldOptions().ParseAdding(ctx, f, in[name])
+			if err != nil {
+				return nil, &FieldError{Field: "custom_fields", Err: err}
+			}
+			if len(fv.NewOptions) > 0 { // else read as usual
+				out = append(out, fv)
+				continue
+			}
 		}
 		v, err := r.ParseFieldValue(ctx, f.GID, in[name])
 		if err != nil {
@@ -153,6 +175,11 @@ func (r *Relations) ResolveFields(ctx context.Context, taskGID string, in map[st
 	return out, nil
 }
 
+// FieldOptions is the use case of adding options, on the same store and clock.
+func (r *Relations) FieldOptions() *FieldOptions {
+	return &FieldOptions{Store: r.Store, Clock: r.Clock}
+}
+
 // Apply writes a resolved edit and custom field values to task taskGID, in the order
 // tags, custom fields, dependencies, followers, projects. It stops at the first error;
 // the writes before it stay (each is its own local write).
@@ -161,7 +188,7 @@ func (r *Relations) Apply(ctx context.Context, taskGID string, e RelationEdit, f
 		return err
 	}
 	for _, f := range fields {
-		if _, err := r.SetFieldHere(ctx, taskGID, f.Field.GID, f.Value); err != nil {
+		if _, err := setFieldValue(ctx, r.Store, r.Clock(), taskGID, f); err != nil {
 			return err
 		}
 	}
