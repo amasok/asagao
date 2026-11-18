@@ -115,6 +115,9 @@ func TestBriefAttackRejects(t *testing.T) {
 		"<!DOCTYPE x><table/>",
 		"<?xml version=\"1.0\"?><table/>",
 		"<![CDATA[x]]><script/>",
+		"<![CDATA[x]]>",
+		"<!-- c --><table/>",
+		"<table><tr><td><![CDATA[a]]></td></tr></table>",
 	}
 	for _, b := range bad {
 		md := "x\n\n```asana-html\n" + b + "\n```\n"
