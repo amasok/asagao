@@ -370,11 +370,12 @@ func refuseDeleted(ctx context.Context, tx *sql.Tx, gids ...string) error {
 }
 
 // TaskDeletesQueuedIn reports whether a delete is queued (in any state) for a task in
-// section sectionGID: Asana deletes only an empty section, so its delete waits for them.
+// section sectionGID, or for its parent: Asana deletes only an empty section, so its
+// delete waits for them.
 func (s *Store) TaskDeletesQueuedIn(ctx context.Context, sectionGID string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM task_memberships WHERE section_gid = ?
-		AND task_gid IN (SELECT task_gid FROM outbox WHERE kind = ?)`, sectionGID, OpDeleteTask).Scan(&n)
+		AND task_gid IN `+deletedTasks, sectionGID).Scan(&n)
 	return n > 0, err
 }
 

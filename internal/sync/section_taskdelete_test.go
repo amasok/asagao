@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -61,5 +62,37 @@ func TestDeleteSectionAfterItsTasksDeletes(t *testing.T) {
 				t.Fatalf("outbox %+v", ops)
 			}
 		})
+	}
+}
+
+// A subtask in the section whose parent's delete is queued counts too.
+func TestDeleteSectionWaitsForAParentsDelete(t *testing.T) {
+	f, s, st := setupSections(t)
+	ctx := context.Background()
+	f.hook = func(rw http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+		if r.Method == http.MethodDelete && r.URL.Path == "/tasks/p0" {
+			rw.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(rw, `{"errors":[{"message":"forbidden"}]}`)
+			return true
+		}
+		return false
+	}
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "p0", Name: "親"}, {GID: "t1", Name: "A", Workspace: &asana.Ref{GID: "w1"},
+		Parent: &asana.Ref{GID: "p0"}, Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DeleteTaskLocal(ctx, "p0", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteSectionLocal(ctx, "s1", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "DELETE /sections/") {
+			t.Fatalf("the section's delete went before its subtask's parent was deleted: %v", f.calls)
+		}
 	}
 }
