@@ -304,13 +304,14 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 // --- projects ---
 
 func (s *Store) ListProjects(ctx context.Context, memberOnly bool) ([]ProjectView, error) {
-	q := `SELECT gid, name, workspace_gid, team_name, is_member, archived, permalink_url,
+	// Favorites first, in the user's order; then by team (projects without a team last).
+	q := `SELECT gid, name, projects.workspace_gid, team_gid, team_name, f.project_gid IS NOT NULL, is_member, archived, permalink_url,
 		COALESCE((SELECT status_type FROM status_updates su WHERE su.project_gid = projects.gid ORDER BY created_at DESC LIMIT 1), '')
-		FROM projects WHERE archived = 0`
+		FROM projects LEFT JOIN project_favorites f ON f.project_gid = projects.gid WHERE archived = 0`
 	if memberOnly {
 		q += " AND is_member = 1"
 	}
-	q += " ORDER BY name"
+	q += " ORDER BY f.project_gid IS NULL, f.position, team_name = '', team_name, team_gid, name"
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -318,7 +319,7 @@ func (s *Store) ListProjects(ctx context.Context, memberOnly bool) ([]ProjectVie
 	projects := []ProjectView{}
 	for rows.Next() {
 		var p ProjectView
-		if err := rows.Scan(&p.GID, &p.Name, &p.WorkspaceGID, &p.TeamName, &p.IsMember, &p.Archived, &p.PermalinkURL, &p.Status); err != nil {
+		if err := rows.Scan(&p.GID, &p.Name, &p.WorkspaceGID, &p.TeamGID, &p.TeamName, &p.Favorite, &p.IsMember, &p.Archived, &p.PermalinkURL, &p.Status); err != nil {
 			rows.Close()
 			return nil, err
 		}

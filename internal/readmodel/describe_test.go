@@ -100,6 +100,10 @@ func TestConflictLines(t *testing.T) {
 			Conflict: map[string]any{"name": "旧", "due_on": "2026-01-03"}},
 			[]string{"期日: こちら=2026-01-02 / Asana=2026-01-03", "名前: こちら=新 / Asana=旧"}},
 		{"no conflict", outbox.Op{Kind: outbox.KindUpdateTask, Payload: map[string]any{"name": "新"}}, []string{}},
+		{"project fields", outbox.Op{Kind: outbox.KindUpdateProject,
+			Payload:  map[string]any{"start_on": "2026-12-01", "color": "none"},
+			Conflict: map[string]any{"start_on": "2026-11-01", "color": "dark-red"}},
+			[]string{"色: こちら=none / Asana=dark-red", "開始日: こちら=2026-12-01 / Asana=2026-11-01"}},
 		{"custom field by display", outbox.Op{Kind: outbox.KindSetCustomField,
 			Payload:  map[string]any{"field_name": "優先度", "value": "o1", "display": "高"},
 			Conflict: map[string]any{"value": "o2", "display": "低"}},
@@ -159,6 +163,12 @@ func TestDescribeChangeAndOp(t *testing.T) {
 			"未完了に戻す、期日を削除、担当者を外す、いいねを外す", "t: 未完了に戻す、期日を削除、担当者を外す、いいねを外す"},
 		{"update, rich notes only", outbox.Op{Kind: outbox.KindUpdateTask, TaskName: "t", Payload: map[string]any{"html_notes": "<body/>"}}, "説明の変更", "t: 説明の変更"},
 		{"update, nothing known", outbox.Op{Kind: outbox.KindUpdateTask, TaskName: "t", Payload: map[string]any{"x": 1}}, "", "t: "},
+		{"update project", outbox.Op{Kind: outbox.KindUpdateProject, TaskName: "新居", Payload: map[string]any{
+			"color": "light-green", "due_on": "2026-12-31", "start_on": "", "owner": "u1", "html_notes": "<body/>", "notes": "n"}},
+			"プロジェクトの説明の変更、オーナーの変更、開始日を外す、期日を 2026-12-31 に変更、色を light-green に変更",
+			"新居: プロジェクトの説明の変更、オーナーの変更、開始日を外す、期日を 2026-12-31 に変更、色を light-green に変更"},
+		{"update project, rich notes only, no owner", outbox.Op{Kind: outbox.KindUpdateProject, TaskName: "新居", Payload: map[string]any{
+			"html_notes": "<body/>", "owner": ""}}, "プロジェクトの説明の変更、オーナーを外す", "新居: プロジェクトの説明の変更、オーナーを外す"},
 		{"unknown kind", outbox.Op{Kind: "zap", TaskName: "t"}, "zap", "t: zap"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

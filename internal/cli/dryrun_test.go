@@ -106,6 +106,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 		{"section rename", []string{"section", "rename", "家具", "大型家具", "--project", "新居"}, "大型家具"},
 		{"status", []string{"project", "status", "post", "新居", "--text", "順調"}, "新居"},
 		{"project create", []string{"project", "create", "引っ越し"}, "プロジェクト「引っ越し」の作成"},
+		{"project edit", []string{"project", "edit", "新居", "--due", "2026-12-31"}, "新居: プロジェクトの期日を 2026-12-31 に変更"},
 		{"project archive", []string{"project", "archive", "新居"}, "プロジェクト「新居」のアーカイブ"},
 		{"project members", []string{"project", "members", "新居", "--add", "Partner", "--remove", "me"}, "メンバー「Partner」を追加"},
 	} {

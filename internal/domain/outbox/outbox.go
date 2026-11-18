@@ -46,6 +46,11 @@ const (
 	// holds the notification gid. payload: read bool, workspace, name (what it is about, for
 	// the outbox list); base: read (before the local change).
 	KindMarkNotification = "mark_notification"
+
+	// KindUpdateProject changes a project's fields (see domain/project). The outbox task_gid
+	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
+	// start_on, due_on, color); base: their values before the local edit.
+	KindUpdateProject = "update_project"
 )
 
 // States of outbox entries (the outbox state column).

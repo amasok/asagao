@@ -1112,7 +1112,7 @@ func TestProjectOperations(t *testing.T) {
 	api.BaseURL = srv.URL
 	s := &Syncer{API: api, Store: st, RichText: richtext.Converter{}}
 
-	p, err := s.CreateProject(ctx, "新規")
+	p, err := s.CreateProject(ctx, "新規", "")
 	if err != nil || p.GID != "P9" {
 		t.Fatalf("create = %+v %v", p, err)
 	}
@@ -1154,7 +1154,7 @@ func TestProjectOperations(t *testing.T) {
 	if ps, _ := st.ListProjects(ctx, false); len(ps) != 0 {
 		t.Fatal("archived project should leave the list")
 	}
-	if _, err := (&Syncer{Store: st}).CreateProject(ctx, "x"); err != ErrOffline {
+	if _, err := (&Syncer{Store: st}).CreateProject(ctx, "x", ""); err != ErrOffline {
 		t.Fatalf("offline create = %v", err)
 	}
 }
@@ -1734,7 +1734,7 @@ func TestCreateProject5xx(t *testing.T) {
 			api.BaseURL = srv.URL
 			waited := 0
 			s := &Syncer{API: api, Store: st, sleep: func(context.Context, time.Duration) error { waited++; return nil }}
-			p, err := s.CreateProject(ctx, "新規")
+			p, err := s.CreateProject(ctx, "新規", "")
 			if posts != 1 {
 				t.Fatalf("a project that may exist must not be created again (posts = %d)", posts)
 			}

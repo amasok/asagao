@@ -35,6 +35,8 @@ var (
 	qField   = readmodel.CustomFieldView{GID: "f1"}
 	qProjs   = []readmodel.ProjectView{{GID: "p1"}}
 	qStatus  = []readmodel.StatusUpdateView{{GID: "s1"}}
+	qOver    = &readmodel.ProjectOverview{GID: "p1"}
+	qTeams   = []readmodel.TeamView{{GID: "tm1", Name: "開発"}}
 	qInbox   = readmodel.InboxState{Status: readmodel.InboxOK}
 	qNotes   = []readmodel.Notification{{GID: "n1"}}
 	qStats   = readmodel.Stats{Tasks: 3}
@@ -118,6 +120,26 @@ func (f *fakeQueryStore) StatusUpdates(_ context.Context, gid string) ([]readmod
 	f.rec("StatusUpdates", gid)
 	return qStatus, f.err
 }
+func (f *fakeQueryStore) ProjectOverview(_ context.Context, gid string) (*readmodel.ProjectOverview, error) {
+	f.rec("ProjectOverview", gid)
+	return qOver, f.err
+}
+func (f *fakeQueryStore) ListTeams(context.Context) ([]readmodel.TeamView, error) {
+	f.rec("ListTeams")
+	return qTeams, f.err
+}
+func (f *fakeQueryStore) ResolveTeam(_ context.Context, arg string) (string, error) {
+	f.rec("ResolveTeam", arg)
+	return "tm1", f.err
+}
+func (f *fakeQueryStore) ListProjectsInTeam(_ context.Context, memberOnly bool, team string) ([]readmodel.ProjectView, error) {
+	f.rec("ListProjectsInTeam", memberOnly, team)
+	return qProjs, f.err
+}
+func (f *fakeQueryStore) TeamForNewProject(_ context.Context, team string) (string, error) {
+	f.rec("TeamForNewProject", team)
+	return "tm1", f.err
+}
 func (f *fakeQueryStore) InboxState(context.Context) (readmodel.InboxState, error) {
 	f.rec("InboxState")
 	return qInbox, f.err
@@ -194,6 +216,14 @@ func TestQueryCallsTheStore(t *testing.T) {
 		{"ResolveProject", func(q Query) ([]any, error) { v, err := q.ResolveProject(ctx, "仕事"); return []any{v}, err }, []any{"仕事"}, []any{"p1"}},
 		{"ProjectMembers", func(q Query) ([]any, error) { v, err := q.ProjectMembers(ctx, "p1"); return []any{v}, err }, []any{"p1"}, []any{qUsers}},
 		{"StatusUpdates", func(q Query) ([]any, error) { v, err := q.StatusUpdates(ctx, "p1"); return []any{v}, err }, []any{"p1"}, []any{qStatus}},
+		{"ProjectOverview", func(q Query) ([]any, error) { v, err := q.ProjectOverview(ctx, "p1"); return []any{v}, err }, []any{"p1"}, []any{qOver}},
+		{"ListProjectsInTeam", func(q Query) ([]any, error) {
+			v, err := q.ListProjectsInTeam(ctx, true, "開発")
+			return []any{v}, err
+		}, []any{true, "開発"}, []any{qProjs}},
+		{"TeamForNewProject", func(q Query) ([]any, error) { v, err := q.TeamForNewProject(ctx, "開発"); return []any{v}, err }, []any{"開発"}, []any{"tm1"}},
+		{"ListTeams", func(q Query) ([]any, error) { v, err := q.ListTeams(ctx); return []any{v}, err }, nil, []any{qTeams}},
+		{"ResolveTeam", func(q Query) ([]any, error) { v, err := q.ResolveTeam(ctx, "開発"); return []any{v}, err }, []any{"開発"}, []any{"tm1"}},
 		{"InboxState", func(q Query) ([]any, error) { v, err := q.InboxState(ctx); return []any{v}, err }, nil, []any{qInbox}},
 		{"ListNotifications", func(q Query) ([]any, error) { v, err := q.ListNotifications(ctx, nf); return []any{v}, err }, []any{nf}, []any{qNotes}},
 		{"UnreadNotifications", func(q Query) ([]any, error) { v, err := q.UnreadNotifications(ctx); return []any{v}, err }, nil, []any{4}},
