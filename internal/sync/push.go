@@ -436,7 +436,11 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	out, err := s.sendOp(ctx, op)
 	if model.IsPaymentRequired(err) {
-		if feature := readmodel.PlanFeatureOf(op.Kind); feature != "" {
+		if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanTimeTracking {
+			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
+				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
+			}
+		} else if feature != "" {
 			_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
 		}
 	}

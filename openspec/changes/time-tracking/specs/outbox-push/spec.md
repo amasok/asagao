@@ -25,9 +25,13 @@
 - **THEN** 作成の payload が新しい時間に変わり、消すと outbox は空になる
 
 ### Requirement: タイムトラッキングがプランにないとき
-記録の送信や一覧の取得に Asana が 402 を返したら、`sync_state` の `plan_unavailable:time_tracking` を記録する (MUST)。記録があれば、一覧は Asana に問い合わせず、TUI のメニューと MCP のツールに出さず、CLI と app はプランで使えない旨のエラーにする。
-根拠: sync/push.go (send); sync/timetracking.go (FetchTimeEntries); readmodel/store_names.go (PlanFeatureOf); TestTimeTrackingPaymentRequired, TestFetchTimeEntriesPaymentRequired, TestTimeEntryToolsPaymentRequired, TestTimeEntriesPaymentRequiredInTUI, TestTimePaymentRequired
+記録の送信や一覧の取得に Asana が 402 を返したら、タスクのワークスペースごとに `plan_unavailable:time_tracking:<ワークスペース>` に時刻を記録する (MUST)。24 時間はそのワークスペースの一覧を問い合わせず、書き込みはエラーにする。全ワークスペースに記録があれば TUI のメニューと MCP のツールに出さない。24 時間たてば試し直し、読めたら記録を消す。
+根拠: sync/plan.go; readmodel/plan.go; app/timetracking.go; TestTimeTrackingPlanPerWorkspaceAndRechecked, TestTimeTrackingPlanUnavailable, TestTimeEntriesPaymentRequiredInTUI
 
 #### Scenario: 記録の作成に 402 が返る
 - **WHEN** 記録を作って送ると Asana が 402 を返す
-- **THEN** その操作は失敗になり、以後は一覧も Asana に問い合わせず、プランで使えないと出す
+- **THEN** その操作は失敗になり、24 時間はそのワークスペースの一覧も Asana に問い合わせず、プランで使えないと出す
+
+#### Scenario: 無料と有料のワークスペース
+- **WHEN** 無料のワークスペースのタスクで 402 が返ったあと、有料のワークスペースのタスクの記録を開く
+- **THEN** 有料のほうは Asana から読み、メニューにも出したまま

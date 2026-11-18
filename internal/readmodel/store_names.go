@@ -60,7 +60,8 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
-	// PlanTimeTracking is the time tracking entries of tasks (#6).
+	// PlanTimeTracking is the time tracking entries of tasks (#6). Unlike the three above,
+	// its 402 is recorded per workspace and for a while only (readmodel/plan.go).
 	PlanTimeTracking = "time_tracking"
 )
 

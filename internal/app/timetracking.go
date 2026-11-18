@@ -14,6 +14,8 @@ import (
 type TimeTrackingStore interface {
 	Me(ctx context.Context) (readmodel.UserRef, error)
 	SyncState(ctx context.Context, key string) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
+	WorkspaceGIDs(ctx context.Context) ([]string, error)
 	TimeEntries(ctx context.Context, taskGID string) (readmodel.TimeEntries, error)
 	TimeEntryTask(ctx context.Context, gid string) (string, error)
 	AddTimeEntryLocal(ctx context.Context, taskGID string, minutes int, enteredOn string, me readmodel.UserRef, now time.Time) (string, error)
@@ -22,16 +24,41 @@ type TimeTrackingStore interface {
 }
 
 // TimeTracking is the use case of the time tracking entries of tasks (#6): the time worked
-// on a task, recorded per day. Asana offers it on paid plans only; once it refused it (402)
-// Available is false and the writes return an *ErrPlanUnavailable.
+// on a task, recorded per day. Asana offers it on paid plans only: for readmodel.PlanRecheckAfter after it
+// refused it in a workspace (402) the writes there return an *ErrPlanUnavailable, and
+// while it is refused in every workspace Available is false.
 type TimeTracking struct {
 	Store TimeTrackingStore
 	Clock Clock
 }
 
-// Available reports whether time tracking can be offered.
+// Available reports whether time tracking can be offered: it is unless Asana refused it
+// (recently) in every workspace.
 func (t *TimeTracking) Available(ctx context.Context) bool {
-	return planAvailable(ctx, t.Store, readmodel.PlanTimeTracking) == nil
+	wss, err := t.Store.WorkspaceGIDs(ctx)
+	if err != nil || len(wss) == 0 {
+		return true // not known yet: try
+	}
+	for _, ws := range wss {
+		if t.off(ctx, ws) == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// AvailableFor returns an *ErrPlanUnavailable while Asana's 402 for time tracking in the
+// workspace of taskGID still hides it.
+func (t *TimeTracking) AvailableFor(ctx context.Context, taskGID string) error {
+	ws, err := t.Store.TaskWorkspace(ctx, taskGID)
+	if err != nil {
+		return err
+	}
+	return t.off(ctx, ws)
+}
+
+func (t *TimeTracking) off(ctx context.Context, ws string) error {
+	return planOffered(ctx, t.Store, readmodel.PlanTimeTracking, ws, t.Clock())
 }
 
 // List returns a task's entries in the cache (fetching them is the sync engine's).
@@ -61,7 +88,7 @@ func (t *TimeTracking) day(s string) (string, error) {
 // dates are written; "" is today), as me, locally and queued in the outbox. It returns the
 // entry's local gid.
 func (t *TimeTracking) Add(ctx context.Context, taskGID, duration, day string) (string, error) {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTimeTracking); err != nil {
+	if err := t.AvailableFor(ctx, taskGID); err != nil {
 		return "", err
 	}
 	minutes, err := timetrack.ParseDuration(duration)
@@ -81,11 +108,11 @@ func (t *TimeTracking) Add(ctx context.Context, taskGID, duration, day string) (
 
 // Edit changes an entry's duration and/or day ("" keeps it), locally and queued.
 func (t *TimeTracking) Edit(ctx context.Context, entryGID, duration, day string) error {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTimeTracking); err != nil {
-		return err
-	}
 	cur, err := t.entry(ctx, entryGID)
 	if err != nil {
+		return err
+	}
+	if err := t.AvailableFor(ctx, cur.TaskGID); err != nil {
 		return err
 	}
 	minutes, on := cur.DurationMinutes, cur.EnteredOn
@@ -104,7 +131,11 @@ func (t *TimeTracking) Edit(ctx context.Context, entryGID, duration, day string)
 
 // Delete deletes an entry, locally and queued (an entry not sent yet is just dropped).
 func (t *TimeTracking) Delete(ctx context.Context, entryGID string) error {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTimeTracking); err != nil {
+	task, err := t.Store.TimeEntryTask(ctx, entryGID)
+	if err != nil {
+		return err
+	}
+	if err := t.AvailableFor(ctx, task); err != nil {
 		return err
 	}
 	return t.Store.DeleteTimeEntryLocal(ctx, entryGID, t.Clock())

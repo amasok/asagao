@@ -140,9 +140,15 @@ func TestTimeEntriesPaymentRequiredInTUI(t *testing.T) {
 	if !strings.Contains(h.screen(), "タイムトラッキング") {
 		t.Errorf("not said why:\n%s", h.screen())
 	}
-	if v, _ := st.SyncState(context.Background(), readmodel.KeyPlanUnavailable+readmodel.PlanTimeTracking); v == "" {
+	ctx := context.Background()
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v == "" {
 		t.Fatal("402 not recorded")
 	}
+	// The syncer recorded it by the real clock; the screen runs at testNow.
+	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1"), testNow.UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	h.run(h.m.loadPlan())
 	h.key(" ")
 	if strings.Contains(h.screen(), "作業時間を見る") {
 		t.Errorf("menu still offers time tracking:\n%s", h.screen())

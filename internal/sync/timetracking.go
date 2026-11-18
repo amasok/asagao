@@ -16,13 +16,23 @@ import (
 // feature, and it is not offered (nor asked for) from then on.
 
 // FetchTimeEntries refreshes a task's time tracking entries. It returns a
-// *readmodel.PlanUnavailableError, without asking Asana, once Asana refused them.
+// *readmodel.PlanUnavailableError, without asking Asana, while a 402 in the task's
+// workspace still hides time tracking (plan.go); after that it asks again, and a list read
+// forgets the 402.
 func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	if s.API == nil {
 		return ErrOffline
 	}
-	if err := s.planAvailable(ctx, readmodel.PlanTimeTracking); err != nil {
+	ws, err := s.Store.TaskWorkspace(ctx, taskGID)
+	if err != nil {
 		return err
+	}
+	unavailable := &readmodel.PlanUnavailableError{Feature: readmodel.PlanTimeTracking}
+	if hidden, err := s.planHidden(ctx, readmodel.PlanTimeTracking, ws); err != nil || hidden {
+		if err != nil {
+			return err
+		}
+		return unavailable
 	}
 	if localgid.IsLocal(taskGID) {
 		return nil // created offline; nothing on the server yet
@@ -30,33 +40,19 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	// Entries Asana creates after this (an add sent meanwhile) are newer than the list.
 	from := s.serverNow().Add(-clockSkew)
 	entries, err := s.API.TimeEntries(ctx, taskGID)
-	if model.IsPaymentRequired(err) {
-		return s.planRefused(ctx, readmodel.PlanTimeTracking)
+	if refused, recErr := s.recordPlanRefusal(ctx, readmodel.PlanTimeTracking, ws, err); refused || recErr != nil {
+		if recErr != nil {
+			return recErr
+		}
+		return unavailable
 	}
 	if err != nil {
+		return err
+	}
+	if err := s.clearPlanRefusal(ctx, readmodel.PlanTimeTracking, ws); err != nil {
 		return err
 	}
 	return s.Store.ReplaceTimeEntries(ctx, taskGID, entries, from)
-}
-
-// planAvailable returns a *readmodel.PlanUnavailableError if Asana refused feature before.
-func (s *Syncer) planAvailable(ctx context.Context, feature string) error {
-	v, err := s.Store.SyncState(ctx, readmodel.KeyPlanUnavailable+feature)
-	if err != nil {
-		return err
-	}
-	if v != "" {
-		return &readmodel.PlanUnavailableError{Feature: feature}
-	}
-	return nil
-}
-
-// planRefused records that Asana refused feature (402) and returns the error that says so.
-func (s *Syncer) planRefused(ctx context.Context, feature string) error {
-	if err := s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00")); err != nil {
-		return err
-	}
-	return &readmodel.PlanUnavailableError{Feature: feature}
 }
 
 func timeEntryValues(op outbox.Op) (minutes int, enteredOn string) {
