@@ -79,7 +79,7 @@ func TestGuardBody(t *testing.T) {
 	pre := "asagao-realcheck-1"
 	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"},
 		CustomFields: []string{"5000005"}, TimeEntries: []string{"6000006"}, Allocations: []string{"7000007"},
-		ProjectTemplates: []string{"8000008"}}
+		ProjectTemplates: []string{"8000008"}, Goals: []string{"9100001"}, Portfolios: []string{"9200002"}}
 	named := func(n string, kv ...any) M {
 		d := M{"name": n}
 		for i := 0; i+1 < len(kv); i += 2 {
@@ -103,6 +103,10 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/projects/1000001/saveAsTemplate", named(pre+"-t", "public", false)},
 		{"POST", "/projects/1000001/duplicate", named(pre + "-d")},
 		{"POST", "/project_templates/8000008/instantiateProject", named(pre + "-p")},
+		{"POST", "/goals", named(pre+"-g", "workspace", TestWorkspace, "team", TestTeam)},
+		{"POST", "/goals/9100001/setMetric", M{"data": M{"metric_type": "number"}}},
+		{"POST", "/portfolios", named(pre+"-pf", "workspace", TestWorkspace, "public", false)},
+		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "1000001"}}},
 	}
 	for _, a := range allowed {
 		if err := c.guardBody(a.m, a.p, a.b); err != nil {
@@ -128,7 +132,13 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/projects/1000001/duplicate", named("copy")},
 		{"POST", "/project_templates/9999999/instantiateProject", named(pre + "-p")},
 		{"POST", "/task_templates/1/instantiateTask", named(pre + "-x")},
-		{"DELETE", "/tasks/2000002", nil}, // deletes go through guardWrite
+		{"DELETE", "/tasks/2000002", nil},                               // deletes go through guardWrite
+		{"POST", "/goals", named(pre+"-g", "workspace", TestWorkspace)}, // workspace-level goal
+		{"POST", "/goals", named("Revenue", "workspace", TestWorkspace, "team", TestTeam)},
+		{"POST", "/goals/9999999/setMetric", M{"data": M{}}},
+		{"POST", "/portfolios", named(pre+"-pf", "workspace", TestWorkspace)},    // public not false
+		{"POST", "/portfolios/9200002/addItem", M{"data": M{"item": "9999999"}}}, // not our project
+		{"POST", "/portfolios/9999999/addItem", M{"data": M{"item": "1000001"}}},
 	}
 	for _, r := range refused {
 		if err := c.guardBody(r.m, r.p, r.b); err == nil {

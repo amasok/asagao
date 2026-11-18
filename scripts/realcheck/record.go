@@ -23,6 +23,8 @@ type Created struct {
 	TimeEntries      []string
 	Allocations      []string
 	ProjectTemplates []string
+	Goals            []string
+	Portfolios       []string
 }
 
 func (c *Created) add(list *[]string, gid string) {
@@ -57,6 +59,10 @@ func (c *Created) guardWrite(method, path string, fields []string) error {
 			list = c.Allocations
 		case "project_templates":
 			list = c.ProjectTemplates
+		case "goals":
+			list = c.Goals
+		case "portfolios":
+			list = c.Portfolios
 		}
 		if slices.Contains(list, parts[1]) {
 			return nil
@@ -246,6 +252,8 @@ func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	del("time_tracking_entries", c.TimeEntries)
 	del("allocations", c.Allocations)
 	del("project_templates", c.ProjectTemplates)
+	del("portfolios", c.Portfolios)
+	del("goals", c.Goals)
 	del("projects", c.Projects)
 	return left
 }
@@ -282,6 +290,14 @@ func (c *Created) guardBody(method, path string, body M) error {
 		ok = ours(c.Projects, 1)
 	case method == "POST" && len(parts) == 3 && parts[0] == "projects" && (parts[2] == "saveAsTemplate" || parts[2] == "duplicate"):
 		ok = ours(c.Projects, 1) && prefixed && data["public"] != true
+	case method == "POST" && path == "/goals":
+		ok = data["workspace"] == TestWorkspace && data["team"] == TestTeam && prefixed
+	case method == "POST" && len(parts) == 3 && parts[0] == "goals" && parts[2] == "setMetric":
+		ok = ours(c.Goals, 1)
+	case method == "POST" && path == "/portfolios":
+		ok = data["workspace"] == TestWorkspace && data["public"] == false && prefixed
+	case method == "POST" && len(parts) == 3 && parts[0] == "portfolios" && (parts[2] == "addItem" || parts[2] == "removeItem"):
+		ok = ours(c.Portfolios, 1) && slices.Contains(c.Projects, fmt.Sprint(data["item"]))
 	case method == "POST" && len(parts) == 3 && parts[0] == "project_templates" && parts[2] == "instantiateProject":
 		ok = ours(c.ProjectTemplates, 1) && prefixed && data["public"] != true
 	}

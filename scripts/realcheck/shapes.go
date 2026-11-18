@@ -184,8 +184,30 @@ func (c *Check) shapes(templates bool) {
 	// #7 goals, portfolios, time periods; #6 allocations
 	s.get("goals", "/goals", "workspace="+TestWorkspace, "opt_fields=name,owner.name,status,due_on,start_on,time_period.display_name,current_status_update.title,metric.current_display_value,metric.target_value,metric.unit,metric.progress_source,html_notes,team.name,is_workspace_level,liked,num_likes")
 	s.get("goal-404", "/goals/1")
+	goalFields := "opt_fields=name,owner.name,status,due_on,start_on,time_period.display_name,current_status_update.title,metric,metric.current_display_value,metric.target_value,metric.unit,metric.progress_source,html_notes,notes,team.name,workspace.gid,is_workspace_level,liked,num_likes,followers.name"
+	goal := s.write("goal-create", "POST", "/goals", M{"data": M{"name": pre + "-goal", "workspace": TestWorkspace, "team": c.team,
+		"owner": c.Me, "due_on": "2030-06-30", "start_on": "2030-01-01", "notes": "dummy goal"}})
+	if gg := str(goal, "data", "gid"); gg != "" {
+		c.Made.add(&c.Made.Goals, gg)
+		s.get("goal", "/goals/"+gg, goalFields)
+		s.write("goal-set-metric", "POST", "/goals/"+gg+"/setMetric", M{"data": M{"metric_type": "number", "unit": "none", "precision": 0,
+			"initial_number_value": 0, "target_number_value": 10, "progress_source": "manual"}})
+		s.get("goal-with-metric", "/goals/"+gg, goalFields)
+		s.get("goals-one", "/goals", "workspace="+TestWorkspace, "team="+c.team, goalFields)
+		s.del("goal-delete", "/goals/"+gg)
+	}
 	s.get("portfolios", "/portfolios", "workspace="+TestWorkspace, "owner="+c.Me, "opt_fields=name,owner.name,color,current_status_update.title,current_status_update.status_type,due_on,start_on,permalink_url")
 	s.get("portfolio-404", "/portfolios/1")
+	pf := s.write("portfolio-create", "POST", "/portfolios", M{"data": M{"name": pre + "-portfolio", "workspace": TestWorkspace, "public": false, "color": "light-green"}})
+	if pg := str(pf, "data", "gid"); pg != "" {
+		c.Made.add(&c.Made.Portfolios, pg)
+		s.write("portfolio-add-item", "POST", "/portfolios/"+pg+"/addItem", M{"data": M{"item": c.p}})
+		s.get("portfolio", "/portfolios/"+pg, "opt_fields=name,owner.name,color,current_status_update.title,current_status_update.status_type,due_on,start_on,permalink_url,public,members.name,workspace.gid")
+		s.get("portfolio-items", "/portfolios/"+pg+"/items", "opt_fields=name,resource_type,current_status_update.status_type,due_on,owner.name")
+		s.get("portfolios-one", "/portfolios", "workspace="+TestWorkspace, "owner="+c.Me, "opt_fields=name,owner.name,color,current_status_update.title,current_status_update.status_type,due_on,start_on,permalink_url")
+		s.write("portfolio-remove-item", "POST", "/portfolios/"+pg+"/removeItem", M{"data": M{"item": c.p}})
+		s.del("portfolio-delete", "/portfolios/"+pg)
+	}
 	s.get("time-periods", "/time_periods", "workspace="+TestWorkspace, "opt_fields=display_name,start_on,end_on,period,parent")
 	alFields := "opt_fields=start_date,end_date,effort,assignee.name,parent.name,resource_subtype"
 	s.get("allocations-empty", "/allocations", "assignee="+c.Me, "workspace="+TestWorkspace, alFields)
