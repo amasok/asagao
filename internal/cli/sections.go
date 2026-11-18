@@ -186,12 +186,12 @@ func (a *app) tagRmCmd() *cobra.Command {
 				return err
 			}
 			if !yes && !a.dryRun {
-				return fmt.Errorf("タグ「%s」を削除します（付いているタスク %d 件から外れます）。Asana でも取り消せません。よろしければ --yes を付けて実行してください（--dry-run で確かめられます）", t.Name, t.Total)
+				return fmt.Errorf("タグ「%s」を削除します（このキャッシュにあるタスクでは %d 件から外れます）。Asana でも取り消せません。よろしければ --yes を付けて実行してください（--dry-run で確かめられます）", t.Name, t.Total)
 			}
 			if err := tags.DeleteHere(ctx, t.GID); err != nil {
 				return err
 			}
-			return a.reportWrite(cmd, st, writeResult{}, fmt.Sprintf("タグを削除しました: %s（%d 件のタスクから外しました）", t.Name, t.Total))
+			return a.reportWrite(cmd, st, writeResult{}, fmt.Sprintf("タグを削除しました: %s（キャッシュにあるタスク %d 件から外しました）", t.Name, t.Total))
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "確認なしで削除する")

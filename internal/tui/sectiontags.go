@@ -202,7 +202,7 @@ func (m *Model) openTagActions(t readmodel.TagCount) {
 	m.picker = &picker{kind: pickTagAction, title: "#" + t.Name, items: []pickerItem{
 		{label: "名前を変える", value: "rename"},
 		{label: "色を変える", value: "color"},
-		{label: "削除する", value: "delete", hint: fmt.Sprintf("%d 件のタスクから外れます", t.Total)},
+		{label: "削除する", value: "delete", hint: fmt.Sprintf("キャッシュにあるタスク %d 件から外れます", t.Total)},
 	}}
 }
 
@@ -234,7 +234,7 @@ func (m *Model) deleteTag(t readmodel.TagCount) tea.Cmd {
 		if err := tags.DeleteHere(m.ctx, t.GID); err != nil {
 			return writeDoneMsg{err: err}
 		}
-		return writeDoneMsg{status: fmt.Sprintf("タグを削除しました: #%s（%d 件のタスクから外しました）", t.Name, t.Total)}
+		return writeDoneMsg{status: fmt.Sprintf("タグを削除しました: #%s（キャッシュにあるタスク %d 件から外しました）", t.Name, t.Total)}
 	}
 }
 
@@ -263,7 +263,7 @@ func (m *Model) handleSectionTagPicker(p *picker, item pickerItem) (tea.Cmd, boo
 			m.openTagColors(t)
 		case "delete":
 			m.picker = &picker{kind: pickDeleteTag,
-				title: fmt.Sprintf("タグ「%s」を削除しますか？（%d 件のタスクから外れます。Asana でも元に戻せません）", t.Name, t.Total),
+				title: fmt.Sprintf("タグ「%s」を削除しますか？（キャッシュにあるタスク %d 件から外れます。Asana でも元に戻せません）", t.Name, t.Total),
 				items: []pickerItem{{label: "やめる"}, {label: "削除する", value: t.GID}}}
 		}
 		return nil, true

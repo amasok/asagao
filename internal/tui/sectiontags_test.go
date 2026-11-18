@@ -62,7 +62,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 	if _, gid, name := h.m.sectionHere(); name != "保留" || !store.IsLocalGID(gid) {
 		t.Fatalf("on %q (%s), want the new section", name, gid)
 	}
-	h.key("space", "O")
+	h.key("space", "H")
 	if h.m.picker == nil || !strings.Contains(h.m.picker.title, "保留") {
 		t.Fatalf("no confirmation: %+v", h.m.picker)
 	}
@@ -70,7 +70,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 	if got := opKindsOf(h); len(got) != 1 {
 		t.Fatalf("cancelled, but ops = %v", got)
 	}
-	h.key("space", "O", "j", "enter")
+	h.key("space", "H", "j", "enter")
 	if got := opKindsOf(h); len(got) != 0 {
 		t.Fatalf("ops = %v, want none (created and deleted offline)", got)
 	}
@@ -85,7 +85,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 func TestTUIMoveSectionAndRefuseNonEmpty(t *testing.T) {
 	st := fixtureStore(t)
 	h := openProjectList(t, st)
-	h.key("space", "O", "j", "enter")
+	h.key("space", "H", "j", "enter")
 	if got := opKindsOf(h); len(got) != 0 || !strings.Contains(h.m.status, "タスクが残って") {
 		t.Fatalf("ops = %v, status %q", got, h.m.status)
 	}

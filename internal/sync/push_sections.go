@@ -64,11 +64,11 @@ func (s *Syncer) realSection(ctx context.Context, gid string) (string, error) {
 // answer is lost, reconcile takes a new section with the name as ours.
 func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, error) {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
+	secs, err := s.API.Sections(ctx, str("project"))
+	if err != nil {
+		return sent, err
+	}
 	if _, ok := op.Payload["existing"]; !ok {
-		secs, err := s.API.Sections(ctx, str("project"))
-		if err != nil {
-			return sent, err
-		}
 		existing := []string{}
 		for _, sec := range secs {
 			if sec.Name == str("name") {
@@ -80,7 +80,6 @@ func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 		}
 	}
 	var before, after string
-	var err error
 	for _, a := range []struct {
 		key string
 		dst *string
@@ -92,6 +91,9 @@ func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 			*a.dst = "" // the section next to it was never created: put it last
 		} else if err != nil {
 			return sent, err
+		}
+		if !slices.ContainsFunc(secs, func(sec model.Section) bool { return sec.GID == *a.dst }) {
+			*a.dst = "" // deleted in Asana meanwhile: put it last rather than fail the create
 		}
 	}
 	created, err := s.API.CreateSection(ctx, str("project"), str("name"), before, after)

@@ -115,7 +115,7 @@ func (m *Model) actions() []action {
 		{id: "new_section", key: "n", group: groupProject, label: "セクションを追加（このセクションの後）", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).startNewSection},
 		{id: "section_up", key: "K", group: groupProject, label: "セクションを上（左）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(-1) }},
 		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
-		{id: "delete_section", key: "O", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
+		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},

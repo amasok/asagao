@@ -225,11 +225,8 @@ func (s *Store) DeleteSectionLocal(ctx context.Context, sectionGID string, now t
 		if _, err := tx.ExecContext(ctx, "DELETE FROM sections WHERE gid = ?", sectionGID); err != nil {
 			return err
 		}
-		// A rename or move of a section that is deleted anyway need not be sent.
-		if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE task_gid = ? AND kind IN (?, ?) AND state = 'pending' AND verify = 0",
-			sectionGID, OpRenameSection, OpInsertSection); err != nil {
-			return err
-		}
+		// Its unsent rename and moves stay queued (sent before the delete), so that
+		// discarding the delete leaves them as they were.
 		return saveOp(ctx, tx, &Op{Kind: OpDeleteSection, TaskGID: sectionGID, State: OpPending, CreatedAt: formatTime(now),
 			Payload: map[string]any{"project": projectGID, "name": name, "position": position}})
 	})

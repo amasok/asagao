@@ -60,6 +60,12 @@ func (f *sectionServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		f.next++
 		sec := asana.Section{GID: fmt.Sprintf("sec%d", f.next), Name: str("name")}
 		at := len(f.sections)
+		for _, k := range []string{"insert_before", "insert_after"} {
+			if str(k) != "" && index(str(k)) < 0 {
+				notFound() // Asana refuses a section that is not there
+				return
+			}
+		}
 		if i := index(str("insert_before")); i >= 0 {
 			at = i
 		} else if i := index(str("insert_after")); i >= 0 {
@@ -314,9 +320,9 @@ func TestPushDeleteAndReorderSections(t *testing.T) {
 	if err := st.DeleteSectionLocal(ctx, "s2", now); err != nil {
 		t.Fatal(err)
 	}
-	// The move of a section deleted anyway is not sent.
+	// The move stays queued before the delete (discarding the delete keeps it).
 	ops, _ := st.ListOps(ctx)
-	if len(ops) != 1 || ops[0].Kind != store.OpDeleteSection {
+	if len(ops) != 2 || ops[0].Kind != store.OpInsertSection || ops[1].Kind != store.OpDeleteSection {
 		t.Fatalf("ops = %+v", ops)
 	}
 	// Last section: refused.
@@ -324,7 +330,7 @@ func TestPushDeleteAndReorderSections(t *testing.T) {
 		t.Fatal("deleting the last section: no error")
 	}
 	res, err := s.Push(ctx)
-	if err != nil || res.Sent != 1 {
+	if err != nil || res.Sent != 2 {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
 	if got := f.sectionNames(); !slices.Equal(got, []string{"Todo"}) {
@@ -503,5 +509,56 @@ func TestPushPaymentRequiredHidesFeature(t *testing.T) {
 	// Tags are another feature: still offered.
 	if !(&app.Tags{Store: st}).Available(ctx) {
 		t.Error("tags hidden by a 402 on sections")
+	}
+}
+
+// A new section placed next to one deleted in Asana meanwhile is created last instead of
+// failing (and taking the moves into it along).
+func TestPushCreateSectionAnchorGone(t *testing.T) {
+	f, s, st := setupSections(t)
+	ctx := context.Background()
+	gid, err := st.CreateSectionLocal(ctx, "p1", "レビュー", "", "s2", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MoveTaskLocal(ctx, "t1", "p1", gid, now); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.sections = f.sections[:1] // Done (s2) deleted by someone else
+	f.mu.Unlock()
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 2 || res.Failed != 0 {
+		t.Fatalf("push = %+v, %v (calls %v)", res, err, f.calls)
+	}
+	if f.count(`POST /projects/p1/sections {"data":{"name":"レビュー"}}`) != 1 {
+		t.Errorf("created with the gone anchor: %v", f.calls)
+	}
+	if got := f.sectionNames(); !slices.Equal(got, []string{"Todo", "レビュー"}) {
+		t.Errorf("server sections = %v", got)
+	}
+	if f.taskSec["t1"] != f.sections[1].GID {
+		t.Errorf("t1 not moved into the new section: %q", f.taskSec["t1"])
+	}
+}
+
+// Discarding a section delete keeps the rename queued before it.
+func TestDiscardDeleteSectionKeepsRename(t *testing.T) {
+	_, _, st := setupSections(t)
+	ctx := context.Background()
+	if err := st.RenameSectionLocal(ctx, "s2", "完了", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteSectionLocal(ctx, "s2", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DiscardOp(ctx, opByKind(t, st, store.OpDeleteSection).ID); err != nil {
+		t.Fatal(err)
+	}
+	if op := opByKind(t, st, store.OpRenameSection); op.Payload["name"] != "完了" {
+		t.Fatalf("rename = %+v", op)
+	}
+	if name, err := st.SectionName(ctx, "s2"); err != nil || name != "完了" {
+		t.Errorf("s2 = %q, %v", name, err)
 	}
 }
