@@ -81,18 +81,30 @@ func (s *Store) UpdateProjectBriefLocal(ctx context.Context, projectGID string, 
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
 		next := cachedBrief{state: BriefNone}
-		if e.Delete {
+		baseState := briefStr(op.Base, "state")
+		switch {
+		case e.Delete:
 			op.Payload = map[string]any{"delete": true}
-		} else {
+		case baseState != BriefAvailable: // a new brief: all of it
 			op.Payload = map[string]any{"title": e.Title, "html_text": e.HTMLText, "text": e.Text}
+		default: // only what differs from the base, so that a change of the other part in
+			// Asana is kept (and is no conflict)
+			op.Payload = map[string]any{}
+			if e.Title != briefStr(op.Base, "title") {
+				op.Payload["title"] = e.Title
+			}
+			if e.HTMLText != briefStr(op.Base, "html_text") {
+				op.Payload["html_text"], op.Payload["text"] = e.HTMLText, e.Text
+			}
+		}
+		if !e.Delete {
 			next = cachedBrief{state: BriefAvailable, title: e.Title, text: e.Text, html: e.HTMLText}
 		}
 		if err := writeBrief(ctx, tx, projectGID, next); err != nil {
 			return err
 		}
-		baseState := briefStr(op.Base, "state")
 		reverted := e.Delete && baseState != BriefAvailable || // made here and deleted again
-			!e.Delete && baseState == BriefAvailable && briefStr(op.Base, "title") == e.Title && briefStr(op.Base, "html_text") == e.HTMLText
+			len(op.Payload) == 0 // changed back to the base
 		if reverted { // nothing left to send: the brief as it was
 			if err := undoBriefOp(ctx, tx, op); err != nil {
 				return err
@@ -149,15 +161,28 @@ func reapplyBriefEditsBut(ctx context.Context, tx *sql.Tx, projectGID string, ex
 	if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
 		return err
 	}
-	return writeBrief(ctx, tx, projectGID, briefOfPayload(p))
+	cur, err := readBrief(ctx, tx, projectGID)
+	if err != nil {
+		return err
+	}
+	return writeBrief(ctx, tx, projectGID, briefWith(cur, p))
 }
 
-// briefOfPayload is the brief an entry's payload makes.
-func briefOfPayload(p map[string]any) cachedBrief {
+// briefWith is brief cur with an entry's payload applied: deleted, or its title and body
+// where the payload has them (a change of only one keeps the other as cur has it).
+func briefWith(cur cachedBrief, p map[string]any) cachedBrief {
 	if p["delete"] == true {
 		return cachedBrief{state: BriefNone}
 	}
-	return cachedBrief{state: BriefAvailable, title: briefStr(p, "title"), text: briefStr(p, "text"), html: briefStr(p, "html_text")}
+	b := cur
+	b.state = BriefAvailable
+	if v, ok := p["title"].(string); ok {
+		b.title = v
+	}
+	if v, ok := p["html_text"].(string); ok {
+		b.html, b.text = v, briefStr(p, "text")
+	}
+	return b
 }
 
 // undoBriefOp puts back the brief as it was before a discarded entry, with the project's

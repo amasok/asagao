@@ -70,7 +70,7 @@ type AsanaAPI interface {
 	Project(ctx context.Context, gid string) (*model.Project, error)
 	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
 	CreateProjectBrief(ctx context.Context, projectGID, title, htmlText string) (*model.ProjectBrief, error)
-	UpdateProjectBrief(ctx context.Context, briefGID, title, htmlText string) (*model.ProjectBrief, error)
+	UpdateProjectBrief(ctx context.Context, briefGID string, changes map[string]any) (*model.ProjectBrief, error)
 	DeleteProjectBrief(ctx context.Context, briefGID string) error
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
 	RemoveDependencies(ctx context.Context, taskGID string, deps []string) error

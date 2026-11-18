@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,10 +19,11 @@ import (
 )
 
 // briefServer is Asana with one project (p1, in workspace w1) and its brief (#60).
-// Assumed of the preview API (not documented, checked on the real one later): GET
-// /projects/{gid} with opt_fields=project_brief gives {"gid"} or null; POST answers the new
-// brief with its gid; PUT takes title and html_text and answers the brief; DELETE answers
-// {"data":{}}; text is the brief's plain text.
+// As the real preview API answered (#60 realcheck): GET /projects/{gid} with
+// opt_fields=project_brief gives {"gid"} or null; POST answers the new brief with its gid
+// (400 when the project has one); PUT takes title and/or html_text, leaves what it is not
+// given, and answers the brief; DELETE answers {"data":{}}; a brief that is not there is
+// 403; text is the brief's plain text.
 type briefServer struct {
 	t  *testing.T
 	mu gosync.Mutex
@@ -31,6 +33,8 @@ type briefServer struct {
 	bodies                 map[string][]map[string]any
 	calls                  map[string]int
 	nextGID                int
+	goneStatus             int  // the status for a brief that is not there (0: 403, as Asana)
+	gidAfterGet            bool // the brief is deleted (by someone else) right after it is read
 }
 
 func (b *briefServer) briefJSON() string {
@@ -83,19 +87,28 @@ func (b *briefServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"data":%s}`, b.briefJSON())
 	case b.gid != "" && key == "GET "+path:
 		fmt.Fprintf(w, `{"data":%s}`, b.briefJSON())
+		if b.gidAfterGet {
+			b.gid, b.title, b.text, b.html = "", "", "", ""
+		}
 	case b.gid != "" && key == "PUT "+path:
 		if _, both := body.Data["text"]; both {
 			b.t.Errorf("text sent with html_text: %v", body.Data)
 		}
-		b.title, b.html = str("title"), str("html_text")
-		b.text = plainOf(b.html)
+		if _, ok := body.Data["title"]; ok {
+			b.title = str("title")
+		}
+		if _, ok := body.Data["html_text"]; ok {
+			b.html = str("html_text")
+			b.text = plainOf(b.html)
+		}
 		fmt.Fprintf(w, `{"data":%s}`, b.briefJSON())
 	case b.gid != "" && key == "DELETE "+path:
 		b.gid, b.title, b.text, b.html = "", "", "", ""
 		fmt.Fprint(w, `{"data":{}}`)
 	case r.Method != "POST" && len(r.URL.Path) > len("/project_briefs/") && r.URL.Path[:len("/project_briefs/")] == "/project_briefs/":
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `{"errors":[{"message":"not found"}]}`)
+		// a brief that is not there: Asana answers 403, not 404 (checked on the real one)
+		w.WriteHeader(cmp.Or(b.goneStatus, http.StatusForbidden))
+		fmt.Fprint(w, `{"errors":[{"message":"You do not have access to this project_brief."}]}`)
 	default:
 		b.t.Errorf("unexpected request %s %s", r.Method, r.URL)
 		w.WriteHeader(http.StatusTeapot)
@@ -445,5 +458,64 @@ func TestPushCreateBriefNotSentSameTitleConflicts(t *testing.T) {
 	bs.gid, bs.title, bs.text, bs.html = "b5", "目的", "あちら", "<body>あちら</body>"
 	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
 		t.Fatalf("push = %+v %v", res, err)
+	}
+}
+
+// Both sides changed the body: a conflict, never an overwrite of Asana's change (found on
+// the real Asana, #60). A title changed here and a body changed there are both kept: only
+// the title is sent.
+func TestPushBriefBodyChangedBothSides(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "目的", "年内")
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "こちらで"), now); err != nil {
+		t.Fatal(err)
+	}
+	bs.text, bs.html = "あちらで", "<body>あちらで</body>"
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 || bs.text != "あちらで" {
+		t.Fatalf("push = %+v %v text=%q", res, err, bs.text)
+	}
+
+	bs2, s2, st2 := setupBrief(t, "目的", "年内")
+	e := store.BriefEdit{Title: "計画", HTMLText: "<body>年内</body>", Text: "年内"} // only the title
+	if err := st2.UpdateProjectBriefLocal(ctx, "p1", e, now); err != nil {
+		t.Fatal(err)
+	}
+	if ops := briefOps(t, st2); len(ops) != 1 || ops[0].Payload["html_text"] != nil {
+		t.Fatalf("payload = %+v", ops[0].Payload)
+	}
+	bs2.text, bs2.html = "あちらで", "<body>あちらで</body>"
+	if res, err := s2.Push(ctx); err != nil || res.Sent != 1 || bs2.title != "計画" || bs2.text != "あちらで" {
+		t.Fatalf("title only: %+v %v %+v", res, err, bs2)
+	}
+	if body := bs2.bodies["PUT /project_briefs/b1"]; len(body) != 1 || body[0]["html_text"] != nil {
+		t.Fatalf("put = %+v", body)
+	}
+	if o, _ := st2.ProjectOverview(ctx, "p1"); o.Brief == nil || o.Brief.Title != "計画" || o.Brief.Text != "あちらで" {
+		t.Fatalf("cache = %+v", o.Brief)
+	}
+	// a title changed on both sides is a conflict
+	bs3, s3, st3 := setupBrief(t, "目的", "年内")
+	_ = st3.UpdateProjectBriefLocal(ctx, "p1", store.BriefEdit{Title: "こちら", HTMLText: "<body>年内</body>", Text: "年内"}, now)
+	bs3.title = "あちら"
+	if res, err := s3.Push(ctx); err != nil || res.Conflicts != 1 || bs3.title != "あちら" {
+		t.Fatalf("title both: %+v %v", res, err)
+	}
+}
+
+// A brief deleted meanwhile answers 403 (not 404) to PUT and DELETE: found by the project
+// no longer having it, it is a conflict (PUT) or done (DELETE), not a refusal.
+func TestPushBriefGoneAnswers403(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "目的", "年内")
+	_ = st.UpdateProjectBriefLocal(ctx, "p1", store.BriefEdit{Delete: true}, now)
+	// deleted there between the GET and the DELETE: simulate by deleting on the first GET
+	bs.status["DELETE /project_briefs/b1"] = http.StatusForbidden
+	bs.gidAfterGet = true
+	res, err := s.Push(ctx)
+	if err != nil || res.Sent != 1 || res.Failed != 0 {
+		t.Fatalf("push = %+v %v", res, err)
+	}
+	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefNone {
+		t.Fatalf("state = %q", o.BriefState)
 	}
 }

@@ -332,6 +332,9 @@ func DescribeChange(op outbox.Op) string {
 		if state, _ := op.Base["state"].(string); state != BriefAvailable {
 			return fmt.Sprintf("ブリーフ「%s」の作成", clip(str("title"), 40))
 		}
+		if _, ok := op.Payload["title"]; !ok { // the body only
+			return "ブリーフの本文の変更"
+		}
 		return fmt.Sprintf("ブリーフ「%s」の変更", clip(str("title"), 40))
 	case outbox.KindUpdateProject:
 		var parts []string
@@ -476,10 +479,13 @@ func BriefConflictLines(op outbox.Op) []string {
 		return []string{"ブリーフ: こちら=" + local("title") + " / Asana=（ブリーフがありません。削除されています）"}
 	}
 	var lines []string
-	if op.Payload["delete"] == true || str(op.Payload, "title") != str(op.Conflict, "title") {
+	del := op.Payload["delete"] == true
+	_, title := op.Payload["title"] // a change sends only what it changes
+	_, text := op.Payload["text"]
+	if del || title && str(op.Payload, "title") != str(op.Conflict, "title") {
 		lines = append(lines, fmt.Sprintf("ブリーフのタイトル: こちら=%s / Asana=%s", local("title"), clip(str(op.Conflict, "title"), 60)))
 	}
-	if op.Payload["delete"] == true || str(op.Payload, "text") != str(op.Conflict, "text") {
+	if del || text && str(op.Payload, "text") != str(op.Conflict, "text") {
 		lines = append(lines, fmt.Sprintf("ブリーフ: こちら=%s / Asana=%s", local("text"), clip(str(op.Conflict, "text"), 60)))
 	}
 	if len(lines) == 0 {

@@ -536,11 +536,11 @@ func (c *Client) CreateProjectBrief(ctx context.Context, projectGID, title, html
 	return &b, err
 }
 
-// UpdateProjectBrief changes a brief's title and body (PUT /project_briefs/{gid}).
-func (c *Client) UpdateProjectBrief(ctx context.Context, briefGID, title, htmlText string) (*ProjectBrief, error) {
+// UpdateProjectBrief changes a brief's title and/or body (PUT /project_briefs/{gid}):
+// changes has "title", "html_text" or both; what it does not have is left as it is.
+func (c *Client) UpdateProjectBrief(ctx context.Context, briefGID string, changes map[string]any) (*ProjectBrief, error) {
 	var b ProjectBrief
-	_, err := c.do(ctx, http.MethodPut, "/project_briefs/"+url.PathEscape(briefGID), fields(briefFields),
-		map[string]any{"title": title, "html_text": htmlText}, &b)
+	_, err := c.do(ctx, http.MethodPut, "/project_briefs/"+url.PathEscape(briefGID), fields(briefFields), changes, &b)
 	return &b, err
 }
 

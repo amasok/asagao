@@ -23,7 +23,7 @@ func (s *Syncer) serverBrief(ctx context.Context, p *model.Project) (*model.Proj
 		return nil, nil
 	}
 	b, err := s.API.ProjectBrief(ctx, p.ProjectBrief.GID)
-	if isNotFound(err) {
+	if s.briefGone(ctx, p.GID, p.ProjectBrief.GID, err) {
 		return nil, nil // deleted meanwhile
 	}
 	if err != nil {
@@ -58,10 +58,12 @@ func sameBriefText(a, b string) bool {
 }
 
 // pushUpdateBrief sends a brief change, after checking that nobody changed the brief in
-// Asana since it was made here (its base): Asana's title or text differing from both the
-// base and this change, a brief made there while one was made here, or one deleted there
-// while it was changed here, is a conflict. A change Asana already has (it was sent before
-// and its answer lost, or someone made the same change) is done without sending it again.
+// Asana since it was made here (its base). A change sends only what it changes (the title,
+// the body, or both), and only that is compared: Asana's value of it differing from both
+// the base and this change is a conflict, and so are a brief made there while one was made
+// here and one deleted there while it was changed here (a delete conflicts with any change
+// there). A change Asana already has (it was sent before and its answer lost, or someone
+// made the same change) is done without sending it again.
 func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, error) {
 	p, err := s.API.Project(ctx, op.TaskGID)
 	if err != nil {
@@ -73,11 +75,11 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 	}
 	str := func(m map[string]any, k string) string { v, _ := m[k].(string); return v }
 	del := op.Payload["delete"] == true
-	title, htmlText, text := str(op.Payload, "title"), str(op.Payload, "html_text"), str(op.Payload, "text")
+	title, hasTitle := op.Payload["title"].(string)
+	htmlText, hasBody := op.Payload["html_text"].(string)
+	text := str(op.Payload, "text")
 	baseState := str(op.Base, "state")
-	same := func(title, text string) bool {
-		return server != nil && server.Title == title && sameBriefText(server.Text, text)
-	}
+	baseTitle, baseText := str(op.Base, "title"), str(op.Base, "text")
 	conflict := false
 	switch {
 	case server == nil && del: // deleted already (sent before, or deleted there too)
@@ -86,17 +88,20 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 		conflict = baseState == readmodel.BriefAvailable // deleted in Asana while changed here
 	case baseState != readmodel.BriefAvailable:
 		// made here, and Asana has one: this one (sent before, its answer lost), or one made
-		// there (or, before the brief was ever fetched, one that was there)
-		// Sent before and maybe made (its answer lost, a 5xx: op.Verify): the title is
-		// enough, since Asana may write the text of tables and lists otherwise than here.
-		if same(title, text) || op.Verify && server.Title == title {
+		// there (or, before the brief was ever fetched, one that was there). Sent before and
+		// maybe made (op.Verify), the title is enough: Asana may write the text of tables
+		// and lists otherwise than here.
+		if server.Title == title && (sameBriefText(server.Text, text) || op.Verify) {
 			return sent, sentNotSaved(s.Store.CompleteBriefOp(ctx, op.ID, op.TaskGID, server))
 		}
 		conflict = true
+	case del:
+		conflict = server.Title != baseTitle || !sameBriefText(server.Text, baseText)
 	default:
-		// changed there since the base, to something else than this change (a change that
-		// only looks the same is sent anyway: its formatting may differ)
-		conflict = !same(str(op.Base, "title"), str(op.Base, "text")) && (del || !same(title, text))
+		// a part changed there since the base, to something else than this change (a body
+		// that only looks the same is sent anyway: its formatting may differ)
+		conflict = hasTitle && server.Title != baseTitle && server.Title != title ||
+			hasBody && !sameBriefText(server.Text, baseText) && !sameBriefText(server.Text, text)
 	}
 	if conflict {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, briefValues(server))
@@ -105,14 +110,21 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 	switch {
 	case del:
 		err = s.API.DeleteProjectBrief(ctx, server.GID)
-		if isNotFound(err) {
+		if s.briefGone(ctx, op.TaskGID, server.GID, err) {
 			err = nil // deleted meanwhile: done
 		}
 	case server == nil:
 		result, err = s.API.CreateProjectBrief(ctx, op.TaskGID, title, htmlText)
 	default:
-		result, err = s.API.UpdateProjectBrief(ctx, server.GID, title, htmlText)
-		if isNotFound(err) { // deleted meanwhile: a conflict, checked again next time
+		changes := map[string]any{}
+		if hasTitle {
+			changes["title"] = title
+		}
+		if hasBody {
+			changes["html_text"] = htmlText
+		}
+		result, err = s.API.UpdateProjectBrief(ctx, server.GID, changes)
+		if s.briefGone(ctx, op.TaskGID, server.GID, err) { // deleted meanwhile: a conflict
 			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, briefValues(nil))
 		}
 	}
@@ -123,6 +135,21 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 		return sent, sentNotSaved(err)
 	}
 	return sent, sentNotSaved(s.Store.CompleteBriefOp(ctx, op.ID, op.TaskGID, result))
+}
+
+// briefGone reports whether a request for brief gid of a project failed because the brief
+// is no more: a 404, or the 403 Asana answers for a brief that does not exist (checked on
+// the real Asana: "You do not have access to this project_brief."), when the project no
+// longer has that brief.
+func (s *Syncer) briefGone(ctx context.Context, projectGID, gid string, err error) bool {
+	if isNotFound(err) {
+		return true
+	}
+	if !isForbidden(err) {
+		return false
+	}
+	p, perr := s.API.Project(ctx, projectGID)
+	return perr == nil && (p.ProjectBrief == nil || p.ProjectBrief.GID != gid)
 }
 
 // briefRefused reports whether err is Asana refusing the brief API: 402 (the workspace's
