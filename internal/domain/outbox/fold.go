@@ -12,7 +12,8 @@ import (
 //   - A field changed back to its base value leaves the payload (and the conflict): it is
 //     not sent.
 //   - Deciding an approval (approval_status) completes the task locally, so the base keeps
-//     completed too, which discarding the entry restores.
+//     completed too, which discarding the entry restores. So does a change of the type or
+//     of a custom type's status (#59), with the type, the custom type and its status.
 //   - A conflicted entry with no conflicting field left is pending again.
 //
 // It returns the entry, and deleteOp when nothing is left to send: then the entry is not
@@ -22,9 +23,22 @@ func Fold(op Op, cur, changes map[string]any) (Op, bool) {
 	op.Payload = cloneOrNew(op.Payload)
 	op.Base = cloneOrNew(op.Base)
 	op.Conflict = maps.Clone(op.Conflict)
+	keep := func(keys ...string) {
+		for _, k := range keys {
+			if _, ok := op.Base[k]; !ok {
+				op.Base[k] = cur[k]
+			}
+		}
+	}
 	if _, ok := changes["approval_status"]; ok {
-		if _, ok := op.Base["completed"]; !ok {
-			op.Base["completed"] = cur["completed"]
+		keep("completed")
+	}
+	for _, k := range []string{"resource_subtype", "custom_type", "custom_type_status_option"} {
+		if _, ok := changes[k]; ok {
+			// One of them changes the others locally (a type of another kind has no custom
+			// type; a status may complete the task): the base keeps them all.
+			keep("resource_subtype", "custom_type", "custom_type_status_option", "completed")
+			break
 		}
 	}
 	for k, v := range changes {
@@ -36,6 +50,13 @@ func Fold(op Op, cur, changes map[string]any) (Op, bool) {
 			delete(op.Conflict, k)
 		} else {
 			op.Payload[k] = v
+		}
+	}
+	if v, ok := op.Payload["resource_subtype"]; ok && v != "custom" {
+		// The task leaves its custom type: no custom type or status of it is sent.
+		for _, k := range []string{"custom_type", "custom_type_status_option"} {
+			delete(op.Payload, k)
+			delete(op.Conflict, k)
 		}
 	}
 	if op.State == StateConflict && len(op.Conflict) == 0 {

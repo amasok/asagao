@@ -16,7 +16,12 @@ func TestValidateFields(t *testing.T) {
 		{"name", map[string]any{"name": "買い物"}, ""},
 		{"every field", map[string]any{"completed": true, "name": "x", "notes": "", "html_notes": "<body></body>", "due_on": "", "assignee": "", "liked": false,
 			"resource_subtype": "approval", "approval_status": "approved"}, ""},
-		{"unknown field", map[string]any{"start_on": "2026-11-20"}, `unsupported field "start_on"`},
+		{"unknown field", map[string]any{"start_at": "2026-11-20T09:00:00Z"}, `unsupported field "start_at"`},
+		{"start_on", map[string]any{"start_on": "2026-11-20"}, ""},
+		{"start_on cleared", map[string]any{"start_on": ""}, ""},
+		{"start_on not a date", map[string]any{"start_on": "tomorrow"}, `start_on は YYYY-MM-DD で書いてください: "tomorrow"`},
+		{"due_on not a date", map[string]any{"due_on": "2026/11/20"}, `due_on は YYYY-MM-DD で書いてください: "2026/11/20"`},
+		{"start_on as nil", map[string]any{"start_on": nil}, "start_on must be string"},
 		{"completed as string", map[string]any{"completed": "true"}, "completed must be bool"},
 		{"liked as string", map[string]any{"liked": "yes"}, "liked must be bool"},
 		{"name as bool", map[string]any{"name": true}, "name must be string"},
@@ -26,7 +31,7 @@ func TestValidateFields(t *testing.T) {
 		{"empty name", map[string]any{"name": ""}, "タスク名が空です"},
 		{"every subtype", map[string]any{"resource_subtype": "milestone"}, ""},
 		{"default subtype", map[string]any{"resource_subtype": "default_task"}, ""},
-		{"unknown subtype", map[string]any{"resource_subtype": "section"}, `タスクの種類は default_task / milestone / approval のどれかです: "section"`},
+		{"unknown subtype", map[string]any{"resource_subtype": "section"}, `タスクの種類は default_task / milestone / approval / custom のどれかです: "section"`},
 		{"label is not a subtype", map[string]any{"resource_subtype": "承認"}, "タスクの種類は"},
 		{"every approval status", map[string]any{"approval_status": "changes_requested"}, ""},
 		{"unknown approval status", map[string]any{"approval_status": "done"}, `承認の状態は pending / approved / rejected / changes_requested のどれかです: "done"`},
@@ -69,6 +74,27 @@ func TestCheckApproval(t *testing.T) {
 		}
 		if err != nil && !strings.Contains(err.Error(), "承認タスクではないため") {
 			t.Errorf("CheckApproval(%q, %v) = %v", tc.subtype, tc.changes, err)
+		}
+	}
+}
+
+func TestCheckDates(t *testing.T) {
+	for _, tc := range []struct {
+		start, due string
+		cleared    bool
+		want       string // "" for none
+	}{
+		{"", "", false, ""},
+		{"", "", true, ""},
+		{"2026-11-01", "2026-11-01", false, ""},
+		{"2026-11-01", "2026-11-30", false, ""},
+		{"2026-11-02", "2026-11-01", false, "開始日 (2026-11-02) が期日 (2026-11-01) より後です"},
+		{"2026-11-01", "", false, "開始日を付けるには期日も必要です"},
+		{"2026-11-01", "", true, "期日だけを消すことはできません"},
+	} {
+		err := CheckDates(tc.start, tc.due, tc.cleared)
+		if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("CheckDates(%q, %q, %v) = %v, want %q", tc.start, tc.due, tc.cleared, err, tc.want)
 		}
 	}
 }

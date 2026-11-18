@@ -32,6 +32,9 @@ type Client struct {
 	AuthHint string
 	// plainTasks: Asana refused the optional task fields; request tasks without them.
 	plainTasks atomic.Bool
+	// noCustomTypes: Asana refused the custom task type fields (#59) but not the other
+	// optional ones; request tasks without those only.
+	noCustomTypes atomic.Bool
 	// sleep is replaced in tests.
 	sleep func(context.Context, time.Duration) error
 	// clockOffset is Asana's clock minus ours in nanoseconds, from the Date header of the

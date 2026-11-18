@@ -32,6 +32,9 @@ func realMain() int {
 	bin := flag.String("bin", filepath.Join(home, "asagao-test", "bin", "asagao-realcheck"), "asagao built from this branch")
 	out := flag.String("out", "", "write the report (Markdown) here as well (default: the run directory)")
 	probe := flag.Bool("probe", false, "only read: probe the paid features")
+	briefF := flag.Bool("brief", false, "check project briefs (#60) instead of the outbox kinds")
+	dates := flag.Bool("dates", false, "check the start date of tasks (#57) instead of the outbox kinds")
+	features := flag.Bool("features", false, "check the features of #2, #6, #7, #36 and #37 instead of the outbox kinds")
 	colors := flag.Bool("colors", false, "only probe the color names (a tag and a project of the run)")
 	shapesF := flag.Bool("shapes", false, "also save the raw responses of the paid features (in the run directory)")
 	templates := flag.Bool("templates", false, "with -shapes: also save a project template from the check project and instantiate it")
@@ -53,7 +56,7 @@ func realMain() int {
 
 	rep := &Report{}
 	r := &Runner{Env: env, Pause: *pause, Log: os.Stderr}
-	c := &Check{R: r, Rep: rep, Made: &Created{Prefix: "asagao-realcheck-" + runID}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors}
+	c := &Check{R: r, Rep: rep, Made: &Created{Prefix: "asagao-realcheck-" + runID}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF}
 	go func() {
 		// The first Ctrl-C stops the steps and cleanup runs; a second one leaves at once
 		// and says what is left in Asana.
@@ -120,9 +123,16 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 		c.syncClean("片付けのあとの同期")
 		code = rep.exitCode()
 	}()
-	if c.ColorsOnly {
+	switch {
+	case c.ColorsOnly:
 		c.colorNames()
-	} else {
+	case c.Features:
+		c.features()
+	case c.Dates:
+		c.dates()
+	case c.Brief:
+		c.brief()
+	default:
 		c.writes()
 	}
 	return rep.exitCode()
@@ -148,7 +158,7 @@ type Check struct {
 	tag      string
 	cf       map[string]string // custom fields made for the run, by type
 
-	Shapes, Templates, ColorsOnly bool // -shapes, -templates, -colors
+	Shapes, Templates, ColorsOnly, Features, Dates, Brief bool // -shapes, -templates, -colors, -features, -dates, -brief
 }
 
 func (c *Check) group(name string) { c.Rep.group(name) }

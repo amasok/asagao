@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/imageview"
@@ -233,6 +234,12 @@ type Model struct {
 	calMonth time.Time // month of calTasks
 	calTasks map[string][]readmodel.TaskSummary
 
+	// timeline (timeline.go)
+	timeline bool
+	tlStart  time.Time // first day shown (zero: a week before today)
+	tlDayW   int       // columns per day (0: the default)
+	tlFollow string    // the task the timeline last scrolled to
+
 	// projects (projects.go)
 	statusView         bool
 	statusOffset       int
@@ -261,7 +268,8 @@ type Model struct {
 	leader         bool                    // space was pressed: the menu is open
 	menuPage       int                     // the page of the menu shown, when it is too high for the screen
 	renderedActive bool                    // the detail was last rendered with selectable items
-	dueTask        readmodel.TaskSummary   // task for promptDue
+	dueTask        readmodel.TaskSummary   // task for promptDue and promptStart
+	startOffered   bool                    // the detail's task can be given a start date (startdate.go)
 	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
 	marked         map[string]bool         // gids of the tasks marked in the list (bulk.go)
 	bulkAsk        *bulkPlan               // a change to the marked tasks waiting for y/n
@@ -341,7 +349,9 @@ type (
 		gid string
 		d   *readmodel.TaskDetail
 		me  string // the logged-in user ("" before the first sync)
-		err error
+		// startOffered: the start date can be set (no recent 402 for it in the workspace)
+		startOffered bool
+		err          error
 	}
 	detailDebounceMsg struct{ gid string }
 	detailFetchedMsg  struct {
@@ -425,7 +435,8 @@ func (m *Model) loadDetail(gid string) tea.Cmd {
 	return func() tea.Msg {
 		d, err := queryOf(st).GetTask(m.ctx, gid)
 		me, _ := queryOf(st).MeGID(m.ctx) // whose comments can be changed
-		return detailLoadedMsg{gid: gid, d: d, me: me, err: err}
+		offered := err == nil && app.StartDateOffered(m.ctx, st, gid, m.deps.Now())
+		return detailLoadedMsg{gid: gid, d: d, me: me, startOffered: offered, err: err}
 	}
 }
 
@@ -521,6 +532,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateOverview(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateBrief(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateGoals(msg); ok {
 		return m, cmd
 	}
@@ -603,7 +617,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			keepScroll := m.detail != nil && m.detail.GID == msg.gid
-			m.detail, m.detailMe = msg.d, msg.me
+			m.detail, m.detailMe, m.startOffered = msg.d, msg.me, msg.startOffered
 			m.placeCursorAfterLoad(keepScroll)
 			m.refreshDetailView()
 			m.detailCursor = clamp(m.detailCursor, 0, len(m.detailItems)-1)
@@ -766,13 +780,18 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.search.Focus()
 	case "esc", "backspace", "q":
 		return m, m.back(key)
-	case "tab":
-		if !m.zoom {
+	case "tab", "shift+tab":
+		switch {
+		case m.zoom:
+		case m.timelineActive(): // no detail pane next to the timeline
+			if m.focus == paneSidebar {
+				m.focus = paneList
+			} else {
+				m.focus = paneSidebar
+			}
+		case key == "tab":
 			m.focus = (m.focus + 1) % 3
-		}
-		return m, nil
-	case "shift+tab":
-		if !m.zoom {
+		default:
 			m.focus = (m.focus + 2) % 3
 		}
 		return m, nil
@@ -803,6 +822,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ctxCalendar:
 		return m.handleCalendarKey(key)
 	case ctxList:
+		if m.timelineActive() {
+			if cmd, ok := m.handleTimelineKey(key); ok {
+				return m, cmd
+			}
+		}
 		half := max(1, m.listHeight()/2)
 		switch key {
 		case "j", "down":

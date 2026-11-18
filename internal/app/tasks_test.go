@@ -23,8 +23,9 @@ type fakeStore struct {
 	sections   map[string]string // projectGID+"/"+arg -> gid
 	first      map[string]string // projectGID -> first section gid
 	workspace  string
-	users      map[string]string // arg -> gid ("" resolves to "")
-	knownTags  map[string]string // name -> gid
+	users      map[string]string  // arg -> gid ("" resolves to "")
+	knownTags  map[string]string  // name -> gid
+	kind       readmodel.TaskKind // TaskKind of every task
 	createErr  error
 	applyErr   error
 	created    []task.NewTask

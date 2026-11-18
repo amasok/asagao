@@ -12,6 +12,7 @@ type Store interface {
 	app.CommentStore
 	app.StatusStore
 	app.ProjectStore
+	app.BriefStore
 	app.RelationStore
 	app.ProjectFieldStore
 	app.SectionStore

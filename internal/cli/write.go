@@ -26,7 +26,8 @@ import (
 type writeResult struct {
 	TaskGID   string `json:"task_gid,omitempty"`
 	CommentID string `json:"comment_gid,omitempty"`
-	// TimeEntryID is the time tracking entry `time add` recorded (a local gid until sent).
+	// TimeEntryID is the time tracking entry `time add` recorded (its real gid once sent,
+	// a local one until then).
 	TimeEntryID string `json:"time_entry_gid,omitempty"`
 	// SectionGID is the section `section create` made (its Asana gid once sent).
 	SectionGID string           `json:"section_gid,omitempty"`
@@ -128,6 +129,13 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 			r.SectionGID = real
 		}
 	}
+	// A sent time entry has its real gid, as add_time_entry gives it (found on the real
+	// Asana, #31): the local one can not be used with `time edit` / `time delete`.
+	if localgid.IsLocal(r.TimeEntryID) {
+		if real, waiting, err := st.LocalResult(cmd.Context(), readmodel.ResultTimeEntry, r.TimeEntryID); err == nil && real != "" && !waiting {
+			r.TimeEntryID = real
+		}
+	}
 	if a.json {
 		return a.printJSON(r)
 	}
@@ -179,8 +187,8 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 
 // createOpts are the flags of `task create`.
 type createOpts struct {
-	name, project, section, due, assignee, notes, parent string
-	tags                                                 []string
+	name, project, section, due, start, assignee, notes, parent string
+	tags                                                        []string
 	// names looks an assignee or (with --quick) a tag the cache lacks up in Asana (nil:
 	// the cache only).
 	names usecase.NameFinder
@@ -192,11 +200,15 @@ func createTask(ctx context.Context, st Store, o createOpts, now time.Time) (str
 	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: o.names}
 	gid, err := tasks.Create(ctx, usecase.CreateTaskInput{
 		Name: o.name, Parent: o.parent, Project: o.project, Section: o.section,
-		Due: o.due, Assignee: o.assignee, Notes: o.notes, Tags: o.tags,
+		Due: o.due, Start: o.start, Assignee: o.assignee, Notes: o.notes, Tags: o.tags,
 	})
 	var fe *usecase.FieldError
 	if errors.As(err, &fe) {
-		return "", fmt.Errorf("--%s: %w", fe.Field, fe.Err) // the field names are the flag names
+		flag := fe.Field // the field names are the flag names, but for the start date
+		if flag == "start_on" {
+			flag = "start"
+		}
+		return "", fmt.Errorf("--%s: %w", flag, fe.Err)
 	}
 	return gid, err
 }
@@ -293,6 +305,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&o.project, "project", "", "プロジェクト（gid または名前）")
 	cmd.Flags().StringVar(&o.section, "section", "", "セクション（gid または名前。省略時は先頭のセクション）")
 	cmd.Flags().StringVar(&o.due, "due", "", "期日（YYYY-MM-DD / today / tomorrow / +Nd）")
+	cmd.Flags().StringVar(&o.start, "start", "", "開始日（--due と一緒に。期日より後にはできません。有料プランの機能）")
 	cmd.Flags().StringVar(&o.assignee, "assignee", "", `担当者（"me"・"none"・ユーザーの gid か名前。プロジェクト未指定なら me）`)
 	cmd.Flags().StringVar(&o.notes, "notes", "", "説明（マークダウン）")
 	cmd.Flags().StringVar(&o.parent, "parent", "", "親タスクの gid（サブタスクとして作成）")
@@ -486,14 +499,28 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 	depend.Flags().StringSlice("add-dependent", nil, "このタスクを待つタスク（gid）を追加")
 	depend.Flags().StringSlice("remove-dependent", nil, "このタスクを待つタスク（gid）を外す")
 
-	kind := a.writeCommand("type <gid> <task|milestone|approval>", "タスクの種類を変える（タスク / マイルストーン / 承認）", cobra.ExactArgs(2),
+	kind := a.writeCommand("type <gid> <task|milestone|approval|カスタムタイプ名>", "タスクの種類を変える（タスク / マイルストーン / 承認 / プロジェクトのカスタムタイプ）", cobra.ExactArgs(2),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			tasks := taskUseCases(st)
-			u, err := tasks.ResolveUpdate(cmd.Context(), usecase.UpdateTaskInput{Subtype: &args[1]})
+			u, err := tasks.ResolveUpdateFor(cmd.Context(), args[0], usecase.UpdateTaskInput{Subtype: &args[1]})
 			if err != nil {
 				return "", "", fieldErr(err)
 			}
-			return args[0], "種類を「" + task.SubtypeLabel(*u.Subtype) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
+			label := task.SubtypeLabel(*u.Subtype)
+			if u.CustomType != nil {
+				label = u.CustomTypeName
+			}
+			return args[0], "種類を「" + label + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
+		})
+
+	status := a.writeCommand("status <gid> <ステータス>", "カスタムタイプのタスクのステータスを変える（task show で選べるものが出ます）", cobra.ExactArgs(2),
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+			tasks := taskUseCases(st)
+			u, err := tasks.ResolveUpdateFor(cmd.Context(), args[0], usecase.UpdateTaskInput{CustomTypeStatus: &args[1]})
+			if err != nil {
+				return "", "", fieldErr(err)
+			}
+			return args[0], "ステータスを「" + u.CustomTypeStatusName + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
 
 	approve := a.writeCommand("approve <gid> [approved|rejected|changes_requested|pending]", "承認タスクの承認の状態を変える（省略時は承認）", cobra.RangeArgs(1, 2),
@@ -516,7 +543,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			}
 			return args[0], "承認の状態を「" + task.ApprovalLabel(*u.Approval) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
-	return []*cobra.Command{like, follow, project, duplicate, attach, detach, field, depend, kind, approve}
+	return []*cobra.Command{like, follow, project, duplicate, attach, detach, field, depend, kind, status, approve, a.taskStartCmd()}
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {
@@ -868,4 +895,41 @@ func (a *app) resolve(ctx context.Context, st Store, out io.Writer, id int64, ac
 		}
 	}
 	return fmt.Sprintf("#%d を取り消しました", id), nil
+}
+
+// taskStartCmd is `task start`: the start date of a task, with its due date if --due says.
+func (a *app) taskStartCmd() *cobra.Command {
+	cmd := a.writeCommand(`start <gid> <日付|"">`, `開始日を設定する（"" で外す。期日が必要で、期日より後にはできません）`, cobra.ExactArgs(2),
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+			in := usecase.UpdateTaskInput{Start: &args[1]}
+			if cmd.Flags().Changed("due") {
+				due, _ := cmd.Flags().GetString("due")
+				in.Due = &due
+			}
+			tasks := taskUseCases(st)
+			u, err := tasks.Update(cmd.Context(), args[0], in)
+			if err != nil {
+				if fe := (*usecase.FieldError)(nil); errors.As(err, &fe) && fe.Field != "due" {
+					return "", "", fe.Err // the positional date
+				}
+				return "", "", flagErr(err, map[string]string{"due": "due"})
+			}
+			msg := "開始日を " + *u.Start + " にしました"
+			if *u.Start == "" {
+				msg = "開始日を外しました"
+			}
+			if u.Due != nil {
+				if *u.Due == "" {
+					msg += "（期日も外しました）"
+				} else {
+					msg += "（期日 " + *u.Due + "）"
+				}
+			}
+			return args[0], msg, nil
+		})
+	cmd.Flags().String("due", "", `期日も一緒に変える（YYYY-MM-DD / today / +Nd、"" で外す）`)
+	cmd.Example = `  asagao task start 1203455468597469 2026-12-01
+  asagao task start 1203455468597469 today --due +7d
+  asagao task start 1203455468597469 ""          # 開始日を外す`
+	return cmd
 }

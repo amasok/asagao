@@ -313,8 +313,8 @@ func TestRunWithoutOptionalTaskFields(t *testing.T) {
 		if _, err := s.Run(ctx, false); err != nil {
 			t.Fatalf("%d: sync stopped: %v", status, err)
 		}
-		if refused != 1 {
-			t.Errorf("%d: the optional fields were requested %d times (want once, then left out)", status, refused)
+		if refused != 2 { // with every field, then without the custom type fields only (#59)
+			t.Errorf("%d: the optional fields were requested %d times (want twice, then left out)", status, refused)
 		}
 		for _, gid := range []string{"t1", "t1a", "t2"} {
 			if _, err := st.GetTask(ctx, gid); err != nil {

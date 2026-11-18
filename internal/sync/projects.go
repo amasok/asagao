@@ -183,7 +183,8 @@ func (s *Syncer) pushStatus(ctx context.Context, op outbox.Op) error {
 // FetchProjectOverview refreshes what a project's overview shows that a sync does not
 // fetch: the project itself (its notes, owner and dates), how many of its tasks are done,
 // and its brief. The brief is a preview API that Asana may refuse (402 on some plans, or
-// 403): it is then recorded as unavailable and not shown. Whatever was fetched is stored
+// 403): it is then recorded as unavailable and not shown, and the workspace is marked so
+// that it is not asked for there for a while (brief.go). Whatever was fetched is stored
 // even if a later request fails; the error is the first failure.
 func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) error {
 	if s.API == nil {
@@ -203,15 +204,25 @@ func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) er
 	}
 	state := readmodel.BriefNone
 	var brief *model.ProjectBrief
-	if p.ProjectBrief != nil && p.ProjectBrief.GID != "" {
-		brief, err = s.API.ProjectBrief(ctx, p.ProjectBrief.GID)
+	hidden, err := s.briefHidden(ctx, projectGID)
+	if err != nil {
+		return err
+	}
+	switch {
+	case hidden: // refused lately in this workspace: not asked again for a while (brief.go)
+		state = readmodel.BriefUnavailable
+	case p.ProjectBrief != nil && p.ProjectBrief.GID != "":
+		brief, err = s.serverBrief(ctx, p)
 		switch {
+		case err == nil && brief == nil: // deleted meanwhile
 		case err == nil:
 			state = readmodel.BriefAvailable
-		case model.IsPaymentRequired(err) || isForbidden(err):
+			if err := s.clearBriefRefusal(ctx, projectGID); err != nil {
+				return err
+			}
+		case briefRefused(err):
 			state, brief = readmodel.BriefUnavailable, nil
-		case isNotFound(err):
-			brief = nil
+			_ = s.briefRefusal(ctx, projectGID, err) // 402: for the workspace; 403: this project
 		default:
 			state, brief = "", nil // keep the cached brief
 			if fail == nil {

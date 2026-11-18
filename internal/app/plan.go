@@ -21,3 +21,17 @@ func planOffered(ctx context.Context, st interface {
 	}
 	return nil
 }
+
+// StartDateOffered reports whether a start date can be set on task gid at now: unless a
+// recent 402 hides start dates in its workspace (readmodel.PlanStartOn). A task whose
+// workspace cannot be read is offered them (the store checks again when one is set).
+func StartDateOffered(ctx context.Context, st interface {
+	SyncState(ctx context.Context, key string) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
+}, gid string, now time.Time) bool {
+	ws, err := st.TaskWorkspace(ctx, gid)
+	if err != nil {
+		return true
+	}
+	return !IsPlanUnavailable(planOffered(ctx, st, readmodel.PlanStartOn, ws, now))
+}

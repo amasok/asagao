@@ -5,15 +5,21 @@ import (
 	"strings"
 )
 
-// Task types (resource_subtype) and approval statuses that can be set.
+// Task types (resource_subtype) that can be chosen by name, and approval statuses. A task
+// of a custom task type (#59) has SubtypeCustom: it is set with the type (CustomType), so
+// it is not one of Subtypes.
 var (
 	Subtypes         = []string{"default_task", "milestone", "approval"}
 	ApprovalStatuses = []string{"pending", "approved", "rejected", "changes_requested"}
 )
 
-// SubtypeLabel is the Japanese name of a task type (resource_subtype).
+// SubtypeCustom is the resource_subtype of a task of a custom task type.
+const SubtypeCustom = "custom"
+
+// SubtypeLabel is the Japanese name of a task type (resource_subtype). A custom task type
+// has its own name, which is shown instead where it is known.
 func SubtypeLabel(s string) string {
-	if l, ok := map[string]string{"default_task": "タスク", "milestone": "マイルストーン", "approval": "承認"}[s]; ok {
+	if l, ok := map[string]string{"default_task": "タスク", "milestone": "マイルストーン", "approval": "承認", SubtypeCustom: "カスタムタイプ"}[s]; ok {
 		return l
 	}
 	return s

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/task"
 )
 
 type MembershipView struct {
@@ -37,6 +38,10 @@ type TaskSummary struct {
 	NumLikes int  `json:"num_likes"`
 	// ApprovalStatus of an approval task: pending, approved, rejected or changes_requested.
 	ApprovalStatus string `json:"approval_status,omitempty"`
+	// CustomType and CustomTypeStatus are the custom task type and its status of a task
+	// whose ResourceSubtype is "custom" (#59); nil for the other tasks, or when not known.
+	CustomType       *CustomTypeRef        `json:"custom_type,omitempty"`
+	CustomTypeStatus *CustomTypeStatusView `json:"custom_type_status,omitempty"`
 	// MySection is the section of My Tasks the task is in (tasks assigned to me; nil when
 	// unknown).
 	MySection *SectionView `json:"my_section,omitempty"`
@@ -75,6 +80,9 @@ type TaskDetail struct {
 	Stories     []StoryView      `json:"stories"`
 	Attachments []AttachmentView `json:"attachments"`
 	Followers   []UserRef        `json:"followers"`
+	// CustomTypes are the custom task types the task's projects offer (#59), to choose its
+	// type and status from.
+	CustomTypes []CustomTypeView `json:"custom_types,omitempty"`
 	// Dependencies are the tasks this task waits for; Dependents the tasks waiting for it.
 	Dependencies []DependencyView `json:"dependencies"`
 	Dependents   []DependencyView `json:"dependents"`
@@ -198,4 +206,35 @@ type DeletePlan struct {
 	Queued int `json:"queued"`
 	// Local: the task was never sent to Asana, so it is removed at once and nothing is queued.
 	Local bool `json:"local"`
+}
+
+// CustomTypeRef is a custom task type (#59) by gid and name.
+type CustomTypeRef struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+}
+
+// CustomTypeStatusView is a status of a custom task type. Complete: a task in it is done.
+type CustomTypeStatusView struct {
+	GID      string `json:"gid"`
+	Name     string `json:"name"`
+	Color    string `json:"color,omitempty"`
+	Complete bool   `json:"complete,omitempty"`
+}
+
+// CustomTypeView is a custom task type a project offers, with the statuses that can be
+// chosen.
+type CustomTypeView struct {
+	GID      string                 `json:"gid"`
+	Name     string                 `json:"name"`
+	Statuses []CustomTypeStatusView `json:"statuses"`
+}
+
+// KindLabel is a task's type as it is shown: the name of its custom type, if it has one,
+// else the Japanese name of its resource_subtype.
+func KindLabel(t TaskSummary) string {
+	if t.ResourceSubtype == "custom" && t.CustomType != nil && t.CustomType.Name != "" {
+		return t.CustomType.Name
+	}
+	return task.SubtypeLabel(t.ResourceSubtype)
 }

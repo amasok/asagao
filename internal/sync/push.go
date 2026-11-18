@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
@@ -364,6 +365,14 @@ func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 		return false, err // offline, cancelled or logged out: keep the rest for later
 	case isNotFound(err): // what it changes was deleted in Asana
 		return false, s.dropGone(ctx, op, err, drops)
+	case errors.As(err, new(*customTypeWithdrawn)): // Asana did not take the custom type (#59)
+		var w *customTypeWithdrawn
+		errors.As(err, &w)
+		return s.withdrawCustomType(ctx, op, w, res)
+	case errors.As(err, new(*startOnWithdrawn)): // the plan or the due date does not allow the start date
+		var w *startOnWithdrawn
+		errors.As(err, &w)
+		return s.withdrawStartOn(ctx, op, w, res)
 	default:
 		verify, ferr := s.handleError(ctx, op, err)
 		if ferr != nil {
@@ -414,7 +423,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 		}
 	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
 		return false, nil
 	case outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return s.waitsForTag(ctx, op.TaskGID)
@@ -438,6 +447,16 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
 // workspace's plan lacks the feature (402) also hides that feature from now on.
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
+	_, withStart := op.Payload["start_on"]
+	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)
+	var startWS string
+	if withStart {
+		// before sending: a create gives the task its Asana gid
+		var err error
+		if startWS, err = s.Store.TaskWorkspace(ctx, op.TaskGID); err != nil {
+			withStart = false // not in the cache: nothing to record the plan for
+		}
+	}
 	out, err := s.sendOp(ctx, op)
 	if isForbidden(err) {
 		err = s.fieldForbidden(ctx, op, err)
@@ -457,16 +476,70 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 		return out, err
 	}
+	if withStart && !errors.As(err, new(*customTypeWithdrawn)) {
+		// A 402 to an entry with a custom type takes out the custom type first (#59),
+		// the more likely cause: the start date is tried again with the rest.
+		return out, s.startOnOutcome(ctx, startWS, op, out, err)
+	}
 	if model.IsPaymentRequired(err) {
 		if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanTimeTracking {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
 				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
 			}
-		} else if feature != "" {
+		} else if feature != "" && feature != readmodel.PlanProjectBrief { // the brief's is per workspace (brief.go)
 			_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
 		}
 	}
 	return out, err
+}
+
+// startOnOutcome records what sending a task's start date (an update or create with
+// start_on) to workspace ws said about its plan: a 402 hides start dates there for a while
+// (readmodel.PlanStartOn), and the error says why; an answer that set one forgets an
+// earlier 402. err is returned, wrapped when it is a 402.
+func (s *Syncer) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
+	if err == nil {
+		if v, _ := op.Payload["start_on"].(string); v != "" && out != conflicted {
+			// Sent: a failure to forget the 402 only hides start dates until it expires.
+			_ = s.clearPlanRefusal(ctx, readmodel.PlanStartOn, ws)
+		}
+		return nil
+	}
+	if refused, rerr := s.recordPlanRefusal(ctx, readmodel.PlanStartOn, ws, err); rerr != nil {
+		return errors.Join(err, rerr)
+	} else if refused {
+		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(readmodel.PlanStartOn), err: err}
+	}
+	return err
+}
+
+// startOnWithdrawn says that an entry's start date cannot be sent (Asana answered 402,
+// or the task's due date in Asana no longer allows it) and why: the start date is taken
+// out of the entry and the rest sent again (handleOutcome, withdrawStartOn).
+type startOnWithdrawn struct {
+	reason string
+	err    error // Asana's answer (nil when nothing was sent)
+}
+
+func (e *startOnWithdrawn) Error() string {
+	if e.err == nil {
+		return e.reason
+	}
+	return e.reason + ": " + e.err.Error()
+}
+func (e *startOnWithdrawn) Unwrap() error { return e.err }
+
+// withdrawStartOn handles a start date that cannot be sent without making the user
+// decide: the start date is dropped (and reported in res.Discarded, with the reason), and
+// the rest of the entry, if any, is sent again right away. Asana did not apply the
+// request (a 402, or it was not sent), so sending the rest again repeats nothing.
+func (s *Syncer) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
+	rest, d, err := s.Store.WithdrawStartOn(ctx, op.ID, w.reason, s.clock())
+	if err != nil {
+		return false, err
+	}
+	res.Discarded = append(res.Discarded, d)
+	return rest != nil, nil
 }
 
 func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
@@ -492,6 +565,8 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushMoveMySection(ctx, op)
 	case outbox.KindUpdateProject:
 		return s.pushUpdateProject(ctx, op)
+	case outbox.KindUpdateProjectBrief:
+		return s.pushUpdateBrief(ctx, op)
 	case outbox.KindCreateEnumOption:
 		return s.pushCreateEnumOption(ctx, op)
 	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
@@ -639,7 +714,7 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		}
 	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}
@@ -796,8 +871,22 @@ func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	if conflicts := updateConflicts(op, server); conflicts != nil {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
-	t, err := s.API.UpdateTask(ctx, op.TaskGID, apiFields(op.Payload))
+	if reason := startOnBlocked(op.Payload, server); reason != "" {
+		return sent, &startOnWithdrawn{reason: reason}
+	}
+	fields := withDue(taskUpdateFields(op), server)
+	if len(fields) == 0 { // only cleared a start date Asana does not have
+		if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+			return sent, sentNotSaved(err)
+		}
+		return sent, nil
+	}
+	t, err := s.API.UpdateTask(ctx, op.TaskGID, fields)
 	if err != nil {
+		return sent, s.customTypeRefused(ctx, op, err)
+	}
+	if err := customTypeApplied(op, t); err != nil {
+		s.refresh(ctx, *t) // the rest was applied: show Asana's task
 		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
@@ -841,6 +930,60 @@ func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, er
 	}
 	s.refresh(ctx, *t)
 	return sent, nil
+}
+
+// serverDueDay is the day a task is due in Asana: due_on, or the local day of due_at.
+func serverDueDay(t *model.Task) string {
+	if t.DueOn != "" {
+		return t.DueOn
+	}
+	if t.DueAt != nil && !t.DueAt.IsZero() {
+		return t.DueAt.Local().Format(time.DateOnly)
+	}
+	return ""
+}
+
+// startOnBlocked says why an update's start date cannot be sent when it keeps the due
+// date and the due date in Asana no longer allows it (removed, or moved before the start
+// date since the edit): Asana would refuse it with a 400. "" when it can be sent.
+func startOnBlocked(payload map[string]any, server *model.Task) string {
+	start, _ := payload["start_on"].(string)
+	if _, due := payload["due_on"]; start == "" || due {
+		return ""
+	}
+	switch due := serverDueDay(server); {
+	case due == "":
+		return fmt.Sprintf("Asana でこのタスクの期日が外されたため、開始日 (%s) を付けられませんでした", start)
+	case start > due:
+		return fmt.Sprintf("Asana でこのタスクの期日が %s になり、開始日 (%s) が期日より後になるため付けられませんでした", due, start)
+	}
+	return ""
+}
+
+// withDue adds the task's due date in Asana to an update that sets or clears the start
+// date without changing the due date: Asana requires one of due_on / due_at in such a
+// request. The server's value is sent as it is, so the due date does not change.
+func withDue(fields map[string]any, server *model.Task) map[string]any {
+	if _, ok := fields["start_on"]; !ok {
+		return fields
+	}
+	if _, ok := fields["due_on"]; ok {
+		return fields
+	}
+	if _, ok := fields["due_at"]; ok {
+		return fields
+	}
+	switch {
+	case server.DueAt != nil && !server.DueAt.IsZero():
+		fields["due_at"] = server.DueAt.UTC().Format(time.RFC3339)
+	case server.DueOn != "":
+		fields["due_on"] = server.DueOn
+	case fields["start_on"] == nil && server.StartOn == "":
+		delete(fields, "start_on") // clearing a start date Asana does not have: nothing to send
+	default:
+		fields["due_on"] = nil
+	}
+	return fields
 }
 
 // updateConflicts compares an update with the task in Asana: the server's values of the
@@ -920,6 +1063,9 @@ func (s *Syncer) pushCreate(ctx context.Context, op outbox.Op) (outcome, error) 
 	delete(fields, "section")
 	delete(fields, "project")
 	delete(fields, "parent")
+	if fields["start_on"] == nil {
+		delete(fields, "start_on") // cleared before it was sent: nothing to unset, and Asana wants a due date with it
+	}
 	if project != "" {
 		fields["projects"] = []string{project}
 	}
@@ -1296,7 +1442,7 @@ func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 	return nil
 }
 
-// apiFields converts outbox values to Asana's: "" clears due_on / assignee.
+// apiFields converts outbox values to Asana's: "" clears due_on / start_on / assignee.
 func apiFields(payload map[string]any) map[string]any {
 	out := make(map[string]any, len(payload))
 	if _, rich := payload["html_notes"]; rich {
@@ -1304,7 +1450,7 @@ func apiFields(payload map[string]any) map[string]any {
 		delete(payload, "notes") // Asana derives the plain notes from html_notes
 	}
 	for k, v := range payload {
-		if slices.Contains([]string{"due_on", "assignee"}, k) && v == "" {
+		if slices.Contains([]string{"due_on", "start_on", "assignee"}, k) && v == "" {
 			out[k] = nil
 			continue
 		}

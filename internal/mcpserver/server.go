@@ -101,6 +101,7 @@ func (s *Server) New() *mcp.Server {
 		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_project", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		Description: "Get a project: its description (Markdown), owner, start and due dates, color, progress (task counts), brief, sections, members and its status updates (Markdown, newest first)."}, s.getProject)
+	s.addBriefTools(srv)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_my_sections", Annotations: readOnly,
 		Description: "List the sections of my My Tasks list (e.g. Today / This week / Later), in order. " +
 			"Tasks show theirs as my_section; move_task with my_tasks=true moves between them."}, s.listMySections)
@@ -136,7 +137,7 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_task", Annotations: write(true),
 			Description: "Update a task: complete/reopen it, rename it, change its description (Markdown), due date, " +
 				"assignee, tags, followers, likes, custom fields, dependencies (tasks it waits for / that wait for it), " +
-				"its type (milestone / approval), an approval's status, or the projects it is in. Only the fields you pass are changed. " +
+				"its type (milestone / approval / a custom type of its projects), an approval's status, a custom type's status, or the projects it is in. Only the fields you pass are changed. " +
 				"Use an empty string to clear due_on or assignee."}, s.updateTask)
 		mcp.AddTool(srv, &mcp.Tool{Name: "move_task", Annotations: write(false),
 			Description: "Move a task to another section of its project (e.g. from \"Ready\" to \"Done\"), " +
@@ -159,6 +160,7 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
 			Description: "Create a project in a team (needs Asana to be reachable)."}, s.createProject)
 		s.addTemplateWriteTools(srv, write)
+		s.addBriefWriteTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_project", Annotations: write(true),
 			Description: "Change a project's description (Markdown), owner, start / due dates or color (queued, sent now if Asana is reachable); " +
 				"archive / unarchive it or add / remove its members (needs Asana to be reachable). Ask before archiving."}, s.updateProject)
@@ -287,6 +289,7 @@ type CreateTaskInput struct {
 	Project  string   `json:"project,omitempty" jsonschema:"project gid or name; omit to create in My Tasks"`
 	Section  string   `json:"section,omitempty" jsonschema:"section gid or exact name (default: first section)"`
 	DueOn    string   `json:"due_on,omitempty" jsonschema:"due date (YYYY-MM-DD, today, tomorrow, +7d)"`
+	StartOn  string   `json:"start_on,omitempty" jsonschema:"start date (YYYY-MM-DD, today, +7d); needs due_on and must not be after it (paid plans)"`
 	Assignee string   `json:"assignee,omitempty" jsonschema:"\"me\", \"none\", a user gid or name (default: me when no project)"`
 	Notes    string   `json:"notes,omitempty" jsonschema:"description in Markdown (headings, **bold**, lists, links); converted to Asana rich text"`
 	Tags     []string `json:"tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids"`
@@ -297,7 +300,8 @@ type UpdateTaskInput struct {
 	Completed          *bool          `json:"completed,omitempty" jsonschema:"true to complete, false to reopen"`
 	Name               *string        `json:"name,omitempty" jsonschema:"new name"`
 	Notes              *string        `json:"notes,omitempty" jsonschema:"new description in Markdown, replacing the old one (keep ![画像](asana:<gid>) lines to keep images)"`
-	DueOn              *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear"`
+	DueOn              *string        `json:"due_on,omitempty" jsonschema:"new due date (YYYY-MM-DD, today, tomorrow, +7d), or empty string to clear (clear start_on too if the task has one)"`
+	StartOn            *string        `json:"start_on,omitempty" jsonschema:"new start date (YYYY-MM-DD, today, +7d), or empty string to clear; the task needs a due date (now or in due_on) on or after it (paid plans)"`
 	Assignee           *string        `json:"assignee,omitempty" jsonschema:"\"me\", a user gid or name (see list_users), or empty string to unassign"`
 	AddTags            []string       `json:"add_tags,omitempty" jsonschema:"tag names (created if they do not exist) or gids to add"`
 	RemoveTags         []string       `json:"remove_tags,omitempty" jsonschema:"tag names or gids to remove"`
@@ -306,7 +310,9 @@ type UpdateTaskInput struct {
 	RemoveFollowers    []string       `json:"remove_followers,omitempty" jsonschema:"\"me\", user names or gids to remove from followers"`
 	AddProjects        []string       `json:"add_projects,omitempty" jsonschema:"project names or gids to also put the task in (first section)"`
 	RemoveProjects     []string       `json:"remove_projects,omitempty" jsonschema:"project names or gids to take the task out of"`
-	ResourceSubtype    *string        `json:"resource_subtype,omitempty" jsonschema:"task type: default_task, milestone or approval"`
+	ResourceSubtype    *string        `json:"resource_subtype,omitempty" jsonschema:"task type: default_task, milestone or approval, or the name of a custom type (see get_task custom_types)"`
+	CustomType         *string        `json:"custom_type,omitempty" jsonschema:"custom task type, by name or gid, of those get_task lists in custom_types (sets resource_subtype to custom)"`
+	CustomTypeStatus   *string        `json:"custom_type_status,omitempty" jsonschema:"status of the task's custom type (or of custom_type, if given), by name or gid"`
 	ApprovalStatus     *string        `json:"approval_status,omitempty" jsonschema:"for an approval task: pending, approved, rejected or changes_requested"`
 	AddDependencies    []string       `json:"add_dependencies,omitempty" jsonschema:"gids of tasks this task should wait for (be blocked by)"`
 	RemoveDependencies []string       `json:"remove_dependencies,omitempty" jsonschema:"gids of tasks this task should stop waiting for"`
@@ -598,12 +604,15 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now, Names: finder{s}}
 	gid, err := tasks.Create(ctx, app.CreateTaskInput{
 		Name: in.Name, Parent: in.Parent, Project: in.Project, Section: in.Section,
-		Due: in.DueOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
+		Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
 	})
 	var fe *app.FieldError
 	if errors.As(err, &fe) {
-		if fe.Field == "due" {
+		switch fe.Field {
+		case "due":
 			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", fe.Err)
+		case "start_on":
+			return nil, WriteOutput{}, fmt.Errorf("start_on: %w", fe.Err)
 		}
 		return nil, WriteOutput{}, fe.Err // the assignee's error is reported as the store gives it
 	}
@@ -618,9 +627,10 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
 	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: finder{s}}
-	changes, err := tasks.ResolveUpdate(ctx, app.UpdateTaskInput{
-		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Assignee: in.Assignee,
+	changes, err := tasks.ResolveUpdateFor(ctx, in.GID, app.UpdateTaskInput{
+		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee,
 		Subtype: in.ResourceSubtype, Approval: in.ApprovalStatus, Completed: in.Completed, Liked: in.Liked,
+		CustomType: in.CustomType, CustomTypeStatus: in.CustomTypeStatus,
 	})
 	if fe := (*app.FieldError)(nil); errors.As(err, &fe) {
 		switch fe.Field {
@@ -628,7 +638,9 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 			return nil, WriteOutput{}, fmt.Errorf("due_on: %w", fe.Err)
 		case "assignee":
 			return nil, WriteOutput{}, fe.Err // as the store says it
-		default: // resource_subtype, approval_status: the argument names
+		case "custom_type_status_option":
+			return nil, WriteOutput{}, fmt.Errorf("custom_type_status: %w", fe.Err)
+		default: // resource_subtype, approval_status, custom_type: the argument names
 			return nil, WriteOutput{}, fmt.Errorf("%s: %w", fe.Field, fe.Err)
 		}
 	}
@@ -944,7 +956,7 @@ type ProjectOutput struct {
 	Note                  string                       `json:"note,omitempty"`
 }
 
-// BriefOutput is a project's brief (read only).
+// BriefOutput is a project's brief (update_project_brief changes it).
 type BriefOutput struct {
 	Title    string `json:"title,omitempty"`
 	Markdown string `json:"markdown"`
@@ -981,7 +993,7 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 	out.Markdown = editableMarkdown(o.HTMLNotes, o.Notes)
 	out.Owner, out.StartOn, out.DueOn, out.Color, out.Counts, out.Pending = o.Owner, o.StartOn, o.DueOn, o.Color, o.Counts, o.Pending
 	if o.Brief != nil {
-		out.Brief = &BriefOutput{Title: o.Brief.Title, Markdown: editableMarkdown(o.Brief.HTMLText, o.Brief.Text)}
+		out.Brief = &BriefOutput{Title: o.Brief.Title, Markdown: briefMarkdown(o.Brief.HTMLText, o.Brief.Text)}
 	}
 	projects, err := s.query().ListProjects(ctx, false)
 	if err != nil {

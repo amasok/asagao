@@ -42,6 +42,7 @@ type AsanaAPI interface {
 	UserTaskList(ctx context.Context, userGID, workspaceGID string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
+	CustomTypes(ctx context.Context, projectGID string) ([]model.CustomType, error)
 	CustomField(ctx context.Context, gid string) (*model.CustomField, error)
 	WorkspaceCustomFields(ctx context.Context, workspaceGID string) ([]model.CustomField, error)
 	CreateEnumOption(ctx context.Context, fieldGID, name string) (*model.EnumOption, error)
@@ -69,6 +70,9 @@ type AsanaAPI interface {
 	Portfolios(ctx context.Context, workspaceGID string) ([]model.Portfolio, error)
 	Project(ctx context.Context, gid string) (*model.Project, error)
 	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
+	CreateProjectBrief(ctx context.Context, projectGID, title, htmlText string) (*model.ProjectBrief, error)
+	UpdateProjectBrief(ctx context.Context, briefGID string, changes map[string]any) (*model.ProjectBrief, error)
+	DeleteProjectBrief(ctx context.Context, briefGID string) error
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
 	RemoveDependencies(ctx context.Context, taskGID string, deps []string) error
 	RemoveFollowers(ctx context.Context, taskGID string, users []string) error
@@ -140,6 +144,9 @@ type LocalStore interface {
 	RemoveAttachmentFile(path string) error
 	CompleteCreate(ctx context.Context, id int64, local, real string, move *outbox.MoveTarget) error
 	CompleteOp(ctx context.Context, id int64) error
+	CompleteBriefOp(ctx context.Context, id int64, projectGID string, brief *model.ProjectBrief) error
+	// WithdrawCustomType takes a custom type Asana did not take out of an entry (#59).
+	WithdrawCustomType(ctx context.Context, id int64, reason string, applied bool, now time.Time) (*outbox.Op, readmodel.Discard, error)
 	CompleteStatus(ctx context.Context, id int64, local string, u model.StatusUpdate) error
 	CompleteUpload(ctx context.Context, id int64, local, real, viewURL string) error
 	CountAttempt(ctx context.Context, id int64, now time.Time) error
@@ -150,6 +157,8 @@ type LocalStore interface {
 	DeleteGoneTasks(ctx context.Context, gids []string) (int64, error)
 	DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]readmodel.Discard, error)
 	DiscardGoneOp(ctx context.Context, id int64, reason string, now time.Time) (readmodel.Discard, error)
+	// WithdrawStartOn takes a start date the plan lacks out of an entry (#57).
+	WithdrawStartOn(ctx context.Context, id int64, reason string, now time.Time) (*outbox.Op, readmodel.Discard, error)
 	DropNotificationMarks(ctx context.Context, also int64) (int, error)
 	FitQueuedRichText(ctx context.Context, fit func(target rich.Target, html string) (fitted, plain string, changed bool)) (int, error)
 	GetAttachment(ctx context.Context, gid string) (*readmodel.AttachmentView, error)
@@ -184,6 +193,7 @@ type LocalStore interface {
 	ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error
 	ReplacePortfolios(ctx context.Context, workspaceGID string, ps []model.Portfolio) error
 	ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error
+	ReplaceProjectCustomTypes(ctx context.Context, projectGID string, types []model.CustomType) error
 	ReplaceWorkspaceCustomFields(ctx context.Context, workspaceGID string, fields []model.CustomField) error
 	CompleteCreateEnumOption(ctx context.Context, id int64, local string, real model.EnumOption) error
 	EnumOptionCreateQueued(ctx context.Context, gid string) (bool, error)

@@ -344,6 +344,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 			if err := s.syncCustomFields(ctx, p.GID, res.Full || ev.fields); err != nil {
 				return res, err
 			}
+			if err := s.syncCustomTypes(ctx, p.GID, w.GID, res.Full || ev.fields); err != nil {
+				return res, err
+			}
 			if err := s.applyEvents(ctx, ev, keep, upsert, &withSubtasks); err != nil {
 				var fe *eventFetchError
 				if !errors.As(err, &fe) || isNetworkError(err) || model.IsUnauthorized(err) {
@@ -452,6 +455,45 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 		}
 	case model.IsPaymentRequired(err) || isForbidden(err): // not available on this plan: no custom fields
 		if err := s.Store.ReplaceProjectCustomFields(ctx, projectGID, nil); err != nil {
+			return err
+		}
+	default:
+		return nil // e.g. an expired token or a 5xx: keep what is cached, try again next time
+	}
+	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+}
+
+// syncCustomTypes fetches the custom task types a project offers (#59), with their
+// statuses, when its custom fields are fetched (syncCustomFields). A 402 (a plan without
+// them) records it for the workspace (plan.go): no project of it asks again for a while,
+// and it has no types meanwhile. Any other failure is retried on the next sync.
+func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID string, full bool) error {
+	key := readmodel.KeyCustomTypes + projectGID
+	if !full {
+		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+			return err
+		}
+	}
+	if hidden, err := s.planHidden(ctx, readmodel.PlanCustomTypes, workspaceGID); err != nil || hidden {
+		return err // tried again on a full sync after the 402 is forgotten
+	}
+	types, err := s.API.CustomTypes(ctx, projectGID)
+	if refused, recErr := s.recordPlanRefusal(ctx, readmodel.PlanCustomTypes, workspaceGID, err); refused || recErr != nil {
+		if recErr != nil {
+			return recErr
+		}
+		return s.Store.ReplaceProjectCustomTypes(ctx, projectGID, nil)
+	}
+	switch {
+	case err == nil:
+		if err := s.clearPlanRefusal(ctx, readmodel.PlanCustomTypes, workspaceGID); err != nil {
+			return err
+		}
+		if err := s.Store.ReplaceProjectCustomTypes(ctx, projectGID, types); err != nil {
+			return err
+		}
+	case isForbidden(err):
+		if err := s.Store.ReplaceProjectCustomTypes(ctx, projectGID, nil); err != nil {
 			return err
 		}
 	default:

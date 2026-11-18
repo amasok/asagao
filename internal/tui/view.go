@@ -40,7 +40,7 @@ func (m *Model) render() string {
 		body = m.renderOutbox(m.width, bodyH)
 	} else if m.statusView {
 		body = m.renderStatuses(m.width, bodyH)
-	} else if m.overviewView {
+	} else if m.overviewView && m.picker == nil { // (a confirmation of the overview is shown over it)
 		body = m.renderOverview(m.width, bodyH)
 	} else if m.goals.open {
 		body = m.renderGoals(m.width, bodyH)
@@ -93,7 +93,13 @@ func (m *Model) paneWidths() (int, int, int) {
 	return side, rest - detail, detail
 }
 
-func (m *Model) listHeight() int { return max(1, m.height-2-3) } // header, footer, borders, title
+func (m *Model) listHeight() int {
+	h := m.height - 2 - 3 // header, footer, borders, title
+	if m.timelineActive() && !m.zoom {
+		h -= 2 // the timeline's month and day rows
+	}
+	return max(1, h)
+}
 
 func (m *Model) layoutDetail() {
 	_, _, dw := m.paneWidths()
@@ -134,6 +140,20 @@ func (m *Model) renderBody(h int) string {
 		}
 		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
 		return lipgloss.JoinHorizontal(lipgloss.Top, side, m.renderCalendar(m.width-sw, h))
+	}
+	if m.timelineActive() && !m.zoom {
+		// Like the board, the timeline takes the list and detail area.
+		if m.narrow() {
+			if m.focus == paneSidebar {
+				return m.pane("プロジェクト", m.sidebarLines(m.width-4, h-3), m.width, h, true)
+			}
+			return m.renderTimeline(m.width, h)
+		}
+		if sw == 0 {
+			return m.renderTimeline(m.width, h)
+		}
+		side := m.pane("プロジェクト", m.sidebarLines(sw-4, h-3), sw, h, m.focus == paneSidebar)
+		return lipgloss.JoinHorizontal(lipgloss.Top, side, m.renderTimeline(m.width-sw, h))
 	}
 	if m.boardActive() && !m.zoom {
 		// The board takes the list and detail area; enter opens the zoomed detail.
@@ -218,6 +238,9 @@ func (m *Model) renderHeader() string {
 	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
+	}
+	if m.timelineActive() {
+		left += "  " + m.st.headerFilter.Render("[タイムライン]")
 	}
 	if m.calendarActive() {
 		left += "  " + m.st.headerFilter.Render("[カレンダー]")
@@ -557,7 +580,9 @@ func (m *Model) renderDetail(w int) string {
 	}
 	field(itemAssignee, "担当", assignee, "未割り当て")
 	field(itemDue, "期日", longDue(d.DueOn, d.DueAt), "なし")
-	if d.StartOn != "" {
+	if m.startOffered {
+		field(itemStart, "開始日", d.StartOn, "なし")
+	} else if d.StartOn != "" { // the plan lacks start dates (a recent 402): shown, not offered
 		b.WriteString(m.st.label.Render(padRight("開始日", labelW)) + " " + d.StartOn + "\n")
 	}
 	for i, ms := range d.Memberships {
@@ -617,7 +642,7 @@ func (m *Model) renderDetail(w int) string {
 		field(itemCompleted, "状態", done, "")
 	}
 	if subtype := d.ResourceSubtype; active || (subtype != "" && subtype != "default_task") {
-		label := task.SubtypeLabel(subtype)
+		label := readmodel.KindLabel(d.TaskSummary)
 		if subtype == "milestone" {
 			label = "◆ " + label
 		}
@@ -629,6 +654,13 @@ func (m *Model) renderDetail(w int) string {
 			status = "pending"
 		}
 		field(itemApproval, "承認", task.ApprovalLabel(status), "")
+	}
+	if d.ResourceSubtype == task.SubtypeCustom && d.CustomType != nil {
+		status := ""
+		if d.CustomTypeStatus != nil {
+			status = d.CustomTypeStatus.Name
+		}
+		field(itemCustomStatus, "ステータス", status, "なし")
 	}
 	if d.Parent != nil {
 		field(itemParent, "親タスク", d.Parent.Name, "")

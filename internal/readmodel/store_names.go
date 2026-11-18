@@ -33,6 +33,9 @@ const (
 	KeyLastSync = "last_sync"
 	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
 	KeyCustomFields = "custom_fields:"
+	// KeyCustomTypes + project gid: when the custom task types the project offers were
+	// last fetched (#59).
+	KeyCustomTypes = "custom_types:"
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
 	KeyEvents = "events:"
 	// KeyPlanUnavailable + a PlanFeature: when Asana refused that feature because the
@@ -104,6 +107,29 @@ const (
 	PlanCustomFields = "custom_fields"
 )
 
+// Features of #60 that a plan may lack (PlanKey).
+const (
+	// PlanProjectBrief is a project's brief (a preview API): Asana answered 402 to reading
+	// or writing one in the workspace.
+	PlanProjectBrief = "project_brief"
+)
+
+// BriefForbiddenMessage says that Asana does not let us read or change one project's
+// brief (it answered 403; BriefUnavailable).
+const BriefForbiddenMessage = "このプロジェクトのブリーフは、Asana が読み書きを許していません (403。権限がないか、API がプレビューのため)。概要を開き直すと、もう一度確かめます"
+
+// Features of #57 that a plan may lack (PlanKey).
+const (
+	// PlanStartOn is the start dates of tasks (start_on).
+	PlanStartOn = "start_on"
+)
+
+// Features of #59 that a plan may lack (PlanKey).
+const (
+	// PlanCustomTypes is custom task types (Starter and above): their list and setting them.
+	PlanCustomTypes = "custom_types"
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -117,6 +143,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanTimeTracking
 	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
 		return PlanCustomFields
+	case outbox.KindUpdateProjectBrief:
+		return PlanProjectBrief
 	}
 	return ""
 }
@@ -134,7 +162,13 @@ func PlanUnavailableMessage(feature string) string {
 		PlanGoals:        "ゴール",
 		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
+		PlanProjectBrief: "プロジェクトブリーフ (概要のページ)",
+		PlanStartOn:      "タスクの開始日",
+		PlanCustomTypes:  "カスタムタイプ (タスクの種類とステータス)",
 	}[feature]
+	if feature == PlanProjectBrief { // tried again after PlanRecheckAfter
+		return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"
+	}
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
 

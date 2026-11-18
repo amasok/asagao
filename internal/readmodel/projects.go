@@ -51,8 +51,13 @@ type ProjectOverview struct {
 	Counts *TaskCounts `json:"counts,omitempty"`
 	// Brief is nil when the project has none, it was not fetched yet, or Asana does not
 	// give it (the API is a preview and may need another plan).
-	Brief  *ProjectBrief     `json:"brief,omitempty"`
-	Status *StatusUpdateView `json:"latest_status,omitempty"`
+	Brief *ProjectBrief `json:"brief,omitempty"`
+	// BriefState is the brief's state in the cache (BriefNone, BriefUnavailable,
+	// BriefAvailable; "" not fetched yet), with the local edits applied.
+	BriefState string `json:"brief_state,omitempty"`
+	// BriefPending: a change to the brief is not sent yet (#60).
+	BriefPending bool              `json:"brief_pending,omitempty"`
+	Status       *StatusUpdateView `json:"latest_status,omitempty"`
 	// FetchedAt is when the counts and the brief were fetched ("" never).
 	FetchedAt string `json:"fetched_at,omitempty"`
 }
@@ -63,6 +68,13 @@ type TaskCounts struct {
 	CompletedTasks      int `json:"completed_tasks"`
 	Milestones          int `json:"milestones"`
 	CompletedMilestones int `json:"completed_milestones"`
+}
+
+// BriefEdit is a change to a project's brief (#60): Delete it, or make it Title with the
+// rich text HTMLText (and its plain Text, to compare with Asana's).
+type BriefEdit struct {
+	Delete                bool
+	Title, HTMLText, Text string
 }
 
 // ProjectBrief is a project's brief.

@@ -72,7 +72,7 @@ func (m *Model) layoutKey(key string) tea.Cmd {
 
 // syncDetailWidth resizes the detail viewport when the layout changed (and re-wraps it).
 func (m *Model) syncDetailWidth() {
-	if m.width == 0 || (m.boardActive() && !m.zoom) {
+	if m.width == 0 || ((m.boardActive() || m.timelineActive()) && !m.zoom) {
 		return
 	}
 	_, _, dw := m.paneWidths()

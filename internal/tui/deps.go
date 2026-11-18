@@ -16,11 +16,14 @@ import (
 // Dependencies, task types and approvals in the detail view: the tasks a task waits for
 // and the tasks waiting for it (enter: open / remove; "＋" rows add one from the tasks of
 // the same projects, or a search), its type (task / milestone / approval) and, for an
-// approval task, its status.
+// approval task, its status; a custom task type's status (#59).
 
 // --- type and approval ---
 
-func (m *Model) openSubtypePicker(t readmodel.TaskSummary) tea.Cmd {
+// openSubtypePicker offers the task types, and the custom types the task's projects offer
+// (#59; none where the plan lacks them). A custom type's value is "custom\x00<gid>".
+func (m *Model) openSubtypePicker(d readmodel.TaskDetail) tea.Cmd {
+	t := d.TaskSummary
 	p := &picker{kind: pickSubtype, title: "種類（" + truncateRunes(t.Name, 30) + "）", task: t}
 	for i, v := range task.Subtypes {
 		item := pickerItem{label: task.SubtypeLabel(v), value: v}
@@ -28,6 +31,43 @@ func (m *Model) openSubtypePicker(t readmodel.TaskSummary) tea.Cmd {
 			item.hint, p.cursor = "現在", i
 		}
 		p.items = append(p.items, item)
+	}
+	for _, c := range d.CustomTypes {
+		item := pickerItem{label: c.Name, value: task.SubtypeCustom + "\x00" + c.GID, hint: "カスタムタイプ"}
+		if t.CustomType != nil && t.CustomType.GID == c.GID {
+			item.hint, p.cursor = "現在", len(p.items)
+		}
+		p.items = append(p.items, item)
+	}
+	m.picker = p
+	return nil
+}
+
+// openCustomStatusPicker offers the statuses of the task's custom type (#59).
+func (m *Model) openCustomStatusPicker(d readmodel.TaskDetail) tea.Cmd {
+	t := d.TaskSummary
+	if t.CustomType == nil {
+		return nil
+	}
+	p := &picker{kind: pickTypeStatus, title: "ステータス（" + truncateRunes(t.Name, 30) + "）", task: t}
+	for _, c := range d.CustomTypes {
+		if c.GID != t.CustomType.GID {
+			continue
+		}
+		for _, st := range c.Statuses {
+			item := pickerItem{label: st.Name, value: st.GID}
+			if st.Complete {
+				item.hint = "完了"
+			}
+			if t.CustomTypeStatus != nil && t.CustomTypeStatus.GID == st.GID {
+				item.hint, p.cursor = "現在", len(p.items)
+			}
+			p.items = append(p.items, item)
+		}
+	}
+	if len(p.items) == 0 {
+		m.status = "この種類のステータスがまだ取得されていません（同期すると取得します）"
+		return nil
 	}
 	m.picker = p
 	return nil
@@ -214,7 +254,12 @@ func (m *Model) updateDeps(msg tea.Msg) (tea.Cmd, bool) {
 func (m *Model) handleDepPicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 	switch p.kind {
 	case pickSubtype:
+		if custom, gid, ok := strings.Cut(item.value, "\x00"); ok {
+			return m.updateTask(p.task, app.TaskUpdate{Subtype: &custom, CustomType: &gid}, "種類を「"+item.label+"」にしました"), true
+		}
 		return m.updateTask(p.task, app.TaskUpdate{Subtype: &item.value}, "種類を「"+item.label+"」にしました"), true
+	case pickTypeStatus:
+		return m.updateTask(p.task, app.TaskUpdate{CustomTypeStatus: &item.value}, "ステータスを「"+item.label+"」にしました"), true
 	case pickApproval:
 		return m.updateTask(p.task, app.TaskUpdate{Approval: &item.value}, "承認の状態を「"+item.label+"」にしました"), true
 	case pickDepAction:

@@ -79,13 +79,27 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 	if err := task.CheckApproval(subtype, changes); err != nil {
 		return err
 	}
+	if err := checkTaskDates(ctx, tx, gid, cur, changes, now); err != nil {
+		return err
+	}
+	if changes, err = customTypeChanges(ctx, tx, gid, cur, changes); err != nil {
+		return err
+	}
 	if IsLocalGID(gid) {
 		// Not on the server yet: fold the change into the pending create.
 		op, err := findUnsentCreate(ctx, tx, gid)
 		if err != nil {
 			return err
 		}
-		if op != nil {
+		// A custom type is set after the create (#59: a create may not take one), so it and
+		// every later edit of the task join the update entry, which is sent after it.
+		var update *Op
+		if op != nil && !task.TouchesCustomType(changes) {
+			if update, err = findUpdateOp(ctx, tx, gid); err != nil {
+				return err
+			}
+		}
+		if op != nil && update == nil && !task.TouchesCustomType(changes) {
 			maps.Copy(op.Payload, changes)
 			if err := saveOp(ctx, tx, op); err != nil {
 				return err
@@ -266,9 +280,15 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 		return "", errors.New("タスク名が空です")
 	}
 	if nt.ParentGID != "" {
-		if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM tasks WHERE gid = ?", nt.ParentGID).Scan(&nt.WorkspaceGID); err != nil {
-			return "", notFound(err, "parent task "+nt.ParentGID)
+		// its own workspace, else its project's (as TaskWorkspace: the 402 of a start date
+		// is recorded and looked up by it)
+		ws, err := taskWorkspace(ctx, s.db, nt.ParentGID)
+		if errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("parent task %s: %w", nt.ParentGID, ErrNotFound)
+		} else if err != nil {
+			return "", err
 		}
+		nt.WorkspaceGID = ws
 		nt.ProjectGID, nt.SectionGID = "", "" // subtasks are not in projects
 	}
 	if nt.WorkspaceGID == "" && nt.ProjectGID != "" {
@@ -278,6 +298,17 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	}
 	if nt.WorkspaceGID == "" && nt.ParentGID == "" { // subtasks inherit it from the parent in Asana
 		return "", errors.New("ワークスペースが決まりません（--project または --workspace を指定してください）")
+	}
+	if err := task.CheckDates(nt.StartOn, nt.DueOn, false); err != nil {
+		return "", err
+	}
+	if nt.StartOn != "" {
+		if _, err := time.Parse(time.DateOnly, nt.StartOn); err != nil {
+			return "", fmt.Errorf("start_on は YYYY-MM-DD で書いてください: %q", nt.StartOn)
+		}
+		if err := startOnOffered(ctx, s.db, nt.WorkspaceGID, now); err != nil {
+			return "", err
+		}
 	}
 	gid := newLocalGID()
 	payload := map[string]any{"workspace": nt.WorkspaceGID, "name": nt.Name}
@@ -299,15 +330,18 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 	if nt.DueOn != "" {
 		payload["due_on"] = nt.DueOn
 	}
+	if nt.StartOn != "" {
+		payload["start_on"] = nt.StartOn
+	}
 	if nt.AssigneeGID != "" {
 		payload["assignee"] = nt.AssigneeGID
 	}
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks
-			(gid, workspace_gid, name, notes, html_notes, due_on, assignee_gid, parent_gid, created_at, modified_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			gid, nt.WorkspaceGID, nt.Name, nt.Notes, nt.HTMLNotes, nt.DueOn, nt.AssigneeGID, nt.ParentGID, ts, ts); err != nil {
+			(gid, workspace_gid, name, notes, html_notes, due_on, start_on, assignee_gid, parent_gid, created_at, modified_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			gid, nt.WorkspaceGID, nt.Name, nt.Notes, nt.HTMLNotes, nt.DueOn, nt.StartOn, nt.AssigneeGID, nt.ParentGID, ts, ts); err != nil {
 			return err
 		}
 		if nt.ParentGID != "" {
@@ -528,8 +562,26 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 		if err := ensureNotSending(op); err != nil {
 			return err
 		}
+		if op.Kind == OpUpdateBrief {
+			if err := keepLocalBrief(ctx, tx, op); err != nil {
+				return err
+			}
+		}
 		maps.Copy(op.Base, op.Conflict)
 		op.Conflict, op.State, op.LastError = map[string]any{}, OpPending, ""
+		if op.Kind == OpUpdateBrief { // shown: Asana's brief with this change over it
+			cur, err := readBrief(ctx, tx, op.TaskGID)
+			if err != nil {
+				return err
+			}
+			base := cachedBrief{state: briefStr(op.Base, "state"), title: briefStr(op.Base, "title"),
+				text: briefStr(op.Base, "text"), html: briefStr(op.Base, "html_text")}
+			if cur.state != BriefUnavailable {
+				if err := writeBrief(ctx, tx, op.TaskGID, briefWith(base, op.Payload)); err != nil {
+					return err
+				}
+			}
+		}
 		return saveOp(ctx, tx, op)
 	})
 }
@@ -659,6 +711,10 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 	case OpUpdateProject:
 		// Restore the values from before the local edit.
 		if err := applyProjectFields(ctx, tx, op.TaskGID, op.Base); err != nil {
+			return err
+		}
+	case OpUpdateBrief:
+		if err := undoBriefOp(ctx, tx, op); err != nil {
 			return err
 		}
 	case OpMoveTask:
@@ -860,18 +916,19 @@ var TaskFieldValues = readmodel.TaskFieldValues
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
 	var completed, liked bool
-	var name, notes, htmlNotes, dueOn, assignee, modifiedAt, subtype, approval string
-	err := tx.QueryRowContext(ctx, `SELECT completed, name, notes, html_notes, due_on, assignee_gid, modified_at, liked,
-		resource_subtype, approval_status FROM tasks WHERE gid = ?`, gid).
-		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &assignee, &modifiedAt, &liked, &subtype, &approval)
+	var name, notes, htmlNotes, dueOn, startOn, assignee, modifiedAt, subtype, approval, customType, customStatus string
+	err := tx.QueryRowContext(ctx, `SELECT completed, name, notes, html_notes, due_on, start_on, assignee_gid, modified_at, liked,
+		resource_subtype, approval_status, custom_type_gid, custom_type_status_gid FROM tasks WHERE gid = ?`, gid).
+		Scan(&completed, &name, &notes, &htmlNotes, &dueOn, &startOn, &assignee, &modifiedAt, &liked, &subtype, &approval, &customType, &customStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", fmt.Errorf("task %s: %w", gid, ErrNotFound)
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "assignee": assignee, "liked": liked,
-		"resource_subtype": subtype, "approval_status": approval}, modifiedAt, nil
+	return map[string]any{"completed": completed, "name": name, "notes": notes, "html_notes": htmlNotes, "due_on": dueOn, "start_on": startOn, "assignee": assignee, "liked": liked,
+		"resource_subtype": subtype, "approval_status": approval,
+		"custom_type": customType, "custom_type_status_option": customStatus}, modifiedAt, nil
 }
 
 // applyFields writes update_task fields to the tasks table.
@@ -911,8 +968,22 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 			like, _ := v.(bool)
 			_, err = tx.ExecContext(ctx, `UPDATE tasks SET num_likes = max(0, num_likes + CASE WHEN ? = liked THEN 0 WHEN ? THEN 1 ELSE -1 END),
 				liked = ? WHERE gid = ?`, like, like, like, gid)
-		case "name", "due_on", "resource_subtype":
+		case "name", "due_on", "start_on":
 			_, err = tx.ExecContext(ctx, "UPDATE tasks SET "+k+" = ? WHERE gid = ?", v, gid)
+		case "resource_subtype":
+			// A task of another kind has no custom type (applied after custom_type: sorted).
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET resource_subtype = ?1,
+				custom_type_gid = CASE WHEN ?1 = 'custom' THEN custom_type_gid ELSE '' END,
+				custom_type_status_gid = CASE WHEN ?1 = 'custom' THEN custom_type_status_gid ELSE '' END WHERE gid = ?2`, v, gid)
+		case "custom_type":
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET custom_type_gid = ?1,
+				custom_type_status_gid = CASE WHEN custom_type_gid = ?1 THEN custom_type_status_gid ELSE '' END WHERE gid = ?2`, v, gid)
+		case "custom_type_status_option":
+			// A status that completes the task (completion_state) is done in Asana, as an
+			// approval is (applied after custom_type: sorted). An unknown state leaves it.
+			_, err = tx.ExecContext(ctx, `UPDATE tasks SET custom_type_status_gid = ?1,
+				completed = COALESCE((SELECT CASE lower(completion_state) WHEN 'complete' THEN 1 WHEN 'incomplete' THEN 0 END
+					FROM custom_type_status_options WHERE gid = ?1), completed) WHERE gid = ?2`, v, gid)
 		case "approval_status":
 			// Asana completes an approval task once it is decided, and reopens it when pending.
 			_, err = tx.ExecContext(ctx, `UPDATE tasks SET approval_status = ?1,
