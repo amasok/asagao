@@ -17,9 +17,10 @@ import (
 	"github.com/amasok/asagao/internal/store"
 )
 
-// timeServer answers the time tracking endpoints like Asana (developers.asana.com):
-// a task's list gives the compact entries (no created_at), one entry and the answers to a
-// create or an update give it with created_at, a delete answers {"data":{}}.
+// timeServer answers the time tracking endpoints like Asana: a task's list gives
+// created_at when opt_fields asks for it (as the real Asana does, unlike the reference;
+// noListCreatedAt leaves it out as documented), one entry and the answers to a create or
+// an update give it, a delete answers {"data":{}}.
 type timeServer struct {
 	mu      stdsync.Mutex
 	shift   time.Duration
@@ -31,6 +32,8 @@ type timeServer struct {
 	// lose["POST"] = n: the next n such requests are applied, then answered 500.
 	lose  map[string]int
 	calls []string
+	// noListCreatedAt: the list gives the compact form of the reference (no created_at).
+	noListCreatedAt bool
 }
 
 func newTimeServer() *timeServer {
@@ -48,12 +51,13 @@ func (ts *timeServer) add(task string, minutes int, on, by string, created time.
 	return gid
 }
 
-func (ts *timeServer) compact(e map[string]any) map[string]any {
+func (ts *timeServer) compact(e map[string]any, fields string) map[string]any {
 	out := map[string]any{}
 	for k, v := range e {
-		if k != "created_at" && k != "task" {
-			out[k] = v
+		if k == "task" || (k == "created_at" && (ts.noListCreatedAt || !strings.Contains(fields, "created_at"))) {
+			continue
 		}
+		out[k] = v
 	}
 	return out
 }
@@ -103,7 +107,7 @@ func (ts *timeServer) hook(rw http.ResponseWriter, r *http.Request) bool {
 		list := []any{}
 		for _, g := range ts.order {
 			if e, ok := ts.entries[g]; ok && e["task"] == parts[1] {
-				list = append(list, ts.compact(e))
+				list = append(list, ts.compact(e, r.URL.Query().Get("opt_fields")))
 			}
 		}
 		out, _ := json.Marshal(map[string]any{"data": list, "next_page": nil})
@@ -268,6 +272,33 @@ func TestPushTimeEntryLostAnswerIsFound(t *testing.T) {
 		t.Errorf("entries %+v", es.Entries)
 	}
 	assertOutboxEmpty(t, st)
+}
+
+// The list gives created_at, so the candidates are not read one by one; a list without it
+// (the reference's compact form) makes each candidate be read.
+func TestPushTimeEntryLostAnswerReadsCandidatesOnlyWithoutCreatedAt(t *testing.T) {
+	for _, noCreatedAt := range []bool{false, true} {
+		ts, s, st := setupTimePush(t)
+		ctx := context.Background()
+		ts.mu.Lock()
+		ts.noListCreatedAt = noCreatedAt
+		ts.add("t1", 30, "2026-11-12", "me", time.Now().Add(-time.Hour))
+		ts.lose[http.MethodPost] = 1
+		ts.mu.Unlock()
+		if _, err := st.AddTimeEntryLocal(ctx, "t1", 30, "2026-11-12", store.UserRef{GID: "me"}, now); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+			t.Fatalf("Push = %+v, %v", res, err)
+		}
+		reads := ts.count("GET /time_tracking_entries/")
+		if noCreatedAt && reads != 2 || !noCreatedAt && reads != 0 {
+			t.Errorf("created_at in the list %v: %d entries read one by one (%v)", !noCreatedAt, reads, ts.calls)
+		}
+		if es := entriesOf(t, st, "t1"); len(es.Entries) != 1 || es.Entries[0].GID != "te2" {
+			t.Errorf("entries %+v", es.Entries)
+		}
+	}
 }
 
 // Two entries of mine that match (both created since the add) cannot be told apart: the add
