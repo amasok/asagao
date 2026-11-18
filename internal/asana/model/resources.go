@@ -128,3 +128,10 @@ type StatusUpdate struct {
 	Author     *Ref      `json:"author"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+// Position is where in a list (a section's tasks, a parent's subtasks) a task goes: just
+// before or just after another task of it. Zero: Asana's default (the end, for addTask).
+type Position struct{ Before, After string }
+
+// IsZero reports whether p leaves the place to Asana.
+func (p Position) IsZero() bool { return p.Before == "" && p.After == "" }

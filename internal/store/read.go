@@ -106,10 +106,10 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 		add(cond, a...)
 	}
 
+	add("t.gid NOT IN " + deletedTasks) // their delete is queued
+
 	q := "SELECT " + taskColumns + " FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid"
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
-	}
+	q += " WHERE " + strings.Join(where, " AND ")
 	if f.SortByModified {
 		q += " ORDER BY t.modified_at DESC, t.name"
 	} else {
@@ -276,7 +276,8 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 		d.Parent = &TaskRef{GID: d.ParentGID, Name: name}
 	}
 	if d.Subtasks, err = s.queryTasks(ctx, "SELECT "+taskColumns+
-		" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid WHERE t.parent_gid = ? ORDER BY t.created_at", gid); err != nil {
+		" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid WHERE t.parent_gid = ? AND t.gid NOT IN "+deletedTasks+
+		" ORDER BY t.created_at", gid); err != nil {
 		return nil, err
 	}
 
@@ -397,24 +398,30 @@ func (s *Store) ResolveSection(ctx context.Context, projectGID, arg string) (str
 // ResolveMove finds the project and section for moving a task. project may be empty when the
 // task is in exactly one project; section is a gid or exact name.
 func (s *Store) ResolveMove(ctx context.Context, taskGID, project, section string) (projectGID, sectionGID string, err error) {
-	d, err := s.GetTask(ctx, taskGID)
-	if err != nil {
+	if projectGID, err = s.resolveMoveProject(ctx, taskGID, project); err != nil {
 		return "", "", err
-	}
-	switch {
-	case project != "":
-		if projectGID, err = s.ResolveProject(ctx, project); err != nil {
-			return "", "", err
-		}
-	case len(d.Memberships) == 1:
-		projectGID = d.Memberships[0].ProjectGID
-	case len(d.Memberships) == 0:
-		return "", "", fmt.Errorf("タスク %s はどのプロジェクトにも入っていません", taskGID)
-	default:
-		return "", "", fmt.Errorf("タスク %s は複数のプロジェクトに入っています。project を指定してください", taskGID)
 	}
 	sectionGID, err = s.ResolveSection(ctx, projectGID, section)
 	return projectGID, sectionGID, err
+}
+
+// resolveMoveProject picks the project of task taskGID to move it in: project (a name or
+// gid), or the only project the task is in.
+func (s *Store) resolveMoveProject(ctx context.Context, taskGID, project string) (projectGID string, err error) {
+	d, err := s.GetTask(ctx, taskGID)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case project != "":
+		return s.ResolveProject(ctx, project)
+	case len(d.Memberships) == 1:
+		return d.Memberships[0].ProjectGID, nil
+	case len(d.Memberships) == 0:
+		return "", fmt.Errorf("タスク %s はどのプロジェクトにも入っていません", taskGID)
+	default:
+		return "", fmt.Errorf("タスク %s は複数のプロジェクトに入っています。project を指定してください", taskGID)
+	}
 }
 
 // ListUsers returns known users (workspace members and people seen on tasks), me first.

@@ -136,3 +136,16 @@ type FieldOption struct {
 	Color     string `json:"color,omitempty"`
 	Tasks     int    `json:"tasks"` // incomplete tasks with this value
 }
+
+// DeletePlan is what deleting a task does: the task, its subtasks (counted with theirs),
+// and the changes queued for them, which are dropped with it.
+type DeletePlan struct {
+	GID      string `json:"gid"`
+	Name     string `json:"name"`
+	Subtasks int    `json:"subtasks"`
+	// Queued is the number of queued changes to the task or its subtasks that are dropped
+	// (once the delete is sent; at once for a task never sent).
+	Queued int `json:"queued"`
+	// Local: the task was never sent to Asana, so it is removed at once and nothing is queued.
+	Local bool `json:"local"`
+}

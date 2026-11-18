@@ -106,7 +106,19 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if !real(section) {
 			return e, false, nil
 		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: "/sections/" + url.PathEscape(section) + "/addTask", Data: map[string]any{"task": task}}
+		data := map[string]any{"task": task}
+		for _, k := range []string{"insert_before", "insert_after"} {
+			if anchor := str(k); anchor != "" {
+				if anchor, err = s.Store.RealGID(ctx, anchor); err != nil {
+					return e, false, err
+				}
+				if !real(anchor) {
+					return e, false, nil // sent alone (pushMove)
+				}
+				data[k] = anchor
+			}
+		}
+		e.write = model.BatchWrite{Method: http.MethodPost, Path: "/sections/" + url.PathEscape(section) + "/addTask", Data: data}
 		e.refresh = true
 	case outbox.KindAddTag, outbox.KindRemoveTag:
 		tag, err := s.Store.RealTagGID(ctx, str("tag"))

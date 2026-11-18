@@ -14,7 +14,9 @@ const (
 	KindUpdateTask = "update_task"
 	KindCreateTask = "create_task"
 	KindAddComment = "add_comment"
-	KindMoveTask   = "move_task" // payload: project, section, section_name; base: section
+	// KindMoveTask moves a task to a section. payload: project, section, section_name, and
+	// insert_before / insert_after (a task of the section, optional: where in it); base: section.
+	KindMoveTask = "move_task"
 
 	// KindRenameSection renames a section. The outbox task_gid column holds the section gid.
 	// payload: name; base: name (before the local edit).
@@ -34,6 +36,14 @@ const (
 	KindRemoveProject    = "remove_project"  // payload: project, project_name, section (to restore)
 	KindDuplicateTask    = "duplicate_task"  // task_gid: the local copy; payload: source, name
 	KindUploadAttachment = "upload_attachment"
+
+	// KindDeleteTask deletes a task (and its subtasks) in Asana. Until it is sent the task
+	// stays in the store, hidden; discarding the entry shows it again. payload: name.
+	KindDeleteTask = "delete_task"
+	// KindSetParent makes a task a subtask of another, or a top-level task (parent "").
+	// payload: parent, parent_name, insert_before / insert_after (a sibling, optional);
+	// base: parent (before the local change).
+	KindSetParent = "set_parent"
 
 	KindAddDependency    = "add_dependency"    // payload: dependency, dependency_name
 	KindRemoveDependency = "remove_dependency" // payload: dependency, dependency_name

@@ -218,7 +218,17 @@ func DescribeChange(op outbox.Op) string {
 	case outbox.KindAddComment:
 		return fmt.Sprintf("コメント「%s」", clip(str("text"), 40))
 	case outbox.KindMoveTask:
+		if str("insert_before") != "" || str("insert_after") != "" {
+			return fmt.Sprintf("セクション「%s」への移動 (並び順の指定あり)", str("section_name"))
+		}
 		return fmt.Sprintf("セクション「%s」への移動", str("section_name"))
+	case outbox.KindDeleteTask:
+		return "タスクの削除"
+	case outbox.KindSetParent:
+		if str("parent") == "" {
+			return "親タスクから外す"
+		}
+		return fmt.Sprintf("「%s」のサブタスクにする", str("parent_name"))
 	case outbox.KindAddTag:
 		return fmt.Sprintf("タグ「%s」の追加", str("tag_name"))
 	case outbox.KindRemoveTag:

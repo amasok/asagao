@@ -164,6 +164,9 @@ func upsertTaskTx(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
 		return err
 	}
+	if err := reapplySetParent(ctx, tx, t.GID); err != nil {
+		return err
+	}
 	return reapplyDependencyOps(ctx, tx, t.GID)
 }
 

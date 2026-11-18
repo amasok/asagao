@@ -422,6 +422,10 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushRelation(ctx, op)
 	case outbox.KindAddDependency, outbox.KindRemoveDependency:
 		err = s.pushDependency(ctx, op)
+	case outbox.KindDeleteTask:
+		err = s.pushDelete(ctx, op)
+	case outbox.KindSetParent:
+		err = s.pushSetParent(ctx, op)
 	case outbox.KindDuplicateTask:
 		err = s.pushDuplicate(ctx, op)
 	case outbox.KindUploadAttachment:
@@ -878,13 +882,84 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 		return &model.Error{Status: 404} // its create failed
 	}
 	section, _ := op.Payload["section"].(string)
-	if err := s.API.AddTaskToSection(ctx, section, op.TaskGID); err != nil {
+	pos, err := s.position(ctx, op)
+	if err != nil {
+		return err
+	}
+	if err := s.API.InsertTaskInSection(ctx, section, op.TaskGID, pos); err != nil {
 		return err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 		return sentNotSaved(err)
 	}
 	if t, err := s.API.Task(ctx, op.TaskGID); err == nil { // else the next sync refreshes it
+		s.refresh(ctx, *t)
+	}
+	return nil
+}
+
+// position is where op puts its task (insert_before / insert_after), with the real gid of
+// a task created offline. One whose create has not gone out (it failed) is left out:
+// the task still goes to its section or parent.
+func (s *Syncer) position(ctx context.Context, op outbox.Op) (model.Position, error) {
+	var pos model.Position
+	for _, p := range []struct {
+		key string
+		to  *string
+	}{{"insert_before", &pos.Before}, {"insert_after", &pos.After}} {
+		gid, _ := op.Payload[p.key].(string)
+		if gid == "" {
+			continue
+		}
+		real, err := s.Store.RealGID(ctx, gid)
+		if err != nil {
+			return pos, err
+		}
+		if !localgid.IsLocal(real) {
+			*p.to = real
+		}
+	}
+	return pos, nil
+}
+
+// pushDelete deletes a task in Asana. A 404 means it is gone already (deleted by this
+// entry sent before, or by someone else): done either way. Push has checked that the
+// account is the one the store belongs to (checkPushAccount), so the 404 is not another
+// account's view.
+func (s *Syncer) pushDelete(ctx context.Context, op outbox.Op) error {
+	if localgid.IsLocal(op.TaskGID) {
+		return &model.Error{Status: 404} // its create failed
+	}
+	if err := s.API.DeleteTask(ctx, op.TaskGID); err != nil && !isNotFound(err) {
+		return err
+	}
+	return sentNotSaved(s.Store.CompleteDelete(ctx, op.ID, op.TaskGID))
+}
+
+// pushSetParent sends a parent change. Repeating it is harmless.
+func (s *Syncer) pushSetParent(ctx context.Context, op outbox.Op) error {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	parent, _ := op.Payload["parent"].(string)
+	if parent, err = s.Store.RealGID(ctx, parent); err != nil {
+		return err
+	}
+	if localgid.IsLocal(task) || localgid.IsLocal(parent) {
+		return &model.Error{Status: 404} // its create failed
+	}
+	pos, err := s.position(ctx, op)
+	if err != nil {
+		return err
+	}
+	if err := s.API.SetParent(ctx, task, parent, pos); err != nil {
+		return err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	if t, err := s.API.Task(ctx, task); err == nil { // else the next sync refreshes it
 		s.refresh(ctx, *t)
 	}
 	return nil

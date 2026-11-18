@@ -7,6 +7,7 @@ import "github.com/amasok/asagao/internal/asana/model"
 // keep the asana names while the callers move (migration-plan.md, d1).
 type (
 	Ref                = model.Ref
+	Position           = model.Position
 	User               = model.User
 	Workspace          = model.Workspace
 	Project            = model.Project

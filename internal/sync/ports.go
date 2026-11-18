@@ -34,10 +34,12 @@ type AsanaAPI interface {
 	CreateTag(ctx context.Context, workspaceGID, name string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
+	DeleteTask(ctx context.Context, taskGID string) error
 	Dependencies(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	Dependents(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	DuplicateTask(ctx context.Context, taskGID, name string) (*model.Ref, error)
 	Events(ctx context.Context, resource, token string) (model.EventPage, error)
+	InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos model.Position) error
 	MarkNotifications(ctx context.Context, workspaceGID string, gids []string, read bool) (failed []string, err error)
 	Me(ctx context.Context) (*model.User, error)
 	Notifications(ctx context.Context, workspaceGID string, max int) ([]model.Notification, error)
@@ -50,6 +52,7 @@ type AsanaAPI interface {
 	RemoveTag(ctx context.Context, taskGID, tagGID string) error
 	Section(ctx context.Context, gid string) (*model.Section, error)
 	Sections(ctx context.Context, projectGID string) ([]model.Section, error)
+	SetParent(ctx context.Context, taskGID, parentGID string, pos model.Position) error
 	SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*model.Project, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
 	Stories(ctx context.Context, taskGID string) ([]model.Story, error)
@@ -73,6 +76,7 @@ type LocalStore interface {
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
+	CompleteDelete(ctx context.Context, id int64, gid string) error
 	CompleteCreate(ctx context.Context, id int64, local, real string, move *outbox.MoveTarget) error
 	CompleteOp(ctx context.Context, id int64) error
 	CompleteStatus(ctx context.Context, id int64, local string, u model.StatusUpdate) error

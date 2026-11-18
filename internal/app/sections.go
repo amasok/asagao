@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"time"
+
+	"github.com/amasok/asagao/internal/asana/model"
 )
 
 // SectionStore is the part of the local cache that moving a task between sections and
@@ -11,7 +13,9 @@ type SectionStore interface {
 	ResolveProject(ctx context.Context, arg string) (string, error)
 	ResolveSection(ctx context.Context, projectGID, arg string) (string, error)
 	ResolveMove(ctx context.Context, taskGID, project, section string) (projectGID, sectionGID string, err error)
+	ResolveMoveNear(ctx context.Context, taskGID, project, anchor string) (projectGID, sectionGID string, err error)
 	MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID string, now time.Time) error
+	MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID string, pos model.Position, now time.Time) error
 	RenameSectionLocal(ctx context.Context, sectionGID, name string, now time.Time) error
 }
 

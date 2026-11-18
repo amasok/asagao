@@ -129,7 +129,42 @@ func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, 
 
 // AddTaskToSection moves a task into a section (POST /sections/{gid}/addTask).
 func (c *Client) AddTaskToSection(ctx context.Context, sectionGID, taskGID string) error {
-	_, err := c.do(ctx, http.MethodPost, "/sections/"+url.PathEscape(sectionGID)+"/addTask", nil, map[string]any{"task": taskGID}, nil)
+	return c.InsertTaskInSection(ctx, sectionGID, taskGID, Position{})
+}
+
+// withPosition adds pos to a request body (insert_before / insert_after).
+func withPosition(body map[string]any, p Position) map[string]any {
+	if p.Before != "" {
+		body["insert_before"] = p.Before
+	}
+	if p.After != "" {
+		body["insert_after"] = p.After
+	}
+	return body
+}
+
+// InsertTaskInSection moves a task into a section at pos (POST /sections/{gid}/addTask
+// with insert_before / insert_after); within its own section, it only reorders it.
+func (c *Client) InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos Position) error {
+	_, err := c.do(ctx, http.MethodPost, "/sections/"+url.PathEscape(sectionGID)+"/addTask", nil, withPosition(map[string]any{"task": taskGID}, pos), nil)
+	return err
+}
+
+// DeleteTask deletes a task, with its subtasks (DELETE /tasks/{gid}). Asana keeps it in
+// the trash for a while.
+func (c *Client) DeleteTask(ctx context.Context, taskGID string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/tasks/"+url.PathEscape(taskGID), nil, nil, nil)
+	return err
+}
+
+// SetParent makes a task a subtask of parentGID at pos among its subtasks, or a top-level
+// task when parentGID is "" (POST /tasks/{gid}/setParent).
+func (c *Client) SetParent(ctx context.Context, taskGID, parentGID string, pos Position) error {
+	var parent any // null: no parent
+	if parentGID != "" {
+		parent = parentGID
+	}
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/setParent", nil, withPosition(map[string]any{"parent": parent}, pos), nil)
 	return err
 }
 
