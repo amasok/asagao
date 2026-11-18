@@ -105,7 +105,7 @@ func TestAttackProjectDateCombinations(t *testing.T) {
 	bad(map[string]any{"due_on": "2026/12/31"})                          // format
 	bad(map[string]any{"due_on": "2026-02-30"})                          // not a date
 	bad(map[string]any{"due_on": 20261231})                              // not a string
-	bad(map[string]any{"color": "red"})                                  // not an Asana color
+	bad(map[string]any{"color": "light-brown"})                          // not an Asana color
 	ok(map[string]any{"start_on": "2026-01-01", "due_on": "2026-02-01"}) // both together
 }
 

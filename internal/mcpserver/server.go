@@ -1100,7 +1100,7 @@ type UpdateProjectInput struct {
 	Owner         *string  `json:"owner,omitempty" jsonschema:"\"me\", a user name or gid; \"\" removes the owner"`
 	StartOn       *string  `json:"start_on,omitempty" jsonschema:"start date YYYY-MM-DD (needs a due date), \"\" to clear"`
 	DueOn         *string  `json:"due_on,omitempty" jsonschema:"due date YYYY-MM-DD, \"\" to clear"`
-	Color         *string  `json:"color,omitempty" jsonschema:"dark-pink, dark-green, dark-blue, dark-red, dark-teal, dark-brown, dark-orange, dark-purple, dark-warm-gray, light-... (the same colors), or none"`
+	Color         *string  `json:"color,omitempty" jsonschema:"dark-pink, dark-green, dark-blue, dark-red, dark-teal, dark-brown, dark-orange, dark-purple, dark-warm-gray, light-... (the same colors), or none; the names Asana now answers (red, blue, ...) are taken too and sent as the first of these with that name"`
 	Archived      *bool    `json:"archived,omitempty" jsonschema:"true to archive, false to unarchive"`
 	AddMembers    []string `json:"add_members,omitempty" jsonschema:"\"me\", user names or gids to add"`
 	RemoveMembers []string `json:"remove_members,omitempty" jsonschema:"\"me\", user names or gids to remove"`

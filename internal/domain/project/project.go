@@ -5,24 +5,52 @@ package project
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/amasok/asagao/internal/domain/tag"
 )
 
 // Fields are the project fields a local edit may change (the keys of an update_project
 // payload). Every value is a string; "" clears owner, start_on and due_on.
 var Fields = []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"}
 
-// Colors are the colors Asana accepts for a project ("none" for no color).
-var Colors = []string{
-	"dark-pink", "dark-green", "dark-blue", "dark-red", "dark-teal", "dark-brown", "dark-orange", "dark-purple", "dark-warm-gray",
-	"light-pink", "light-green", "light-blue", "light-red", "light-teal", "light-yellow", "light-orange", "light-purple", "light-warm-gray",
-	"none",
+// Colors are the colors Asana accepts for a project in a write ("none" for no color):
+// the tag colors (tag.Colors).
+var Colors = append(slices.Clone(tag.Colors), "none")
+
+// NormalizeColor checks a project color the user typed: one of Colors, or a name Asana's
+// GET answers (red, blue, ...: tag.NewColors), in any case. It returns the name to send
+// (a new name becomes its written name, tag.WriteColor). "" is not a color.
+func NormalizeColor(s string) (string, error) {
+	c := strings.ToLower(strings.TrimSpace(s))
+	if c == "none" {
+		return c, nil
+	}
+	if w, ok := tag.WriteColor(c); ok {
+		return w, nil
+	}
+	return "", fmt.Errorf("色は %s のどれかです（Asana の新しい名前 %s も使えます）: %q",
+		strings.Join(Colors, " / "), strings.Join(tag.NewColors(), " / "), s)
+}
+
+// NormalizeFields checks the changes (ValidateFields) and returns a copy with the color
+// as it is sent (NormalizeColor).
+func NormalizeFields(changes map[string]any) (map[string]any, error) {
+	if err := ValidateFields(changes); err != nil {
+		return nil, err
+	}
+	out := maps.Clone(changes)
+	if c, ok := out["color"].(string); ok {
+		out["color"], _ = NormalizeColor(c)
+	}
+	return out, nil
 }
 
 // ValidateFields checks the field changes of a local edit: at least one, each a field that
-// can be changed, with a string value, a color Asana has, and dates as YYYY-MM-DD.
+// can be changed, with a string value, a color Asana has (NormalizeColor), and dates as YYYY-MM-DD.
 func ValidateFields(changes map[string]any) error {
 	if len(changes) == 0 {
 		return errors.New("変更がありません")
@@ -37,8 +65,8 @@ func ValidateFields(changes map[string]any) error {
 		}
 		switch k {
 		case "color":
-			if !slices.Contains(Colors, s) {
-				return fmt.Errorf("色は %s のどれかです: %q", strings.Join(Colors, " / "), s)
+			if _, err := NormalizeColor(s); err != nil {
+				return err
 			}
 		case "start_on", "due_on":
 			if s == "" {

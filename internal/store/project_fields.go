@@ -31,8 +31,10 @@ var projectColumns = map[string]string{"notes": "notes", "html_notes": "html_not
 // UpdateProjectLocal applies field changes to a project and queues them for Asana (see
 // project.Fields). Consecutive edits of the same project are one outbox entry
 // (outbox.Fold); an edit that reverts every field to its original value removes it.
+// A color Asana's GET answers (red) is kept and sent as its written name (dark-red).
 func (s *Store) UpdateProjectLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error {
-	if err := project.ValidateFields(changes); err != nil {
+	changes, err := project.NormalizeFields(changes)
+	if err != nil {
 		return err
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {

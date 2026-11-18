@@ -303,3 +303,24 @@ func TestMigrateStoreFromBeforeProjectFields(t *testing.T) {
 	}
 	must(t, st.ReplaceTeams(ctx, "w1", []asana.Team{{GID: "tm1", Name: "営業"}}))
 }
+
+// #52: a name Asana's GET answers (red) is taken and kept and sent as its written name.
+func TestUpdateProjectLocalNewColorName(t *testing.T) {
+	ctx := context.Background()
+	s := projectStore(t)
+	must(t, s.UpdateProjectLocal(ctx, "p1", map[string]any{"color": " Red "}, testNow))
+	o, err := s.ProjectOverview(ctx, "p1")
+	must(t, err)
+	if o.Color != "dark-red" {
+		t.Errorf("cached color = %q, want dark-red", o.Color)
+	}
+	ops, _ := s.PendingOps(ctx)
+	if len(ops) != 1 || ops[0].Payload["color"] != "dark-red" {
+		t.Fatalf("ops = %+v", ops)
+	}
+	// blue is dark-blue (the first of the two), the color p1 had: nothing left to send.
+	must(t, s.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "blue"}, testNow))
+	if ops, _ := s.PendingOps(ctx); len(ops) != 0 {
+		t.Fatalf("blue is not dark-blue: %+v", ops)
+	}
+}
