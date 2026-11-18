@@ -55,6 +55,7 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 | `internal/mcpserver` | 入り口 | 同じ | MCP go-sdk | MCP のツール |
 | `internal/cli` | 入り口 | 同じ | cobra、bubbletea、MCP go-sdk、x/term、go-runewidth | コマンド |
 | `internal/wire` | 組み立て | 同じ (d4 で `internal/cli/root.go` から移した。cmd/asagao が `cli.Wiring` で cli に渡す) | なし (adapter を通す) | adapter を作り、app と sync に渡す。adapter を import してよい唯一の場所 |
+| `scripts/realcheck` | 共通 (標準ライブラリだけ) | 同じ | なし | 本物の Asana での確認 (#31)。asagao の実行ファイル (CLI・MCP) を外から動かすので、asagao のパッケージは import しない |
 
 `domain/rich` などの名前は、その段階の PR で決め直してよい (ADR にする)。
 

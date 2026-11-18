@@ -59,6 +59,9 @@ var layers = map[string]layer{
 	"internal/termsafe": layerCommon,
 	"internal/xdg":      layerCommon,
 
+	// The real-Asana check drives the asagao binary from outside: standard library only.
+	"scripts/realcheck": layerCommon,
+
 	"internal/tui":       layerEntry,
 	"internal/cli":       layerEntry,
 	"internal/mcpserver": layerEntry,
