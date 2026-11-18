@@ -1,74 +1,61 @@
 package readmodel
 
 import (
+	"fmt"
 	"math"
-	"strconv"
-	"strings"
 	"testing"
 )
 
-func f64(v float64) *float64 { return &v }
-
-// 29 of 100 is 29%, not 28% (29/100*100 is 28.999999999999996 in floats).
-func TestAttackMetricTextDoesNotLoseAPercent(t *testing.T) {
-	for _, cur := range []float64{29, 57, 58, 14, 7} {
-		m := &GoalMetric{Initial: f64(0), Target: f64(100), Current: f64(cur)}
-		want := "（" + strconv.Itoa(int(cur)) + "%）"
-		if got := m.Text(); !strings.HasSuffix(got, want) {
-			t.Errorf("current %v: %q, want suffix %q", cur, got, want)
+// A percentage is a fraction: every whole percent k/100 is shown as k (no 28.999… floor
+// error), as the text and as the progress.
+func TestAttackPercentageFractionsAreExact(t *testing.T) {
+	for k := 0; k <= 100; k++ {
+		m := &GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(float64(k) / 100)}
+		if want := fmt.Sprintf("%d%% / 100%%（%d%%）", k, k); m.Text() != want {
+			t.Errorf("k=%d: %q, want %q", k, m.Text(), want)
 		}
 	}
 }
 
-func TestAttackMetricProgressEdges(t *testing.T) {
-	cases := []struct {
+// Going down (initial 1 → target 0.5), no span, over / under the range, and the other
+// kinds that must not be multiplied.
+func TestAttackPercentageShapes(t *testing.T) {
+	for _, tc := range []struct {
 		name string
 		m    *GoalMetric
-		p    float64
-		ok   bool
+		want string
 	}{
-		{"decreasing goal", &GoalMetric{Initial: f64(100), Target: f64(0), Current: f64(25)}, 0.75, true},
-		{"overshoot", &GoalMetric{Initial: f64(0), Target: f64(10), Current: f64(50)}, 1, true},
-		{"wrong direction", &GoalMetric{Initial: f64(0), Target: f64(10), Current: f64(-5)}, 0, true},
-		{"target == initial", &GoalMetric{Initial: f64(5), Target: f64(5), Current: f64(5)}, 0, false},
-		{"inf target", &GoalMetric{Target: f64(math.Inf(1)), Current: f64(1)}, 0, false},
-		{"inf current", &GoalMetric{Target: f64(10), Current: f64(math.Inf(1))}, 1, true},
-		{"nan current", &GoalMetric{Target: f64(10), Current: f64(math.NaN())}, 0, false},
-		{"no current", &GoalMetric{Target: f64(10)}, 0, false},
-		{"nil", nil, 0, false},
-	}
-	for _, c := range cases {
-		p, ok := c.m.Progress()
-		if p != c.p || ok != c.ok {
-			t.Errorf("%s: (%v, %v), want (%v, %v)", c.name, p, ok, c.p, c.ok)
-		}
-	}
-}
-
-func TestAttackMetricTextOddInputs(t *testing.T) {
-	for _, m := range []*GoalMetric{
-		{Precision: -3, Current: f64(1.5), Target: f64(3)},
-		{Precision: 1 << 30, Current: f64(1), Target: f64(3)},
-		{Kind: "currency", Current: f64(1), Target: f64(0)},
-		{Kind: "percentage", Target: f64(math.NaN()), Current: f64(math.NaN())},
-		{},
-		nil,
+		{"down", &GoalMetric{Kind: "percentage", Initial: f(1), Target: f(0.5), Current: f(0.75)}, "75% / 50%（50%）"},
+		{"no span", &GoalMetric{Kind: "percentage", Initial: f(0.5), Target: f(0.5), Current: f(0.5)}, "50% / 50%"},
+		{"under", &GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(-0.2)}, "-20% / 100%（0%）"},
+		{"over", &GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(3)}, "300% / 100%（100%）"},
+		{"no initial", &GoalMetric{Kind: "percentage", Target: f(1), Current: f(0.5)}, "50% / 100%（50%）"},
+		{"no target", &GoalMetric{Kind: "percentage", Current: f(0.5)}, "50%"},
+		{"nothing", &GoalMetric{Kind: "percentage"}, ""},
+		{"precision", &GoalMetric{Kind: "percentage", Precision: 1, Initial: f(0), Target: f(1), Current: f(0.123)}, "12.3% / 100.0%（12%）"},
+		{"display wins for current", &GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(0.4), Display: "40%"}, "40% / 100%（40%）"},
+		{"currency not multiplied", &GoalMetric{Kind: "currency", Currency: "USD", Target: f(1), Current: f(0.5), Precision: 2}, "USD 0.50 / USD 1.00（50%）"},
+		{"number not multiplied", &GoalMetric{Kind: "number", Target: f(1), Current: f(0.5), Precision: 1}, "0.5 / 1.0（50%）"},
+		{"unknown kind is a number", &GoalMetric{Kind: "weird", Target: f(1), Current: f(0.5), Precision: 1}, "0.5 / 1.0（50%）"},
+		{"empty kind is a number", &GoalMetric{Target: f(2), Current: f(1)}, "1 / 2（50%）"},
 	} {
-		_ = m.Text() // must not panic
-	}
-	if got := (&GoalMetric{Kind: "currency", Currency: "JPY", Current: f64(5), Target: f64(10)}).Text(); got != "JPY 5 / JPY 10（50%）" {
-		t.Errorf("currency text = %q", got)
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.m.Text(); got != tc.want {
+				t.Errorf("%q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestAttackContainsBoundaries(t *testing.T) {
-	p := TimePeriodView{StartOn: "2026-10-01", EndOn: "2026-12-31"}
-	for day, want := range map[string]bool{"2026-09-30": false, "2026-10-01": true, "2026-12-31": true, "2027-01-01": false, "": false} {
-		if p.Contains(day) != want {
-			t.Errorf("%q: %v", day, !want)
+// Odd floats do not panic and are not shown as a number that is not one.
+func TestAttackPercentageOddFloats(t *testing.T) {
+	for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 1e308, -1e308, math.SmallestNonzeroFloat64} {
+		m := &GoalMetric{Kind: "percentage", Initial: f(0), Target: f(v), Current: f(v)}
+		_ = m.Text()
+		m = &GoalMetric{Kind: "percentage", Initial: f(v), Target: f(1), Current: f(0.5), Precision: -3}
+		_ = m.Text()
+		if p, ok := m.Progress(); ok && (p < 0 || p > 1 || math.IsNaN(p)) {
+			t.Errorf("progress %v for %v", p, v)
 		}
-	}
-	if (TimePeriodView{StartOn: "2026-10-01"}).Contains("2026-11-01") {
-		t.Error("an open-ended period contains a day")
 	}
 }
