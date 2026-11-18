@@ -97,6 +97,7 @@ func TestAttackAttachmentRedownloadsAfterUndo(t *testing.T) {
 		fmt.Fprint(w, `{"data":{"gid":"a1","name":"x.png","host":"asana","download_url":"https://files.example/a1","parent":{"gid":"t1"}}}`)
 	})
 	ctx := context.Background()
+	st.SetAttachmentDir(cache) // where it downloads
 	if err := st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "x.png", Host: "asana"}}); err != nil {
 		t.Fatal(err)
 	}
