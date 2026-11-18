@@ -93,12 +93,14 @@ func (m *Model) actions() []action {
 		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
 		{id: "set_parent", key: "p", group: groupTask, label: "親タスクを付け替える", ctx: ctxTask, needTask: true, run: (*Model).openParentPicker},
 		{id: "delete_task", key: "Z", group: groupTask, label: "タスクを削除（確認あり）", ctx: ctxTask, needTask: true, run: (*Model).confirmDeleteTask},
+		{id: "time", key: "h", group: groupTask, label: "作業時間を見る / 記録する", ctx: ctxTask, needTask: true, plan: readmodel.PlanTimeTracking, run: (*Model).openTimeEntries},
 		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
 		// view
 		{id: "filter", key: "f", shortcut: []string{"f"}, group: groupView, label: "絞り込み（未完了・期限切れ…）", ctx: ctxAll, run: (*Model).openFilterPicker},
 		{id: "tag_filter", key: "T", shortcut: []string{"T"}, group: groupView, label: "タグで絞り込む", ctx: ctxAll, run: (*Model).openTagPicker},
+		{id: "search_asana", key: "g", group: groupView, label: "Asana でも検索（キャッシュにないタスク。/ で語を入れてから）", ctx: ctxAll, run: (*Model).searchAsana},
 		{id: "saved_search", key: "/", group: groupView, label: "保存した検索を呼び出す", ctx: ctxAll, run: (*Model).openSavedSearchPicker},
 		{id: "field_filter", key: "F", group: groupView, label: "カスタムフィールドで絞り込む", ctx: ctxAll, run: (*Model).openFieldFilterPicker},
 		{id: "view", key: "v", shortcut: []string{"v"}, group: groupView, label: "表示を切り替え（リスト→ボード→カレンダー）", ctx: ctxList | ctxBoard | ctxCalendar, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},
@@ -127,6 +129,8 @@ func (m *Model) actions() []action {
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
+		{id: "goals", key: "Q", group: groupProject, label: "ゴール（期間・進み具合）", ctx: ctxAll, plan: readmodel.PlanGoals, run: (*Model).openGoals},
+		{id: "portfolios", key: "l", group: groupProject, label: "ポートフォリオ（自分がオーナーのもの）", ctx: ctxAll, plan: readmodel.PlanPortfolios, run: (*Model).openPortfolios},
 		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other
 		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},

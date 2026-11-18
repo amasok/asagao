@@ -543,12 +543,21 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) err
 				"DELETE FROM teams WHERE workspace_gid = ?",
 				"DELETE FROM project_favorites WHERE workspace_gid = ?",
 				"DELETE FROM sync_state WHERE key = '" + KeyTeams + "' || ?",
+				"DELETE FROM goal_supports WHERE goal_gid IN (SELECT gid FROM goals WHERE workspace_gid = ?)",
+				"DELETE FROM goals WHERE workspace_gid = ?",
+				"DELETE FROM time_periods WHERE workspace_gid = ?",
+				"UPDATE portfolios SET mine = 0 WHERE workspace_gid = ?",
+				"DELETE FROM sync_state WHERE key IN ('" + readmodel.KeyGoals + "' || ?1, '" + readmodel.KeyPortfolios + "' || ?1)",
+				"DELETE FROM sync_state WHERE key GLOB '" + readmodel.KeyPlanUnavailable + "*:' || ?", // its 402s (readmodel.PlanKey)
 				"DELETE FROM workspaces WHERE gid = ?",
 			} {
 				if _, err := tx.ExecContext(ctx, q, gid); err != nil {
 					return err
 				}
 			}
+		}
+		if len(stale) > 0 {
+			return prunePortfolios(ctx, tx)
 		}
 		return nil
 	})
@@ -567,4 +576,31 @@ func (s *Store) UpsertUsers(ctx context.Context, users []model.User) error {
 		}
 		return nil
 	})
+}
+
+// AddUsers caches users found in Asana by name (typeahead, Issue #36) that the cache does
+// not have yet. A user already cached is left as it is (the found record may lack the
+// email). It returns how many were added.
+func (s *Store) AddUsers(ctx context.Context, users []model.User) (int, error) {
+	added := 0
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		added = 0
+		for _, u := range users {
+			if u.GID == "" {
+				continue
+			}
+			res, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name, email) VALUES(?, ?, ?)
+				ON CONFLICT(gid) DO NOTHING`, u.GID, u.Name, u.Email)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return err
+			} else if n > 0 {
+				added++
+			}
+		}
+		return nil
+	})
+	return added, err
 }

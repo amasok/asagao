@@ -281,6 +281,10 @@ const (
 	pickDeleteTag
 	pickMySection // a section of My Tasks (mysections.go)
 	pickTeam      // the team of a new project (project_overview.go)
+	// timetracking.go
+	pickTimeEntries // a task's time tracking entries
+	pickTimeAction  // edit / delete one entry
+	pickTimeDelete  // confirm deleting an entry
 	// templates.go
 	pickTaskTemplate
 	pickProjectTemplate
@@ -428,6 +432,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if cmd, ok := m.handleSectionTagPicker(p, item); ok {
+			return m, cmd
+		}
+		if cmd, ok := m.handleTimePicker(p, item); ok {
 			return m, cmd
 		}
 		switch p.kind {

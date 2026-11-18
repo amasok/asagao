@@ -107,6 +107,17 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 		cond, a := searchCondition(term)
 		add(cond, a...)
 	}
+	if f.GIDs != nil {
+		if len(f.GIDs) == 0 {
+			add("0")
+		} else {
+			a := make([]any, len(f.GIDs))
+			for i, g := range f.GIDs {
+				a[i] = g
+			}
+			add("t.gid IN ("+strings.TrimSuffix(strings.Repeat("?,", len(f.GIDs)), ",")+")", a...)
+		}
+	}
 
 	add("t.gid NOT IN " + deletedTasks) // their delete is queued
 

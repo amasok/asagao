@@ -31,6 +31,16 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
+		if !(&app.TimeTracking{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
+			off[readmodel.PlanTimeTracking] = true
+		}
+		goals := &app.Goals{Store: st, Clock: m.deps.Now}
+		if !goals.Available(m.ctx) {
+			off[readmodel.PlanGoals] = true
+		}
+		if !goals.PortfoliosAvailable(m.ctx) {
+			off[readmodel.PlanPortfolios] = true
+		}
 		// Project templates are listed and made in the default workspace. (Task templates
 		// are hidden per project: templates.go.)
 		ws, _ := st.DefaultWorkspace(m.ctx)

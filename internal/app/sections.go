@@ -81,9 +81,7 @@ func (s *Sections) RenameHere(ctx context.Context, sectionGID, name string) erro
 
 // ErrPlanUnavailable is returned for a feature that Asana refused because the workspace's
 // plan lacks it (see readmodel.KeyPlanUnavailable). The message says which.
-type ErrPlanUnavailable struct{ Feature string }
-
-func (e *ErrPlanUnavailable) Error() string { return readmodel.PlanUnavailableMessage(e.Feature) }
+type ErrPlanUnavailable = readmodel.PlanUnavailableError
 
 // IsPlanUnavailable reports whether err is an ErrPlanUnavailable.
 func IsPlanUnavailable(err error) bool {
