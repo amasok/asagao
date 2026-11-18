@@ -16,7 +16,7 @@ import (
 func TestAttackGoalsStaleAnswerDropped(t *testing.T) {
 	h := goalsHarness(t, goalsStore(t), func() time.Time { return testNow })
 	m := h.m
-	h.key(" ", "g")
+	h.key(" ", "Q")
 	list := m.goals.list
 	h.key("enter") // detail of g1; loads (cache + fetch)
 	staleSeq := m.goals.seq
@@ -45,7 +45,7 @@ func TestAttackGoalsStaleAnswerDropped(t *testing.T) {
 func TestAttackGoalsCursorClampsWhenListShrinks(t *testing.T) {
 	h := goalsHarness(t, goalsStore(t), func() time.Time { return testNow })
 	m := h.m
-	h.key(" ", "g", "G")
+	h.key(" ", "Q", "G")
 	if m.goals.cursor != 2 {
 		t.Fatalf("cursor = %d", m.goals.cursor)
 	}
@@ -65,7 +65,7 @@ func TestAttackGoalsCursorClampsWhenListShrinks(t *testing.T) {
 func TestAttackGoalsEmptyEverywhere(t *testing.T) {
 	st := overviewStore(t)
 	h := goalsHarness(t, st, func() time.Time { return testNow })
-	for _, ks := range [][]string{{" ", "g"}, {" ", "G"}} {
+	for _, ks := range [][]string{{" ", "Q"}, {" ", "l"}} {
 		h.key(ks...)
 		for _, k := range []string{"enter", "j", "k", "g", "G", "ctrl+d", "ctrl+u", "tab", "c", "l", "h", "tab", "c", "r"} {
 			h.key(k)
@@ -79,7 +79,7 @@ func TestAttackGoalsEmptyEverywhere(t *testing.T) {
 func TestAttackGoalsFailedDetailEscapes(t *testing.T) {
 	h := goalsHarness(t, goalsStore(t), func() time.Time { return testNow })
 	m := h.m
-	h.key(" ", "g", "enter")
+	h.key(" ", "Q", "enter")
 	h.send(goalDetailMsg{seq: m.goals.seq, fetched: true, err: context.DeadlineExceeded})
 	mustShow(t, h.screen(), "deadline")
 	h.key("esc")
@@ -97,7 +97,7 @@ func TestAttackGoalsTermsafeAndTinyWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := goalsHarness(t, st, func() time.Time { return testNow })
-	h.key(" ", "g")
+	h.key(" ", "Q")
 	if raw := h.m.render(); strings.Contains(raw, "pwn\x07") || strings.Contains(raw, "\x1b]0") {
 		t.Fatalf("control sequence on screen: %q", raw)
 	}

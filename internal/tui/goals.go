@@ -10,7 +10,7 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// Goals and portfolios (#7), read only: space g opens the goals, space G my portfolios
+// Goals and portfolios (#7), read only: space Q opens the goals, space l my portfolios
 // (tab switches). They are read from the cache and refreshed from Asana when shown
 // online. enter opens a goal (its subgoals and supporting work) or a portfolio (its
 // projects); from there enter opens a subgoal, a portfolio, a task, or jumps to a
