@@ -293,6 +293,8 @@ var legacyColors = []string{
 	"dark-pink", "dark-green", "dark-blue", "dark-red", "dark-teal", "dark-brown", "dark-orange", "dark-purple", "dark-warm-gray",
 	"light-pink", "light-green", "light-blue", "light-red", "light-teal", "light-brown", "light-orange", "light-purple", "light-warm-gray",
 	"none",
+	// not offered by asagao: light-yellow (in Asana's 400 list) and the new names GET answers
+	"light-yellow", "hot-pink", "red", "aqua", "cool-gray", "yellow-green",
 }
 
 // colorNames records, for every color name asagao sends, what Asana answers to the PUT and
@@ -319,7 +321,12 @@ func (c *Check) colorNames() {
 			body, err := c.R.WriteBody(c.ctx, c.Made, "PUT", "/"+kind+"/"+gid, M{"data": M{"color": col}})
 			put := str(decode(body), "data", "color")
 			if err != nil {
-				put = "エラー " + oneLine(err.Error())
+				put = "エラー (全文は colors-errors.txt)"
+				full := fmt.Sprintf("%s %s %s: %s\n", kind, gid, col, err)
+				if f, ferr := os.OpenFile(filepath.Join(c.R.Env.Run, "colors-errors.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
+					_, _ = f.WriteString(full)
+					f.Close()
+				}
 			}
 			got, gerr := c.asana("/"+kind+"/"+gid, "opt_fields=color")
 			return put, str(got, "color") + errText(gerr)
