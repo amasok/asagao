@@ -46,9 +46,6 @@ func refAPIValue(fieldType string, v any) any {
 	if s, ok := v.(string); ok && fieldType == "date" {
 		return map[string]any{"date": s}
 	}
-	if v == nil && fieldType == "people" { // changed on purpose: Asana clears people with [] (#31)
-		return []string{}
-	}
 	return v
 }
 
