@@ -131,9 +131,14 @@ func findBriefOp(ctx context.Context, tx *sql.Tx, projectGID string) (*Op, error
 // reapplyBriefEdits keeps the unsent brief changes of a project after its brief was stored
 // from Asana: the cache shows the brief as it will be once they are sent.
 func reapplyBriefEdits(ctx context.Context, tx *sql.Tx, projectGID string) error {
+	return reapplyBriefEditsBut(ctx, tx, projectGID, 0)
+}
+
+// reapplyBriefEditsBut is reapplyBriefEdits without entry except (one being discarded).
+func reapplyBriefEditsBut(ctx context.Context, tx *sql.Tx, projectGID string, except int64) error {
 	var payload string
 	err := tx.QueryRowContext(ctx, `SELECT payload FROM outbox WHERE kind = ? AND task_gid = ? AND state <> 'failed'
-		ORDER BY id DESC LIMIT 1`, OpUpdateBrief, projectGID).Scan(&payload)
+		AND id <> ? ORDER BY id DESC LIMIT 1`, OpUpdateBrief, projectGID, except).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -155,10 +160,15 @@ func briefOfPayload(p map[string]any) cachedBrief {
 	return cachedBrief{state: BriefAvailable, title: briefStr(p, "title"), text: briefStr(p, "text"), html: briefStr(p, "html_text")}
 }
 
-// undoBriefOp puts back the brief as it was before a discarded entry.
+// undoBriefOp puts back the brief as it was before a discarded entry, with the project's
+// other brief changes still queued (a later one made while it was failed or being sent)
+// applied over it.
 func undoBriefOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	return writeBrief(ctx, tx, op.TaskGID, cachedBrief{state: briefStr(op.Base, "state"), title: briefStr(op.Base, "title"),
-		text: briefStr(op.Base, "text"), html: briefStr(op.Base, "html_text")})
+	if err := writeBrief(ctx, tx, op.TaskGID, cachedBrief{state: briefStr(op.Base, "state"), title: briefStr(op.Base, "title"),
+		text: briefStr(op.Base, "text"), html: briefStr(op.Base, "html_text")}); err != nil {
+		return err
+	}
+	return reapplyBriefEditsBut(ctx, tx, op.TaskGID, op.ID)
 }
 
 // CompleteBriefOp removes a sent brief entry and stores the brief Asana now has (nil: the

@@ -113,3 +113,21 @@ func TestCompleteBriefKeepsNewerChange(t *testing.T) {
 		t.Fatalf("overview = %+v", o)
 	}
 }
+
+// Discarding a failed change keeps a later one queued for the brief in view (#60, found
+// by the tester): the brief shown is the later change, not the base of the failed one.
+func TestBriefDiscardKeepsLaterChange(t *testing.T) {
+	s, ctx := briefStore(t, asanaBrief)
+	now := time.Now()
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>A</body>", Text: "A"}, now))
+	a := briefEntries(t, s)[0]
+	must(t, s.MarkOpFailed(ctx, a.ID, errors.New("402")))
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>B</body>", Text: "B"}, now))
+	if n := len(briefEntries(t, s)); n != 2 {
+		t.Fatalf("entries = %d", n)
+	}
+	must(t, s.DiscardOp(ctx, a.ID))
+	if o, _ := s.ProjectOverview(ctx, "p1"); o.Brief == nil || o.Brief.Text != "B" || !o.BriefPending {
+		t.Fatalf("overview = %+v", o)
+	}
+}
