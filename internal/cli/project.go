@@ -333,7 +333,11 @@ func (a *app) projectCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "プロジェクトを作りました: %s (%s)\n", p.Name, p.GID)
+			msg := fmt.Sprintf("プロジェクトを作りました: %s (%s)", p.Name, p.GID)
+			if p.Team != nil && p.Team.Name != "" {
+				msg += "  チーム: " + p.Team.Name // a partial --team names the team it picked
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil
 		},
 	}

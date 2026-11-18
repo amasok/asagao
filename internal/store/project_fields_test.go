@@ -106,8 +106,15 @@ func TestTeamsForNewProject(t *testing.T) {
 		t.Fatalf("resolve 営業 = %q %v", g, err)
 	}
 	must(t, s.ReplaceTeams(ctx, "w1", []asana.Team{{GID: "tm9", Name: "開発 A"}, {GID: "tm8", Name: "開発 B"}}))
-	if _, err := s.ResolveTeam(ctx, "発"); !errors.Is(err, ErrAmbiguous) {
-		t.Fatalf("partial name of two teams: %v", err)
+	if _, err := s.ResolveTeam(ctx, "発"); !errors.Is(err, ErrAmbiguous) || !strings.Contains(err.Error(), "開発 A") || !strings.Contains(err.Error(), "開発 B") {
+		t.Fatalf("partial name of two teams should name the candidates: %v", err)
+	}
+	// A new project is never put in a team by a guess between several.
+	if _, err := s.TeamForNewProject(ctx, "発"); !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("a new project's team by an ambiguous name: %v", err)
+	}
+	if g, err := s.ResolveTeam(ctx, "開発 a"); err != nil || g != "tm9" {
+		t.Fatalf("exact name, case-insensitive: %q %v", g, err)
 	}
 	if g, err := s.ResolveTeam(ctx, "開発"); err != nil || g != "tm2" {
 		t.Fatalf("an exact name wins over partial ones: %q %v", g, err)
@@ -167,6 +174,15 @@ func TestUpdateProjectLocalRejects(t *testing.T) {
 	}
 	if err := s.UpdateProjectLocal(ctx, "p2", map[string]any{"start_on": "2026-12-01"}, testNow); err == nil {
 		t.Errorf("a start date without a due date was accepted")
+	}
+	// Only the due date changes: it is checked against the cached start date (Asana would
+	// answer 400 when the edit is sent).
+	must(t, s.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p3", Name: "C 開発", Team: &asana.Ref{GID: "tm2", Name: "開発"},
+		Members: []asana.Ref{{GID: "me"}}, StartOn: "2026-12-10", DueOn: "2026-12-31"}}, "me"))
+	for _, due := range []string{"2026-12-09", ""} {
+		if err := s.UpdateProjectLocal(ctx, "p3", map[string]any{"due_on": due}, testNow); err == nil || !strings.Contains(err.Error(), "開始日") {
+			t.Errorf("due %q before the cached start date: %v", due, err)
+		}
 	}
 	if err := s.UpdateProjectLocal(ctx, "nope", map[string]any{"color": "none"}, testNow); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown project: %v", err)
