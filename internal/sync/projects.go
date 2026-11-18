@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -222,8 +223,8 @@ func (s *Syncer) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, 
 		}
 		sv, known := current[k]
 		base := op.Base[k]
-		if k == "color" { // no color is "" here and "none" in Asana's answers
-			sv, base, local = noColor(sv), noColor(base), noColor(local)
+		if k == "color" { // "none" ≡ "", and Asana renames the written names (dark-red is red)
+			sv, base, local = canonColor(sv), canonColor(base), canonColor(local)
 		}
 		if known && !same(sv, base) && !same(sv, local) {
 			conflicts[k] = sv
@@ -268,10 +269,11 @@ func projectFieldValues(p *model.Project) map[string]any {
 	return map[string]any{"notes": p.Notes, "owner": owner, "start_on": p.StartOn, "due_on": p.DueOn, "color": p.Color}
 }
 
-// noColor reads a project color with "none" (Asana's "no color") as "".
-func noColor(v any) any {
-	if v == "none" {
-		return ""
+// canonColor compares colors as Asana's GET names them (tag.CanonicalColor): no color
+// ("" / "none") is "", and a written name is its new name (dark-red is red).
+func canonColor(v any) any {
+	if s, ok := v.(string); ok {
+		return tag.CanonicalColor(s)
 	}
 	return v
 }

@@ -190,13 +190,14 @@ func (s *Syncer) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, erro
 	for k, v := range op.Payload {
 		want, _ := v.(string)
 		cur, base := any(current[k]), op.Base[k]
-		if k == "color" { // no color is "" here and "none" in Asana's answers, like a project's
-			cur, base = noColor(cur), noColor(base)
-			if noColor(want) == "" {
+		cmpWant := any(want)
+		if k == "color" { // "none" ≡ "", and Asana renames the written names, like a project's
+			cur, base, cmpWant = canonColor(cur), canonColor(base), canonColor(want)
+			if cmpWant == "" {
 				want = ""
 			}
 		}
-		if !same(cur, base) && cur != any(want) {
+		if !same(cur, base) && cur != cmpWant {
 			conflict[k] = current[k]
 		}
 		if k == "color" && want == "" {
