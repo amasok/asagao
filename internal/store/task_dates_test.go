@@ -216,3 +216,22 @@ func TestCreateTaskLocalStartOn(t *testing.T) {
 		t.Fatalf("refused creates were queued: %d ops", len(ops))
 	}
 }
+
+// A subtask's workspace is its parent's as TaskWorkspace finds it (the parent's own, else
+// its project's), so a 402 recorded for that workspace applies to the subtask too.
+func TestCreateSubtaskStartOnPlanWorkspace(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t) // t1 has no workspace of its own; its project p1 is in w1
+	now := time.Now()
+	if err := s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1"), now.UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.CreateTaskLocal(ctx, NewTask{Name: "採寸", ParentGID: "t1", DueOn: "2026-11-19", StartOn: "2026-11-18"}, now)
+	var pe *readmodel.PlanUnavailableError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want a plan error", err)
+	}
+	if _, err := s.CreateTaskLocal(ctx, NewTask{Name: "x", ParentGID: "nope"}, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown parent: %v", err)
+	}
+}

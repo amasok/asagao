@@ -269,9 +269,15 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 		return "", errors.New("タスク名が空です")
 	}
 	if nt.ParentGID != "" {
-		if err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM tasks WHERE gid = ?", nt.ParentGID).Scan(&nt.WorkspaceGID); err != nil {
-			return "", notFound(err, "parent task "+nt.ParentGID)
+		// its own workspace, else its project's (as TaskWorkspace: the 402 of a start date
+		// is recorded and looked up by it)
+		ws, err := taskWorkspace(ctx, s.db, nt.ParentGID)
+		if errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("parent task %s: %w", nt.ParentGID, ErrNotFound)
+		} else if err != nil {
+			return "", err
 		}
+		nt.WorkspaceGID = ws
 		nt.ProjectGID, nt.SectionGID = "", "" // subtasks are not in projects
 	}
 	if nt.WorkspaceGID == "" && nt.ProjectGID != "" {
