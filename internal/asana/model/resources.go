@@ -3,7 +3,10 @@
 // use them; internal/asana keeps aliases (migration-plan.md, d1).
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Ref struct {
 	GID  string `json:"gid"`
@@ -29,18 +32,54 @@ type Project struct {
 	Archived     bool      `json:"archived"`
 	Color        string    `json:"color"`
 	Notes        string    `json:"notes"`
+	HTMLNotes    string    `json:"html_notes"`
+	Owner        *Ref      `json:"owner"`
+	StartOn      string    `json:"start_on"`
+	DueOn        string    `json:"due_on"`
 	Workspace    *Ref      `json:"workspace"`
 	Team         *Ref      `json:"team"`
 	Members      []Ref     `json:"members"`
 	PermalinkURL string    `json:"permalink_url"`
 	CreatedAt    time.Time `json:"created_at"`
 	ModifiedAt   time.Time `json:"modified_at"`
+	// ProjectBrief is the project's brief, if it has one (only asked for by Client.Project).
+	ProjectBrief *Ref `json:"project_brief,omitempty"`
+}
+
+// Team is a team of an organization.
+type Team struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+}
+
+// TaskCounts is how many tasks a project has (GET /projects/{gid}/task_counts).
+type TaskCounts struct {
+	NumTasks           int `json:"num_tasks"`
+	NumCompletedTasks  int `json:"num_completed_tasks"`
+	NumIncompleteTasks int `json:"num_incomplete_tasks"`
+	NumMilestones      int `json:"num_milestones"`
+	NumCompletedMiles  int `json:"num_completed_milestones"`
+}
+
+// ProjectBrief is a project's brief (the "概要" note; a preview API).
+type ProjectBrief struct {
+	GID      string `json:"gid"`
+	Title    string `json:"title"`
+	Text     string `json:"text"`
+	HTMLText string `json:"html_text"`
 }
 
 type Section struct {
 	GID     string `json:"gid"`
 	Name    string `json:"name"`
 	Project *Ref   `json:"project"`
+}
+
+// Tag is a tag with its color (a color name such as "dark-green", or "" for none).
+type Tag struct {
+	GID   string `json:"gid"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 
 type Membership struct {
@@ -80,6 +119,9 @@ type Task struct {
 	// are nil when the response did not include them.
 	Dependencies []Ref `json:"dependencies"`
 	Dependents   []Ref `json:"dependents"`
+	// AssigneeSection is the section of the assignee's My Tasks the task is in. Set is
+	// false when the response did not include it (it is then left as it is).
+	AssigneeSection OptionalRef `json:"assignee_section"`
 	// Partial is set when the task was fetched without the optional fields (see
 	// optionalTaskFields): its custom fields, dependencies and approval status are unknown.
 	Partial bool `json:"-"`
@@ -145,3 +187,38 @@ type Position struct{ Before, After string }
 
 // IsZero reports whether p leaves the place to Asana.
 func (p Position) IsZero() bool { return p.Before == "" && p.After == "" }
+
+// OptionalRef is a reference that a response may leave out (Set false), give as null
+// (Set, Ref nil) or give (Set, Ref).
+type OptionalRef struct {
+	Set bool
+	Ref *Ref
+}
+
+func (o *OptionalRef) UnmarshalJSON(b []byte) error {
+	o.Set, o.Ref = true, nil
+	if string(b) == "null" {
+		return nil
+	}
+	var r Ref
+	if err := json.Unmarshal(b, &r); err != nil {
+		return err
+	}
+	o.Ref = &r
+	return nil
+}
+
+func (o OptionalRef) MarshalJSON() ([]byte, error) {
+	if o.Ref == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(o.Ref)
+}
+
+// GID is the referenced gid ("" for none).
+func (o OptionalRef) GID() string {
+	if o.Ref == nil {
+		return ""
+	}
+	return o.Ref.GID
+}

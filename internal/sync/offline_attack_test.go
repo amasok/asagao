@@ -15,7 +15,7 @@ func TestOfflineSyncerNeverCallsAPI(t *testing.T) {
 	if s.API != nil {
 		t.Fatal("API must be a nil interface")
 	}
-	if _, err := s.CreateProject(ctx, "x"); !errors.Is(err, ErrOffline) {
+	if _, err := s.CreateProject(ctx, "x", ""); !errors.Is(err, ErrOffline) {
 		t.Errorf("CreateProject: %v", err)
 	}
 	if err := s.SetProjectArchived(ctx, "p1", true); !errors.Is(err, ErrOffline) {

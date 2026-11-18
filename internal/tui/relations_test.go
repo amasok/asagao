@@ -103,7 +103,7 @@ func TestSubmitFieldReadsAndQueues(t *testing.T) {
 func TestToggleFollowerAndTagQueue(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
-	if err := st.UpsertTags(ctx, []asana.Ref{{GID: "g1", Name: "急ぎ"}}); err != nil {
+	if err := st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.GetTask(ctx, "t1")

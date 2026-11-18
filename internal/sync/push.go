@@ -391,6 +391,9 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 			return waiting, err
 		}
 	}
+	if wait, err := s.waitsForSection(ctx, op); err != nil || wait {
+		return wait, err
+	}
 	gid := op.TaskGID
 	switch op.Kind {
 	case outbox.KindCreateTask:
@@ -401,8 +404,11 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 				return wait, err
 			}
 		}
-	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification:
+	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject:
 		return false, nil
+	case outbox.KindUpdateTag, outbox.KindDeleteTag:
+		return s.waitsForTag(ctx, op.TaskGID)
 	}
 	return s.createQueued(ctx, gid)
 }
@@ -420,8 +426,19 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 	return s.Store.CreateQueued(ctx, real)
 }
 
-// send sends one entry (already marked "sending").
+// send sends one entry (already marked "sending"). An entry Asana refuses because the
+// workspace's plan lacks the feature (402) also hides that feature from now on.
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
+	out, err := s.sendOp(ctx, op)
+	if model.IsPaymentRequired(err) {
+		if feature := readmodel.PlanFeatureOf(op.Kind); feature != "" {
+			_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
+		}
+	}
+	return out, err
+}
+
+func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 	var err error
 	switch op.Kind {
 	case outbox.KindUpdateTask:
@@ -430,6 +447,20 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		return s.pushCustomField(ctx, op)
 	case outbox.KindRenameSection:
 		return s.pushRenameSection(ctx, op)
+	case outbox.KindCreateSection:
+		return s.pushCreateSection(ctx, op)
+	case outbox.KindDeleteSection:
+		err = s.pushDeleteSection(ctx, op)
+	case outbox.KindInsertSection:
+		err = s.pushInsertSection(ctx, op)
+	case outbox.KindUpdateTag:
+		return s.pushUpdateTag(ctx, op)
+	case outbox.KindDeleteTag:
+		err = s.pushDeleteTag(ctx, op)
+	case outbox.KindMoveMySection:
+		err = s.pushMoveMySection(ctx, op)
+	case outbox.KindUpdateProject:
+		return s.pushUpdateProject(ctx, op)
 	case outbox.KindCreateTask:
 		return s.pushCreate(ctx, op)
 	case outbox.KindAddComment:
@@ -565,7 +596,8 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification:
+	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag:
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}
@@ -912,6 +944,10 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 		return &model.Error{Status: 404} // its create failed
 	}
 	section, _ := op.Payload["section"].(string)
+	section, err := s.realSection(ctx, section)
+	if err != nil {
+		return err
+	}
 	pos, err := s.position(ctx, op)
 	if err != nil {
 		return err
@@ -996,6 +1032,11 @@ func (s *Syncer) pushSetParent(ctx context.Context, op outbox.Op) error {
 }
 
 func (s *Syncer) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
+	gid, err := s.realSection(ctx, op.TaskGID)
+	if err != nil {
+		return sent, err
+	}
+	op.TaskGID = gid
 	server, err := s.API.Section(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -1059,6 +1100,13 @@ func (s *Syncer) pushRelation(ctx context.Context, op outbox.Op) error {
 	user, _ := op.Payload["user"].(string)
 	project, _ := op.Payload["project"].(string)
 	section, _ := op.Payload["section"].(string)
+	if section != "" {
+		if section, err = s.realSection(ctx, section); isNotFound(err) {
+			section = "" // created offline and discarded: the project's first section
+		} else if err != nil {
+			return err
+		}
+	}
 	switch op.Kind {
 	case outbox.KindAddFollower:
 		err = s.API.AddFollowers(ctx, task, []string{user})

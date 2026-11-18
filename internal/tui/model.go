@@ -93,6 +93,7 @@ type scope struct {
 	project  string // gid
 	sections []readmodel.SectionView
 	status   string // latest status update type of the project
+	group    string // the sidebar heading it is under (readmodel.ProjectGroup)
 	notice   string // scopeRecent: why the inbox is not shown (inbox.go)
 }
 
@@ -106,11 +107,14 @@ type row struct {
 	task      *readmodel.TaskSummary
 	notif     *readmodel.Notification // inbox: the notification (task is what it is about, if a task)
 	note      bool                    // header is an explanation, not a group (never collapsed)
+	empty     bool                    // header of a section with no tasks (shown so it can be changed)
 }
 
-// selectable rows: tasks, notifications, and collapsed group headers (so they can be
-// expanded again).
-func (r row) selectable() bool { return r.task != nil || r.notif != nil || r.collapsed }
+// selectable rows: tasks, notifications, collapsed group headers (so they can be expanded
+// again) and empty sections (so they can be renamed, moved or deleted).
+func (r row) selectable() bool {
+	return r.task != nil || r.notif != nil || r.collapsed || r.empty
+}
 
 // isHeader reports whether r is a group header (or a note).
 func (r row) isHeader() bool { return r.task == nil && r.notif == nil }
@@ -197,6 +201,11 @@ type Model struct {
 	allRows   []row           // every row; rows is allRows minus collapsed groups
 	collapsed map[string]bool // keys of collapsed groups in the current scope
 	renameGID string          // section being renamed (promptRenameSection)
+	// sections and tags (sectiontags.go)
+	planOff         map[string]bool      // features the workspace's plan lacks (402)
+	newSectionAfter string               // promptNewSection: the section to add it after
+	tagList         []readmodel.TagCount // the tags the tag manager shows
+	tagTarget       readmodel.TagCount   // the tag being changed
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
 	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).
@@ -225,6 +234,11 @@ type Model struct {
 	statusOffset       int
 	statuses           []readmodel.StatusUpdateView
 	selectProjectAfter string
+	// the project overview (project_overview.go)
+	overviewView   bool
+	overviewOffset int
+	overview       *readmodel.ProjectOverview
+	newProjectName string // pickTeam: the project to create
 
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
@@ -238,13 +252,13 @@ type Model struct {
 	commentGID   string       // task the comment prompt posts to
 
 	// keys (keymap.go) and choosers (pickers.go)
-	leader         bool                  // space was pressed: the menu is open
-	renderedActive bool                  // the detail was last rendered with selectable items
-	dueTask        readmodel.TaskSummary // task for promptDue
+	leader         bool                    // space was pressed: the menu is open
+	renderedActive bool                    // the detail was last rendered with selectable items
+	dueTask        readmodel.TaskSummary   // task for promptDue
 	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
 	marked         map[string]bool         // gids of the tasks marked in the list (bulk.go)
 	bulkAsk        *bulkPlan               // a change to the marked tasks waiting for y/n
-	tagTask        readmodel.TaskSummary // task for promptNewTag
+	tagTask        readmodel.TaskSummary   // task for promptNewTag
 	// custom fields (fields.go)
 	fieldTask   readmodel.TaskSummary     // task for promptField
 	fieldEdit   readmodel.CustomFieldView // field for promptField
@@ -495,6 +509,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateEdit(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateOverview(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateProjects(msg); ok {
 		return m, cmd
 	}
@@ -692,6 +709,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleOutboxKey(key)
 	case m.statusView:
 		return m.handleStatusKey(key)
+	case m.overviewView:
+		return m.handleOverviewKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
 	case m.searching:
@@ -869,7 +888,8 @@ func (m *Model) setProjects(ps []readmodel.ProjectView) {
 	current := m.currentScope()
 	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, m.inboxScope()}
 	for _, p := range ps {
-		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status})
+		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status,
+			group: readmodel.ProjectGroup(p)})
 	}
 	m.scopes = scopes
 	m.scopeCursor = 0

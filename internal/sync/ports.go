@@ -31,7 +31,14 @@ type AsanaAPI interface {
 	CreateProject(ctx context.Context, workspaceGID, teamGID, name string) (*model.Project, error)
 	CreateStatusUpdate(ctx context.Context, projectGID, statusType, title, text, htmlText string) (*model.StatusUpdate, error)
 	CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*model.Task, error)
+	CreateSection(ctx context.Context, projectGID, name, before, after string) (*model.Section, error)
 	CreateTag(ctx context.Context, workspaceGID, name string) (*model.Ref, error)
+	DeleteSection(ctx context.Context, gid string) error
+	DeleteTag(ctx context.Context, gid string) error
+	InsertSection(ctx context.Context, projectGID, sectionGID, before, after string) error
+	Tag(ctx context.Context, gid string) (*model.Tag, error)
+	UpdateTag(ctx context.Context, gid string, changes map[string]any) (*model.Tag, error)
+	UserTaskList(ctx context.Context, userGID, workspaceGID string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
 	DeleteAttachment(ctx context.Context, gid string) error
@@ -42,10 +49,13 @@ type AsanaAPI interface {
 	DuplicateTask(ctx context.Context, taskGID, name string) (*model.Ref, error)
 	Events(ctx context.Context, resource, token string) (model.EventPage, error)
 	InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos model.Position) error
+	FavoriteProjects(ctx context.Context, workspaceGID string) ([]model.Ref, error)
 	MarkNotifications(ctx context.Context, workspaceGID string, gids []string, read bool) (failed []string, err error)
 	Me(ctx context.Context) (*model.User, error)
+	MyTeams(ctx context.Context, workspaceGID string) ([]model.Team, error)
 	Notifications(ctx context.Context, workspaceGID string, max int) ([]model.Notification, error)
 	Project(ctx context.Context, gid string) (*model.Project, error)
+	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
 	RemoveDependencies(ctx context.Context, taskGID string, deps []string) error
 	RemoveFollowers(ctx context.Context, taskGID string, users []string) error
@@ -59,11 +69,13 @@ type AsanaAPI interface {
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
 	Stories(ctx context.Context, taskGID string) ([]model.Story, error)
 	Subtasks(ctx context.Context, taskGID string) ([]model.Task, error)
-	Tags(ctx context.Context, workspaceGID string) ([]model.Ref, error)
+	Tags(ctx context.Context, workspaceGID string) ([]model.Tag, error)
 	Task(ctx context.Context, gid string) (*model.Task, error)
+	TaskCounts(ctx context.Context, projectGID string) (*model.TaskCounts, error)
 	TaskDetail(ctx context.Context, gid string) (*model.Task, error)
 	Tasks(ctx context.Context, tq model.TaskQuery) ([]model.Task, error)
 	TasksByGID(ctx context.Context, gids []string) (tasks []model.Task, gone []string, err error)
+	UpdateProject(ctx context.Context, gid string, changes map[string]any) (*model.Project, error)
 	UpdateSection(ctx context.Context, gid, name string) (*model.Section, error)
 	UpdateStory(ctx context.Context, gid, text, htmlText string) (*model.Story, error)
 	UpdateTask(ctx context.Context, gid string, fields map[string]any) (*model.Task, error)
@@ -77,6 +89,13 @@ type AsanaAPI interface {
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
 	ApplyStory(ctx context.Context, gid, text, htmlText string) error
+	ApplyTag(ctx context.Context, t model.Tag) error
+	ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error
+	CompleteCreateSection(ctx context.Context, id int64, local, real string) error
+	RealSectionGID(ctx context.Context, gid string) (string, error)
+	SectionCreateQueued(ctx context.Context, gid string) (bool, error)
+	SetOpPayload(ctx context.Context, id int64, key string, value any) error
+	TagCreateQueued(ctx context.Context, tag string) (bool, error)
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
@@ -121,13 +140,16 @@ type LocalStore interface {
 	ReleaseOp(ctx context.Context, id int64) error
 	ReplaceAttachments(ctx context.Context, taskGID string, atts []model.Attachment) error
 	ReplaceDependencies(ctx context.Context, taskGID string, deps, dependents []model.TaskRef) error
+	ReplaceFavoriteProjects(ctx context.Context, workspaceGID string, favorites []model.Ref) error
 	ReplaceLocalTagGID(ctx context.Context, local, real string) error
 	ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error
 	ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error
+	ReplaceTeams(ctx context.Context, workspaceGID string, teams []model.Team) error
 	SafeToResend(ctx context.Context, op outbox.Op) (bool, error)
+	SaveProjectOverview(ctx context.Context, projectGID string, counts *model.TaskCounts, briefState string, brief *model.ProjectBrief, now time.Time) error
 	SetAttachmentPath(ctx context.Context, gid, path string) error
 	SetInboxState(ctx context.Context, st readmodel.InboxState) error
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
@@ -137,7 +159,7 @@ type LocalStore interface {
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error
 	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error
-	UpsertTags(ctx context.Context, tags []model.Ref) error
+	UpsertTags(ctx context.Context, tags []model.Tag) error
 	UpsertTasks(ctx context.Context, tasks []model.Task) error
 	UpsertUser(ctx context.Context, u model.User) error
 	UpsertUsers(ctx context.Context, users []model.User) error

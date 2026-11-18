@@ -52,7 +52,7 @@ func TestCreateProjectDroppedConnectionPCClockAhead(t *testing.T) {
 	api.BaseURL = srv.URL
 	api.MaxRetries = 0
 	s := &Syncer{API: api, Store: st, sleep: func(context.Context, time.Duration) error { return nil }}
-	p, err := s.CreateProject(ctx, "新規")
+	p, err := s.CreateProject(ctx, "新規", "")
 	if posts != 1 {
 		t.Fatalf("posts = %d: a project that may exist must not be created again", posts)
 	}

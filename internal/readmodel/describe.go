@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/task"
 )
 
@@ -142,6 +143,8 @@ func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDet
 	case outbox.KindCreateTask, outbox.KindUpdateTask:
 		add("名前", "name")
 		addRich("説明", "notes", "html_notes")
+	case outbox.KindUpdateProject:
+		addRich("説明", "notes", "html_notes")
 	}
 	return out
 }
@@ -178,10 +181,14 @@ func ConflictLines(op outbox.Op) []string {
 		name, _ := op.Payload["field_name"].(string)
 		return []string{fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict))}
 	}
+	label := FieldLabel
+	if op.Kind == outbox.KindUpdateProject {
+		label = project.FieldLabel
+	}
 	keys := slices.Sorted(maps.Keys(op.Conflict))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("%s: こちら=%v / Asana=%v", FieldLabel(k), op.Payload[k], op.Conflict[k]))
+		lines = append(lines, fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), op.Payload[k], op.Conflict[k]))
 	}
 	return lines
 }
@@ -192,7 +199,9 @@ func ConflictLines(op outbox.Op) []string {
 func DescribeOp(op outbox.Op) string {
 	what := DescribeChange(op)
 	switch op.Kind {
-	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection:
+	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection,
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection,
+		outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return what
 	}
 	name := op.TaskName
@@ -271,6 +280,54 @@ func DescribeChange(op outbox.Op) string {
 			return "通知を既読にする"
 		}
 		return "通知を未読に戻す"
+	case outbox.KindCreateSection:
+		return fmt.Sprintf("セクション「%s」の作成", str("name"))
+	case outbox.KindDeleteSection:
+		return fmt.Sprintf("セクション「%s」の削除", str("name"))
+	case outbox.KindInsertSection:
+		return fmt.Sprintf("セクション「%s」の並べ替え", str("name"))
+	case outbox.KindUpdateTag:
+		old, _ := op.Base["name"].(string)
+		if old == "" {
+			old, _ = op.Payload["name"].(string)
+		}
+		var parts []string
+		if v, ok := op.Payload["name"].(string); ok {
+			parts = append(parts, fmt.Sprintf("名前を「%s」に変更", v))
+		}
+		if v, ok := op.Payload["color"].(string); ok {
+			if v == "" {
+				v = "なし"
+			}
+			parts = append(parts, fmt.Sprintf("色を %s に変更", v))
+		}
+		return fmt.Sprintf("タグ「%s」の%s", old, strings.Join(parts, "、"))
+	case outbox.KindDeleteTag:
+		return fmt.Sprintf("タグ「%s」の削除", str("name"))
+	case outbox.KindMoveMySection:
+		return fmt.Sprintf("マイタスクのセクション「%s」への移動", str("section_name"))
+	case outbox.KindUpdateProject:
+		var parts []string
+		for _, k := range []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"} {
+			v, ok := op.Payload[k]
+			if !ok {
+				continue
+			}
+			label := project.FieldLabel(k)
+			switch {
+			case k == "html_notes":
+				if _, plain := op.Payload["notes"]; !plain {
+					parts = append(parts, "説明の変更")
+				}
+			case k == "notes", k == "owner" && v != "":
+				parts = append(parts, label+"の変更")
+			case v == "":
+				parts = append(parts, label+"を外す")
+			default:
+				parts = append(parts, fmt.Sprintf("%sを %v に変更", label, v))
+			}
+		}
+		return "プロジェクトの" + strings.Join(parts, "、")
 	case outbox.KindRenameSection:
 		if old, _ := op.Base["name"].(string); old != "" {
 			return fmt.Sprintf("セクション名を「%s」から「%s」に変更", old, str("name"))

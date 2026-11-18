@@ -23,7 +23,7 @@ func quickAddStore(t *testing.T) *store.Store {
 	if err := st.UpsertUsers(ctx, []asana.User{{GID: "u2", Name: "Partner Two", Email: "partner@example.com"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertTags(ctx, []asana.Ref{{GID: "g1", Name: "買い物"}, {GID: "g2", Name: "急ぎ"}}); err != nil {
+	if err := st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "買い物"}, {GID: "g2", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
 	return st

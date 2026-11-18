@@ -9,11 +9,15 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Project operations that need Asana right away (creating, archiving, members). They are
 // not queued: tasks may be created in a new project immediately, which an offline
 // placeholder project could not support. The store is updated with Asana's response.
+// Changes to a project's fields (description, owner, dates, color) are queued like task
+// edits (update_project, sent by pushUpdateProject); the overview's progress and brief
+// are fetched when it is opened (FetchProjectOverview).
 
 // ErrOffline is returned by online-only operations when there is no API client.
 var ErrOffline = errors.New("オンラインのときだけできる操作です")
@@ -27,8 +31,9 @@ func (s *Syncer) saveProject(ctx context.Context, p *model.Project) error {
 	return s.Store.UpsertProjects(ctx, ws, []model.Project{*p}, me)
 }
 
-// CreateProject creates a project (in the default workspace) and stores it with its sections.
-func (s *Syncer) CreateProject(ctx context.Context, name string) (*model.Project, error) {
+// CreateProject creates a project in team teamGID ("" for none, in a workspace that is
+// not an organization) of the default workspace, and stores it with its sections.
+func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*model.Project, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -40,7 +45,7 @@ func (s *Syncer) CreateProject(ctx context.Context, name string) (*model.Project
 		return nil, err
 	}
 	started := s.clock()
-	p, err := s.API.CreateProject(ctx, ws, "", name)
+	p, err := s.API.CreateProject(ctx, ws, teamGID, name)
 	if err != nil {
 		if p, err = s.recoverCreateProject(ctx, ws, name, started, err); err != nil {
 			return nil, err
@@ -155,4 +160,113 @@ func (s *Syncer) pushStatus(ctx context.Context, op outbox.Op) error {
 		return err
 	}
 	return sentNotSaved(s.Store.CompleteStatus(ctx, op.ID, str("status"), *u))
+}
+
+// FetchProjectOverview refreshes what a project's overview shows that a sync does not
+// fetch: the project itself (its notes, owner and dates), how many of its tasks are done,
+// and its brief. The brief is a preview API that Asana may refuse (402 on some plans, or
+// 403): it is then recorded as unavailable and not shown. Whatever was fetched is stored
+// even if a later request fails; the error is the first failure.
+func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) error {
+	if s.API == nil {
+		return ErrOffline
+	}
+	p, err := s.API.Project(ctx, projectGID)
+	if err != nil {
+		return err
+	}
+	if err := s.saveProject(ctx, p); err != nil {
+		return err
+	}
+	var fail error
+	counts, err := s.API.TaskCounts(ctx, projectGID)
+	if err != nil {
+		counts, fail = nil, err
+	}
+	state := readmodel.BriefNone
+	var brief *model.ProjectBrief
+	if p.ProjectBrief != nil && p.ProjectBrief.GID != "" {
+		brief, err = s.API.ProjectBrief(ctx, p.ProjectBrief.GID)
+		switch {
+		case err == nil:
+			state = readmodel.BriefAvailable
+		case model.IsPaymentRequired(err) || isForbidden(err):
+			state, brief = readmodel.BriefUnavailable, nil
+		case isNotFound(err):
+			brief = nil
+		default:
+			state, brief = "", nil // keep the cached brief
+			if fail == nil {
+				fail = err
+			}
+		}
+	}
+	if err := s.Store.SaveProjectOverview(ctx, projectGID, counts, state, brief, s.clock()); err != nil {
+		return err
+	}
+	return fail
+}
+
+// pushUpdateProject sends a project edit, after checking that nobody changed the same
+// fields in Asana since it was made here (like a task's update).
+func (s *Syncer) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, error) {
+	server, err := s.API.Project(ctx, op.TaskGID)
+	if err != nil {
+		return sent, err
+	}
+	current := projectFieldValues(server)
+	conflicts := map[string]any{}
+	for k, local := range op.Payload {
+		if k == "html_notes" {
+			continue // the server normalizes HTML; "notes" (plain) is compared instead
+		}
+		sv, known := current[k]
+		if known && !same(sv, op.Base[k]) && !same(sv, local) {
+			conflicts[k] = sv
+		}
+	}
+	if len(conflicts) > 0 {
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
+	}
+	changes := apiFields(op.Payload)
+	for _, k := range []string{"owner", "start_on"} {
+		if v, ok := changes[k]; ok && v == "" {
+			changes[k] = nil
+		}
+	}
+	if _, ok := changes["start_on"]; ok {
+		if _, ok := changes["due_on"]; !ok {
+			// Asana needs the due date with a start date: send the one it has.
+			changes["due_on"] = nullIfEmpty(server.DueOn)
+		}
+	}
+	p, err := s.API.UpdateProject(ctx, op.TaskGID, changes)
+	if err != nil {
+		return sent, err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sent, sentNotSaved(err)
+	}
+	if p.Workspace == nil {
+		p.Workspace = server.Workspace
+	}
+	_ = s.saveProject(ctx, p) // the next sync fixes a failure
+	return sent, nil
+}
+
+// projectFieldValues are a project's values of the fields an update_project changes, as
+// the store keeps them.
+func projectFieldValues(p *model.Project) map[string]any {
+	owner := ""
+	if p.Owner != nil {
+		owner = p.Owner.GID
+	}
+	return map[string]any{"notes": p.Notes, "owner": owner, "start_on": p.StartOn, "due_on": p.DueOn, "color": p.Color}
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

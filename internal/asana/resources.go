@@ -17,7 +17,7 @@ import (
 // Fields requested for each resource (keep responses small; see requirements 8 章).
 var (
 	userFields    = []string{"name", "email", "workspaces.name"}
-	projectFields = []string{"name", "archived", "color", "notes", "workspace", "team.name", "members.name", "permalink_url", "created_at", "modified_at"}
+	projectFields = []string{"name", "archived", "color", "notes", "html_notes", "owner.name", "start_on", "due_on", "workspace", "team.name", "members.name", "permalink_url", "created_at", "modified_at"}
 	sectionFields = []string{"name", "project"}
 	TaskFields    = slices.Concat([]string{
 		"name", "notes", "html_notes", "resource_subtype", "completed", "completed_at",
@@ -25,7 +25,7 @@ var (
 		"memberships.project.name", "memberships.section.name", "tags.name",
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
-		"approval_status", "dependencies", "dependents",
+		"approval_status", "dependencies", "dependents", "assignee_section.name",
 	}, customFieldValueFields)
 )
 
@@ -222,6 +222,41 @@ func (c *Client) UpdateSection(ctx context.Context, gid, name string) (*Section,
 	return &s, err
 }
 
+// CreateSection creates a section in a project (POST /projects/{gid}/sections). At most
+// one of before / after (a section gid) places it; with neither it goes last.
+func (c *Client) CreateSection(ctx context.Context, projectGID, name, before, after string) (*Section, error) {
+	body := map[string]any{"name": name}
+	if before != "" {
+		body["insert_before"] = before
+	}
+	if after != "" {
+		body["insert_after"] = after
+	}
+	var s Section
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/sections", fields(sectionFields), body, &s)
+	return &s, err
+}
+
+// DeleteSection deletes an empty section (DELETE /sections/{gid}).
+func (c *Client) DeleteSection(ctx context.Context, gid string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/sections/"+url.PathEscape(gid), nil, nil, nil)
+	return err
+}
+
+// InsertSection moves a section of a project just before or just after another one
+// (POST /projects/{gid}/sections/insert). Exactly one of before / after is set.
+func (c *Client) InsertSection(ctx context.Context, projectGID, sectionGID, before, after string) error {
+	body := map[string]any{"section": sectionGID}
+	if before != "" {
+		body["before_section"] = before
+	}
+	if after != "" {
+		body["after_section"] = after
+	}
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/sections/insert", nil, body, nil)
+	return err
+}
+
 // --- attachments ---
 
 var attachmentFields = []string{"name", "resource_subtype", "host", "download_url", "view_url", "permanent_url", "size", "created_at", "parent"}
@@ -256,11 +291,42 @@ func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map
 
 // --- tags ---
 
+var tagFields = []string{"name", "color"}
+
 // Tags lists the tags of a workspace.
-func (c *Client) Tags(ctx context.Context, workspaceGID string) ([]Ref, error) {
+func (c *Client) Tags(ctx context.Context, workspaceGID string) ([]Tag, error) {
+	q := fields(tagFields)
+	q.Set("workspace", workspaceGID)
+	return list[Tag](ctx, c, "/tags", q)
+}
+
+// Tag returns one tag (GET /tags/{gid}).
+func (c *Client) Tag(ctx context.Context, gid string) (*Tag, error) {
+	var t Tag
+	return &t, c.get(ctx, "/tags/"+url.PathEscape(gid), fields(tagFields), &t)
+}
+
+// UpdateTag changes a tag's name and/or color (PUT /tags/{gid}). changes holds "name"
+// and/or "color" (a color name, or nil for none).
+func (c *Client) UpdateTag(ctx context.Context, gid string, changes map[string]any) (*Tag, error) {
+	var t Tag
+	_, err := c.do(ctx, http.MethodPut, "/tags/"+url.PathEscape(gid), fields(tagFields), changes, &t)
+	return &t, err
+}
+
+// DeleteTag deletes a tag (DELETE /tags/{gid}). Asana removes it from every task.
+func (c *Client) DeleteTag(ctx context.Context, gid string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/tags/"+url.PathEscape(gid), nil, nil, nil)
+	return err
+}
+
+// UserTaskList returns the gid of a user's My Tasks list in a workspace
+// (GET /users/{gid}/user_task_list). userGID may be "me".
+func (c *Client) UserTaskList(ctx context.Context, userGID, workspaceGID string) (*Ref, error) {
 	q := fields([]string{"name"})
 	q.Set("workspace", workspaceGID)
-	return list[Ref](ctx, c, "/tags", q)
+	var r Ref
+	return &r, c.get(ctx, "/users/"+url.PathEscape(userGID)+"/user_task_list", q, &r)
 }
 
 // CreateTag creates a tag in a workspace (POST /tags).
@@ -428,8 +494,40 @@ func (c *Client) RemoveMembers(ctx context.Context, projectGID string, users []s
 	return &p, err
 }
 
-// Project returns one project.
+// Project returns one project, with a reference to its brief (if it has one).
 func (c *Client) Project(ctx context.Context, gid string) (*Project, error) {
 	var p Project
-	return &p, c.get(ctx, "/projects/"+url.PathEscape(gid), fields(projectFields), &p)
+	return &p, c.get(ctx, "/projects/"+url.PathEscape(gid), fields(append(slices.Clone(projectFields), "project_brief")), &p)
+}
+
+// UpdateProject changes a project's fields (notes or html_notes, owner, start_on, due_on,
+// color; nil clears owner and the dates).
+func (c *Client) UpdateProject(ctx context.Context, gid string, changes map[string]any) (*Project, error) {
+	var p Project
+	_, err := c.do(ctx, http.MethodPut, "/projects/"+url.PathEscape(gid), fields(projectFields), changes, &p)
+	return &p, err
+}
+
+// TaskCounts returns how many tasks a project has and how many are completed.
+func (c *Client) TaskCounts(ctx context.Context, projectGID string) (*TaskCounts, error) {
+	var n TaskCounts
+	return &n, c.get(ctx, "/projects/"+url.PathEscape(projectGID)+"/task_counts",
+		fields([]string{"num_tasks", "num_completed_tasks", "num_incomplete_tasks", "num_milestones", "num_completed_milestones"}), &n)
+}
+
+// ProjectBrief returns a project brief (a preview API: Asana may answer 402 or 403).
+func (c *Client) ProjectBrief(ctx context.Context, briefGID string) (*ProjectBrief, error) {
+	var b ProjectBrief
+	return &b, c.get(ctx, "/project_briefs/"+url.PathEscape(briefGID), fields([]string{"title", "text", "html_text"}), &b)
+}
+
+// MyTeams lists the teams of an organization the logged-in user is a member of.
+func (c *Client) MyTeams(ctx context.Context, workspaceGID string) ([]Team, error) {
+	return list[Team](ctx, c, "/users/me/teams", url.Values{"opt_fields": {"name"}, "organization": {workspaceGID}})
+}
+
+// FavoriteProjects lists the logged-in user's favorite projects of a workspace, in the
+// order the user arranged them in Asana.
+func (c *Client) FavoriteProjects(ctx context.Context, workspaceGID string) ([]Ref, error) {
+	return list[Ref](ctx, c, "/users/me/favorites", url.Values{"opt_fields": {"name"}, "resource_type": {"project"}, "workspace": {workspaceGID}})
 }

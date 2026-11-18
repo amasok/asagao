@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: 操作の種類
-outbox の操作の種類は 23 個 (MUST): `update_task`、`create_task`、`add_comment`、`update_story`、`delete_story`、`move_task`、`delete_task`、`set_parent`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`delete_attachment`、`set_custom_field`、`add_tag`、`remove_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_status`、`mark_notification`。
+outbox の操作の種類は 30 個 (MUST): `update_task`、`create_task`、`add_comment`、`update_story`、`delete_story`、`move_task`、`move_my_section`、`delete_task`、`set_parent`、`add_follower`、`remove_follower`、`add_project`、`remove_project`、`duplicate_task`、`upload_attachment`、`delete_attachment`、`set_custom_field`、`add_tag`、`remove_tag`、`update_tag`、`delete_tag`、`add_dependency`、`remove_dependency`、`rename_section`、`create_section`、`delete_section`、`insert_section`、`create_status`、`mark_notification`、`update_project`。
 根拠: internal/domain/outbox/outbox.go; internal/store/outbox.go:28-33; taskops.go; relations.go:18-23; customfields.go:38-40; tags.go:15-16; dependencies.go:20-21; sections.go:16; projects.go:16; notifications.go:21
 
 #### Scenario: タスクにタグを付ける
