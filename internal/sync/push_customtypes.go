@@ -3,7 +3,6 @@ package sync
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/amasok/asagao/internal/asana/model"
@@ -38,25 +37,49 @@ func taskUpdateFields(op outbox.Op) map[string]any {
 }
 
 // errCustomTypeUnsupported says that Asana did not take a custom type over the API.
-const errCustomTypeUnsupported = "Asana がカスタムタイプの設定を受け付けませんでした（API が対応していない可能性があります。Asana の画面で設定し、この変更は取り消してください）"
+const errCustomTypeUnsupported = "Asana がカスタムタイプの設定を受け付けませんでした（API が対応していない可能性があります。Asana の画面で設定してください）"
 
-// customTypeRefused words a 400 / 403 / 422 to a change with a custom type (a 402 is the
-// plan's: send records it). The status is kept, so the entry is marked failed.
-func customTypeRefused(op outbox.Op, err error) error {
+// customTypeWithdrawn says that Asana did not take an entry's custom type: refused it
+// (4xx; a 402 is the plan's) or answered without applying it (applied: the rest of the
+// entry was applied). The custom type is taken out of the entry and the rest, if any, sent
+// again (handleOutcome, withdrawCustomType), so that it does not hold the rest up.
+type customTypeWithdrawn struct {
+	reason  string
+	applied bool
+	err     error // Asana's answer (nil when it answered 200)
+}
+
+func (e *customTypeWithdrawn) Error() string {
+	if e.err == nil {
+		return e.reason
+	}
+	return e.reason + ": " + e.err.Error()
+}
+func (e *customTypeWithdrawn) Unwrap() error { return e.err }
+
+// customTypeRefused turns Asana's refusal (400 / 403 / 422, or 402 for the plan, which
+// is recorded for the workspace) of a change with a custom type into customTypeWithdrawn.
+func (s *Syncer) customTypeRefused(ctx context.Context, op outbox.Op, err error) error {
 	var apiErr *model.Error
 	if op.Kind != outbox.KindUpdateTask || !domaintask.TouchesCustomType(op.Payload) || !errors.As(err, &apiErr) {
 		return err
 	}
 	switch apiErr.Status {
+	case http.StatusPaymentRequired:
+		if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
+			_, _ = s.recordPlanRefusal(ctx, readmodel.PlanCustomTypes, ws, err) // per workspace, for a while (plan.go)
+		}
+		return &customTypeWithdrawn{reason: readmodel.PlanUnavailableMessage(readmodel.PlanCustomTypes), err: err}
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
-		return fmt.Errorf("%s: %w", errCustomTypeUnsupported, err)
+		return &customTypeWithdrawn{reason: errCustomTypeUnsupported, err: err}
 	}
 	return err
 }
 
 // customTypeApplied checks that Asana's answer to a change with a custom type has it: an
-// answer without it (the field ignored) fails the entry instead of completing it, which
-// would lose the change silently. A task read without the optional fields is not checked.
+// answer without it (the field ignored) is customTypeWithdrawn, applied, instead of a
+// change completed silently without its type. A task read without its custom type is not
+// checked.
 func customTypeApplied(op outbox.Op, t *model.Task) error {
 	if !domaintask.TouchesCustomType(op.Payload) || t == nil || t.Partial || t.NoCustomType {
 		return nil
@@ -71,18 +94,24 @@ func customTypeApplied(op outbox.Op, t *model.Task) error {
 	}
 	for _, k := range []string{"resource_subtype", "custom_type", "custom_type_status_option"} {
 		if v, ok := sent[k].(string); ok && got[k] != v {
-			return fmt.Errorf("%s: %w", errCustomTypeUnsupported,
-				&model.Error{Status: http.StatusUnprocessableEntity}) // 4xx: failed, not sent again
+			return &customTypeWithdrawn{reason: errCustomTypeUnsupported, applied: true}
 		}
 	}
 	return nil
 }
 
-// customTypePlanRefusal records a 402 to a change with a custom type for the task's
-// workspace, for a while (plan.go): custom types are not offered there meanwhile.
-func (s *Syncer) customTypePlanRefusal(ctx context.Context, op outbox.Op, err error) error {
-	if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
-		_, _ = s.recordPlanRefusal(ctx, readmodel.PlanCustomTypes, ws, err)
+// withdrawCustomType handles a custom type Asana did not take without making the user
+// decide: it is dropped (and reported in res.Discarded, with the reason), and the rest of
+// the entry, if Asana did not apply it, is sent again right away. Asana applied nothing
+// of a refused request, so sending the rest again repeats nothing.
+func (s *Syncer) withdrawCustomType(ctx context.Context, op outbox.Op, w *customTypeWithdrawn, res *PushResult) (again bool, err error) {
+	rest, d, err := s.Store.WithdrawCustomType(ctx, op.ID, w.reason, w.applied, s.clock())
+	if err != nil {
+		return false, err
 	}
-	return fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(readmodel.PlanCustomTypes), err)
+	res.Discarded = append(res.Discarded, d)
+	if w.applied {
+		res.Sent++
+	}
+	return rest != nil, nil
 }

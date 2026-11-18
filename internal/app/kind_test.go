@@ -68,6 +68,7 @@ func TestResolveCustomTypeErrors(t *testing.T) {
 		{"status and leaving custom", custom, UpdateTaskInput{Subtype: str("task"), CustomTypeStatus: str("完了")}, "custom_type_status_option", "カスタムタイプのタスクではない"},
 		{"type with another kind", bugKind, UpdateTaskInput{Subtype: str("milestone"), CustomType: str("バグ")}, "custom_type", "同時に"},
 		{"empty type", bugKind, UpdateTaskInput{CustomType: str(" ")}, "custom_type", ""},
+		{"two different types", bugKind, UpdateTaskInput{Subtype: str("バグ"), CustomType: str("Request")}, "custom_type", "違う種類"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tasks, _ := kindTasks(tc.kind)

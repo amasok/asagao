@@ -23,13 +23,13 @@
 - **THEN** payload に `resource_subtype: custom`・`custom_type`・`custom_type_status_option` (対応中) が入る
 
 ### Requirement: カスタムタイプを送る
-`custom_type` か `custom_type_status_option` のある `update_task` は、`resource_subtype: custom` と (ステータスだけなら base の) `custom_type` も付けて `PUT /tasks/{gid}` で送り、`POST /batch` にはまとめない (MUST)。402 なら、そのタスクのワークスペースについて `plan_unavailable:custom_types:<workspace>` を記録し、理由付きで失敗にする。Asana のステータスが base と違えば競合にする。Asana が 400・403・422 で断ったとき、または 200 でも答えのタスクに送った種類・ステータスが無いときは、「API が対応していない可能性」を理由に失敗にして、送り直さない (取り消せば元に戻る)。
-根拠: sync/push_customtypes.go (taskUpdateFields, customTypeRefused, customTypeApplied, customTypePlanRefusal); sync/batch.go (batchEntryFor); TestPushCustomType, TestPushCustomTypePaymentRequired, TestPushCustomTypeConflict, TestPushCustomTypeNotSupported
+`custom_type` か `custom_type_status_option` のある `update_task` は、`resource_subtype: custom` と (ステータスだけなら base の) `custom_type` も付けて `PUT /tasks/{gid}` で送り、`POST /batch` にはまとめない (MUST)。Asana のステータスが base と違えば競合にする。Asana が断ったとき (402・400・403・422)、または 200 でも答えのタスクに送った種類・ステータスが無いときは、種類の部分 (`custom_type`・`custom_type_status_option`・`resource_subtype: custom`) だけを操作から外して、理由付きで捨てた変更に残し、タスクの種類・ステータス・完了をローカルで base に戻す。残り (名前など) は、断られたときは送り直し、200 のときは届いたので完了にする。402 なら、そのタスクのワークスペースについて `plan_unavailable:custom_types:<workspace>` も記録する。
+根拠: sync/push_customtypes.go (taskUpdateFields, customTypeRefused, customTypeApplied, customTypePlanRefusal); sync/batch.go (batchEntryFor); TestPushCustomType, TestPushCustomTypePaymentRequired, TestPushCustomTypeConflict, TestPushCustomTypeNotSupported; store/customtypes_write.go (WithdrawCustomType)
 
 #### Scenario: ステータスだけを変える
 - **WHEN** 種類「バグ」のタスクのステータスを変えて送る
 - **THEN** 本文に `resource_subtype: custom`・`custom_type`・`custom_type_status_option` が入る
 
 #### Scenario: Asana が種類を受け付けない
-- **WHEN** 種類を変えた変更に、Asana が 400 を返す (または種類を変えずに 200 を返す)
-- **THEN** 変更は理由付きで失敗になり、次の同期でも送られない
+- **WHEN** 種類と名前を変えた変更に、Asana が 400 を返す (または種類を変えずに 200 を返す)
+- **THEN** 種類は理由付きで捨てた変更になってタスクの種類が元に戻り、名前は Asana に届く

@@ -79,7 +79,7 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 	if err := task.CheckApproval(subtype, changes); err != nil {
 		return err
 	}
-	if changes, err = customTypeChanges(ctx, tx, cur, changes); err != nil {
+	if changes, err = customTypeChanges(ctx, tx, gid, cur, changes); err != nil {
 		return err
 	}
 	if IsLocalGID(gid) {

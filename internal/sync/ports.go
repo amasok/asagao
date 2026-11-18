@@ -141,6 +141,8 @@ type LocalStore interface {
 	RemoveAttachmentFile(path string) error
 	CompleteCreate(ctx context.Context, id int64, local, real string, move *outbox.MoveTarget) error
 	CompleteOp(ctx context.Context, id int64) error
+	// WithdrawCustomType takes a custom type Asana did not take out of an entry (#59).
+	WithdrawCustomType(ctx context.Context, id int64, reason string, applied bool, now time.Time) (*outbox.Op, readmodel.Discard, error)
 	CompleteStatus(ctx context.Context, id int64, local string, u model.StatusUpdate) error
 	CompleteUpload(ctx context.Context, id int64, local, real, viewURL string) error
 	CountAttempt(ctx context.Context, id int64, now time.Time) error

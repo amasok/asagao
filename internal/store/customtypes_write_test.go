@@ -105,3 +105,29 @@ func TestCustomTypeOfOfflineTaskIsAnUpdate(t *testing.T) {
 		t.Fatalf("update %+v", ops[1].Payload)
 	}
 }
+
+// A status that can no longer be chosen is refused (from the tester's attack tests); the
+// task's own status is still allowed.
+func TestAttackDisabledStatusIsRefused(t *testing.T) {
+	st, ctx := openTypes(t)
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"custom_type_status_option": "cs-old"}, testNow); err == nil {
+		t.Fatal("a status that can no longer be chosen was queued")
+	}
+	must(t, st.ReplaceProjectCustomTypes(ctx, "p1", []asana.CustomType{{GID: "ct1", Name: "バグ", StatusOptions: []asana.CustomTypeStatusOption{
+		{GID: "cs-doing", Name: "対応中", Enabled: ptrBool(false)}, {GID: "cs-done", Name: "完了", CompletionState: "Complete"}}}}))
+	must(t, st.UpdateTaskLocal(ctx, "t1", map[string]any{"custom_type_status_option": "cs-done"}, testNow))
+	must(t, st.UpdateTaskLocal(ctx, "t1", map[string]any{"custom_type_status_option": "cs-doing"}, testNow)) // back to its own
+}
+
+// A type no project of the task offers (and nothing knows) is not one to set.
+func TestAttackUnknownTypeIsRefused(t *testing.T) {
+	st, ctx := openTypes(t)
+	if err := st.UpdateTaskLocal(ctx, "t2", map[string]any{"resource_subtype": "custom", "custom_type": "nope"}, testNow); err == nil {
+		t.Fatal("an unknown custom type was queued")
+	}
+	// A type only another project offers is not one either.
+	must(t, st.ReplaceProjectCustomTypes(ctx, "p9", []asana.CustomType{{GID: "ct9", Name: "他"}}))
+	if err := st.UpdateTaskLocal(ctx, "t2", map[string]any{"resource_subtype": "custom", "custom_type": "ct9"}, testNow); err == nil {
+		t.Fatal("a type of another project was queued")
+	}
+}

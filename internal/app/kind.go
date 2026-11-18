@@ -65,6 +65,9 @@ func (t *Tasks) resolveKind(ctx context.Context, gid string, in UpdateTaskInput,
 		if u.Subtype != nil && *u.Subtype != task.SubtypeCustom {
 			return &FieldError{Field: "custom_type", Err: fmt.Errorf("種類「%s」とカスタムタイプは同時に指定できません", task.SubtypeLabel(*u.Subtype))}
 		}
+		if u.CustomType != nil && *u.CustomType != c.GID {
+			return &FieldError{Field: "custom_type", Err: fmt.Errorf("種類に「%s」、カスタムタイプに「%s」と、違う種類が指定されています", u.CustomTypeName, c.Name)}
+		}
 		setType(c)
 	}
 	if in.CustomTypeStatus != nil {

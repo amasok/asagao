@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -71,7 +72,8 @@ func TestPushCustomTypeConflict(t *testing.T) {
 	}
 }
 
-// A 402 for the write says that the plan lacks custom types, and records it.
+// A 402 for the write records that the plan lacks custom types, and drops the custom
+// type with the reason; the task goes back to what it was.
 func TestPushCustomTypePaymentRequired(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
@@ -82,54 +84,68 @@ func TestPushCustomTypePaymentRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.refuse = true
-	res, _ := s.Push(ctx)
-	if res.Failed != 1 {
-		t.Fatalf("push %+v", res)
+	res, err := s.Push(ctx)
+	if err != nil || len(res.Discarded) != 1 || !strings.Contains(res.Discarded[0].Reason, "カスタムタイプ") || res.Failed != 0 {
+		t.Fatalf("push %+v, %v", res, err)
 	}
 	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v == "" {
 		t.Fatal("402 not recorded")
 	}
-	ops, _ := st.ListOps(ctx)
-	if len(ops) != 1 || ops[0].State != "failed" || !strings.Contains(ops[0].LastError, "カスタムタイプ") {
-		t.Fatalf("failed %+v", ops)
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("left %+v", ops)
+	}
+	if d, _ := st.GetTask(ctx, "t1"); d.ResourceSubtype != "default_task" || d.CustomType != nil {
+		t.Fatalf("not restored: %+v", d.TaskSummary)
 	}
 }
 
-// Asana refuses the custom type (400), or answers without applying it: the change stops
-// as failed with the reason, is not sent again, and the local value stays until it is
-// discarded (which restores the task).
+// Asana refuses the custom type (400), or answers without applying it: the custom type is
+// dropped with the reason and the task's type restored, but the rest of the same change
+// (a new name) reaches Asana and stays; nothing is sent again after that.
 func TestPushCustomTypeNotSupported(t *testing.T) {
 	for _, mode := range []string{"reject", "ignore"} {
-		t.Run(mode, func(t *testing.T) {
-			f, s, st, _ := setupTypes(t)
-			ctx := context.Background()
-			if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
-				t.Fatal(err)
-			}
-			f.reject, f.ignore = mode == "reject", mode == "ignore"
-			if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "custom", "custom_type": "ct1"}, time.Now()); err != nil {
-				t.Fatal(err)
-			}
-			res, _ := s.Push(ctx)
-			if res.Failed != 1 || len(f.puts) != 1 {
-				t.Fatalf("push %+v, puts %d", res, len(f.puts))
-			}
-			ops, _ := st.ListOps(ctx)
-			if len(ops) != 1 || ops[0].State != "failed" || !strings.Contains(ops[0].LastError, "API が対応していない") {
-				t.Fatalf("ops %+v", ops)
-			}
-			if _, err := s.Push(ctx); err != nil || len(f.puts) != 1 {
-				t.Fatalf("sent again: %d, %v", len(f.puts), err)
-			}
-			if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v != "" {
-				t.Fatal("recorded as the plan's")
-			}
-			if err := st.DiscardOp(ctx, ops[0].ID); err != nil {
-				t.Fatal(err)
-			}
-			if d, _ := st.GetTask(ctx, "t1"); d.ResourceSubtype != "default_task" || d.CustomType != nil {
-				t.Fatalf("after discard %+v", d.TaskSummary)
-			}
-		})
+		for _, withName := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s name=%v", mode, withName), func(t *testing.T) {
+				f, s, st, _ := setupTypes(t)
+				ctx := context.Background()
+				if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+					t.Fatal(err)
+				}
+				f.reject, f.ignore = mode == "reject", mode == "ignore"
+				if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "custom", "custom_type": "ct1"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"custom_type_status_option": "cs-done"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				if withName {
+					if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "新しい名前"}, time.Now()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				res, err := s.Push(ctx)
+				if err != nil || res.Failed != 0 || len(res.Discarded) != 1 || !strings.Contains(res.Discarded[0].Reason, "API が対応していない") {
+					t.Fatalf("push %+v, %v", res, err)
+				}
+				if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+					t.Fatalf("left %+v", ops)
+				}
+				d, _ := st.GetTask(ctx, "t1")
+				if d.ResourceSubtype != "default_task" || d.CustomType != nil || d.Completed {
+					t.Fatalf("not restored: %+v", d.TaskSummary)
+				}
+				wantName := "A"
+				if withName {
+					wantName = "新しい名前"
+				}
+				if d.Name != wantName || (withName && f.name != "新しい名前") {
+					t.Fatalf("name: cache %q, Asana %q", d.Name, f.name)
+				}
+				puts := len(f.puts)
+				if _, err := s.Push(ctx); err != nil || len(f.puts) != puts {
+					t.Fatalf("sent again: %d → %d, %v", puts, len(f.puts), err)
+				}
+			})
+		}
 	}
 }

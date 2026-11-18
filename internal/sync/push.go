@@ -15,7 +15,6 @@ import (
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/rich"
-	domaintask "github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -365,6 +364,10 @@ func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 		return false, err // offline, cancelled or logged out: keep the rest for later
 	case isNotFound(err): // what it changes was deleted in Asana
 		return false, s.dropGone(ctx, op, err, drops)
+	case errors.As(err, new(*customTypeWithdrawn)): // Asana did not take the custom type (#59)
+		var w *customTypeWithdrawn
+		errors.As(err, &w)
+		return s.withdrawCustomType(ctx, op, w, res)
 	default:
 		verify, ferr := s.handleError(ctx, op, err)
 		if ferr != nil {
@@ -457,9 +460,6 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
 		}
 		return out, err
-	}
-	if model.IsPaymentRequired(err) && op.Kind == outbox.KindUpdateTask && domaintask.TouchesCustomType(op.Payload) {
-		return out, s.customTypePlanRefusal(ctx, op, err)
 	}
 	if model.IsPaymentRequired(err) {
 		if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanTimeTracking {
@@ -802,9 +802,10 @@ func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	}
 	t, err := s.API.UpdateTask(ctx, op.TaskGID, taskUpdateFields(op))
 	if err != nil {
-		return sent, customTypeRefused(op, err)
+		return sent, s.customTypeRefused(ctx, op, err)
 	}
 	if err := customTypeApplied(op, t); err != nil {
+		s.refresh(ctx, *t) // the rest was applied: show Asana's task
 		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
