@@ -15,6 +15,7 @@ import (
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/rich"
+	domaintask "github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -457,6 +458,9 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 		return out, err
 	}
+	if model.IsPaymentRequired(err) && op.Kind == outbox.KindUpdateTask && domaintask.TouchesCustomType(op.Payload) {
+		return out, s.customTypePlanRefusal(ctx, op, err)
+	}
 	if model.IsPaymentRequired(err) {
 		if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanTimeTracking {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
@@ -796,8 +800,11 @@ func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	if conflicts := updateConflicts(op, server); conflicts != nil {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
-	t, err := s.API.UpdateTask(ctx, op.TaskGID, apiFields(op.Payload))
+	t, err := s.API.UpdateTask(ctx, op.TaskGID, taskUpdateFields(op))
 	if err != nil {
+		return sent, customTypeRefused(op, err)
+	}
+	if err := customTypeApplied(op, t); err != nil {
 		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {

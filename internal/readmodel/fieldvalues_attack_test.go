@@ -95,7 +95,7 @@ func TestMovedValuesMatchOldStore(t *testing.T) {
 func TestTaskFieldValuesAttack(t *testing.T) {
 	tk := &model.Task{Name: "n", Notes: "o", Completed: true, Liked: true, DueOn: "2024-01-01", ApprovalStatus: "approved", ResourceSubtype: "approval", Assignee: &model.Ref{GID: "9"}}
 	v := TaskFieldValues(tk)
-	if v["approval_status"] != "approved" || v["assignee"] != "9" || v["completed"] != true || v["due_on"] != "2024-01-01" || len(v) != 9 {
+	if v["approval_status"] != "approved" || v["assignee"] != "9" || v["completed"] != true || v["due_on"] != "2024-01-01" || len(v) != 11 || v["custom_type"] != "" {
 		t.Errorf("%v", v)
 	}
 	tk.Partial, tk.Assignee = true, nil

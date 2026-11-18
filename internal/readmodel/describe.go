@@ -163,7 +163,8 @@ func AccountChangedHelp(unsent int, resetHow string) string {
 // FieldLabel is the label of an update_task field ("" for unknown keys).
 func FieldLabel(k string) string {
 	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者",
-		"liked": "いいね", "resource_subtype": "種類", "approval_status": "承認"}[k]
+		"liked": "いいね", "resource_subtype": "種類", "approval_status": "承認",
+		"custom_type": "カスタムタイプ", "custom_type_status_option": "ステータス"}[k]
 }
 
 // ConflictLines describes the conflicting fields of an entry in conflict, one per line:
@@ -348,7 +349,7 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("セクション名を「%s」に変更", str("name"))
 	case outbox.KindUpdateTask:
 		var parts []string
-		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked", "resource_subtype", "approval_status"} {
+		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked", "resource_subtype", "approval_status", "custom_type", "custom_type_status_option"} {
 			v, ok := op.Payload[k]
 			if !ok {
 				continue
@@ -373,7 +374,13 @@ func DescribeChange(op outbox.Op) string {
 			case "notes":
 				parts = append(parts, "説明の変更")
 			case "resource_subtype":
-				parts = append(parts, fmt.Sprintf("種類を「%s」に変更", task.SubtypeLabel(fmt.Sprint(v))))
+				if _, typ := op.Payload["custom_type"]; !typ || v != task.SubtypeCustom { // else said by custom_type
+					parts = append(parts, fmt.Sprintf("種類を「%s」に変更", task.SubtypeLabel(fmt.Sprint(v))))
+				}
+			case "custom_type":
+				parts = append(parts, "種類をカスタムタイプに変更")
+			case "custom_type_status_option":
+				parts = append(parts, "ステータスの変更")
 			case "approval_status":
 				parts = append(parts, fmt.Sprintf("承認を「%s」に変更", task.ApprovalLabel(fmt.Sprint(v))))
 			case "liked":

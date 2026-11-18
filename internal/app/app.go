@@ -27,6 +27,8 @@ type TaskStore interface {
 	CreateTaskLocal(ctx context.Context, nt task.NewTask, now time.Time) (string, error)
 	ApplyTagEdit(ctx context.Context, taskGID string, e task.TagEdit, now time.Time) error
 	UpdateTaskLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error
+	// TaskKind is a task's type and the custom types it can be given (#59).
+	TaskKind(ctx context.Context, gid string) (readmodel.TaskKind, error)
 }
 
 // CommentStore is the part of the local cache that the comment use case needs.

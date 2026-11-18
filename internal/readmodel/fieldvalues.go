@@ -21,9 +21,19 @@ func TaskFieldValues(t *model.Task) map[string]any {
 		assignee = t.Assignee.GID
 	}
 	values := map[string]any{"completed": t.Completed, "name": t.Name, "notes": t.Notes, "html_notes": t.HTMLNotes, "due_on": t.DueOn, "assignee": assignee, "liked": t.Liked,
-		"resource_subtype": t.ResourceSubtype, "approval_status": t.ApprovalStatus}
+		"resource_subtype": t.ResourceSubtype, "approval_status": t.ApprovalStatus, "custom_type": "", "custom_type_status_option": ""}
+	if t.ResourceSubtype == "custom" {
+		if t.CustomType != nil {
+			values["custom_type"] = t.CustomType.GID
+		}
+		if t.CustomTypeStatusOption != nil {
+			values["custom_type_status_option"] = t.CustomTypeStatusOption.GID
+		}
+	}
 	if t.Partial {
 		delete(values, "approval_status") // not fetched
+		delete(values, "custom_type")
+		delete(values, "custom_type_status_option")
 	}
 	return values
 }
