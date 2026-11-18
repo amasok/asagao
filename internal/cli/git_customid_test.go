@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -82,5 +83,43 @@ func TestGitScanByCustomID(t *testing.T) {
 	}
 	if ops := cliOps(t, path); len(ops) != 1 {
 		t.Fatalf("queued %v", opKinds(ops))
+	}
+}
+
+// Asana too slow for the hook: the gids found before are still used for every ID (the
+// time limit is Asana's, not the cache's).
+func TestGitScanHookCustomIDSlowAsana(t *testing.T) {
+	path, fake, run := onlineGitEnv(t)
+	st, err := store.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, gid := range map[string]string{"ENG-1": gitA, "ENG-2": gitB} {
+		if err := st.SetSyncState(context.Background(), readmodel.KeyCustomID+id, gid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = st.Close()
+	old := hookPushTimeout
+	hookPushTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { hookPushTimeout = old })
+	fake.mu.Lock()
+	fake.delay = 10 * time.Second
+	fake.mu.Unlock()
+	repo := gitRepo(t)
+	gitCommit(t, repo, "fixes asana#ENG-1, see asana#ENG-2")
+	start := time.Now()
+	out, errOut, err := run("git", "scan", "--hook", "-C", repo, "HEAD")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the hook took %v", d)
+	}
+	if !strings.Contains(out, "完了にしてコメント: ENG-1 ソファを買う") || !strings.Contains(out, "コメント: ENG-2 カーテンを買う") {
+		t.Fatalf("output:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(errOut, "タスクの ID") {
+		t.Errorf("no warning:\n%s", errOut)
 	}
 }

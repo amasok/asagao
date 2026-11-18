@@ -89,3 +89,18 @@ func TestCustomIDsOfCommits(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+// After Asana fails once (offline, out of time), the other IDs are not asked for: they are
+// resolved as found before.
+func TestResolveCustomIDsStopsAskingAfterAFailure(t *testing.T) {
+	ctx := context.Background()
+	remembered := customIDState{readmodel.KeyCustomID + "ENG-1": "t1", readmodel.KeyCustomID + "ENG-2": "t2"}
+	f := &fakeCustomIDs{err: context.DeadlineExceeded}
+	got, err := ResolveCustomIDs(ctx, remembered, f, []string{"ENG-1", "ENG-2"})
+	if !errors.Is(err, context.DeadlineExceeded) || !maps.Equal(got, map[string]string{"ENG-1": "t1", "ENG-2": "t2"}) {
+		t.Fatalf("got %v %v", got, err)
+	}
+	if !slices.Equal(f.calls, []string{"ENG-1"}) {
+		t.Fatalf("asked %v", f.calls)
+	}
+}

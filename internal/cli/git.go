@@ -256,13 +256,15 @@ func (a *app) resolveCustomIDs(ctx context.Context, st Store, ids []string, offl
 		if hook {
 			timeout = hookPushTimeout
 		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-		if api, err := a.apiClient(ctx); err != nil {
+		// The limit is Asana's only: the gids found before are read without it.
+		deadline := time.Now().Add(timeout)
+		actx, cancel := context.WithDeadline(ctx, deadline)
+		api, err := a.apiClient(actx)
+		cancel()
+		if err != nil {
 			problem = err
 		} else {
-			find = a.syncer(api, st)
+			find = deadlineFinder{a.syncer(api, st), deadline}
 		}
 	}
 	custom, err := usecase.ResolveCustomIDs(ctx, st, find, ids)
@@ -273,6 +275,18 @@ func (a *app) resolveCustomIDs(ctx context.Context, st Store, ids []string, offl
 		return custom, fmt.Sprintf("Asana でタスクの ID（%s）を引けませんでした。前に見つけたものだけを使います（%v）", strings.Join(ids, ", "), err)
 	}
 	return custom, ""
+}
+
+// deadlineFinder asks Asana for custom IDs until deadline.
+type deadlineFinder struct {
+	f        usecase.CustomIDFinder
+	deadline time.Time
+}
+
+func (d deadlineFinder) TaskByCustomID(ctx context.Context, id string) (string, error) {
+	ctx, cancel := context.WithDeadline(ctx, d.deadline)
+	defer cancel()
+	return d.f.TaskByCustomID(ctx, id)
 }
 
 // refreshTasks fetches the tasks gids from Asana. It returns a warning when that could not
