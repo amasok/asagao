@@ -27,7 +27,12 @@ type Created struct {
 	Goals            []string
 	Portfolios       []string
 	Briefs           []string
-	Jobs             []string // duplicate / template jobs: cleanup waits for them
+	// HostProjects are projects the user made for the checks (#55), which the run may add
+	// prefixed tasks to but never deletes; HostTasks are the user's tasks in them whose
+	// type and status the run may change (and puts back).
+	HostProjects []string
+	HostTasks    []string
+	Jobs         []string // duplicate / template jobs: cleanup waits for them
 	// Deleted are "kind/gid" the run deleted itself (a deleted goal answers 403, not 404).
 	Deleted []string
 }
@@ -351,7 +356,7 @@ func (c *Created) guardBody(method, path string, body M) error {
 		projects, _ := data["projects"].([]string)
 		ok = prefixed && len(projects) > 0
 		for _, p := range projects {
-			ok = ok && slices.Contains(c.Projects, p)
+			ok = ok && (slices.Contains(c.Projects, p) || slices.Contains(c.HostProjects, p))
 		}
 	case method == "POST" && path == "/tags":
 		ok = data["workspace"] == TestWorkspace && prefixed
@@ -362,6 +367,12 @@ func (c *Created) guardBody(method, path string, body M) error {
 		ok = ours(list, 1) && len(data) == 1 && color
 	case method == "PUT" && len(parts) == 2 && parts[0] == "tasks":
 		ok = ours(c.Tasks, 1)
+		if !ok && ours(c.HostTasks, 1) { // the user's task: its type and status only
+			ok = len(data) > 0
+			for k := range data {
+				ok = ok && slices.Contains([]string{"resource_subtype", "custom_type", "custom_type_status_option", "completed"}, k)
+			}
+		}
 	case method == "POST" && len(parts) == 3 && parts[0] == "tasks" &&
 		(parts[2] == "time_tracking_entries" || parts[2] == "addDependencies" || parts[2] == "removeDependencies"):
 		ok = ours(c.Tasks, 1)

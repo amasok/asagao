@@ -486,4 +486,11 @@ CREATE TABLE project_custom_types (
 	PRIMARY KEY (project_gid, custom_type_gid)
 );
 `,
+	`
+-- Custom task types (#59) were read as custom_type.name, which Asana answers without the
+-- gid: a custom task was stored without its type and status. Forget the last full sync of
+-- a store with such a task, so the next sync fetches every task again, with them.
+DELETE FROM sync_state WHERE key = 'last_full_sync'
+	AND EXISTS (SELECT 1 FROM tasks WHERE resource_subtype = 'custom' AND custom_type_gid = '');
+`,
 }

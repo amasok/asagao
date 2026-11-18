@@ -158,3 +158,66 @@ func TestCustomTypeNotFetchedIsKept(t *testing.T) {
 		t.Fatalf("not fetched, yet dropped: %+v", d.TaskSummary)
 	}
 }
+
+// A custom type or status that came without its gid (#59: Asana answers custom_type.name
+// alone so) does not replace what the cache knows.
+func TestCustomTypeWithoutGidIsKept(t *testing.T) {
+	st, ctx := openTypes(t)
+	for _, tk := range []asana.Task{
+		{GID: "t1", Name: "custom", ResourceSubtype: "custom", CustomType: &asana.Ref{Name: "バグ"}, CustomTypeStatusOption: &asana.Ref{Name: "完了"}},
+		{GID: "t1", Name: "custom", ResourceSubtype: "custom", CustomType: &asana.Ref{GID: "ct1"}, CustomTypeStatusOption: &asana.Ref{Name: "完了"}},
+		{GID: "t1", Name: "custom", ResourceSubtype: "custom", CustomType: &asana.Ref{Name: "依頼"}, CustomTypeStatusOption: &asana.Ref{GID: "cr-new"}},
+	} {
+		tk.Memberships = []asana.Membership{{Project: &asana.Ref{GID: "p1"}}}
+		must(t, st.UpsertTasks(ctx, []asana.Task{tk}))
+		if d, _ := st.GetTask(ctx, "t1"); d.CustomType == nil || d.CustomType.GID != "ct1" || d.CustomTypeStatus == nil || d.CustomTypeStatus.GID != "cs-doing" {
+			t.Fatalf("%+v replaced it: %+v %+v", tk, d.CustomType, d.CustomTypeStatus)
+		}
+	}
+	// A task no longer custom loses them.
+	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "custom", ResourceSubtype: "default_task",
+		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}}}}}))
+	if d, _ := st.GetTask(ctx, "t1"); d.CustomType != nil || d.CustomTypeStatus != nil {
+		t.Fatalf("not custom, still %+v %+v", d.CustomType, d.CustomTypeStatus)
+	}
+}
+
+// A store whose custom tasks were stored without their type (#59, read by name only)
+// forgets its last full sync, so that the next sync reads every task again; another store
+// keeps it.
+func TestMigrateStoreWithCustomTasksWithoutType(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		task asana.Task
+		full bool
+	}{
+		{"without type", asana.Task{GID: "t1", Name: "x", ResourceSubtype: "custom", CustomType: &asana.Ref{Name: "バグ"}}, true},
+		{"with type", asana.Task{GID: "t1", Name: "x", ResourceSubtype: "custom", CustomType: &asana.Ref{GID: "ct1"}}, false},
+		{"no custom task", asana.Task{GID: "t1", Name: "x", ResourceSubtype: "default_task"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "store.db")
+			st, err := Open(ctx, path)
+			must(t, err)
+			must(t, st.UpsertTasks(ctx, []asana.Task{c.task}))
+			must(t, st.SetSyncState(ctx, "last_full_sync", "2026-11-18T00:00:00Z"))
+			rollbackTo(t, st.db, 22)
+			st.Close()
+
+			st, err = Open(ctx, path)
+			must(t, err)
+			defer st.Close()
+			v, err := st.SyncState(ctx, "last_full_sync")
+			must(t, err)
+			if (v == "") != c.full {
+				t.Fatalf("last_full_sync %q, want a full sync: %v", v, c.full)
+			}
+			d, err := st.GetTask(ctx, "t1")
+			must(t, err)
+			if d.Name != "x" {
+				t.Fatalf("task lost: %+v", d.TaskSummary)
+			}
+		})
+	}
+}

@@ -13,13 +13,21 @@ import (
 // Tasks are read with their custom type and its status (#59), as optional fields: a
 // workspace that refuses them still syncs its tasks.
 func TestTaskFieldsHaveCustomType(t *testing.T) {
-	for _, f := range []string{"custom_type.name", "custom_type_status_option.name"} {
+	// The gids by name: Asana answers custom_type.name alone without the gid.
+	for _, f := range []string{"custom_type.gid", "custom_type.name", "custom_type_status_option.gid", "custom_type_status_option.name"} {
 		if !slices.Contains(TaskFields, f) {
 			t.Errorf("TaskFields lack %s", f)
 		}
 		if !isOptionalTaskField(f) {
 			t.Errorf("%s is not optional", f)
 		}
+	}
+}
+
+// The statuses of a project's types are read with their gids too.
+func TestCustomTypeFieldsHaveStatusGid(t *testing.T) {
+	if !slices.Contains(customTypeFields, "status_options.gid") {
+		t.Errorf("customTypeFields lack status_options.gid: %v", customTypeFields)
 	}
 }
 

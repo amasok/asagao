@@ -38,11 +38,12 @@ func (f *atkServer) fail(key string, code, times int) {
 	f.status[key], f.left[key] = code, times
 }
 
-func (f *atkServer) taskJSON(gid string) string {
+// taskJSON is the task as Asana answers r (askedRef: a gid only when asked for).
+func (f *atkServer) taskJSON(r *http.Request, gid string) string {
 	ct, cs := "null", "null"
 	if f.subtype == "custom" {
-		ct = fmt.Sprintf(`{"gid":%q,"name":"バグ"}`, f.typ)
-		cs = fmt.Sprintf(`{"gid":%q,"name":"対応中"}`, f.st)
+		ct = askedRef(r, "custom_type", f.typ, "バグ")
+		cs = askedRef(r, "custom_type_status_option", f.st, "対応中")
 	}
 	return fmt.Sprintf(`{"gid":%q,"name":%q,"resource_subtype":%q,"custom_type":%s,"custom_type_status_option":%s,
 		"workspace":{"gid":"w1"},"memberships":[{"project":{"gid":"p1"}}],"modified_at":"2026-11-13T00:00:00Z"}`, gid, f.name, f.subtype, ct, cs)
@@ -71,7 +72,7 @@ func (f *atkServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case key == "POST /tasks":
 		f.subtype = "default_task"
 		f.name, _ = body.Data["name"].(string)
-		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON("t9"))
+		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON(r, "t9"))
 	case key == "PUT /tasks/t9":
 		if v, ok := body.Data["resource_subtype"].(string); ok {
 			f.subtype = v
@@ -85,9 +86,9 @@ func (f *atkServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if v, ok := body.Data["name"].(string); ok {
 			f.name = v
 		}
-		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON("t9"))
+		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON(r, "t9"))
 	case key == "GET /tasks/t9":
-		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON("t9"))
+		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON(r, "t9"))
 	case r.URL.Path == "/tasks/t8":
 		fmt.Fprint(w, `{"data":{"gid":"t8","name":"y","resource_subtype":"default_task","workspace":{"gid":"w1"},"memberships":[{"project":{"gid":"p1"}}]}}`)
 	case r.URL.Path == "/batch":

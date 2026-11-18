@@ -26,7 +26,9 @@ var (
 		"num_subtasks", "workspace", "permalink_url", "created_at", "modified_at",
 		"followers.name", "liked", "num_likes", "created_by",
 		"approval_status", "dependencies", "dependents", "assignee_section.name",
-		"custom_type.name", "custom_type_status_option.name",
+		// The gids are asked for by name: Asana answers custom_type.name alone without the
+		// gid (unlike assignee.name and the like), and a type without its gid is not stored.
+		"custom_type.gid", "custom_type.name", "custom_type_status_option.gid", "custom_type_status_option.name",
 	}, customFieldValueFields)
 )
 

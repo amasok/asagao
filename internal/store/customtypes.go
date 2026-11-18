@@ -15,8 +15,13 @@ import (
 // types each project offers (with the choices of statuses: their order, color, whether
 // they can be chosen and whether they complete the task).
 
-// upsertTaskCustomType stores the custom type and status of a task fetched with them.
+// upsertTaskCustomType stores the custom type and status of a task fetched with them. A
+// custom type or status that came without its gid (Asana answers custom_type.name alone
+// so) says nothing of which it is: the task keeps what the cache has.
 func upsertTaskCustomType(ctx context.Context, tx *sql.Tx, t model.Task) error {
+	if t.ResourceSubtype == task.SubtypeCustom && (noGID(t.CustomType) || noGID(t.CustomTypeStatusOption)) {
+		return nil
+	}
 	var typ, status string
 	if t.ResourceSubtype == task.SubtypeCustom && t.CustomType != nil && t.CustomType.GID != "" {
 		typ = t.CustomType.GID
@@ -36,6 +41,9 @@ func upsertTaskCustomType(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	_, err := tx.ExecContext(ctx, "UPDATE tasks SET custom_type_gid = ?, custom_type_status_gid = ? WHERE gid = ?", typ, status, t.GID)
 	return err
 }
+
+// noGID reports a reference that came without its gid.
+func noGID(r *model.Ref) bool { return r != nil && r.GID == "" }
 
 func upsertCustomTypeName(ctx context.Context, tx *sql.Tx, gid, name string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO custom_types(gid, name) VALUES(?, ?)
