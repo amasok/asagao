@@ -264,6 +264,13 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		w.atts[parent] = append(w.atts[parent], js)
 		fmt.Fprintf(rw, `{"data":%s}`, js)
 	case r.URL.Path == "/status_updates" && r.Method == http.MethodPost:
+		if _, t := body.Data["text"]; t {
+			if _, h := body.Data["html_text"]; h { // as the real Asana answers (#31)
+				rw.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(rw, `{"errors":[{"message":"Must supply only one of text or html_text."}]}`)
+				return
+			}
+		}
 		w.next++
 		parent, _ := body.Data["parent"].(string)
 		js := fmt.Sprintf(`{"gid":"su%d","status_type":%q,"title":%q,"text":%q,"author":{"gid":"me"},"created_at":%q}`,

@@ -17,7 +17,7 @@ var Fields = []string{"notes", "html_notes", "owner", "start_on", "due_on", "col
 // Colors are the colors Asana accepts for a project ("none" for no color).
 var Colors = []string{
 	"dark-pink", "dark-green", "dark-blue", "dark-red", "dark-teal", "dark-brown", "dark-orange", "dark-purple", "dark-warm-gray",
-	"light-pink", "light-green", "light-blue", "light-red", "light-teal", "light-brown", "light-orange", "light-purple", "light-warm-gray",
+	"light-pink", "light-green", "light-blue", "light-red", "light-teal", "light-yellow", "light-orange", "light-purple", "light-warm-gray",
 	"none",
 }
 

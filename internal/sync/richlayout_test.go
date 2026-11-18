@@ -45,6 +45,13 @@ func (f *layoutAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(b, &body)
 	req := r.Method + " " + r.URL.Path
+	_, text := body.Data["text"]
+	if _, html := body.Data["html_text"]; text && html { // as the real Asana answers (#31)
+		f.rejected = append(f.rejected, req+": both text and html_text")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"errors":[{"message":"Must supply only one of text or html_text."}]}`)
+		return
+	}
 	for _, k := range []string{"html_notes", "html_text"} {
 		v, ok := body.Data[k].(string)
 		if !ok {

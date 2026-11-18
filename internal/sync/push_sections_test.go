@@ -562,3 +562,55 @@ func TestDiscardDeleteSectionKeepsRename(t *testing.T) {
 		t.Errorf("s2 = %q, %v", name, err)
 	}
 }
+
+// A tag without a color is "" here and "none" in Asana's answers (found by
+// scripts/realcheck, #31): the same value, so coloring it is not a conflict.
+func TestPushUpdateTagNoColorIsNone(t *testing.T) {
+	for _, c := range []struct{ stored, asana, want string }{{"", "none", "dark-red"}, {"none", "", "dark-red"}, {"none", "none", "light-blue"}} {
+		t.Run(c.stored+"/"+c.asana+"/"+c.want, func(t *testing.T) {
+			f, s, st := setupSections(t)
+			ctx := context.Background()
+			_ = st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ", Color: c.stored}})
+			f.mu.Lock()
+			f.tags["g1"].Color = c.asana
+			f.mu.Unlock()
+			if err := st.UpdateTagLocal(ctx, "g1", map[string]any{"color": c.want}, now); err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.Push(ctx)
+			if err != nil || res.Sent != 1 || res.Conflicts != 0 {
+				t.Fatalf("push = %+v, %v", res, err)
+			}
+		})
+	}
+}
+
+// Asana renames the old color names (dark-red comes back as red, found by
+// scripts/realcheck #31): the cache keeps Asana's name, so the next edit is no conflict.
+func TestPushUpdateTagKeepsAsanasColorName(t *testing.T) {
+	f, s, st := setupSections(t)
+	ctx := context.Background()
+	f.hook = func(rw http.ResponseWriter, r *http.Request, body map[string]any) bool {
+		if r.Method == http.MethodPut && r.URL.Path == "/tags/g1" && body["color"] == "dark-red" {
+			// as the real Asana: the PUT echoes dark-red, a later GET says red
+			f.tags["g1"].Color = "red"
+			fmt.Fprint(rw, `{"data":{"gid":"g1","name":"急ぎ","color":"dark-red"}}`)
+			return true
+		}
+		return false
+	}
+	f.tags["g1"].Color = "none"
+	_ = st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ", Color: ""}})
+	if err := st.UpdateTagLocal(ctx, "g1", map[string]any{"color": "dark-red"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	if err := st.UpdateTagLocal(ctx, "g1", map[string]any{"color": ""}, now); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Conflicts != 0 {
+		t.Fatalf("second push = %+v, %v", res, err)
+	}
+}
