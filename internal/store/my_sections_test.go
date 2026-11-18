@@ -93,3 +93,18 @@ func TestReplaceMyTaskSectionsKeepsTaskSections(t *testing.T) {
 		t.Errorf("my sections = %v", secs)
 	}
 }
+
+// A task being deleted is not moved in My Tasks either (as for its parent and section).
+func TestMoveMySectionRefusesATaskBeingDeleted(t *testing.T) {
+	s := newMyTasksStore(t)
+	ctx := context.Background()
+	if _, err := s.DeleteTaskLocal(ctx, "mt", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveMySectionLocal(ctx, "mt", "m1", testNow); err == nil {
+		t.Fatal("moved a task being deleted")
+	}
+	if ops, _ := s.ListOps(ctx); len(ops) != 1 {
+		t.Errorf("outbox %+v", ops)
+	}
+}

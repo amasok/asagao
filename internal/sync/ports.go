@@ -100,6 +100,7 @@ type LocalStore interface {
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
 	CompleteDelete(ctx context.Context, id int64, gid string) error
+	TaskDeletesQueuedIn(ctx context.Context, sectionGID string) (bool, error)
 	// RemoveAttachmentFile deletes a local attachment file, only inside the store's
 	// attachments folder.
 	RemoveAttachmentFile(path string) error

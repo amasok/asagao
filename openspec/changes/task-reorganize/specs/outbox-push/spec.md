@@ -49,3 +49,11 @@ outbox の操作の種類は 30 個 (MUST): `update_task`、`create_task`、`add
 #### Scenario: 同じセクションで並べ替える
 - **WHEN** タスクを、同じセクションのタスクの後ろに置く
 - **THEN** `move_task` が積まれ、送ると `addTask` に `insert_after` が入る
+
+### Requirement: 削除予定のタスクとセクションの削除
+セクションの削除で「タスクが残っている」と数えるとき、削除を積んだタスクは数えない (MUST)。そのセクションの `delete_section` は、中のタスクの `delete_task` がすべて outbox から消えるまで送らずに待つ (Asana は空のセクションしか消さないため)。削除を積んだタスクは、マイタスクのセクションへも移さない。
+根拠: store/section_ops.go (DeleteSectionLocal); store/taskops.go (TaskDeletesQueuedIn); store/my_sections.go (MoveMySectionLocal); sync/push.go (waitsForCreate); TestDeleteSectionAfterItsTasksDeletes, TestMoveMySectionRefusesATaskBeingDeleted
+
+#### Scenario: タスクを消してからセクションを消す
+- **WHEN** セクションの唯一のタスクの削除を積み、続けてそのセクションを削除する
+- **THEN** 両方積め、送るときはタスクの削除が先に送られ、それが失敗しているあいだはセクションの削除を送らない

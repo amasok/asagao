@@ -92,6 +92,9 @@ var ErrNotMine = errors.New("自分が担当のタスクだけ、マイタスク
 // list and queues the move. Moving it back cancels it.
 func (s *Store) MoveMySectionLocal(ctx context.Context, gid, sectionGID string, now time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
+		if err := refuseDeleted(ctx, tx, gid); err != nil {
+			return err
+		}
 		var workspace, assignee, current, me string
 		err := tx.QueryRowContext(ctx, "SELECT workspace_gid, assignee_gid, assignee_section_gid FROM tasks WHERE gid = ?", gid).
 			Scan(&workspace, &assignee, &current)

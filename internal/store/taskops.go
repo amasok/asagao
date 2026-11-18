@@ -353,6 +353,15 @@ func refuseDeleted(ctx context.Context, tx *sql.Tx, gids ...string) error {
 	return nil
 }
 
+// TaskDeletesQueuedIn reports whether a delete is queued (in any state) for a task in
+// section sectionGID: Asana deletes only an empty section, so its delete waits for them.
+func (s *Store) TaskDeletesQueuedIn(ctx context.Context, sectionGID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM task_memberships WHERE section_gid = ?
+		AND task_gid IN (SELECT task_gid FROM outbox WHERE kind = ?)`, sectionGID, OpDeleteTask).Scan(&n)
+	return n > 0, err
+}
+
 // requeue takes entry op out of its place in the queue: saving it adds it at the end
 // (with its base), after the changes queued since.
 func requeue(ctx context.Context, tx *sql.Tx, op *Op, now time.Time) error {
