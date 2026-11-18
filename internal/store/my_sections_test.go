@@ -65,3 +65,31 @@ func TestMoveMySectionLocal(t *testing.T) {
 		t.Fatalf("ops = %+v", ops)
 	}
 }
+
+// A section only known from my tasks keeps its name when the list is read again without it.
+func TestReplaceMyTaskSectionsKeepsTaskSections(t *testing.T) {
+	s := newMyTasksStore(t)
+	ctx := context.Background()
+	if err := s.UpsertTasks(ctx, []asana.Task{{GID: "mt", Name: "私の", Workspace: &asana.Ref{GID: "w1"}, Assignee: &asana.Ref{GID: "me"},
+		AssigneeSection: model.OptionalRef{Set: true, Ref: &asana.Ref{GID: "m3", Name: "古いセクション"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceMyTaskSections(ctx, "w1", []asana.Section{{GID: "m2", Name: "あとで"}, {GID: "m1", Name: "今日やる"}}); err != nil {
+		t.Fatal(err)
+	}
+	secs, _ := s.ListMyTaskSections(ctx, "w1")
+	if len(secs) != 3 || secs[0].GID != "m2" || secs[1].GID != "m1" || secs[2].Name != "古いセクション" {
+		t.Fatalf("my sections = %v", secs)
+	}
+	if d, _ := s.GetTask(ctx, "mt"); d.MySection == nil || d.MySection.Name != "古いセクション" {
+		t.Errorf("mt = %+v", d.MySection)
+	}
+	// One no task is in any more goes.
+	_ = s.ReplaceMyTaskSections(ctx, "w1", nil)
+	_ = s.UpsertTasks(ctx, []asana.Task{{GID: "mt", Name: "私の", Workspace: &asana.Ref{GID: "w1"}, Assignee: &asana.Ref{GID: "me"},
+		AssigneeSection: model.OptionalRef{Set: true, Ref: &asana.Ref{GID: "m1", Name: "今日やる"}}}})
+	_ = s.ReplaceMyTaskSections(ctx, "w1", []asana.Section{{GID: "m1", Name: "今日やる"}})
+	if secs, _ := s.ListMyTaskSections(ctx, "w1"); len(secs) != 1 {
+		t.Errorf("my sections = %v", secs)
+	}
+}

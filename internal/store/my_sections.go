@@ -26,21 +26,24 @@ const KeyUserTaskList = readmodel.KeyUserTaskList
 // Asana's order. Sections only known from tasks (assignee_section) are kept after them.
 func (s *Store) ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM my_task_sections WHERE workspace_gid = ?", workspaceGID); err != nil {
+		// The sections my tasks are in stay even when the list did not return them, with
+		// the name the tasks told (after the list's).
+		if _, err := tx.ExecContext(ctx, `DELETE FROM my_task_sections WHERE workspace_gid = ? AND gid NOT IN (
+			SELECT t.assignee_section_gid FROM tasks t WHERE t.workspace_gid = ?
+			AND t.assignee_gid = (SELECT value FROM sync_state WHERE key = ?))`, workspaceGID, workspaceGID, KeyMeGID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE my_task_sections SET position = ? WHERE workspace_gid = ?", len(secs), workspaceGID); err != nil {
 			return err
 		}
 		for i, sec := range secs {
-			if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO my_task_sections(gid, workspace_gid, name, position) VALUES(?, ?, ?, ?)",
+			if _, err := tx.ExecContext(ctx, `INSERT INTO my_task_sections(gid, workspace_gid, name, position) VALUES(?, ?, ?, ?)
+				ON CONFLICT(gid) DO UPDATE SET workspace_gid = excluded.workspace_gid, name = excluded.name, position = excluded.position`,
 				sec.GID, workspaceGID, sec.Name, i); err != nil {
 				return err
 			}
 		}
-		// Keep the sections my tasks are in that the list did not return (an older list).
-		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO my_task_sections(gid, workspace_gid, name, position)
-			SELECT DISTINCT t.assignee_section_gid, ?, '', ? FROM tasks t
-			WHERE t.workspace_gid = ? AND t.assignee_section_gid <> ''
-			AND t.assignee_gid = (SELECT value FROM sync_state WHERE key = ?)`, workspaceGID, len(secs), workspaceGID, KeyMeGID)
-		return err
+		return nil
 	})
 }
 
