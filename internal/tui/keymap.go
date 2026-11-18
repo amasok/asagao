@@ -98,6 +98,7 @@ func (m *Model) actions() []action {
 		// view
 		{id: "filter", key: "f", shortcut: []string{"f"}, group: groupView, label: "絞り込み（未完了・期限切れ…）", ctx: ctxAll, run: (*Model).openFilterPicker},
 		{id: "tag_filter", key: "T", shortcut: []string{"T"}, group: groupView, label: "タグで絞り込む", ctx: ctxAll, run: (*Model).openTagPicker},
+		{id: "search_asana", key: "g", group: groupView, label: "Asana でも検索（キャッシュにないタスク。/ で語を入れてから）", ctx: ctxAll, run: (*Model).searchAsana},
 		{id: "saved_search", key: "/", group: groupView, label: "保存した検索を呼び出す", ctx: ctxAll, run: (*Model).openSavedSearchPicker},
 		{id: "field_filter", key: "F", group: groupView, label: "カスタムフィールドで絞り込む", ctx: ctxAll, run: (*Model).openFieldFilterPicker},
 		{id: "view", key: "v", shortcut: []string{"v"}, group: groupView, label: "表示を切り替え（リスト→ボード→カレンダー）", ctx: ctxList | ctxBoard | ctxCalendar, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},

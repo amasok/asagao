@@ -55,14 +55,21 @@ func SearchWithAsana(ctx context.Context, q Query, find TaskFinder, f readmodel.
 		return out, nil
 	}
 	out.Found, out.ByName = len(res.GIDs), res.ByName
+	out.Tasks, err = WithFound(ctx, q, f, local, res.GIDs)
+	return out, err
+}
+
+// WithFound adds to local (the cache's matches for f) the tasks found in Asana (gids,
+// already cached) that it lacks and that pass the rest of f, up to f's limit.
+func WithFound(ctx context.Context, q Query, f readmodel.TaskFilter, local []readmodel.TaskSummary, gids []string) ([]readmodel.TaskSummary, error) {
 	var more []string
-	for _, g := range res.GIDs {
+	for _, g := range gids {
 		if !slices.ContainsFunc(local, func(t readmodel.TaskSummary) bool { return t.GID == g }) {
 			more = append(more, g)
 		}
 	}
 	if len(more) == 0 || (f.Limit > 0 && len(local) >= f.Limit) {
-		return out, nil
+		return local, nil
 	}
 	rf := f
 	rf.Query, rf.GIDs, rf.Limit = "", more, 0
@@ -71,8 +78,7 @@ func SearchWithAsana(ctx context.Context, q Query, find TaskFinder, f readmodel.
 	}
 	found, err := q.ListTasks(ctx, rf)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	out.Tasks = append(out.Tasks, found...)
-	return out, nil
+	return append(local, found...), nil
 }

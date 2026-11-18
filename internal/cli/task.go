@@ -11,6 +11,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
+	usecase "github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
@@ -133,10 +134,17 @@ func (a *app) taskListCmd() *cobra.Command {
 
 func (a *app) searchCmd() *cobra.Command {
 	var f listFlags
+	var remote bool
 	cmd := &cobra.Command{
 		Use:   "search <キーワード>...",
-		Short: "タスク名・説明・コメントを全文検索する（ローカルストアから）",
-		Args:  cobra.MinimumNArgs(1),
+		Short: "タスク名・説明・コメントを全文検索する（ローカルストアから。--remote で Asana も）",
+		Long: "ローカルストアのタスクを、名前・説明・コメントで全文検索します。\n" +
+			"--remote を付けると Asana でも探し、キャッシュにないタスク（同期していないプロジェクト、古い完了タスク）も\n" +
+			"見つけてキャッシュに入れます。ワークスペースのプランに検索 API がない（Asana が 402 を返す）ときは、\n" +
+			"タスク名の先頭で探します（typeahead。説明やコメントでは探せません）。Asana に届かなければ、ローカルの結果だけを出します。",
+		Example: `  asagao search 牛乳
+  asagao search 請求書 --remote --all`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)
@@ -150,6 +158,9 @@ func (a *app) searchCmd() *cobra.Command {
 				return err
 			}
 			tf.Query = strings.Join(args, " ")
+			if remote {
+				return a.searchRemote(cmd, st, tf)
+			}
 			tasks, err := query(st).ListTasks(ctx, tf)
 			if err != nil {
 				return err
@@ -162,7 +173,46 @@ func (a *app) searchCmd() *cobra.Command {
 		},
 	}
 	f.register(cmd, "any")
+	cmd.Flags().BoolVar(&remote, "remote", false, "Asana でも探す（見つけたタスクはキャッシュに入る）")
 	return cmd
+}
+
+// searchRemote is search --remote: the cache's matches and what Asana finds. What Asana
+// found, or why it could not be searched, goes to stderr, so the output (and --json) has
+// the same shape as without --remote.
+func (a *app) searchRemote(cmd *cobra.Command, st Store, tf readmodel.TaskFilter) error {
+	ctx := cmd.Context()
+	var find usecase.TaskFinder
+	if s, err := a.onlineSyncer(ctx, st); err != nil {
+		find = unreachable{err}
+	} else {
+		find = s
+	}
+	out, err := usecase.SearchWithAsana(ctx, query(st), find, tf)
+	if err != nil {
+		return err
+	}
+	errw := cmd.ErrOrStderr()
+	switch {
+	case out.RemoteErr != nil:
+		fmt.Fprintf(errw, "（Asana では探せませんでした: %v。ローカルの結果だけです）\n", out.RemoteErr)
+	case out.ByName:
+		fmt.Fprintf(errw, "（Asana で %d 件見つかりました。このワークスペースのプランでは検索 API を使えないため、タスク名の先頭で探しました）\n", out.Found)
+	default:
+		fmt.Fprintf(errw, "（Asana で %d 件見つかりました）\n", out.Found)
+	}
+	if a.json {
+		return a.printJSON(out.Tasks)
+	}
+	printTaskTable(cmd.OutOrStdout(), out.Tasks)
+	return nil
+}
+
+// unreachable is a TaskFinder for when Asana cannot be reached (not logged in, --dry-run).
+type unreachable struct{ err error }
+
+func (u unreachable) SearchTasks(context.Context, string, *bool, int) (readmodel.RemoteSearchResult, error) {
+	return readmodel.RemoteSearchResult{}, u.err
 }
 
 func (a *app) taskShowCmd() *cobra.Command {
