@@ -166,3 +166,30 @@ func TestGoalsGoWithTheirWorkspaceAndReset(t *testing.T) {
 		t.Fatalf("%d rows after a reset", n)
 	}
 }
+
+// The metric as the real Asana returns it (#31, scripts/realcheck): resource_subtype is
+// "number" for every metric and the kind is in unit; a percentage is a fraction.
+func TestGoalMetricKindFromUnit(t *testing.T) {
+	ctx := context.Background()
+	s := projectStore(t)
+	f := func(v float64) *float64 { return &v }
+	must(t, s.ReplaceGoals(ctx, "w1", []model.Goal{
+		{GID: "g1", Name: "既定", Metric: &model.GoalMetric{ResourceSubtype: "number", Unit: "percentage",
+			InitialNumberValue: f(0), TargetNumberValue: f(1), CurrentNumberValue: f(0.4), CurrentDisplayValue: "40%"}},
+		{GID: "g2", Name: "件数", Metric: &model.GoalMetric{ResourceSubtype: "number", Unit: "none",
+			InitialNumberValue: f(0), TargetNumberValue: f(10), CurrentNumberValue: f(4), CurrentDisplayValue: "4"}},
+		{GID: "g3", Name: "売上", Metric: &model.GoalMetric{ResourceSubtype: "number", Unit: "currency", CurrencyCode: "JPY",
+			TargetNumberValue: f(1000), CurrentNumberValue: f(250)}},
+	}))
+	for gid, want := range map[string]struct{ kind, text string }{
+		"g1": {"percentage", "40% / 100%（40%）"},
+		"g2": {"number", "4 / 10（40%）"},
+		"g3": {"currency", "JPY 250 / JPY 1000（25%）"},
+	} {
+		g, err := s.GoalDetail(ctx, gid)
+		must(t, err)
+		if g.Metric == nil || g.Metric.Kind != want.kind || g.Metric.Text() != want.text {
+			t.Errorf("%s: %+v %q, want %s %q", gid, g.Metric, g.Metric.Text(), want.kind, want.text)
+		}
+	}
+}

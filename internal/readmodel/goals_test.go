@@ -16,7 +16,10 @@ func TestGoalMetricProgress(t *testing.T) {
 		{nil, ""},
 		{&GoalMetric{Kind: "number", Initial: f(0), Target: f(100), Current: f(40), Display: "40"}, "40 / 100（40%）"},
 		{&GoalMetric{Kind: "number", Target: f(100), Current: f(40)}, "40 / 100（40%）"},
-		{&GoalMetric{Kind: "percentage", Initial: f(0), Target: f(100), Current: f(150)}, "150% / 100%（100%）"},
+		{&GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(1.5)}, "150% / 100%（100%）"},
+		// a new goal's default metric on the real Asana (#31): percentage 0 → 1
+		{&GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(0.4)}, "40% / 100%（40%）"},
+		{&GoalMetric{Kind: "percentage", Initial: f(0), Target: f(1), Current: f(0), Display: "0%"}, "0% / 100%（0%）"},
 		{&GoalMetric{Kind: "number", Initial: f(100), Target: f(50), Current: f(75)}, "75 / 50（50%）"}, // going down
 		{&GoalMetric{Kind: "number", Initial: f(10), Target: f(10), Current: f(10)}, "10 / 10"},       // no span
 		{&GoalMetric{Kind: "currency", Currency: "JPY", Target: f(1000), Current: f(-5)}, "JPY -5 / JPY 1000（0%）"},

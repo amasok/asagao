@@ -38,6 +38,19 @@ func userRef(gid, name string) *readmodel.UserRef {
 	return &readmodel.UserRef{GID: gid, Name: name}
 }
 
+// metricKind is number, percentage or currency. The real Asana says it in the unit
+// (resource_subtype is always "number"; checked with scripts/realcheck, #31).
+func metricKind(m model.GoalMetric) string {
+	switch m.Unit {
+	case "percentage", "currency":
+		return m.Unit
+	}
+	if m.ResourceSubtype == "percentage" || m.ResourceSubtype == "currency" {
+		return m.ResourceSubtype // as the API reference describes it
+	}
+	return "number"
+}
+
 // goalJSON encodes a goal's time period and metric for their columns ("" for none).
 func goalJSON(g model.Goal) (period, metric string, err error) {
 	if p := g.TimePeriod; p != nil && p.GID != "" {
@@ -48,7 +61,7 @@ func goalJSON(g model.Goal) (period, metric string, err error) {
 		period = string(b)
 	}
 	if m := g.Metric; m != nil {
-		b, err := json.Marshal(readmodel.GoalMetric{Kind: m.ResourceSubtype, Currency: m.CurrencyCode, Initial: m.InitialNumberValue,
+		b, err := json.Marshal(readmodel.GoalMetric{Kind: metricKind(*m), Currency: m.CurrencyCode, Initial: m.InitialNumberValue,
 			Target: m.TargetNumberValue, Current: m.CurrentNumberValue, Display: m.CurrentDisplayValue, Source: m.ProgressSource,
 			Precision: m.Precision})
 		if err != nil {

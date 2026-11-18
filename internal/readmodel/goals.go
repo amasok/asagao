@@ -101,7 +101,11 @@ func (m *GoalMetric) Text() string {
 		if v == nil {
 			return ""
 		}
-		s := strconv.FormatFloat(*v, 'f', max(0, min(m.Precision, 6)), 64)
+		x := *v
+		if m.Kind == "percentage" {
+			x *= 100 // Asana keeps a percentage as a fraction (1 is 100%)
+		}
+		s := strconv.FormatFloat(x, 'f', max(0, min(m.Precision, 6)), 64)
 		switch m.Kind {
 		case "percentage":
 			return s + "%"
