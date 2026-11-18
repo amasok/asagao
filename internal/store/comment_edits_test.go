@@ -306,7 +306,9 @@ func TestDeleteAttachmentLocal(t *testing.T) {
 	atts := []asana.Attachment{{GID: "a1", Name: "図面.pdf", Host: "asana", ViewURL: "https://v", Size: 1234, CreatedAt: testNow},
 		{GID: "a2", Name: "残す.png"}}
 	must(t, s.ReplaceAttachments(ctx, "t1", atts))
-	downloaded := filepath.Join(t.TempDir(), "a1-図面.pdf")
+	cache := t.TempDir()
+	s.SetAttachmentDir(cache)
+	downloaded := filepath.Join(cache, "a1-図面.pdf")
 	must(t, os.WriteFile(downloaded, []byte("pdf"), 0o600))
 	must(t, s.SetAttachmentPath(ctx, "a1", downloaded))
 	must(t, s.DeleteAttachmentLocal(ctx, "a1", testNow))
@@ -340,7 +342,7 @@ func TestDeleteAttachmentLocal(t *testing.T) {
 
 	src := filepath.Join(t.TempDir(), "メモ.txt")
 	must(t, os.WriteFile(src, []byte("x"), 0o600))
-	local, err := s.UploadAttachmentLocal(ctx, "t1", src, t.TempDir(), testNow)
+	local, err := s.UploadAttachmentLocal(ctx, "t1", src, cache, testNow)
 	must(t, err)
 	copied, err := s.GetAttachment(ctx, local)
 	must(t, err)

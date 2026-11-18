@@ -165,6 +165,7 @@ func TestAttackDeleteAttachmentKeepsTheOriginal(t *testing.T) {
 	src := filepath.Join(dir, "原本.txt")
 	must(t, os.WriteFile(src, []byte("x"), 0o600))
 	cache := t.TempDir()
+	s.SetAttachmentDir(cache)
 	local, err := s.UploadAttachmentLocal(ctx, "t1", src, cache, testNow)
 	must(t, err)
 	must(t, s.DeleteAttachmentLocal(ctx, local, testNow))

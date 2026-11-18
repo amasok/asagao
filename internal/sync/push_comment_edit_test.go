@@ -236,7 +236,9 @@ func TestPushDeleteRemovesUploadCopy(t *testing.T) {
 	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	local, err := st.UploadAttachmentLocal(ctx, "t1", src, t.TempDir(), now)
+	cache := t.TempDir()
+	st.SetAttachmentDir(cache)
+	local, err := st.UploadAttachmentLocal(ctx, "t1", src, cache, now)
 	if err != nil {
 		t.Fatal(err)
 	}

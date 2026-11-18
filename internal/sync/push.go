@@ -1199,7 +1199,7 @@ func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 	}
 	// The copy an upload kept until it was sent (store.DeleteAttachmentLocal): no longer needed.
 	if path, _ := op.Payload["path"].(string); path != "" {
-		_ = os.Remove(path)
+		_ = s.Store.RemoveAttachmentFile(path) // only inside the attachments folder
 	}
 	return nil
 }

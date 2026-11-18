@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"strings"
 	"time"
 
@@ -224,7 +222,7 @@ func (s *Store) DeleteAttachmentLocal(ctx context.Context, gid string, now time.
 			State: OpPending, CreatedAt: formatTime(now)})
 	})
 	if err == nil && remove != "" {
-		if rerr := os.Remove(remove); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+		if rerr := s.RemoveAttachmentFile(remove); rerr != nil {
 			return fmt.Errorf("添付は削除しましたが、ローカルのファイル %s を消せませんでした: %w", remove, rerr)
 		}
 	}
