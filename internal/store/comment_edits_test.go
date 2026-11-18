@@ -297,15 +297,22 @@ func TestStoryReactions(t *testing.T) {
 }
 
 // Deleting an attachment hides it at once and keeps it hidden through refreshes until sent;
-// discarding the delete puts it back as it was. One not uploaded yet is just dropped.
+// its downloaded file is removed at once. Discarding the delete puts it back as it was,
+// without the file (downloaded again when opened). One not uploaded yet is just dropped,
+// with its copy.
 func TestDeleteAttachmentLocal(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	atts := []asana.Attachment{{GID: "a1", Name: "図面.pdf", Host: "asana", ViewURL: "https://v", Size: 1234, CreatedAt: testNow},
 		{GID: "a2", Name: "残す.png"}}
 	must(t, s.ReplaceAttachments(ctx, "t1", atts))
-	must(t, s.SetAttachmentPath(ctx, "a1", "/cache/図面.pdf"))
+	downloaded := filepath.Join(t.TempDir(), "a1-図面.pdf")
+	must(t, os.WriteFile(downloaded, []byte("pdf"), 0o600))
+	must(t, s.SetAttachmentPath(ctx, "a1", downloaded))
 	must(t, s.DeleteAttachmentLocal(ctx, "a1", testNow))
+	if _, err := os.Stat(downloaded); !os.IsNotExist(err) {
+		t.Errorf("the downloaded file of a deleted attachment is still there: %v", err)
+	}
 	if _, err := s.GetAttachment(ctx, "a1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleted attachment still there: %v", err)
 	}
@@ -324,8 +331,8 @@ func TestDeleteAttachmentLocal(t *testing.T) {
 	must(t, s.DiscardOp(ctx, ops[0].ID))
 	a, err := s.GetAttachment(ctx, "a1")
 	must(t, err)
-	if a.Name != "図面.pdf" || a.Size != 1234 || a.LocalPath != "/cache/図面.pdf" || a.ViewURL != "https://v" {
-		t.Errorf("put back as %+v", a)
+	if a.Name != "図面.pdf" || a.Size != 1234 || a.LocalPath != "" || a.ViewURL != "https://v" {
+		t.Errorf("put back as %+v (no local file: it was removed)", a)
 	}
 	if err := s.DeleteAttachmentLocal(ctx, "missing", testNow); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing attachment: err = %v", err)
@@ -335,7 +342,15 @@ func TestDeleteAttachmentLocal(t *testing.T) {
 	must(t, os.WriteFile(src, []byte("x"), 0o600))
 	local, err := s.UploadAttachmentLocal(ctx, "t1", src, t.TempDir(), testNow)
 	must(t, err)
+	copied, err := s.GetAttachment(ctx, local)
+	must(t, err)
 	must(t, s.DeleteAttachmentLocal(ctx, local, testNow))
+	if _, err := os.Stat(copied.LocalPath); !os.IsNotExist(err) {
+		t.Errorf("the copy of an unsent upload is still there: %v", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("the user's own file was touched: %v", err)
+	}
 	if ops := opsOfKind(t, s, OpUploadAttachment); len(ops) != 0 {
 		t.Errorf("the unsent upload is still queued: %+v", ops)
 	}
@@ -357,6 +372,14 @@ func TestDeleteAttachmentBeingUploaded(t *testing.T) {
 		t.Fatal(ok, err)
 	}
 	must(t, s.DeleteAttachmentLocal(ctx, local, testNow))
+	// The upload may be sent again from its copy: it stays until the delete is sent.
+	copyPath, _ := up.Payload["path"].(string)
+	if _, err := os.Stat(copyPath); err != nil {
+		t.Errorf("the copy an upload being sent needs was removed: %v", err)
+	}
+	if del := opsOfKind(t, s, OpDeleteAttachment); len(del) != 1 || del[0].Payload["path"] != copyPath {
+		t.Errorf("delete %+v does not carry the copy to remove", del)
+	}
 	must(t, s.CompleteUpload(ctx, up.ID, local, "a-real", "https://v"))
 	if _, err := s.GetAttachment(ctx, "a-real"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("uploaded attachment shown although deleted: %v", err)

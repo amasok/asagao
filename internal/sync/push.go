@@ -1100,7 +1100,14 @@ func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 			return err
 		}
 	}
-	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	// The copy an upload kept until it was sent (store.DeleteAttachmentLocal): no longer needed.
+	if path, _ := op.Payload["path"].(string); path != "" {
+		_ = os.Remove(path)
+	}
+	return nil
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.
