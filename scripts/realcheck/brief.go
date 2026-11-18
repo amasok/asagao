@@ -11,7 +11,7 @@ import (
 // a rule, lists, an image and a table (asagao keeps a table as an asana-html block).
 const briefBody = "# Heading one\n\n## Heading two\n\nPlain text with **bold**, *italic* and a [link](https://example.com/realcheck).\n\n" +
 	"---\n\n- first\n- second\n  - nested\n\n1. one\n2. two\n\n![picture](https://example.com/realcheck.png)\n\n" +
-	"| a | b |\n|---|---|\n| 1 | 2 |\n"
+	"| **a** | b |\n|---|---|\n| 1 | [x](https://example.com/cell) |\n"
 
 // brief checks project briefs (#60, a preview API) on the real Asana through the CLI and
 // MCP (-brief): create, update, title only, a change in Asana meanwhile (a conflict),
