@@ -7,7 +7,7 @@ import (
 
 func TestGuardWrite(t *testing.T) {
 	c := &Created{Prefix: "asagao-realcheck-1", Projects: []string{"1000001"}, Tasks: []string{"2000002"},
-		Tags: []string{"3000003"}, Statuses: []string{"4000004"}, CustomFields: []string{"5000005"}}
+		Tags: []string{"3000003"}, Statuses: []string{"4000004"}, CustomFields: []string{"5000005"}, Briefs: []string{"9300003"}}
 	allowed := []struct {
 		m, p   string
 		fields []string
@@ -17,6 +17,7 @@ func TestGuardWrite(t *testing.T) {
 		{"DELETE", "/tags/3000003", nil},
 		{"DELETE", "/status_updates/4000004", nil},
 		{"DELETE", "/custom_fields/5000005", nil},
+		{"DELETE", "/project_briefs/9300003", nil},
 		{"POST", "/projects/1000001/addCustomFieldSetting", []string{"custom_field=5000005"}},
 		{"POST", "/custom_fields", []string{"workspace=" + TestWorkspace, "name=asagao-realcheck-1-date"}},
 	}
@@ -29,7 +30,8 @@ func TestGuardWrite(t *testing.T) {
 		m, p   string
 		fields []string
 	}{
-		{"DELETE", "/tasks/9999999", nil},            // not ours
+		{"DELETE", "/tasks/9999999", nil}, // not ours
+		{"DELETE", "/project_briefs/9999999", nil},
 		{"DELETE", "/projects/2000002", nil},         // a task gid used as a project
 		{"DELETE", "/tasks/2000002/../9999999", nil}, // path tricks
 		{"DELETE", "/users/2000002", nil},            // unknown kind
