@@ -156,3 +156,76 @@ func TestCheckMe(t *testing.T) {
 		}
 	}
 }
+
+// -syncbench may use a copy of the test config inside the run directory, nowhere else.
+func TestCheckEnvConfigCopyInRun(t *testing.T) {
+	home, bin := testTree(t, fileStore)
+	e := NewEnv(home, bin, "/usr/bin", "20260101-000000")
+	cfg := filepath.Join(e.Run, "config")
+	if err := os.MkdirAll(filepath.Join(cfg, "asagao"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"token.json", "config.toml"} {
+		if err := os.WriteFile(filepath.Join(cfg, "asagao", f), []byte(fileStore), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	use := func(e *Env, dir string) {
+		e.Config = dir
+		for i, kv := range e.Vars {
+			if strings.HasPrefix(kv, "XDG_CONFIG_HOME=") {
+				e.Vars[i] = "XDG_CONFIG_HOME=" + dir
+			}
+		}
+	}
+	use(&e, cfg)
+	if err := CheckEnv(e); err != nil {
+		t.Fatalf("copy in the run refused: %v", err)
+	}
+	for _, dir := range []string{filepath.Join(home, ".config"), filepath.Join(home, "asagao-test", "realcheck-runs", "other", "config")} {
+		e2 := NewEnv(home, bin, "/usr/bin", "20260101-000000")
+		use(&e2, dir)
+		if err := CheckEnv(e2); err == nil {
+			t.Errorf("config %s accepted", dir)
+		}
+	}
+}
+
+func TestParseBench(t *testing.T) {
+	vs := parseBench("main=/a, lazy=/b")
+	if len(vs) != 3 || vs[0].Bin != "/a" || vs[0].Offline || !vs[2].Eager || vs[2].Bin != "/b" || !vs[1].Offline {
+		t.Fatalf("%+v", vs)
+	}
+}
+
+func TestAsagaoRequests(t *testing.T) {
+	for _, c := range []struct {
+		out, err string
+		want     int
+	}{
+		{`{"requests": 37, "listed": 4}`, "", 37},
+		{`[{"gid":"1"}]`, "（このプロジェクトのタスクを Asana から取得しました: タスク 15 件 / リクエスト 3 回）\n", 3},
+		{`[{"gid":"1"}]`, "", -1}, // main's build, or nothing fetched: not counted
+		{"同期しました", "", -1},
+	} {
+		if got := asagaoRequests([]byte(c.out), c.err); got != c.want {
+			t.Errorf("%q %q: %d, want %d", c.out, c.err, got, c.want)
+		}
+	}
+}
+
+func TestRunPrefix(t *testing.T) {
+	for p, ok := range map[string]bool{
+		"asagao-realcheck-20261119-051348":    true,
+		"asagao-realcheck-":                   false, // every run's leftovers at once
+		"asagao-realcheck-2026":               false,
+		"asagao":                              false,
+		"":                                    false,
+		"asagao-realcheck-20261119-051348-P1": false,
+		"x asagao-realcheck-20261119-051348":  false,
+	} {
+		if runPrefix.MatchString(p) != ok {
+			t.Errorf("%q: %v", p, !ok)
+		}
+	}
+}

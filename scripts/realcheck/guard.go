@@ -86,9 +86,14 @@ func CheckEnv(e Env) error {
 	if !inside(runs, e.Run) || e.Run == runs {
 		return fmt.Errorf("run directory %s is not under %s", e.Run, runs)
 	}
+	// The config is the test one, or a copy of it in this run's directory (-syncbench
+	// changes a setting there; the test config itself is never written).
+	if e.Config != filepath.Join(e.Root, "config") && !inside(e.Run, e.Config) {
+		return fmt.Errorf("config %s is neither %s nor in %s", e.Config, filepath.Join(e.Root, "config"), e.Run)
+	}
 	want := map[string]string{
 		"HOME":            e.Home,
-		"XDG_CONFIG_HOME": filepath.Join(e.Root, "config"),
+		"XDG_CONFIG_HOME": e.Config,
 		"XDG_DATA_HOME":   e.Data,
 		"XDG_CACHE_HOME":  e.Cache,
 	}
@@ -115,9 +120,6 @@ func CheckEnv(e Env) error {
 		if !inside(e.Run, d) {
 			return fmt.Errorf("%s is not under %s", d, e.Run)
 		}
-	}
-	if e.Config != filepath.Join(e.Root, "config") {
-		return fmt.Errorf("config %s is not %s", e.Config, filepath.Join(e.Root, "config"))
 	}
 	// No symlinks on the way to the token, the config or the run directory.
 	for _, p := range []struct {
