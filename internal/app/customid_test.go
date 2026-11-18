@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -102,5 +103,16 @@ func TestResolveCustomIDsStopsAskingAfterAFailure(t *testing.T) {
 	}
 	if !slices.Equal(f.calls, []string{"ENG-1"}) {
 		t.Fatalf("asked %v", f.calls)
+	}
+}
+
+// An answer from Asana about one ID (a 500 that Asana gives for some unknown IDs) does not
+// stop the others from being asked for.
+func TestResolveCustomIDsGoesOnAfterAnAnswer(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeCustomIDs{gids: map[string]string{"ENG-2": "t2"}, err: &model.Error{Status: 500}}
+	got, err := ResolveCustomIDs(ctx, customIDState{readmodel.KeyCustomID + "TEST-1": "t1"}, f, []string{"TEST-1", "ENG-2"})
+	if err == nil || !maps.Equal(got, map[string]string{"TEST-1": "t1", "ENG-2": "t2"}) || !slices.Equal(f.calls, []string{"TEST-1", "ENG-2"}) {
+		t.Fatalf("got %v %v calls %v", got, err, f.calls)
 	}
 }
