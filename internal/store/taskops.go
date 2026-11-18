@@ -122,38 +122,46 @@ func deleteLocalTask(ctx context.Context, tx *sql.Tx, gid string) error {
 }
 
 // CompleteDelete records that Asana deleted the task of entry id: the task, its subtasks
-// and every change still queued for them are removed.
+// and every change still queued for them are removed, and then the local files of their
+// attachments (downloaded, or copied for an upload or kept for a delete; #43).
 func (s *Store) CompleteDelete(ctx context.Context, id int64, gid string) error {
-	return s.completeOp(ctx, id, func(tx *sql.Tx) error { return removeTaskTree(ctx, tx, gid, nil) })
+	var files []string
+	err := s.completeOp(ctx, id, func(tx *sql.Tx) error {
+		var err error
+		files, err = removeTaskTree(ctx, tx, gid)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		_ = s.RemoveAttachmentFile(f) // only inside the attachments folder; a file left is no loss
+	}
+	return nil
 }
 
 // removeTaskTree removes task gid, its subtasks, their dependencies and the changes queued
-// for them; each entry is passed to dropped first (if set).
-func removeTaskTree(ctx context.Context, tx *sql.Tx, gid string, dropped func(*Op) error) error {
+// for them. It returns the local attachment files they had, to delete once it is saved.
+func removeTaskTree(ctx context.Context, tx *sql.Tx, gid string) ([]string, error) {
+	files, err := taskTreeFiles(ctx, tx, gid, true)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE sub(gid) AS (
 			SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid)
 		SELECT o.id FROM outbox o WHERE o.task_gid IN (SELECT gid FROM sub) ORDER BY o.id`, gid)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ids, err := scanIDs(rows)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var parent string
 	_ = tx.QueryRowContext(ctx, "SELECT parent_gid FROM tasks WHERE gid = ?", gid).Scan(&parent)
 	for _, id := range ids {
-		if dropped != nil {
-			op, err := getOpTx(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if err := dropped(op); err != nil {
-				return err
-			}
-		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for _, q := range []string{
@@ -163,13 +171,37 @@ func removeTaskTree(ctx context.Context, tx *sql.Tx, gid string, dropped func(*O
 		DELETE FROM tasks WHERE gid IN (SELECT gid FROM sub)`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, gid); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if parent != "" {
 		_, err = tx.ExecContext(ctx, "UPDATE tasks SET num_subtasks = max(0, num_subtasks - 1) WHERE gid = ?", parent)
 	}
-	return err
+	return files, err
+}
+
+// taskTreeFiles lists the local attachment files of task gid and its subtasks: downloaded
+// ones, and the copies kept by their queued attachment deletes and (with uploads) uploads.
+// Without uploads, a file a queued upload still refers to is left out: the upload is
+// recorded as a dropped change that shows where its copy is, to get the file back.
+func taskTreeFiles(ctx context.Context, tx *sql.Tx, gid string, uploads bool) ([]string, error) {
+	q := `WITH RECURSIVE sub(gid) AS (
+			SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid),
+		ups(path) AS (SELECT json_extract(payload, '$.path') FROM outbox
+			WHERE task_gid IN (SELECT gid FROM sub) AND kind = ? AND json_extract(payload, '$.path') <> '')
+		SELECT local_path FROM attachments WHERE parent_gid IN (SELECT gid FROM sub) AND local_path <> ''
+		UNION SELECT json_extract(payload, '$.path') FROM outbox WHERE task_gid IN (SELECT gid FROM sub)
+			AND kind = ? AND json_extract(payload, '$.path') <> ''`
+	if uploads {
+		q += ` UNION SELECT path FROM ups`
+	} else {
+		q += ` EXCEPT SELECT path FROM ups`
+	}
+	rows, err := tx.QueryContext(ctx, q, gid, OpUploadAttachment, OpDeleteAttachment)
+	if err != nil {
+		return nil, err
+	}
+	return scanStrings(rows)
 }
 
 // SetParentLocal makes task gid a subtask of parent ("" for a top-level task), at pos
@@ -335,6 +367,16 @@ func refuseDeleted(ctx context.Context, tx *sql.Tx, gids ...string) error {
 		}
 	}
 	return nil
+}
+
+// TaskDeletesQueuedIn reports whether a delete is queued (in any state) for a task in
+// section sectionGID, or for its parent: Asana deletes only an empty section, so its
+// delete waits for them.
+func (s *Store) TaskDeletesQueuedIn(ctx context.Context, sectionGID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM task_memberships WHERE section_gid = ?
+		AND task_gid IN `+deletedTasks, sectionGID).Scan(&n)
+	return n > 0, err
 }
 
 // requeue takes entry op out of its place in the queue: saving it adds it at the end

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"os"
 	"time"
 
 	"github.com/amasok/asagao/internal/readmodel"
@@ -124,7 +123,7 @@ func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsen
 		return unsent, err
 	}
 	for _, f := range files {
-		_ = os.Remove(f)
+		_ = s.RemoveAttachmentFile(f) // only inside the attachments folder (#43)
 	}
 	return unsent, nil
 }

@@ -253,6 +253,7 @@ type Model struct {
 
 	// keys (keymap.go) and choosers (pickers.go)
 	leader         bool                    // space was pressed: the menu is open
+	menuPage       int                     // the page of the menu shown, when it is too high for the screen
 	renderedActive bool                    // the detail was last rendered with selectable items
 	dueTask        readmodel.TaskSummary   // task for promptDue
 	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
@@ -716,6 +717,14 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case m.searching:
 		return m.handleSearchKey(msg)
 	case m.leader:
+		switch {
+		case slices.Contains(menuNext, key):
+			m.turnMenuPage(+1)
+			return m, nil
+		case slices.Contains(menuPrev, key):
+			m.turnMenuPage(-1)
+			return m, nil
+		}
 		m.leader = false
 		return m, m.runMenuKey(key)
 	case m.showHelp:
@@ -727,6 +736,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "space":
 		m.leader = true
+		m.menuPage = 0
 		return m, nil
 	case "?":
 		m.showHelp = true

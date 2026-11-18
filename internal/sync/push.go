@@ -394,6 +394,11 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	if wait, err := s.waitsForSection(ctx, op); err != nil || wait {
 		return wait, err
 	}
+	if op.Kind == outbox.KindDeleteSection { // Asana deletes only an empty section
+		if wait, err := s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID); err != nil || wait {
+			return wait, err
+		}
+	}
 	gid := op.TaskGID
 	switch op.Kind {
 	case outbox.KindCreateTask:

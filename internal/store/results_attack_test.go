@@ -212,7 +212,7 @@ func TestPruneResultsConcurrentWithPush(t *testing.T) {
 func TestPruneResultsLargeOutboxIsFast(t *testing.T) {
 	ctx := context.Background()
 	st := resultsStore(t)
-	const maps, ops = 3000, 1500 // the scan per mapping took ~15 s here; now well under 1 s, even with -race
+	const maps, ops = 3000, 1500 // the scan per mapping took ~15 s here; now well under 1 s
 	big := `{"notes":"` + strings.Repeat("あいうえお ", 100) + `"}`
 	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -231,9 +231,16 @@ func TestPruneResultsLargeOutboxIsFast(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	// The old scan took ~15 s without -race. -race (and a loaded machine, as in CI with
+	// other packages running) makes everything several times slower: the limit is looser
+	// then, still well under what the scan took with -race.
+	limit := 3 * time.Second
+	if raceEnabled {
+		limit = 30 * time.Second
+	}
 	start := time.Now()
 	prune(t, st, attackNow)
-	if d := time.Since(start); d > 3*time.Second {
-		t.Errorf("prune of %d mappings against %d entries took %v", maps, ops, d)
+	if d := time.Since(start); d > limit {
+		t.Errorf("prune of %d mappings against %d entries took %v (limit %v)", maps, ops, d, limit)
 	}
 }
