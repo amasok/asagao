@@ -166,3 +166,39 @@ func TestBriefAttackKeepLocalThenEditKeepsServerTitle(t *testing.T) {
 		t.Fatalf("server title overwritten: title=%q text=%q", bs.title, bs.text)
 	}
 }
+
+// Discarding a conflict shows Asana's brief (what the conflict found), also when Asana
+// deleted it, and a later edit is a plain one again.
+func TestBriefAttackDiscardConflictShowsAsana(t *testing.T) {
+	ctx := context.Background()
+	bs, s, st := setupBrief(t, "目的", "年内")
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "春"), now); err != nil {
+		t.Fatal(err)
+	}
+	bs.text, bs.html = "夏", "<body>夏</body>"
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if err := st.DiscardOp(ctx, briefOps(t, st)[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := st.ProjectOverview(ctx, "p1")
+	if o.Brief == nil || o.Brief.Text != "夏" || o.BriefPending {
+		t.Fatalf("after discard: %+v", o)
+	}
+	// deleted there
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "冬"), now); err != nil {
+		t.Fatal(err)
+	}
+	bs.gid, bs.title, bs.text, bs.html = "", "", "", ""
+	if res, err := s.Push(ctx); err != nil || res.Conflicts != 1 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if err := st.DiscardOp(ctx, briefOps(t, st)[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	o, _ = st.ProjectOverview(ctx, "p1")
+	if o.Brief != nil || o.BriefState != store.BriefNone {
+		t.Fatalf("deleted there, discard: %+v", o)
+	}
+}
