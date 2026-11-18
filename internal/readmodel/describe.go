@@ -165,7 +165,7 @@ func AccountChangedHelp(unsent int, resetHow string) string {
 
 // FieldLabel is the label of an update_task field ("" for unknown keys).
 func FieldLabel(k string) string {
-	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "assignee": "担当者",
+	return map[string]string{"completed": "完了", "name": "名前", "notes": "説明", "due_on": "期日", "start_on": "開始日", "assignee": "担当者",
 		"liked": "いいね", "resource_subtype": "種類", "approval_status": "承認"}[k]
 }
 
@@ -362,7 +362,7 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("セクション名を「%s」に変更", str("name"))
 	case outbox.KindUpdateTask:
 		var parts []string
-		for _, k := range []string{"name", "completed", "due_on", "assignee", "notes", "liked", "resource_subtype", "approval_status"} {
+		for _, k := range []string{"name", "completed", "start_on", "due_on", "assignee", "notes", "liked", "resource_subtype", "approval_status"} {
 			v, ok := op.Payload[k]
 			if !ok {
 				continue
@@ -377,6 +377,12 @@ func DescribeChange(op outbox.Op) string {
 					parts = append(parts, "期日を削除")
 				} else {
 					parts = append(parts, fmt.Sprintf("期日を %s に変更", v))
+				}
+			case "start_on":
+				if v == "" {
+					parts = append(parts, "開始日を削除")
+				} else {
+					parts = append(parts, fmt.Sprintf("開始日を %s に変更", v))
 				}
 			case "assignee":
 				if v == "" {

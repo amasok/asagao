@@ -111,6 +111,12 @@ const (
 	PlanProjectBrief = "project_brief"
 )
 
+// Features of #57 that a plan may lack (PlanKey).
+const (
+	// PlanStartOn is the start dates of tasks (start_on).
+	PlanStartOn = "start_on"
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -144,6 +150,7 @@ func PlanUnavailableMessage(feature string) string {
 		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
 		PlanProjectBrief: "プロジェクトブリーフ (概要のページ)",
+		PlanStartOn:      "タスクの開始日",
 	}[feature]
 	if feature == PlanProjectBrief { // a preview API: refused with 402 or 403
 		return "このワークスペースでは、" + what + "を API で使えません (Asana が 402 か 403 を返しました。しばらくしてから、もう一度試します)"

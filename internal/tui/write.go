@@ -39,6 +39,7 @@ const (
 	promptTemplateProject  // name of a project made from a template (templates.go)
 	promptDuplicateProject // name of a project's copy
 	promptFieldOption      // a new option of an enum field (projectfields.go)
+	promptStart            // a task's start date (startdate.go)
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -332,6 +333,9 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptDue:
 		m.prompt.Prompt = "期日: "
 		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
+	case promptStart:
+		m.prompt.Prompt = "開始日: "
+		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で開始日なし。期日より後にはできません）"
 	case promptNewTag:
 		m.prompt.Prompt = "新しいタグ: "
 		m.prompt.Placeholder = "タグ名"
@@ -370,6 +374,9 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.prompt.Blur()
 		if kind == promptDue { // empty clears the due date
 			return m, m.submitDue(value)
+		}
+		if kind == promptStart { // empty clears the start date
+			return m, m.submitStart(value)
 		}
 		if kind == promptField { // empty clears the field
 			return m, m.submitField(value)

@@ -32,15 +32,16 @@ func (t *Tasks) resolveUser(ctx context.Context, arg string) (string, error) {
 }
 
 // CreateTaskInput is what a user gives to create a task. Project, Section and Assignee
-// are names or gids; Due is a date as ParseDue reads it; Notes is Markdown.
+// are names or gids; Due and Start (the start date, which needs Due) are dates as
+// ParseDue reads them; Notes is Markdown.
 type CreateTaskInput struct {
-	Name, Parent, Project, Section, Due, Assignee, Notes string
+	Name, Parent, Project, Section, Due, Start, Assignee, Notes string
 	Tags                                                 []string // names or gids to add
 }
 
 // Create resolves all of its input and then creates the task locally, queued in the
-// outbox. Nothing is written when the input is invalid: a bad due date or assignee is a
-// *FieldError, a name that does not resolve is the store's error.
+// outbox. Nothing is written when the input is invalid: a bad due date, start date or
+// assignee is a *FieldError, a name that does not resolve is the store's error.
 //
 //   - A subtask (Parent) gets its workspace from the parent and is in no project.
 //   - In a project, the task goes to Section, or to the first section.
@@ -57,6 +58,12 @@ func (t *Tasks) Create(ctx context.Context, in CreateTaskInput) (string, error) 
 	var err error
 	if nt.DueOn, err = ParseDue(in.Due, now); err != nil {
 		return "", &FieldError{Field: "due", Err: err}
+	}
+	if nt.StartOn, err = ParseDue(in.Start, now); err != nil {
+		return "", &FieldError{Field: "start_on", Err: err}
+	}
+	if err := task.CheckDates(nt.StartOn, nt.DueOn, false); err != nil {
+		return "", &FieldError{Field: "start_on", Err: err}
 	}
 	assignee := in.Assignee
 	switch {

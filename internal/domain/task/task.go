@@ -13,6 +13,7 @@ type NewTask struct {
 	Notes        string
 	HTMLNotes    string // Asana rich text; sent instead of Notes when set
 	DueOn        string
+	StartOn      string // needs DueOn, not after it (task.CheckDates)
 	AssigneeGID  string
 }
 

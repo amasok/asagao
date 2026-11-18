@@ -37,6 +37,7 @@ const (
 	itemDependent     // sub: index into Dependents
 	itemAddDependent  //
 	itemComment       // sub: index into Stories (my own comments only: they can be changed)
+	itemStart         // start date (startdate.go)
 )
 
 type detailItem struct {
@@ -160,6 +161,8 @@ func (m *Model) activateItem() tea.Cmd {
 		return m.openAssigneePicker()
 	case itemDue:
 		return m.openDuePicker()
+	case itemStart:
+		return m.openStartPicker(*d)
 	case itemSection:
 		if it.sub < len(d.Memberships) {
 			m.sectionProject = d.Memberships[it.sub].ProjectGID
