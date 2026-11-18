@@ -78,18 +78,30 @@ func (c *Check) brief() {
 	if ch := s.write("brief-changed-in-asana", "PUT", "/project_briefs/"+bg, M{"data": M{"html_text": "<body>changed in Asana</body>"}}); str(ch, "data", "gid") == "" {
 		c.Rep.fail("Asana 側でブリーフを変える", show(ch))
 	}
-	before := c.outbox()
+	// Only the title changed here: sent, and Asana's new body is kept.
 	var cr M
 	err := c.R.JSON(c.ctx, &cr, "project", "brief", c.p, "--title", pre+" brief 3")
-	c.Rep.note("Asana で変わったあとに asagao で変える", fmt.Sprintf("%v %s", err, show(cr)))
+	fourth := s.get("brief-title-after-asana-change", "/project_briefs/"+bg, "opt_fields=title,html_text")
+	c.Rep.check("Asana で本文が変わっていても、タイトルだけの変更は送られ、本文は保たれる",
+		err == nil && boolean(cr, "sent") && str(fourth, "data", "title") == pre+" brief 3" && strings.Contains(str(fourth, "data", "html_text"), "changed in Asana"),
+		errText(err)+show(cr)+" / "+str(fourth, "data", "title")+" "+oneLine(str(fourth, "data", "html_text")))
+	// The body changed on both sides: a conflict, not an overwrite.
+	_, _ = c.R.CLI(c.ctx, "sync")
+	s.write("brief-changed-in-asana-2", "PUT", "/project_briefs/"+bg, M{"data": M{"html_text": "<body>changed in Asana again</body>"}})
+	if err := os.WriteFile(file, []byte("changed in asagao\n"), 0o600); err != nil {
+		c.must("brief.md", err)
+	}
+	before := c.outbox()
+	err = c.R.JSON(c.ctx, &cr, "project", "brief", c.p, "--file", file)
+	c.Rep.note("両方で本文を変えたとき", fmt.Sprintf("%v %s", err, show(cr)))
 	ob := c.outbox()
 	conflict := false
 	for _, e := range toDiscardAny(before, ob) {
 		conflict = conflict || str(e, "state") == "conflict"
 	}
-	fourth := s.get("brief-after-conflict", "/project_briefs/"+bg, "opt_fields=title,html_text")
-	c.Rep.check("競合になり、Asana の本文は上書きされない", conflict && strings.Contains(str(fourth, "data", "html_text"), "changed in Asana"),
-		show(ob)+" / "+oneLine(str(fourth, "data", "html_text")))
+	fifth := s.get("brief-after-conflict", "/project_briefs/"+bg, "opt_fields=title,html_text")
+	c.Rep.check("両方で本文を変えると競合になり、Asana の本文は上書きされない", conflict && strings.Contains(str(fifth, "data", "html_text"), "changed in Asana again"),
+		show(ob)+" / "+oneLine(str(fifth, "data", "html_text")))
 	for _, e := range toDiscardAny(before, ob) {
 		if _, err := c.R.CLI(c.ctx, "outbox", "discard", outboxID(e)); err != nil {
 			c.Rep.fail("outbox discard", err.Error())
@@ -132,7 +144,7 @@ func (c *Check) brief() {
 	s.write("brief-with-p", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": "<body><p>p</p></body>"}})
 	s.write("brief-with-table", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": "<body><table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table></body>"}})
 	s.get("brief-table-read", "/project_briefs/"+c.briefGID(), "opt_fields=html_text")
-	s.write("brief-with-img", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": `<body><img src="https://example.com/realcheck.png"></body>`}})
+	s.write("brief-with-img", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": `<body><img src="https://example.com/realcheck.png"/></body>`}})
 	c.syncClean("最後")
 }
 
