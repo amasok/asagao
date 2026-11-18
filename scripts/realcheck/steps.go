@@ -75,7 +75,7 @@ func (c *Check) cacheTask(gid string) any {
 		c.Rep.fail("キャッシュのタスク "+gid, err.Error())
 		return nil
 	}
-	return v
+	return v["task"]
 }
 
 // both fetches a task from the cache and from Asana and checks them with f.
@@ -332,12 +332,16 @@ func (c *Check) project() {
 	for _, f := range []struct {
 		k    []string
 		want any
-	}{{[]string{"start_on"}, "2030-01-10"}, {[]string{"due_on"}, "2030-01-20"}, {[]string{"color"}, "dark-green"}, {[]string{"owner", "gid"}, c.Me}} {
+	}{{[]string{"start_on"}, "2030-01-10"}, {[]string{"due_on"}, "2030-01-20"}, {[]string{"owner", "gid"}, c.Me}} {
 		ok, d := same(f.k[0], get(ca, f.k...), get(as, f.k...), f.want)
 		c.Rep.check("プロジェクトの "+strings.Join(f.k, "."), ok, d)
 	}
-	ok := strings.Contains(str(as, "html_notes"), "<strong>notes</strong>") && strings.Contains(str(ca, "notes"), "**notes**")
-	c.Rep.check("プロジェクトの説明 (マークダウン → html_notes)", ok, "Asana "+str(as, "html_notes")+" / キャッシュ "+str(ca, "notes"))
+	// Asana renames the old color names (dark-green → green): the cache must follow it.
+	ok, d := same("color", get(ca, "color"), get(as, "color"), get(as, "color"))
+	c.Rep.check("プロジェクトの色がキャッシュと Asana で同じ", ok && str(as, "color") != "none", d)
+	c.Rep.note("project edit --color dark-green のあとの Asana の色", str(as, "color"))
+	ok = strings.Contains(str(as, "html_notes"), "<strong>notes</strong>") && str(ca, "notes") == str(as, "notes")
+	c.Rep.check("プロジェクトの説明 (マークダウン → html_notes、キャッシュは Asana の notes と同じ)", ok, "Asana "+str(as, "html_notes")+" "+str(as, "notes")+" / キャッシュ "+str(ca, "notes"))
 }
 
 func (c *Check) status() {
@@ -356,7 +360,8 @@ func (c *Check) status() {
 		ok, d = same("title", get(ca, "latest_status", "title"), a[0], c.Made.Prefix+" status")
 	}
 	c.Rep.check("ステータス更新が 1 件、キャッシュの最新と同じ", ok, d)
-	c.Rep.check("ステータス更新の本文がマークダウン → html", strings.Contains(show(get(as, "#html_text")), "<strong>status</strong>"), show(get(as, "#html_text")))
+	html := strings.Join(strs(get(as, "#html_text")), " ")
+	c.Rep.check("ステータス更新の本文がマークダウン → html", strings.Contains(html, "<strong>status</strong>"), html)
 }
 
 // sections compares the section names of P (ignoring Asana's default "Untitled section").
@@ -514,8 +519,15 @@ func (c *Check) tagIs(name, tagName string, color any) {
 	}
 	ca := c.tagByName(tagName)
 	ok1, d1 := same("name", str(ca, "name"), str(as, "name"), tagName)
-	ok2, d2 := same("color", normalize(get(ca, "color")), normalize(get(as, "color")), color)
+	// Asana may rename old color names (as dark-green → green for projects): the cache must
+	// follow Asana; only "no color" is checked against what was asked.
+	want := normalize(get(as, "color"))
+	if color == nil {
+		want = nil
+	}
+	ok2, d2 := same("color", normalize(get(ca, "color")), normalize(get(as, "color")), want)
 	c.Rep.check(name, ok1 && ok2, d1+" "+d2)
+	c.Rep.note(name+": Asana の色", fmt.Sprintf("%v (頼んだのは %v)", get(as, "color"), color))
 }
 
 func (c *Check) myTasks() {
@@ -643,9 +655,16 @@ func (c *Check) leftovers() {
 		as, err := c.asana("/workspaces/"+TestWorkspace+"/typeahead", "resource_type="+kind, "query="+c.Made.Prefix, "opt_fields=name")
 		var left []string
 		for _, e := range asArray(as) {
-			if strings.HasPrefix(str(e, "name"), c.Made.Prefix) {
-				left = append(left, str(e, "gid")+" "+str(e, "name"))
+			if !strings.HasPrefix(str(e, "name"), c.Made.Prefix) {
+				continue
 			}
+			// typeahead's index lags behind deletes: ask the object itself.
+			path := map[string]string{"task": "/tasks/", "tag": "/tags/", "project": "/projects/",
+				"project_template": "/project_templates/", "goal": "/goals/", "portfolio": "/portfolios/"}[kind]
+			if _, err := c.asana(path+str(e, "gid"), "opt_fields=name"); err != nil && gone(err.Error()) {
+				continue
+			}
+			left = append(left, str(e, "gid")+" "+str(e, "name"))
 		}
 		c.Rep.check("typeahead で前置きの "+kind+" が見つからない", err == nil && len(left) == 0, errText(err)+strings.Join(left, ", "))
 	}
