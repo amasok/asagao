@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -65,16 +66,23 @@ func (r *Runner) CLI(ctx context.Context, args ...string) ([]byte, error) {
 
 // APIError is Asana's error body as printed by `asagao api`.
 type APIError struct {
+	Status   string // from asagao's error line "asana: 403 …"
 	Messages []string
 	Raw      string
 }
 
 func (e *APIError) Error() string {
+	msg := e.Raw
 	if len(e.Messages) > 0 {
-		return strings.Join(e.Messages, "; ")
+		msg = strings.Join(e.Messages, "; ")
 	}
-	return e.Raw
+	if e.Status != "" {
+		return e.Status + " " + msg
+	}
+	return msg
 }
+
+var statusRE = regexp.MustCompile(`asana: ([1-5][0-9][0-9])\b`)
 
 // API calls `asagao api`. Fields are key=value strings (-f). Writes go through guardWrite.
 func (r *Runner) API(ctx context.Context, method, path string, fields ...string) (json.RawMessage, error) {
@@ -93,6 +101,11 @@ func (r *Runner) API(ctx context.Context, method, path string, fields ...string)
 	jerr := json.Unmarshal(out, &body)
 	if err != nil || len(body.Errors) > 0 {
 		ae := &APIError{Raw: strings.TrimSpace(string(out))}
+		if err != nil {
+			if m := statusRE.FindStringSubmatch(err.Error()); m != nil {
+				ae.Status = m[1]
+			}
+		}
 		for _, e := range body.Errors {
 			ae.Messages = append(ae.Messages, e.Message)
 		}

@@ -25,6 +25,8 @@ func (c *Check) probes() {
 		{"typeahead (#36)", ws + "/typeahead", []string{"resource_type=task", "query=a"}},
 		{"検索 API tasks/search (#36)", ws + "/tasks/search", []string{"text=a"}},
 		{"受信トレイ notifications (#1)", "/users/me/notifications", []string{"workspace=" + TestWorkspace}},
+		{"custom ID TEST-1 (#36、ID のフィールドなし)", ws + "/tasks/custom_id/TEST-1", nil},
+		{"custom ID test-1 (#36、ID のフィールドなし)", ws + "/tasks/custom_id/test-1", nil},
 	}
 	for _, p := range list {
 		data, err := c.R.API(ctx, "GET", p.path, p.fields...)
