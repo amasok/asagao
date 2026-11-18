@@ -27,6 +27,7 @@ type searchServer struct {
 	typeCalls     map[string]int // resource_type -> calls
 	searchQueries []string
 	customStatus  int
+	customCalls   int
 }
 
 func (f *searchServer) handler() http.Handler {
@@ -69,6 +70,7 @@ func (f *searchServer) handler() http.Handler {
 		})
 	}
 	mux.HandleFunc("GET /workspaces/w1/tasks/custom_id/{id}", func(w http.ResponseWriter, r *http.Request) {
+		f.customCalls++
 		if f.customStatus != 0 {
 			w.WriteHeader(f.customStatus)
 			fmt.Fprint(w, `{"errors":[{"message":"Not Found"}]}`)
@@ -274,6 +276,19 @@ func TestTaskByCustomID(t *testing.T) {
 	}
 	if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"ENG-123"); v != "" {
 		t.Fatalf("gone gid remembered: %q", v)
+	}
+	// a plan without custom IDs: remembered, and Asana is not asked again
+	// (the first is asked twice: the client tries a 402 again without the optional fields)
+	f.customStatus = http.StatusPaymentRequired
+	if _, err := s.TaskByCustomID(ctx, "ENG-123"); !errors.Is(err, ErrCustomIDUnavailable) {
+		t.Fatalf("402: %v", err)
+	}
+	calls := f.customCalls
+	if _, err := s.TaskByCustomID(ctx, "ENG-123"); !errors.Is(err, ErrCustomIDUnavailable) {
+		t.Fatalf("402 again: %v", err)
+	}
+	if f.customCalls != calls {
+		t.Fatalf("asked again after a 402 (%d -> %d)", calls, f.customCalls)
 	}
 	f.customStatus = http.StatusInternalServerError
 	s.API.(*asana.Client).MaxRetries = 0
