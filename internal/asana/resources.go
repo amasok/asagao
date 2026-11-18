@@ -454,8 +454,11 @@ func (c *Client) StatusUpdates(ctx context.Context, projectGID string) ([]Status
 
 // CreateStatusUpdate posts a status update on a project.
 func (c *Client) CreateStatusUpdate(ctx context.Context, projectGID, statusType, title, text, htmlText string) (*StatusUpdate, error) {
+	// Asana takes only one of text and html_text ("400 Must supply only one of text or
+	// html_text"), like comments.
 	body := map[string]any{"parent": projectGID, "status_type": statusType, "title": title, "text": text}
 	if htmlText != "" {
+		delete(body, "text")
 		body["html_text"] = htmlText
 	}
 	var s StatusUpdate
