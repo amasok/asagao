@@ -1,0 +1,182 @@
+package sync
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/amasok/asagao/internal/asana/model"
+	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/readmodel"
+)
+
+// Finding in Asana what the local cache does not have (Issue #36): tasks by text, users and
+// tags by name, a task by its custom ID. What is found is cached (a task stays until a full
+// sync prunes it, like any task outside the synced projects).
+//
+// The search API needs a premium plan. When Asana answers 402, that is remembered
+// (readmodel.KeyPlanUnavailable + PlanSearch) and typeahead, which matches task names
+// only, is used from then on. If typeahead too answers 402, it is remembered the same way:
+// remote search then fails with ErrRemoteSearchUnavailable, and names are looked up in the
+// cache only.
+
+// ErrRemoteSearchUnavailable is returned by SearchTasks when the workspace's plan offers
+// neither the search API nor typeahead.
+var ErrRemoteSearchUnavailable = errors.New(readmodel.PlanUnavailableMessage(readmodel.PlanTypeahead))
+
+// SearchResult is what SearchTasks found.
+type SearchResult = readmodel.RemoteSearchResult
+
+// typeaheadNames is how many users or tags one name lookup asks for.
+const typeaheadNames = 10
+
+// planUnavailable reports whether Asana refused feature with a 402 before.
+func (s *Syncer) planUnavailable(ctx context.Context, feature string) (bool, error) {
+	v, err := s.Store.SyncState(ctx, readmodel.KeyPlanUnavailable+feature)
+	return v != "", err
+}
+
+func (s *Syncer) markPlanUnavailable(ctx context.Context, feature string) {
+	_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
+}
+
+// SearchTasks searches Asana for tasks by text and caches what it finds. completed nil
+// means open and completed tasks; limit is at most 100 (Asana's limit).
+func (s *Syncer) SearchTasks(ctx context.Context, text string, completed *bool, limit int) (SearchResult, error) {
+	var res SearchResult
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return res, errors.New("検索する語がありません")
+	}
+	ws, err := s.Store.DefaultWorkspace(ctx)
+	if err != nil {
+		return res, err
+	}
+	refs, byName, err := s.searchRefs(ctx, ws, text, completed, limit)
+	if err != nil {
+		return res, err
+	}
+	res.ByName = byName
+	var gids []string
+	seen := map[string]bool{}
+	for _, r := range refs {
+		if r.GID == "" || seen[r.GID] || localgid.IsLocal(r.GID) {
+			continue
+		}
+		seen[r.GID] = true
+		gids = append(gids, r.GID)
+	}
+	if len(gids) == 0 {
+		return res, nil
+	}
+	// The found records are compact: read the tasks as a sync does, so that a cached task
+	// is never overwritten with only a name.
+	tasks, _, err := s.API.TasksByGID(ctx, gids)
+	if err != nil {
+		return res, fmt.Errorf("見つけたタスクを読めませんでした: %w", err)
+	}
+	byGID := make(map[string]model.Task, len(tasks))
+	var keep []model.Task
+	for _, t := range tasks {
+		if completed != nil && t.Completed != *completed {
+			continue // typeahead does not filter
+		}
+		byGID[t.GID] = t
+		keep = append(keep, t)
+	}
+	if err := s.Store.UpsertTasks(ctx, keep); err != nil {
+		return res, err
+	}
+	for _, g := range gids {
+		if _, ok := byGID[g]; ok {
+			res.GIDs = append(res.GIDs, g)
+		}
+	}
+	return res, nil
+}
+
+// searchRefs asks the search API, or typeahead when the plan lacks it (byName).
+func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *bool, limit int) (refs []model.Ref, byName bool, err error) {
+	if no, err := s.planUnavailable(ctx, readmodel.PlanSearch); err != nil {
+		return nil, false, err
+	} else if !no {
+		refs, err := s.API.SearchTasks(ctx, ws, text, completed, limit)
+		if !model.IsPaymentRequired(err) {
+			return refs, false, err
+		}
+		s.markPlanUnavailable(ctx, readmodel.PlanSearch)
+	}
+	if no, err := s.planUnavailable(ctx, readmodel.PlanTypeahead); err != nil {
+		return nil, true, err
+	} else if no {
+		return nil, true, ErrRemoteSearchUnavailable
+	}
+	refs, err = s.API.TypeaheadTasks(ctx, ws, text, limit)
+	if model.IsPaymentRequired(err) {
+		s.markPlanUnavailable(ctx, readmodel.PlanTypeahead)
+		return nil, true, ErrRemoteSearchUnavailable
+	}
+	return refs, true, err
+}
+
+// FindUsers looks users up in Asana by the start of their name or email (typeahead) and
+// caches the ones the cache does not have. It returns how many it added: 0 also when the
+// plan lacks typeahead (then nothing is asked).
+func (s *Syncer) FindUsers(ctx context.Context, query string) (int, error) {
+	return findNames(ctx, s, query, s.API.TypeaheadUsers, s.Store.AddUsers)
+}
+
+// FindTags is FindUsers for tags.
+func (s *Syncer) FindTags(ctx context.Context, query string) (int, error) {
+	return findNames(ctx, s, query, s.API.TypeaheadTags, s.Store.AddTags)
+}
+
+func findNames[T any](ctx context.Context, s *Syncer, query string,
+	find func(ctx context.Context, ws, query string, count int) ([]T, error),
+	add func(ctx context.Context, found []T) (int, error)) (int, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return 0, nil
+	}
+	if no, err := s.planUnavailable(ctx, readmodel.PlanTypeahead); err != nil || no {
+		return 0, err
+	}
+	ws, err := s.Store.DefaultWorkspace(ctx)
+	if err != nil {
+		return 0, err
+	}
+	found, err := find(ctx, ws, query, typeaheadNames)
+	if model.IsPaymentRequired(err) {
+		s.markPlanUnavailable(ctx, readmodel.PlanTypeahead)
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return add(ctx, found)
+}
+
+// TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it and
+// returns its gid. A custom ID Asana does not know is readmodel.ErrNotFound.
+func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, error) {
+	ws, err := s.Store.DefaultWorkspace(ctx)
+	if err != nil {
+		return "", err
+	}
+	t, err := s.API.TaskByCustomID(ctx, ws, customID)
+	var apiErr *model.Error
+	if errors.As(err, &apiErr) && apiErr.Status == 404 {
+		return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
+	}
+	if err != nil {
+		return "", err
+	}
+	if t.GID == "" {
+		return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
+	}
+	if err := s.Store.UpsertTasks(ctx, []model.Task{*t}); err != nil {
+		return "", err
+	}
+	return t.GID, nil
+}

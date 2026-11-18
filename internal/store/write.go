@@ -568,3 +568,30 @@ func (s *Store) UpsertUsers(ctx context.Context, users []model.User) error {
 		return nil
 	})
 }
+
+// AddUsers caches users found in Asana by name (typeahead, Issue #36) that the cache does
+// not have yet. A user already cached is left as it is (the found record may lack the
+// email). It returns how many were added.
+func (s *Store) AddUsers(ctx context.Context, users []model.User) (int, error) {
+	added := 0
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		added = 0
+		for _, u := range users {
+			if u.GID == "" {
+				continue
+			}
+			res, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name, email) VALUES(?, ?, ?)
+				ON CONFLICT(gid) DO NOTHING`, u.GID, u.Name, u.Email)
+			if err != nil {
+				return err
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return err
+			} else if n > 0 {
+				added++
+			}
+		}
+		return nil
+	})
+	return added, err
+}
