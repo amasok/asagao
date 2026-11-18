@@ -276,6 +276,7 @@ const (
 	pickTagColor
 	pickDeleteTag
 	pickMySection // a section of My Tasks (mysections.go)
+	pickTeam      // the team of a new project (project_overview.go)
 )
 
 type pickerItem struct {
@@ -431,6 +432,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.applySavedSearch(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
+		case pickTeam:
+			return m, m.createProjectInTeam(m.newProjectName, item.value)
 		case pickReset:
 			return m, m.reset(item.value)
 		case pickDue:

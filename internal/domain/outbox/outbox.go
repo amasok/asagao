@@ -65,6 +65,11 @@ const (
 	// KindMoveMySection moves a task to another section of the user's My Tasks list.
 	// payload: section, section_name, workspace; base: section (before the local move).
 	KindMoveMySection = "move_my_section"
+
+	// KindUpdateProject changes a project's fields (see domain/project). The outbox task_gid
+	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
+	// start_on, due_on, color); base: their values before the local edit.
+	KindUpdateProject = "update_project"
 )
 
 // SectionRefKeys are the payload keys that may hold a section gid, so that a section

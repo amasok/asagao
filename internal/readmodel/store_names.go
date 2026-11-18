@@ -40,6 +40,17 @@ const (
 	KeyPlanUnavailable = "plan_unavailable:"
 	// KeyUserTaskList + workspace gid: the gid of my My Tasks list there.
 	KeyUserTaskList = "user_task_list:"
+	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
+	// fetched.
+	KeyTeams = "teams:"
+)
+
+// States of a project's brief in the local cache (project_overviews.brief_state; "" is not
+// fetched yet). Stored, so they must not change.
+const (
+	BriefNone        = "none"        // the project has no brief
+	BriefUnavailable = "unavailable" // Asana does not give it (plan, preview API)
+	BriefAvailable   = "available"
 )
 
 // Features that a plan may lack (KeyPlanUnavailable).

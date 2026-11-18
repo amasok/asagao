@@ -45,10 +45,13 @@ type AsanaAPI interface {
 	Dependents(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	DuplicateTask(ctx context.Context, taskGID, name string) (*model.Ref, error)
 	Events(ctx context.Context, resource, token string) (model.EventPage, error)
+	FavoriteProjects(ctx context.Context, workspaceGID string) ([]model.Ref, error)
 	MarkNotifications(ctx context.Context, workspaceGID string, gids []string, read bool) (failed []string, err error)
 	Me(ctx context.Context) (*model.User, error)
+	MyTeams(ctx context.Context, workspaceGID string) ([]model.Team, error)
 	Notifications(ctx context.Context, workspaceGID string, max int) ([]model.Notification, error)
 	Project(ctx context.Context, gid string) (*model.Project, error)
+	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
 	RemoveDependencies(ctx context.Context, taskGID string, deps []string) error
 	RemoveFollowers(ctx context.Context, taskGID string, users []string) error
@@ -63,9 +66,11 @@ type AsanaAPI interface {
 	Subtasks(ctx context.Context, taskGID string) ([]model.Task, error)
 	Tags(ctx context.Context, workspaceGID string) ([]model.Tag, error)
 	Task(ctx context.Context, gid string) (*model.Task, error)
+	TaskCounts(ctx context.Context, projectGID string) (*model.TaskCounts, error)
 	TaskDetail(ctx context.Context, gid string) (*model.Task, error)
 	Tasks(ctx context.Context, tq model.TaskQuery) ([]model.Task, error)
 	TasksByGID(ctx context.Context, gids []string) (tasks []model.Task, gone []string, err error)
+	UpdateProject(ctx context.Context, gid string, changes map[string]any) (*model.Project, error)
 	UpdateSection(ctx context.Context, gid, name string) (*model.Section, error)
 	UpdateTask(ctx context.Context, gid string, fields map[string]any) (*model.Task, error)
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
@@ -123,13 +128,16 @@ type LocalStore interface {
 	ReleaseOp(ctx context.Context, id int64) error
 	ReplaceAttachments(ctx context.Context, taskGID string, atts []model.Attachment) error
 	ReplaceDependencies(ctx context.Context, taskGID string, deps, dependents []model.TaskRef) error
+	ReplaceFavoriteProjects(ctx context.Context, workspaceGID string, favorites []model.Ref) error
 	ReplaceLocalTagGID(ctx context.Context, local, real string) error
 	ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error
 	ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error
+	ReplaceTeams(ctx context.Context, workspaceGID string, teams []model.Team) error
 	SafeToResend(ctx context.Context, op outbox.Op) (bool, error)
+	SaveProjectOverview(ctx context.Context, projectGID string, counts *model.TaskCounts, briefState string, brief *model.ProjectBrief, now time.Time) error
 	SetAttachmentPath(ctx context.Context, gid, path string) error
 	SetInboxState(ctx context.Context, st readmodel.InboxState) error
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error

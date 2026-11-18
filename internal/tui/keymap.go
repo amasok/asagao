@@ -117,6 +117,7 @@ func (m *Model) actions() []action {
 		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
 		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
+		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},

@@ -91,11 +91,11 @@ func (s *Server) New() *mcp.Server {
 		Description: "Get an attachment of a task. Images are returned as image content so you can look at them " +
 			"(e.g. those referenced as ![画像](asana:<gid>) in a description); other files return their local path."}, s.getAttachment)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: readOnly,
-		Description: "List projects and their sections (gid and name). By default only projects I am a member of."}, s.listProjects)
+		Description: "List projects and their sections (gid and name), my favorites first, then by team. By default only projects I am a member of; team narrows to one team."}, s.listProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_users", Annotations: readOnly,
 		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_project", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
-		Description: "Get a project: sections, members and its status updates (Markdown, newest first)."}, s.getProject)
+		Description: "Get a project: its description (Markdown), owner, start and due dates, color, progress (task counts), brief, sections, members and its status updates (Markdown, newest first)."}, s.getProject)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_my_sections", Annotations: readOnly,
 		Description: "List the sections of my My Tasks list (e.g. Today / This week / Later), in order. " +
 			"Tasks show theirs as my_section; move_task with my_tasks=true moves between them."}, s.listMySections)
@@ -145,9 +145,10 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_status_update", Annotations: write(false),
 			Description: "Post a status update on a project: status (on_track, at_risk, off_track, on_hold, complete), title and a Markdown text."}, s.createStatus)
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
-			Description: "Create a project (needs Asana to be reachable)."}, s.createProject)
+			Description: "Create a project in a team (needs Asana to be reachable)."}, s.createProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_project", Annotations: write(true),
-			Description: "Archive / unarchive a project or add / remove its members (needs Asana to be reachable). Ask before archiving."}, s.updateProject)
+			Description: "Change a project's description (Markdown), owner, start / due dates or color (queued, sent now if Asana is reachable); " +
+				"archive / unarchive it or add / remove its members (needs Asana to be reachable). Ask before archiving."}, s.updateProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "resolve_outbox", Annotations: write(true),
 			Description: "Resolve a local change that could not be sent (see sync_status.outbox): keep_local overwrites " +
 				"Asana with the local value, keep_remote drops the local change, retry resends a failed entry, discard drops it. " +
@@ -210,7 +211,8 @@ type CommentOutput struct {
 }
 
 type ListProjectsInput struct {
-	All bool `json:"all,omitempty" jsonschema:"include projects I am not a member of"`
+	All  bool   `json:"all,omitempty" jsonschema:"include projects I am not a member of"`
+	Team string `json:"team,omitempty" jsonschema:"only projects of this team (gid or name)"`
 }
 
 type ProjectsOutput struct {
@@ -418,7 +420,7 @@ func editableMarkdown(htmlText, plain string) string {
 }
 
 func (s *Server) listProjects(ctx context.Context, _ *mcp.CallToolRequest, in ListProjectsInput) (*mcp.CallToolResult, ProjectsOutput, error) {
-	ps, err := s.query().ListProjects(ctx, !in.All)
+	ps, err := s.query().ListProjectsInTeam(ctx, !in.All, in.Team)
 	return nil, ProjectsOutput{Projects: ps}, err
 }
 
@@ -781,10 +783,27 @@ type ProjectInput struct {
 }
 
 type ProjectOutput struct {
-	Project  readmodel.ProjectView `json:"project"`
-	Members  []readmodel.UserRef   `json:"members"`
-	Statuses []StatusOutput        `json:"status_updates"`
-	Note     string                `json:"note,omitempty"`
+	Project readmodel.ProjectView `json:"project"`
+	// The overview: the description as Markdown (what update_project accepts back), the
+	// owner, dates, color, progress and brief.
+	Markdown string                `json:"markdown"`
+	Owner    *readmodel.UserRef    `json:"owner,omitempty"`
+	StartOn  string                `json:"start_on,omitempty"`
+	DueOn    string                `json:"due_on,omitempty"`
+	Color    string                `json:"color,omitempty"`
+	Counts   *readmodel.TaskCounts `json:"task_counts,omitempty"`
+	Brief    *BriefOutput          `json:"brief,omitempty"`
+	// Pending: changes to the fields above are queued and not sent yet.
+	Pending  bool                `json:"pending,omitempty"`
+	Members  []readmodel.UserRef `json:"members"`
+	Statuses []StatusOutput      `json:"status_updates"`
+	Note     string              `json:"note,omitempty"`
+}
+
+// BriefOutput is a project's brief (read only).
+type BriefOutput struct {
+	Title    string `json:"title,omitempty"`
+	Markdown string `json:"markdown"`
 }
 
 type StatusOutput struct {
@@ -807,6 +826,18 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 		if err := syncer.FetchStatusUpdates(ctx, gid); err != nil {
 			out.Note = "status updates from the local cache: " + err.Error()
 		}
+		if err := syncer.FetchProjectOverview(ctx, gid); err != nil {
+			out.Note = strings.TrimPrefix(out.Note+"; ", "; ") + "overview from the local cache: " + err.Error()
+		}
+	}
+	o, err := s.query().ProjectOverview(ctx, gid)
+	if err != nil {
+		return nil, out, err
+	}
+	out.Markdown = editableMarkdown(o.HTMLNotes, o.Notes)
+	out.Owner, out.StartOn, out.DueOn, out.Color, out.Counts, out.Pending = o.Owner, o.StartOn, o.DueOn, o.Color, o.Counts, o.Pending
+	if o.Brief != nil {
+		out.Brief = &BriefOutput{Title: o.Brief.Title, Markdown: editableMarkdown(o.Brief.HTMLText, o.Brief.Text)}
 	}
 	projects, err := s.query().ListProjects(ctx, false)
 	if err != nil {
@@ -850,11 +881,15 @@ func (s *Server) createStatus(ctx context.Context, _ *mcp.CallToolRequest, in Cr
 
 type CreateProjectInput struct {
 	Name string `json:"name" jsonschema:"project name"`
+	Team string `json:"team,omitempty" jsonschema:"team gid or name (needed when I am in more than one team)"`
 }
 
 type ProjectWriteOutput struct {
 	ProjectGID string `json:"project_gid"`
-	Note       string `json:"note,omitempty"`
+	// Sent is set when fields were changed: true when the change reached Asana, false when
+	// it is queued locally.
+	Sent *bool  `json:"sent,omitempty"`
+	Note string `json:"note,omitempty"`
 }
 
 func (s *Server) createProject(ctx context.Context, _ *mcp.CallToolRequest, in CreateProjectInput) (*mcp.CallToolResult, ProjectWriteOutput, error) {
@@ -862,7 +897,11 @@ func (s *Server) createProject(ctx context.Context, _ *mcp.CallToolRequest, in C
 	if err != nil {
 		return nil, ProjectWriteOutput{}, fmt.Errorf("Asana に接続できないため作れません: %w", err)
 	}
-	p, err := syncer.CreateProject(ctx, in.Name)
+	team, err := s.query().TeamForNewProject(ctx, in.Team)
+	if err != nil {
+		return nil, ProjectWriteOutput{}, fmt.Errorf("team: %w", err)
+	}
+	p, err := syncer.CreateProject(ctx, in.Name, team)
 	if err != nil {
 		return nil, ProjectWriteOutput{}, err
 	}
@@ -871,6 +910,11 @@ func (s *Server) createProject(ctx context.Context, _ *mcp.CallToolRequest, in C
 
 type UpdateProjectInput struct {
 	Project       string   `json:"project" jsonschema:"project gid or name"`
+	Notes         *string  `json:"notes,omitempty" jsonschema:"new description in Markdown (replaces it)"`
+	Owner         *string  `json:"owner,omitempty" jsonschema:"\"me\", a user name or gid; \"\" removes the owner"`
+	StartOn       *string  `json:"start_on,omitempty" jsonschema:"start date YYYY-MM-DD (needs a due date), \"\" to clear"`
+	DueOn         *string  `json:"due_on,omitempty" jsonschema:"due date YYYY-MM-DD, \"\" to clear"`
+	Color         *string  `json:"color,omitempty" jsonschema:"dark-pink, dark-green, dark-blue, dark-red, dark-teal, dark-brown, dark-orange, dark-purple, dark-warm-gray, light-... (the same colors), or none"`
 	Archived      *bool    `json:"archived,omitempty" jsonschema:"true to archive, false to unarchive"`
 	AddMembers    []string `json:"add_members,omitempty" jsonschema:"\"me\", user names or gids to add"`
 	RemoveMembers []string `json:"remove_members,omitempty" jsonschema:"\"me\", user names or gids to remove"`
@@ -890,12 +934,31 @@ func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in U
 	if err != nil {
 		return nil, ProjectWriteOutput{}, fmt.Errorf("remove_members: %w", err)
 	}
+	projects := app.Projects{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	fields, err := projects.ResolveUpdate(ctx, app.UpdateProjectInput{Notes: in.Notes, Owner: in.Owner, StartOn: in.StartOn, DueOn: in.DueOn, Color: in.Color})
+	if err != nil {
+		return nil, ProjectWriteOutput{}, err
+	}
 	members := len(add)+len(remove) > 0
-	if !members && in.Archived == nil {
-		return nil, ProjectWriteOutput{}, errors.New("nothing to update: pass archived, add_members or remove_members")
+	if !members && in.Archived == nil && fields.Count() == 0 {
+		return nil, ProjectWriteOutput{}, errors.New("nothing to update: pass notes, owner, start_on, due_on, color, archived, add_members or remove_members")
+	}
+	if fields.Count() > 0 {
+		// Queued first (it works offline), then sent with the other changes.
+		if err := projects.UpdateHere(ctx, gid, fields); err != nil {
+			return nil, ProjectWriteOutput{}, err
+		}
+		if !members && in.Archived == nil {
+			w := s.push(ctx, "")
+			return nil, ProjectWriteOutput{ProjectGID: gid, Sent: &w.Sent, Note: w.Note}, nil
+		}
 	}
 	syncer, err := s.getSyncer(ctx)
 	if err != nil {
+		if fields.Count() > 0 {
+			return nil, ProjectWriteOutput{}, fmt.Errorf("the fields were saved locally and will be sent on the next sync, "+
+				"but archiving / members need Asana, which cannot be reached: %w", err)
+		}
 		return nil, ProjectWriteOutput{}, fmt.Errorf("Asana に接続できないため変更できません: %w", err)
 	}
 	type step struct {
@@ -915,6 +978,9 @@ func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in U
 			steps = append([]step{archive}, steps...) // and after unarchiving
 		}
 	}
+	if fields.Count() > 0 {
+		steps = append([]step{{"fields (queued)", func() error { return nil }}}, steps...)
+	}
 	for i, st := range steps {
 		if err := st.run(); err != nil {
 			if i > 0 {
@@ -923,5 +989,10 @@ func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in U
 			return nil, ProjectWriteOutput{}, err
 		}
 	}
-	return nil, ProjectWriteOutput{ProjectGID: gid}, nil
+	out := ProjectWriteOutput{ProjectGID: gid}
+	if fields.Count() > 0 {
+		w := s.push(ctx, "")
+		out.Sent, out.Note = &w.Sent, w.Note
+	}
+	return nil, out, nil
 }

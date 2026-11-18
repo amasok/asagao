@@ -586,6 +586,11 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := undoSectionOp(ctx, tx, op); err != nil {
 			return err
 		}
+	case OpUpdateProject:
+		// Restore the values from before the local edit.
+		if err := applyProjectFields(ctx, tx, op.TaskGID, op.Base); err != nil {
+			return err
+		}
 	case OpMoveTask:
 		project, _ := op.Payload["project"].(string)
 		section, _ := op.Base["section"].(string)

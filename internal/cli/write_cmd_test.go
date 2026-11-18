@@ -77,6 +77,14 @@ func TestWriteCommandsOfflineQueue(t *testing.T) {
 			}
 		}},
 		{"tag rm", []string{"tag", "rm", "急ぎ", "--yes"}, store.OpDeleteTag, "g1", nil},
+		{"project edit", []string{"project", "edit", "新居", "--owner", "Partner", "--start", "2026-12-01", "--due", "2026-12-31",
+			"--color", "dark-red", "--notes", "**年内**に引っ越す"}, store.OpUpdateProject, "p1", func(t *testing.T, st *store.Store) {
+			o, _ := st.ProjectOverview(context.Background(), "p1")
+			if o == nil || o.Owner == nil || o.Owner.GID != "u2" || o.StartOn != "2026-12-01" || o.DueOn != "2026-12-31" ||
+				o.Color != "dark-red" || o.Notes != "年内に引っ越す" || !strings.Contains(o.HTMLNotes, "<strong>年内</strong>") {
+				t.Errorf("p1 locally: %+v", o)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeCLIEnv(t)

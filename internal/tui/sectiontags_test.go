@@ -140,17 +140,22 @@ func TestTUITagManager(t *testing.T) {
 func TestTUIHidesUnavailableFeatures(t *testing.T) {
 	st := fixtureStore(t)
 	h := openProjectList(t, st)
-	h.key("space")
-	if !strings.Contains(h.screen(), "セクションを追加") {
-		t.Fatalf("menu without セクションを追加:\n%s", h.screen())
+	labels := func() string {
+		var out []string
+		for _, a := range h.m.available() {
+			out = append(out, a.label)
+		}
+		return strings.Join(out, "\n")
 	}
-	h.key("esc")
+	if !strings.Contains(labels(), "セクションを追加") {
+		t.Fatalf("menu without セクションを追加:\n%s", labels())
+	}
 	if err := st.SetSyncState(context.Background(), readmodel.KeyPlanUnavailable+readmodel.PlanSections, "x"); err != nil {
 		t.Fatal(err)
 	}
 	h.run(h.m.loadOutbox())
+	s := labels()
 	h.key("space")
-	s := h.screen()
 	if strings.Contains(s, "セクションを追加") || strings.Contains(s, "空のセクションを削除") {
 		t.Errorf("unavailable entries still in the menu:\n%s", s)
 	}

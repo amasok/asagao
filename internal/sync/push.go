@@ -391,7 +391,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	case outbox.KindCreateTask:
 		gid, _ = op.Payload["parent"].(string)
 	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection:
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject:
 		return false, nil
 	case outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return s.waitsForTag(ctx, op.TaskGID)
@@ -439,6 +439,8 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushDeleteTag(ctx, op)
 	case outbox.KindMoveMySection:
 		err = s.pushMoveMySection(ctx, op)
+	case outbox.KindUpdateProject:
+		return s.pushUpdateProject(ctx, op)
 	case outbox.KindCreateTask:
 		return s.pushCreate(ctx, op)
 	case outbox.KindAddComment:
@@ -566,7 +568,7 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification,
+	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag:
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
