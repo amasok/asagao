@@ -58,10 +58,12 @@ func (s *Server) addGoalTools(srv *mcp.Server) {
 	if s.goals().Available(ctx) {
 		mcp.AddTool(srv, &mcp.Tool{Name: "list_goals", Annotations: readOnly,
 			Description: "List the workspace's goals: status (green/yellow/red while open; achieved, partial, missed or dropped once closed), " +
-				"progress (metric), time period, owner. Also lists the time periods (fiscal years, halves, quarters) to narrow by."}, s.listGoals)
+				"progress (metric), time period, owner. Also lists the time periods (fiscal years, halves, quarters) to narrow by. " +
+				"A metric of kind percentage keeps its values as fractions (target 1 is 100%)."}, s.listGoals)
 		mcp.AddTool(srv, &mcp.Tool{Name: "get_goal", Annotations: readOnly,
 			Description: "Get a goal: its description (Markdown), status, progress, time period, owner, " +
-				"and what supports it (subgoals, projects, portfolios, tasks)."}, s.getGoal)
+				"and what supports it (subgoals, projects, portfolios, tasks). " +
+				"A metric of kind percentage keeps its values as fractions (target 1 is 100%)."}, s.getGoal)
 	}
 	if s.goals().PortfoliosAvailable(ctx) {
 		mcp.AddTool(srv, &mcp.Tool{Name: "list_portfolios", Annotations: readOnly,
