@@ -79,7 +79,7 @@ outbox の操作の種類は 33 個 (MUST): `update_task`、`create_task`、`add
 - **THEN** 操作は失敗になり、そのフィールドでは「選択肢を足して設定する」を出さない。ほかのフィールドでは出す
 
 ### Requirement: カスタムフィールドの値の書き込み形式
-`set_custom_field` の値は、Asana が受け付ける形で送る (MUST): date は `{"date": "YYYY-MM-DD"}` (文字列は "date_value: DayAndDateTime is not a JSON object" で断られる)、people と multi_enum は gid の配列で、空にするときは `[]` (people は null を "people_value: Not an array" で断られる)、そのほかを空にするときは null。本物の Asana で確かめた (Issue #1)。number の形は未確認。
+`set_custom_field` の値は、Asana が受け付ける形で送る (MUST): date は `{"date": "YYYY-MM-DD"}` (文字列は "date_value: DayAndDateTime is not a JSON object" で断られる)、people と multi_enum は gid の配列で、空にするときは `[]` (null は "people_value: Not an array"・"multi_enum_values: Not an array" で断られる)、number は数値、そのほかを空にするときは null。本物の Asana で確かめた (Issue #1)。
 根拠: readmodel/fieldvalues.go (CustomFieldAPIValue); TestMovedValuesMatchOldStore, TestPushClearMultiEnumSendsEmptyList
 
 #### Scenario: 担当者のフィールドを空にする
