@@ -281,6 +281,16 @@ const (
 	pickDeleteTag
 	pickMySection // a section of My Tasks (mysections.go)
 	pickTeam      // the team of a new project (project_overview.go)
+	// projectfields.go
+	pickProjectFields
+	pickRemoveField
+	// timetracking.go
+	pickTimeEntries // a task's time tracking entries
+	pickTimeAction  // edit / delete one entry
+	pickTimeDelete  // confirm deleting an entry
+	// templates.go
+	pickTaskTemplate
+	pickProjectTemplate
 )
 
 type pickerItem struct {
@@ -405,6 +415,8 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.toggleProject(p.task, item)
 		case pickMembers:
 			return m, m.toggleMember(p.project, item)
+		case pickProjectFields:
+			return m, m.toggleProjectField(p, item)
 		case pickFieldMulti:
 			return m, m.toggleFieldOption(p, item)
 		}
@@ -427,10 +439,16 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		if cmd, ok := m.handleSectionTagPicker(p, item); ok {
 			return m, cmd
 		}
+		if cmd, ok := m.handleTimePicker(p, item); ok {
+			return m, cmd
+		}
 		switch p.kind {
 		case pickDayTask:
 			return m, m.openTaskDetail(item.value)
 		case pickField:
+			if item.value == newOptionValue {
+				return m, m.startNewOption(p.task, p.field)
+			}
 			var value any
 			if item.value != "" {
 				value = item.value
@@ -438,12 +456,21 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.setField(p.task, p.field, value, false)
 		case pickFieldFilter:
 			return m, m.applyFieldFilter(item.value)
+		case pickRemoveField:
+			if item.value == "" {
+				return m, nil // やめる
+			}
+			return m, m.setProjectField(p.project, item.value, item.hint, false)
 		case pickSavedSearch:
 			return m, m.applySavedSearch(item.value)
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickTeam:
 			return m, m.createProjectInTeam(m.newProjectName, item.value)
+		case pickTaskTemplate:
+			return m, m.makeTaskFromTemplate(p.project, item.value)
+		case pickProjectTemplate:
+			return m, m.chooseProjectTemplate(item.value)
 		case pickReset:
 			return m, m.reset(item.value)
 		case pickDue:

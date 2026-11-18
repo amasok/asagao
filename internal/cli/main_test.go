@@ -16,6 +16,7 @@ import (
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/auth/tokenstore"
 	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/testguard"
 )
 
 // The tests of this package run commands as a user would, so before any of them:
@@ -25,8 +26,9 @@ import (
 //     would also be refreshed against the real Asana);
 //   - the token, client id and client secret from the environment are cleared, so one
 //     exported in the developer's shell is not used;
-//   - XDG_DATA_HOME, XDG_CONFIG_HOME, XDG_CACHE_HOME and XDG_STATE_HOME are a private
-//     temporary directory, so the user's store.db and config.toml are never opened;
+//   - HOME, XDG_DATA_HOME, XDG_CONFIG_HOME, XDG_CACHE_HOME and XDG_STATE_HOME are a private
+//     temporary directory (testguard), so the user's store.db and config.toml are never
+//     opened;
 //   - .asana.json is looked for from an empty folder, not from the source tree;
 //   - requests may only go to this machine (httptest servers). One that goes elsewhere is
 //     blocked, and the run fails.
@@ -55,21 +57,15 @@ func (l loopbackOnly) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestMain(m *testing.M) {
-	// The store (store.db), config.toml and caches are under these: a test that does not
-	// set its own reads and writes a private directory, never the user's data.
-	tmp, err := os.MkdirTemp("", "asagao-cli-test-")
-	if err != nil {
+	// HOME and the XDG folders (the store.db, config.toml and caches are under them) are a
+	// private directory of testguard: a test that does not set its own reads and writes it,
+	// never the user's data. Setup comes first, since the folder for .asana.json is made in
+	// it; testguard.Run below does not set up again.
+	if err := testguard.Setup(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	for _, k := range []string{"XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"} {
-		dir := filepath.Join(tmp, k)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		os.Setenv(k, dir)
-	}
+	tmp := testguard.Dir()
 	// .asana.json is looked for from an empty folder of its own (a repository root, so the
 	// search stops there): one around the source tree must not change what the tests do.
 	// Tests of .asana.json point getwd at their own folder.
@@ -85,12 +81,11 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 	http.DefaultTransport = loopbackOnly{http.DefaultTransport}
-	code := m.Run()
+	code := testguard.Run(m)
 	if n := realNetworkAttempts.Load(); n > 0 && code == 0 {
 		fmt.Fprintf(os.Stderr, "FAIL: %d request(s) left for a real host\n", n)
 		code = 1
 	}
-	os.RemoveAll(tmp)
 	os.Exit(code)
 }
 
@@ -132,7 +127,7 @@ func TestDataAndConfigArePrivate(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	tmp := os.TempDir()
 	for _, p := range []string{config.DataDir(), config.ConfigDir(), config.FilePath()} {
-		if !strings.Contains(p, "asagao-cli-test-") || (home != "" && strings.HasPrefix(p, filepath.Join(home, ".config"))) {
+		if !strings.HasPrefix(p, testguard.Dir()+string(filepath.Separator)) || (home != "" && strings.HasPrefix(p, filepath.Join(home, ".config"))) {
 			t.Errorf("%s is not under the private test directory (TMPDIR %s)", p, tmp)
 		}
 	}

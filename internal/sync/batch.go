@@ -99,6 +99,9 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if str("field") == "" {
 			return e, false, nil
 		}
+		if wait, err := s.waitsForField(ctx, op); err != nil || wait {
+			return e, false, err // an option or a field of the project is created first
+		}
 		e.write = model.BatchWrite{Method: http.MethodPut, Path: taskPath, Data: customFieldUpdate(op), Task: true}
 		e.check = true
 	case outbox.KindMoveTask:

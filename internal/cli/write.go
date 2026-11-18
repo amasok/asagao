@@ -26,6 +26,8 @@ import (
 type writeResult struct {
 	TaskGID   string `json:"task_gid,omitempty"`
 	CommentID string `json:"comment_gid,omitempty"`
+	// TimeEntryID is the time tracking entry `time add` recorded (a local gid until sent).
+	TimeEntryID string `json:"time_entry_gid,omitempty"`
 	// SectionGID is the section `section create` made (its Asana gid once sent).
 	SectionGID string           `json:"section_gid,omitempty"`
 	Sent       bool             `json:"sent"`
@@ -179,12 +181,15 @@ func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
 type createOpts struct {
 	name, project, section, due, assignee, notes, parent string
 	tags                                                 []string
+	// names looks an assignee or (with --quick) a tag the cache lacks up in Asana (nil:
+	// the cache only).
+	names usecase.NameFinder
 }
 
 // createTask resolves every option and then creates the task locally. Nothing is written
 // when an option is invalid.
 func createTask(ctx context.Context, st Store, o createOpts, now time.Time) (string, error) {
-	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	tasks := usecase.Tasks{Store: st, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: o.names}
 	gid, err := tasks.Create(ctx, usecase.CreateTaskInput{
 		Name: o.name, Parent: o.parent, Project: o.project, Section: o.section,
 		Due: o.due, Assignee: o.assignee, Notes: o.notes, Tags: o.tags,
@@ -264,6 +269,7 @@ func (a *app) taskCreateCmd() *cobra.Command {
 				}
 			}
 			now := time.Now()
+			o.names = a.nameFinder(st)
 			var q *usecase.QuickAddResult
 			if quick {
 				if q, err = readQuickAdd(ctx, st, &o, now); err != nil {
@@ -423,13 +429,23 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 				return "", "", fmt.Errorf("値を指定してください（空にするなら --clear）")
 			}
 			relations := relationUseCases(st)
-			value, err := relations.ParseFieldValue(ctx, f.GID, input)
+			fv := usecase.FieldValue{Field: f}
+			if addOption, _ := cmd.Flags().GetBool("add-option"); addOption && input != nil {
+				if fv, err = relations.FieldOptions().ParseAdding(ctx, args[0], f, input); err != nil {
+					return "", "", err
+				}
+			} else if fv.Value, err = relations.ParseFieldValue(ctx, f.GID, input); err != nil {
+				if errors.Is(err, readmodel.ErrNotFound) && (f.Type == readmodel.CFEnum || f.Type == readmodel.CFMultiEnum) && f.CanAddOption {
+					return "", "", fmt.Errorf("%w（選択肢に足して設定するなら --add-option）", err)
+				}
+				return "", "", err
+			}
+			display, err := relations.FieldOptions().Set(ctx, args[0], fv)
 			if err != nil {
 				return "", "", err
 			}
-			display, err := relations.SetFieldHere(ctx, args[0], f.GID, value)
-			if err != nil {
-				return "", "", err
+			if len(fv.NewOptions) > 0 {
+				return args[0], fmt.Sprintf("「%s」を「%s」にしました（選択肢 %s を足しました。同期のときに Asana に送ります）", f.Name, display, strings.Join(fv.NewOptions, "、")), nil
 			}
 			if display == "" {
 				return args[0], fmt.Sprintf("「%s」を空にしました", f.Name), nil
@@ -437,11 +453,13 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			return args[0], fmt.Sprintf("「%s」を「%s」にしました", f.Name, display), nil
 		})
 	field.Flags().Bool("clear", false, "値を空にする")
+	field.Flags().Bool("add-option", false, "選択式のフィールドに無い選択肢なら、足して設定する（名前が完全に一致するものだけ既存とみなす）")
 	field.Example = `  asagao task field 1203455468597469 優先度 高
   asagao task field 1203455468597469 見積もり 3.5
   asagao task field 1203455468597469 ラベル "バグ,UI"     # 複数選択はカンマ区切り
   asagao task field 1203455468597469 締切 +7d
-  asagao task field 1203455468597469 優先度 --clear`
+  asagao task field 1203455468597469 優先度 --clear
+  asagao task field 1203455468597469 優先度 最優先 --add-option   # 無ければ選択肢に足す`
 	depend := a.writeCommand("depend <gid> [--add 待つタスク]... [--remove 待つタスク]... [--add-dependent タスク]... [--remove-dependent タスク]...",
 		"依存関係を追加 / 解除する（待つタスク・待たれるタスクを gid で）", cobra.ExactArgs(1),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
@@ -514,6 +532,7 @@ func (a *app) taskAssignCmd() *cobra.Command {
 			}
 			defer st.Close()
 			tasks := taskUseCases(st)
+			tasks.Names = a.nameFinder(st)
 			if _, err := tasks.Update(ctx, args[0], usecase.UpdateTaskInput{Assignee: &args[1]}); err != nil {
 				return fieldErr(err)
 			}

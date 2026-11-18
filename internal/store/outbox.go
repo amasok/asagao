@@ -593,6 +593,10 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := undoAttachmentDelete(ctx, tx, op); err != nil {
 			return err
 		}
+	case OpAddTimeEntry, OpUpdateTimeEntry, OpDeleteTimeEntry:
+		if err := undoTimeEntryOp(ctx, tx, op); err != nil {
+			return err
+		}
 	case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
 		if err := applyRelation(ctx, tx, *op, true); err != nil {
 			return err
@@ -642,6 +646,14 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		}
 	case OpCreateSection, OpDeleteSection, OpInsertSection:
 		if err := undoSectionOp(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpCreateEnumOption:
+		if err := undoCreateEnumOption(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpAddFieldSetting, OpRemoveFieldSetting:
+		if err := undoFieldSettingOp(ctx, tx, op); err != nil {
 			return err
 		}
 	case OpUpdateProject:
@@ -746,6 +758,7 @@ func replaceLocalTaskGID(ctx context.Context, tx *sql.Tx, local, real string) er
 		"UPDATE OR REPLACE task_dependencies SET dependency_gid = ?2 WHERE dependency_gid = ?1",
 		"UPDATE task_details SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE stories SET task_gid = ?2 WHERE task_gid = ?1",
+		"UPDATE time_entries SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE attachments SET parent_gid = ?2 WHERE parent_gid = ?1",
 		"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
 		// Remember the mapping so callers holding the local gid can find the task.

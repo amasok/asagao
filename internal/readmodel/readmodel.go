@@ -55,6 +55,22 @@ type CustomFieldView struct {
 	Editable bool `json:"editable"`
 	// Options are the enabled choices of an enum / multi_enum field (task detail only).
 	Options []EnumOptionView `json:"options,omitempty"`
+	// CanAddOption: an option can be added to this enum / multi_enum field (task detail
+	// only). Not when Asana refused it before (402: the plan; 403: e.g. locked options).
+	CanAddOption bool `json:"can_add_option,omitempty"`
+}
+
+// ProjectFieldView is a custom field of a project, or of its workspace that can be added
+// to it (#37).
+type ProjectFieldView struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	// Attached: the project has the field (as changed locally: an add or a removal not sent
+	// yet counts). Pending: such a change is queued.
+	Attached  bool `json:"attached"`
+	Important bool `json:"important,omitempty"`
+	Pending   bool `json:"pending,omitempty"`
 }
 
 // ErrOpSending is returned when an outbox entry that is being sent is retried, resolved

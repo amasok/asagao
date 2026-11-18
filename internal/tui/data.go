@@ -13,7 +13,10 @@ import (
 //   - search: one group with all hits (across every project)
 //   - My Tasks: by due date (期限切れ / 今日 / 7日以内 / それ以降 / 期日なし)
 //   - project: by section, in Asana's section order
-func queryRows(ctx context.Context, st Store, sc scope, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
+//
+// found are the tasks Asana found for query (remotesearch.go): they are listed after the
+// cache's matches, when they pass the filter.
+func queryRows(ctx context.Context, st Store, sc scope, query string, filter filterMode, tag string, field fieldFilter, now time.Time, found []string) ([]row, error) {
 	f := readmodel.TaskFilter{Query: query, Tag: tag, Field: field.field, FieldValue: field.value}
 	today := now.Format(time.DateOnly)
 	f.Completed = boolPtr(false)
@@ -36,7 +39,14 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 		if err != nil {
 			return nil, err
 		}
-		return group(tasks, []string{fmt.Sprintf("検索結果 (%d)", len(tasks))}, func(readmodel.TaskSummary) int { return 0 }), nil
+		label := fmt.Sprintf("検索結果 (%d)", len(tasks))
+		if found != nil {
+			if tasks, err = app.WithFound(ctx, queryOf(st), f, tasks, found); err != nil {
+				return nil, err
+			}
+			label = fmt.Sprintf("検索結果 (%d・Asana も)", len(tasks))
+		}
+		return group(tasks, []string{label}, func(readmodel.TaskSummary) int { return 0 }), nil
 	}
 
 	switch sc.kind {

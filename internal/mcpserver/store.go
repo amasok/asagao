@@ -13,6 +13,7 @@ type Store interface {
 	app.StatusStore
 	app.ProjectStore
 	app.RelationStore
+	app.ProjectFieldStore
 	app.SectionStore
 	app.TaskOpsStore
 	app.TagStore
@@ -20,5 +21,7 @@ type Store interface {
 	app.NotificationStore
 	app.OutboxStore
 	app.QueryStore
+	app.TimeTrackingStore
+	app.GoalStore
 	sync.LocalStore
 }

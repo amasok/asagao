@@ -354,4 +354,108 @@ DELETE FROM sync_state WHERE key = 'last_full_sync';
 -- Asana's reaction_summary; '' until the comments are fetched again.
 ALTER TABLE stories ADD COLUMN reactions TEXT NOT NULL DEFAULT '';
 `,
+	`
+-- Goals, portfolios and time periods (#7), fetched from Asana when they are shown. A
+-- goal's metric and time period are JSON (readmodel.GoalMetric, TimePeriodView); what
+-- supports a goal and what a portfolio holds are replaced whole with it. mine marks the
+-- portfolios I own (the list); others are kept only to be shown as an item's detail.
+CREATE TABLE goals (
+	gid             TEXT PRIMARY KEY,
+	workspace_gid   TEXT NOT NULL,
+	position        INTEGER NOT NULL DEFAULT 0,
+	name            TEXT NOT NULL DEFAULT '',
+	notes           TEXT NOT NULL DEFAULT '',
+	html_notes      TEXT NOT NULL DEFAULT '',
+	status          TEXT NOT NULL DEFAULT '',
+	owner_gid       TEXT NOT NULL DEFAULT '',
+	owner_name      TEXT NOT NULL DEFAULT '',
+	team_name       TEXT NOT NULL DEFAULT '',
+	workspace_level INTEGER NOT NULL DEFAULT 0,
+	start_on        TEXT NOT NULL DEFAULT '',
+	due_on          TEXT NOT NULL DEFAULT '',
+	time_period     TEXT NOT NULL DEFAULT '',
+	metric          TEXT NOT NULL DEFAULT '',
+	fetched_at      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX goals_workspace ON goals(workspace_gid, position);
+CREATE TABLE goal_supports (
+	goal_gid TEXT NOT NULL,
+	position INTEGER NOT NULL,
+	gid      TEXT NOT NULL,
+	type     TEXT NOT NULL DEFAULT '',
+	name     TEXT NOT NULL DEFAULT '',
+	weight   REAL,
+	PRIMARY KEY (goal_gid, position)
+);
+CREATE TABLE time_periods (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	display_name  TEXT NOT NULL DEFAULT '',
+	period        TEXT NOT NULL DEFAULT '',
+	start_on      TEXT NOT NULL DEFAULT '',
+	end_on        TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE portfolios (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL DEFAULT '',
+	mine          INTEGER NOT NULL DEFAULT 0,
+	position      INTEGER NOT NULL DEFAULT 0,
+	name          TEXT NOT NULL DEFAULT '',
+	color         TEXT NOT NULL DEFAULT '',
+	owner_gid     TEXT NOT NULL DEFAULT '',
+	owner_name    TEXT NOT NULL DEFAULT '',
+	start_on      TEXT NOT NULL DEFAULT '',
+	due_on        TEXT NOT NULL DEFAULT '',
+	permalink_url TEXT NOT NULL DEFAULT '',
+	status_type   TEXT NOT NULL DEFAULT '',
+	status_title  TEXT NOT NULL DEFAULT '',
+	fetched_at    TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE portfolio_items (
+	portfolio_gid TEXT NOT NULL,
+	position      INTEGER NOT NULL,
+	gid           TEXT NOT NULL,
+	type          TEXT NOT NULL DEFAULT '',
+	name          TEXT NOT NULL DEFAULT '',
+	color         TEXT NOT NULL DEFAULT '',
+	archived      INTEGER NOT NULL DEFAULT 0,
+	owner_gid     TEXT NOT NULL DEFAULT '',
+	owner_name    TEXT NOT NULL DEFAULT '',
+	start_on      TEXT NOT NULL DEFAULT '',
+	due_on        TEXT NOT NULL DEFAULT '',
+	permalink_url TEXT NOT NULL DEFAULT '',
+	status_type   TEXT NOT NULL DEFAULT '',
+	status_title  TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (portfolio_gid, position)
+);
+`,
+	`
+-- Time tracking entries of tasks (#6), read when asked for (not by the sync). categories
+-- is a JSON array of names; added_at is when Asana created an entry recorded here (kept by a
+-- refresh that read the list before it), '' for the ones read from Asana.
+CREATE TABLE time_entries (
+	gid              TEXT PRIMARY KEY,
+	task_gid         TEXT NOT NULL REFERENCES tasks(gid) ON DELETE CASCADE,
+	duration_minutes INTEGER NOT NULL,
+	entered_on       TEXT NOT NULL DEFAULT '',
+	assignee_gid     TEXT NOT NULL DEFAULT '',
+	assignee_name    TEXT NOT NULL DEFAULT '',
+	created_by_gid   TEXT NOT NULL DEFAULT '',
+	created_by_name  TEXT NOT NULL DEFAULT '',
+	project_name     TEXT NOT NULL DEFAULT '',
+	categories       TEXT NOT NULL DEFAULT '',
+	added_at         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX time_entries_task ON time_entries(task_gid, entered_on);
+`,
+	`
+-- The custom fields of each workspace (#37), to add one to a project. Their definitions
+-- are in custom_fields.
+CREATE TABLE workspace_custom_fields (
+	workspace_gid TEXT NOT NULL,
+	field_gid     TEXT NOT NULL,
+	position      INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (workspace_gid, field_gid)
+);
+`,
 }

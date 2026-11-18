@@ -160,6 +160,7 @@ type Model struct {
 	search    textinput.Model
 	searching bool // input has focus
 	query     string
+	remote    remoteFound // what Asana found for a search (remotesearch.go)
 	filter    filterMode
 
 	syncer      *sync.Syncer
@@ -206,6 +207,9 @@ type Model struct {
 	newSectionAfter string               // promptNewSection: the section to add it after
 	tagList         []readmodel.TagCount // the tags the tag manager shows
 	tagTarget       readmodel.TagCount   // the tag being changed
+	// time tracking (timetracking.go): the task whose entries are shown, the entry edited
+	timeTask  readmodel.TaskSummary
+	timeEntry string
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
 	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).
@@ -239,6 +243,8 @@ type Model struct {
 	overviewOffset int
 	overview       *readmodel.ProjectOverview
 	newProjectName string // pickTeam: the project to create
+	// goals and portfolios (goals.go)
+	goals goalScreen
 
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
@@ -270,9 +276,10 @@ type Model struct {
 	depTask       readmodel.TaskSummary // task for promptDepSearch
 	depDependents bool
 	// extras.go
-	dupSource      string // task to duplicate (promptDuplicate)
-	attachTask     string // task to attach a file to (promptAttach)
-	sectionProject string // project whose sections to choose from (detail project line)
+	dupSource      string        // task to duplicate (promptDuplicate)
+	attachTask     string        // task to attach a file to (promptAttach)
+	sectionProject string        // project whose sections to choose from (detail project line)
+	tmpl           templateState // templates.go
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -379,6 +386,7 @@ func (m *Model) loadTasks() tea.Cmd {
 func (m *Model) loadList() tea.Cmd {
 	m.taskSeq++
 	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
+	found := m.remote.foundFor(query)
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.collapsedScope
 	expanded := make(map[string]bool, len(m.expanded))
@@ -399,7 +407,7 @@ func (m *Model) loadList() tea.Cmd {
 		if saved != nil {
 			rows, err = savedRows(m.ctx, st, *saved, query, filter, tag, field, now)
 		} else {
-			rows, err = queryRows(m.ctx, st, sc, query, filter, tag, field, now)
+			rows, err = queryRows(m.ctx, st, sc, query, filter, tag, field, now, found)
 		}
 		if err == nil {
 			rows, err = withSubtasks(m.ctx, st, rows, expanded, subCompleted)
@@ -513,7 +521,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateOverview(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateGoals(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateProjects(msg); ok {
+		return m, cmd
+	}
+	if cmd, ok := m.updateTemplates(msg); ok {
 		return m, cmd
 	}
 	if cmd, ok := m.updateSearches(msg); ok {
@@ -607,6 +621,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchDetails(msg.gid)
 
+	case remoteSearchMsg:
+		return m, m.remoteSearchDone(msg)
 	case detailFetchedMsg:
 		if m.fetchingFor == msg.gid {
 			m.fetchingFor = ""
@@ -664,7 +680,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err == nil {
 			m.lastSync = msg.at
-			cmds = append(cmds, m.loadScopes(), m.loadTasks())
+			cmds = append(cmds, m.loadScopes(), m.loadTasks(), m.prefetchTemplates())
 			if gid := m.detailGID(); gid != "" {
 				cmds = append(cmds, m.loadDetail(gid), m.debounceDetail(gid))
 			}
@@ -712,6 +728,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleStatusKey(key)
 	case m.overviewView:
 		return m.handleOverviewKey(key)
+	case m.goals.open:
+		return m.handleGoalKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
 	case m.searching:
@@ -737,7 +755,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "space":
 		m.leader = true
 		m.menuPage = 0
-		return m, nil
+		return m, m.prefetchTemplates() // the menu offers templates only when there are some
 	case "?":
 		m.showHelp = true
 		return m, nil

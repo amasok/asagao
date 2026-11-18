@@ -107,6 +107,17 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 		cond, a := searchCondition(term)
 		add(cond, a...)
 	}
+	if f.GIDs != nil {
+		if len(f.GIDs) == 0 {
+			add("0")
+		} else {
+			a := make([]any, len(f.GIDs))
+			for i, g := range f.GIDs {
+				a[i] = g
+			}
+			add("t.gid IN ("+strings.TrimSuffix(strings.Repeat("?,", len(f.GIDs)), ",")+")", a...)
+		}
+	}
 
 	add("t.gid NOT IN " + deletedTasks) // their delete is queued
 
@@ -584,6 +595,16 @@ func (s *Store) DefaultWorkspace(ctx context.Context) (string, error) {
 	err := s.db.QueryRowContext(ctx, "SELECT gid FROM workspaces ORDER BY name LIMIT 1").Scan(&gid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errors.New("ワークスペースがありません。先に `asagao sync` を実行してください")
+	}
+	return gid, err
+}
+
+// ProjectWorkspace returns the workspace of a cached project ("" if it is not cached).
+func (s *Store) ProjectWorkspace(ctx context.Context, projectGID string) (string, error) {
+	var gid string
+	err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", projectGID).Scan(&gid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
 	return gid, err
 }
