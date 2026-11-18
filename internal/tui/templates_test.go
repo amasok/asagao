@@ -29,6 +29,7 @@ type templateFake struct {
 	gets      map[string]int
 	empty     bool
 	status402 bool
+	status500 bool
 }
 
 func (f *templateFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +48,10 @@ func (f *templateFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.gets[key]++
 	}
 	reply := func(v any) { _ = json.NewEncoder(w).Encode(map[string]any{"data": v}) }
+	if f.status500 && strings.HasSuffix(r.URL.Path, "_templates") {
+		http.Error(w, `{"errors":[{"message":"down"}]}`, http.StatusInternalServerError)
+		return
+	}
 	if f.status402 && strings.HasSuffix(r.URL.Path, "_templates") {
 		http.Error(w, `{"errors":[{"message":"upgrade"}]}`, http.StatusPaymentRequired)
 		return
@@ -226,5 +231,26 @@ func TestTemplatesOffline(t *testing.T) {
 	}
 	if len(f.posts)+len(f.gets) != 0 {
 		t.Errorf("reached Asana offline: %v %v", f.posts, f.gets)
+	}
+}
+
+// A failed fetch is not tried again at every menu, only after templateTTL.
+func TestTemplatesFailedFetchWaits(t *testing.T) {
+	h, f, _, now := templateHarness(t, true)
+	f.status500 = true
+	h.key("space", "esc")
+	tasks, projects := f.gets["GET /task_templates"], f.gets["GET /project_templates"]
+	if tasks != 1 || projects != 1 {
+		t.Fatalf("fetched %d / %d", tasks, projects)
+	}
+	h.key("space", "esc", "space", "esc")
+	if f.gets["GET /task_templates"] != tasks || f.gets["GET /project_templates"] != projects {
+		t.Errorf("fetched again at once: %v", f.gets)
+	}
+	f.status500 = false
+	*now = now.Add(templateTTL)
+	h.key("space")
+	if !strings.Contains(h.screen(), "テンプレートからタスクを作る") {
+		t.Errorf("not offered after the fetch worked:\n%s", h.screen())
 	}
 }

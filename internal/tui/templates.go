@@ -189,7 +189,10 @@ func (m *Model) makeTaskFromTemplate(project, gid string) tea.Cmd {
 		if made == nil {
 			return writeDoneMsg{err: err}
 		}
-		status := "タスクを作りました: " + made.Name + pendingNote(made)
+		status := "タスクを作りました: " + made.Name
+		if made.Pending {
+			status += "（サブタスクは Asana が作っている途中です。タスクを開くと取り込みます）"
+		}
 		if err != nil {
 			status += "（" + err.Error() + "）"
 		}
@@ -256,18 +259,14 @@ func madeProject(made *sync.Made, err error) tea.Msg {
 	if made == nil {
 		return projectDoneMsg{err: err}
 	}
-	status := "プロジェクトを作りました: " + made.Name + pendingNote(made)
+	status := "プロジェクトを作りました: " + made.Name
+	if made.Pending {
+		status += "（中身は Asana が作っている途中です。次の同期で取り込みます）"
+	}
 	if err != nil {
 		status += "（" + err.Error() + "）"
 	}
 	return projectDoneMsg{status: status, selectProject: made.GID}
-}
-
-func pendingNote(made *sync.Made) string {
-	if made.Pending {
-		return "（中身は Asana が作っている途中です。次の同期で取り込みます）"
-	}
-	return ""
 }
 
 // updateTemplates handles the messages of this file.
@@ -275,11 +274,14 @@ func (m *Model) updateTemplates(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case taskTemplatesMsg:
 		delete(m.tmpl.fetching, "task:"+msg.project)
-		if m.templateError(msg.err, readmodel.PlanTaskTemplates, msg.open) {
-			return nil, true
-		}
 		if m.tmpl.task == nil {
 			m.tmpl.task = map[string]taskTemplates{}
+		}
+		if m.templateError(msg.err, readmodel.PlanTaskTemplates, msg.open) {
+			// Not looked for again before templateTTL; what was known is kept.
+			c := m.tmpl.task[msg.project]
+			m.tmpl.task[msg.project] = taskTemplates{list: c.list, at: m.deps.Now()}
+			return nil, true
 		}
 		m.tmpl.task[msg.project] = taskTemplates{list: msg.list, at: m.deps.Now()}
 		if msg.open {
@@ -294,6 +296,7 @@ func (m *Model) updateTemplates(msg tea.Msg) (tea.Cmd, bool) {
 	case projectTemplatesMsg:
 		delete(m.tmpl.fetching, "project")
 		if m.templateError(msg.err, readmodel.PlanProjectTemplates, msg.open) {
+			m.tmpl.project.at = m.deps.Now() // not looked for again before templateTTL
 			return nil, true
 		}
 		m.tmpl.project = projectTemplates{list: msg.list, at: m.deps.Now()}

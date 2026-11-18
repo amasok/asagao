@@ -69,10 +69,23 @@ func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*mode
 // looks twice, projectSettle apart. If it is still not there, the project is not created
 // again (that could make a duplicate); the error says to check after the next sync.
 func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*model.Project, error) {
-	var apiErr *model.Error
-	if (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil {
+	if notMade(ctx, cause) {
 		return nil, cause // not created
 	}
+	return s.findCreatedProject(ctx, ws, name, started, cause,
+		"プロジェクトが作成されたか、まだ分かりません。次の同期の後に一覧に無ければ、もう一度作成してください")
+}
+
+// notMade reports whether a failed request surely made nothing: Asana refused it (4xx),
+// it was not sent, or ctx ended before.
+func notMade(ctx context.Context, cause error) bool {
+	var apiErr *model.Error
+	return (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil
+}
+
+// findCreatedProject looks in Asana for the one project named name created since started
+// (twice, projectSettle apart). Not there, the error is notFound (wrapping cause).
+func (s *Syncer) findCreatedProject(ctx context.Context, ws, name string, started time.Time, cause error, notFound string) (*model.Project, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
 			if err := s.wait(ctx, projectSettle); err != nil {
@@ -97,7 +110,7 @@ func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, star
 			return nil, fmt.Errorf("同じ名前のプロジェクトが複数あります。Asana で確認してください: %w", cause)
 		}
 	}
-	return nil, fmt.Errorf("プロジェクトが作成されたか、まだ分かりません。次の同期の後に一覧に無ければ、もう一度作成してください: %w", cause)
+	return nil, fmt.Errorf("%s: %w", notFound, cause)
 }
 
 const projectSettle = 5 * time.Second

@@ -281,7 +281,9 @@ func (a *app) reportMade(cmd *cobra.Command, what string, made *sync.Made, err e
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "%sを作りました: %s (%s)\n", what, made.Name, made.GID)
-	if made.Pending {
+	if made.Pending && what == "タスク" {
+		fmt.Fprintln(out, "  サブタスクは Asana が作っている途中です。task show で開くと取り込みます")
+	} else if made.Pending {
 		fmt.Fprintln(out, "  中身は Asana が作っている途中です。次の同期で取り込みます")
 	}
 	return err

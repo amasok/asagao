@@ -35,6 +35,8 @@ type templateServer struct {
 	newName string
 	// org: a workspace that is an organization (templates are listed by team only).
 	org bool
+	// hideNew: the jobs do not name what they make (yet).
+	hideNew bool
 }
 
 func (f *templateServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +70,9 @@ func (f *templateServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		j := map[string]any{"gid": "j1", "resource_type": "job", "status": status,
 			"new_task": nil, "new_project": nil, "new_task_template": nil}
+		if f.hideNew {
+			return j
+		}
 		if strings.Contains(f.lastPost(), "instantiateTask") {
 			j["resource_subtype"] = "instantiate_task"
 			j["new_task"] = map[string]any{"gid": "t9", "name": f.newName, "resource_type": "task"}
@@ -278,6 +283,14 @@ func TestProjectTemplatesOrganization(t *testing.T) {
 	if list, err := s.ProjectTemplates(ctx, "team2"); err != nil || len(list) != 1 {
 		t.Fatalf("team list = %+v %v", list, err)
 	}
+	// Another 400 is returned as it is, without asking each team.
+	f.org = false
+	f.status["GET /project_templates"] = http.StatusBadRequest
+	if _, err := s.ProjectTemplates(ctx, ""); err == nil {
+		t.Error("a 400 was taken for an organization")
+	}
+	delete(f.status, "GET /project_templates")
+	f.org = true
 	// Teams that cannot be listed are an error, not "no templates".
 	f.status["GET /users/me/teams"] = http.StatusInternalServerError
 	if _, err := s.ProjectTemplates(ctx, ""); err == nil {
@@ -624,5 +637,49 @@ func TestRequestedDateOnTheCalendar(t *testing.T) {
 	}
 	if _, err := s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "x", Dates: map[string]string{"d1": "2028-02-29"}}); err != nil {
 		t.Errorf("leap day: %v", err)
+	}
+}
+
+// The job was taken but does not name what it makes, and then cannot be looked at (503)
+// or does not end: what was made is looked for by name and stored, Pending, and nothing
+// is posted again. Not found, the error says not to make it again.
+func TestJobAcceptedThenUnknown(t *testing.T) {
+	for _, tc := range []string{"job 503", "job never ends"} {
+		ctx := context.Background()
+		f, s, st, _ := setupTemplates(t)
+		f.hideNew = true
+		if tc == "job 503" {
+			f.status["GET /jobs/j1"] = http.StatusServiceUnavailable
+		} else {
+			f.jobLooks = -1
+		}
+		made, err := s.InstantiateTask(ctx, tmplTask, "")
+		if err != nil || made == nil || made.GID != "t9" || !made.Pending {
+			t.Fatalf("%s: task = %+v %v", tc, made, err)
+		}
+		if _, err := st.GetTask(ctx, "t9"); err != nil {
+			t.Errorf("%s: task not stored: %v", tc, err)
+		}
+		made, err = s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "引っ越し"})
+		if err != nil || made == nil || made.GID != "p9" || !made.Pending {
+			t.Fatalf("%s: project = %+v %v", tc, made, err)
+		}
+		made, err = s.DuplicateProject(ctx, "p1", "引っ越し", "")
+		if err != nil || made == nil || made.GID != "p9" {
+			t.Fatalf("%s: duplicate = %+v %v", tc, made, err)
+		}
+		if n := len(f.posts); n != 3 {
+			t.Errorf("%s: posted %d times: %v", tc, n, f.posts)
+		}
+		// Not found: an error that says not to make it again.
+		s.API = &notMadeAPI{AsanaAPI: s.API}
+		for _, try := range []func() (*Made, error){
+			func() (*Made, error) { return s.InstantiateTask(ctx, tmplTask, "") },
+			func() (*Made, error) { return s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "x"}) },
+		} {
+			if made, err := try(); made != nil || err == nil || !strings.Contains(err.Error(), "作り直さないでください") {
+				t.Errorf("%s: not found = %+v %v", tc, made, err)
+			}
+		}
 	}
 }

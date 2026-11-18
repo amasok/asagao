@@ -88,7 +88,7 @@ func (s *Syncer) ProjectTemplates(ctx context.Context, teamGID string) ([]model.
 		return nil, err
 	}
 	list, err := s.API.ProjectTemplates(ctx, ws, teamGID)
-	if teamGID == "" && isBadRequest(err) {
+	if teamGID == "" && needsTeam(err) {
 		// An organization lists templates by team only (400
 		// requires_workspace_received_organization): those of each team I am in.
 		list, err = s.teamProjectTemplates(ctx, ws)
@@ -139,9 +139,18 @@ func (s *Syncer) teamProjectTemplates(ctx context.Context, ws string) ([]model.P
 	return out, nil
 }
 
-func isBadRequest(err error) bool {
+// needsTeam reports whether Asana refused a workspace because it is an organization.
+func needsTeam(err error) bool {
 	var apiErr *model.Error
-	return errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest {
+		return false
+	}
+	for _, e := range apiErr.Errors {
+		if e.Error == "requires_workspace_received_organization" {
+			return true
+		}
+	}
+	return false
 }
 
 // notePlan records what err says about the plan: a 402 marks feature unavailable (and
@@ -229,20 +238,20 @@ func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, n
 		if errors.As(err, &pe) || tmpl.Project == nil {
 			return nil, err
 		}
-		t, err := s.recoverInstantiateTask(ctx, tmpl.Project.GID, name, started, err)
-		if err != nil {
+		if notMade(ctx, err) {
 			return nil, err
 		}
-		// Found: the job's state is unknown, so the subtasks may still be coming.
-		made := &Made{GID: t.GID, Name: name, Pending: true}
-		if err := s.FetchDetails(ctx, t.GID); err != nil && !isAttachmentsError(err) {
-			return made, fmt.Errorf("タスクは作られましたが、取り込めませんでした (次の同期で取り込みます): %w", err)
-		}
-		return made, nil
+		return s.foundTask(ctx, tmpl.Project.GID, name, started, err,
+			"タスクが作られたか、まだ分かりません。次の同期の後にプロジェクトに無ければ、もう一度作ってください")
 	}
 	job, done, err := s.waitJob(ctx, job, func(j *model.Job) bool { return j.NewTask != nil })
 	if err != nil {
-		return nil, err
+		// Asana took the job but asagao does not know what it made yet: look for it.
+		err = fmt.Errorf("%s: %w", jobAccepted, err)
+		if tmpl.Project == nil {
+			return nil, err
+		}
+		return s.foundTask(ctx, tmpl.Project.GID, name, started, err, jobAccepted)
 	}
 	if job.NewTask == nil {
 		return nil, jobError(job, "タスク")
@@ -262,15 +271,28 @@ func isAttachmentsError(err error) bool {
 	return errors.As(err, &ae)
 }
 
-// recoverInstantiateTask handles a failed instantiateTask that may have made the task
-// anyway: the task of that name created in the project since started is it (looked for
-// twice, projectSettle apart). Not found, it is not made again (that could make a
-// duplicate).
-func (s *Syncer) recoverInstantiateTask(ctx context.Context, projectGID, name string, started time.Time, cause error) (*model.Task, error) {
-	var apiErr *model.Error
-	if (errors.As(cause, &apiErr) && apiErr.Status < 500) || requestNotSent(cause) || ctx.Err() != nil {
-		return nil, cause // not made
+// jobAccepted says that Asana took a job whose result is not known yet.
+const jobAccepted = "Asana は作る処理を受け付けましたが、できたものをまだ確かめられません。作り直さないでください (できたものは次の同期で取り込みます)"
+
+// foundTask looks for the task that a failed or unfinished instantiateTask may have made
+// (findMadeTask) and stores it, as Pending: the job's state is unknown, so the subtasks
+// may still be coming.
+func (s *Syncer) foundTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*Made, error) {
+	t, err := s.findMadeTask(ctx, projectGID, name, started, cause, notFound)
+	if err != nil {
+		return nil, err
 	}
+	made := &Made{GID: t.GID, Name: name, Pending: true}
+	if err := s.FetchDetails(ctx, t.GID); err != nil && !isAttachmentsError(err) {
+		return made, fmt.Errorf("タスクは作られましたが、取り込めませんでした (次の同期で取り込みます): %w", err)
+	}
+	return made, nil
+}
+
+// findMadeTask looks for the task of that name created in the project since started
+// (twice, projectSettle apart). Not found, it is not made again (that could make a
+// duplicate): the error is notFound, wrapping cause.
+func (s *Syncer) findMadeTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*model.Task, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
 			if err := s.wait(ctx, projectSettle); err != nil {
@@ -290,7 +312,7 @@ func (s *Syncer) recoverInstantiateTask(ctx context.Context, projectGID, name st
 			return nil, fmt.Errorf("同じ名前のタスクが複数作られています。Asana で確認してください: %w", cause)
 		}
 	}
-	return nil, fmt.Errorf("タスクが作られたか、まだ分かりません。次の同期の後にプロジェクトに無ければ、もう一度作ってください: %w", cause)
+	return nil, fmt.Errorf("%s: %w", notFound, cause)
 }
 
 // InstantiateProject makes a project from template tmpl (from ProjectTemplates) and
@@ -357,7 +379,13 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 	}
 	job, done, err := s.waitJob(ctx, job, func(j *model.Job) bool { return j.NewProject != nil })
 	if err != nil {
-		return nil, err
+		// Asana took the job but asagao does not know what it made yet: look for it.
+		err = fmt.Errorf("%s: %w", jobAccepted, err)
+		p, err := s.findCreatedProject(ctx, ws, name, started, err, jobAccepted)
+		if err != nil {
+			return nil, err
+		}
+		return s.storeMadeProject(ctx, p.GID, name, true)
 	}
 	if job.NewProject == nil {
 		return nil, jobError(job, "プロジェクト")
@@ -405,7 +433,7 @@ func (s *Syncer) waitJob(ctx context.Context, job *model.Job, has func(*model.Jo
 			if has(job) {
 				return job, false, nil
 			}
-			return nil, false, errors.New("Asana の処理が終わりませんでした。次の同期の後に、できているか確かめてください")
+			return nil, false, fmt.Errorf("%v たっても終わりませんでした", jobWait)
 		}
 		if err := s.wait(ctx, pause); err != nil {
 			if has(job) {

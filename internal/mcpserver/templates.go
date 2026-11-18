@@ -143,7 +143,7 @@ func madeOutput(made *sync.Made, err error) (*mcp.CallToolResult, MadeOutput, er
 	if err != nil { // made, but not stored or the job failed: say so with what was made
 		out.Note = err.Error()
 	} else if made.Pending {
-		out.Note = "Asana is still filling it in; the rest arrives with the next sync"
+		out.Note = "Asana is still filling it in; the rest arrives with the next sync (a task's subtasks: when get_task opens it)"
 	}
 	return nil, out, nil
 }
