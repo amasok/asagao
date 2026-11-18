@@ -129,7 +129,8 @@ func (s *Syncer) pushDeleteTimeEntry(ctx context.Context, op outbox.Op) error {
 
 // findTimeEntry looks in Asana for the entry an add_time_entry may have created: same
 // minutes and day, by me, created since the add was sent, and not the result of another
-// entry. A task's list does not say when an entry was created, so each candidate is read.
+// entry. A candidate the list gives without created_at (as the reference documents it) is
+// read on its own.
 func (s *Syncer) findTimeEntry(ctx context.Context, op outbox.Op, byMe func(*model.Ref) bool, recent func(time.Time) bool) (outcome, match, error) {
 	if localgid.IsLocal(op.TaskGID) {
 		return sent, notFound, nil // its task is not in Asana: nothing can have been created
@@ -148,12 +149,15 @@ func (s *Syncer) findTimeEntry(ctx context.Context, op outbox.Op, byMe func(*mod
 		if used[e.GID] || e.DurationMinutes != minutes || (enteredOn != "" && e.EnteredOn != enteredOn) || !byMe(e.CreatedBy) {
 			continue
 		}
-		full, err := s.API.TimeEntry(ctx, e.GID)
-		if isNotFound(err) {
-			continue // deleted meanwhile
-		}
-		if err != nil {
-			return sent, notFound, err
+		full := &e
+		if e.CreatedAt.IsZero() {
+			full, err = s.API.TimeEntry(ctx, e.GID)
+			if isNotFound(err) {
+				continue // deleted meanwhile
+			}
+			if err != nil {
+				return sent, notFound, err
+			}
 		}
 		if full.CreatedAt.IsZero() {
 			return sent, ambiguous, nil // no way to tell an older entry from ours

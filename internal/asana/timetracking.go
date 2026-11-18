@@ -11,15 +11,15 @@ import (
 // description, billable status and categories need the Timesheets & Budgets add-on, and
 // sending them without it would answer 402 for the whole entry.
 var (
-	// timeEntryListFields are what a list of entries can give (the compact form).
-	timeEntryListFields = []string{"duration_minutes", "entered_on", "assignee.name", "created_by.name", "attributable_to.name", "categories.name"}
-	// timeEntryFields are what one entry gives (with when it was created).
-	timeEntryFields = append([]string{"created_at"}, timeEntryListFields...)
+	// timeEntryFields are asked for both in a task's list and for one entry. The reference
+	// lists created_at for one entry only, but Asana gives it in the list too (checked on
+	// a real workspace, 2026-11): the list then tells whether an entry is new.
+	timeEntryFields = []string{"duration_minutes", "entered_on", "created_at", "assignee.name", "created_by.name", "attributable_to.name", "categories.name"}
 )
 
 // TimeEntries returns the time tracking entries of a task (GET /tasks/{gid}/time_tracking_entries).
 func (c *Client) TimeEntries(ctx context.Context, taskGID string) ([]TimeEntry, error) {
-	return list[TimeEntry](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/time_tracking_entries", fields(timeEntryListFields))
+	return list[TimeEntry](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/time_tracking_entries", fields(timeEntryFields))
 }
 
 // TimeEntry returns one time tracking entry (GET /time_tracking_entries/{gid}).
