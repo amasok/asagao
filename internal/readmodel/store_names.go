@@ -104,6 +104,13 @@ const (
 	PlanCustomFields = "custom_fields"
 )
 
+// Features of #60 that a plan may lack (PlanKey).
+const (
+	// PlanProjectBrief is a project's brief (a preview API): Asana answered 402 or 403 to
+	// reading or writing one in the workspace.
+	PlanProjectBrief = "project_brief"
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -117,6 +124,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanTimeTracking
 	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
 		return PlanCustomFields
+	case outbox.KindUpdateProjectBrief:
+		return PlanProjectBrief
 	}
 	return ""
 }
@@ -134,7 +143,11 @@ func PlanUnavailableMessage(feature string) string {
 		PlanGoals:        "ゴール",
 		PlanPortfolios:   "ポートフォリオ",
 		PlanCustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
+		PlanProjectBrief: "プロジェクトブリーフ (概要のページ)",
 	}[feature]
+	if feature == PlanProjectBrief { // a preview API: refused with 402 or 403
+		return "このワークスペースでは、" + what + "を API で使えません (Asana が 402 か 403 を返しました。しばらくしてから、もう一度試します)"
+	}
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
 

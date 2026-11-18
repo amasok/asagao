@@ -661,6 +661,10 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := applyProjectFields(ctx, tx, op.TaskGID, op.Base); err != nil {
 			return err
 		}
+	case OpUpdateBrief:
+		if err := undoBriefOp(ctx, tx, op); err != nil {
+			return err
+		}
 	case OpMoveTask:
 		project, _ := op.Payload["project"].(string)
 		section, _ := op.Base["section"].(string)

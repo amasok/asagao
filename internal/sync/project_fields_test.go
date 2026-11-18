@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -327,6 +328,24 @@ func TestFetchProjectOverview(t *testing.T) {
 			t.Fatalf("%d: brief %+v counts %+v", status, o.Brief, o.Counts)
 		}
 	}
+	// The refusal is recorded for the workspace (#60), and the brief is not asked for there
+	// for a while; forget it to go on.
+	key := readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")
+	if v, _ := st.SyncState(ctx, key); v == "" {
+		t.Fatal("refusal not recorded for the workspace")
+	}
+	ps.briefStatus = 0
+	refused := ps.calls["GET /project_briefs/b1"]
+	if err := s.FetchProjectOverview(ctx, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	if ps.calls["GET /project_briefs/b1"] != refused {
+		t.Fatal("asked for the brief again right after a refusal")
+	}
+	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefUnavailable {
+		t.Fatalf("brief state %q while refused", o.BriefState)
+	}
+	_ = st.SetSyncState(ctx, key, "")
 	// A project without a brief does not ask for one.
 	ps.brief, ps.briefStatus = "", 0
 	before := ps.calls["GET /project_briefs/b1"]

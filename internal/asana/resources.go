@@ -521,7 +521,33 @@ func (c *Client) TaskCounts(ctx context.Context, projectGID string) (*TaskCounts
 // ProjectBrief returns a project brief (a preview API: Asana may answer 402 or 403).
 func (c *Client) ProjectBrief(ctx context.Context, briefGID string) (*ProjectBrief, error) {
 	var b ProjectBrief
-	return &b, c.get(ctx, "/project_briefs/"+url.PathEscape(briefGID), fields([]string{"title", "text", "html_text"}), &b)
+	return &b, c.get(ctx, "/project_briefs/"+url.PathEscape(briefGID), fields(briefFields), &b)
+}
+
+var briefFields = []string{"title", "text", "html_text"}
+
+// CreateProjectBrief gives a project a brief (POST /projects/{gid}/project_briefs). The
+// body is html_text (a <body> document), never text with it: Asana takes one of the two.
+// A project has at most one brief; Asana refuses a second.
+func (c *Client) CreateProjectBrief(ctx context.Context, projectGID, title, htmlText string) (*ProjectBrief, error) {
+	var b ProjectBrief
+	_, err := c.do(ctx, http.MethodPost, "/projects/"+url.PathEscape(projectGID)+"/project_briefs", fields(briefFields),
+		map[string]any{"title": title, "html_text": htmlText}, &b)
+	return &b, err
+}
+
+// UpdateProjectBrief changes a brief's title and body (PUT /project_briefs/{gid}).
+func (c *Client) UpdateProjectBrief(ctx context.Context, briefGID, title, htmlText string) (*ProjectBrief, error) {
+	var b ProjectBrief
+	_, err := c.do(ctx, http.MethodPut, "/project_briefs/"+url.PathEscape(briefGID), fields(briefFields),
+		map[string]any{"title": title, "html_text": htmlText}, &b)
+	return &b, err
+}
+
+// DeleteProjectBrief deletes a brief (DELETE /project_briefs/{gid}).
+func (c *Client) DeleteProjectBrief(ctx context.Context, briefGID string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/project_briefs/"+url.PathEscape(briefGID), nil, nil, nil)
+	return err
 }
 
 // MyTeams lists the teams of an organization the logged-in user is a member of.

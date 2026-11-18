@@ -325,6 +325,11 @@ func (s *Store) SaveProjectOverview(ctx context.Context, projectGID string, coun
 				brief_html = ? WHERE project_gid = ?`, briefState, title, text, html, projectGID); err != nil {
 				return err
 			}
+			if briefState != BriefUnavailable { // unsent changes stay until they are sent (#60)
+				if err := reapplyBriefEdits(ctx, tx, projectGID); err != nil {
+					return err
+				}
+			}
 		}
 		_, err := tx.ExecContext(ctx, "UPDATE project_overviews SET fetched_at = ? WHERE project_gid = ?", formatTime(now), projectGID)
 		return err
@@ -340,13 +345,14 @@ func (s *Store) ProjectOverview(ctx context.Context, gid string) (*ProjectOvervi
 			COALESCE(u.name, ''), p.start_on, p.due_on, p.permalink_url, p.archived,
 			EXISTS(SELECT 1 FROM project_favorites f WHERE f.project_gid = p.gid),
 			EXISTS(SELECT 1 FROM outbox WHERE kind = ? AND task_gid = p.gid),
+			EXISTS(SELECT 1 FROM outbox WHERE kind = ? AND task_gid = p.gid),
 			o.num_tasks, o.num_completed_tasks, o.num_milestones, o.num_completed_milestones,
 			COALESCE(o.brief_state, ''), COALESCE(o.brief_title, ''), COALESCE(o.brief_text, ''), COALESCE(o.brief_html, ''),
 			COALESCE(o.fetched_at, '')
 		FROM projects p LEFT JOIN users u ON u.gid = p.owner_gid AND p.owner_gid <> ''
-		LEFT JOIN project_overviews o ON o.project_gid = p.gid WHERE p.gid = ?`, OpUpdateProject, gid).
+		LEFT JOIN project_overviews o ON o.project_gid = p.gid WHERE p.gid = ?`, OpUpdateProject, OpUpdateBrief, gid).
 		Scan(&o.GID, &o.Name, &o.TeamName, &o.Color, &o.Notes, &o.HTMLNotes, &ownerGID, &ownerName, &o.StartOn, &o.DueOn,
-			&o.PermalinkURL, &o.Archived, &o.Favorite, &o.Pending, &tasks, &completed, &milestones, &completedMilestones,
+			&o.PermalinkURL, &o.Archived, &o.Favorite, &o.Pending, &o.BriefPending, &tasks, &completed, &milestones, &completedMilestones,
 			&briefState, &briefTitle, &briefText, &briefHTML, &fetchedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("project %s: %w", gid, ErrNotFound)
@@ -361,6 +367,7 @@ func (s *Store) ProjectOverview(ctx context.Context, gid string) (*ProjectOvervi
 		o.Counts = &readmodel.TaskCounts{Tasks: int(tasks.Int64), CompletedTasks: int(completed.Int64),
 			Milestones: int(milestones.Int64), CompletedMilestones: int(completedMilestones.Int64)}
 	}
+	o.BriefState = briefState
 	if briefState == BriefAvailable {
 		o.Brief = &readmodel.ProjectBrief{Title: briefTitle, Text: briefText, HTMLText: briefHTML}
 	}

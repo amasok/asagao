@@ -69,6 +69,9 @@ type AsanaAPI interface {
 	Portfolios(ctx context.Context, workspaceGID string) ([]model.Portfolio, error)
 	Project(ctx context.Context, gid string) (*model.Project, error)
 	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
+	CreateProjectBrief(ctx context.Context, projectGID, title, htmlText string) (*model.ProjectBrief, error)
+	UpdateProjectBrief(ctx context.Context, briefGID, title, htmlText string) (*model.ProjectBrief, error)
+	DeleteProjectBrief(ctx context.Context, briefGID string) error
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
 	RemoveDependencies(ctx context.Context, taskGID string, deps []string) error
 	RemoveFollowers(ctx context.Context, taskGID string, users []string) error
@@ -140,6 +143,7 @@ type LocalStore interface {
 	RemoveAttachmentFile(path string) error
 	CompleteCreate(ctx context.Context, id int64, local, real string, move *outbox.MoveTarget) error
 	CompleteOp(ctx context.Context, id int64) error
+	CompleteBriefOp(ctx context.Context, id int64, projectGID string, brief *model.ProjectBrief) error
 	CompleteStatus(ctx context.Context, id int64, local string, u model.StatusUpdate) error
 	CompleteUpload(ctx context.Context, id int64, local, real, viewURL string) error
 	CountAttempt(ctx context.Context, id int64, now time.Time) error
