@@ -77,6 +77,47 @@ func TestToDiscard(t *testing.T) {
 	}
 }
 
+// The user's project of #55: prefixed tasks may be added; the user's task takes only a
+// type and a status; nothing of theirs is deleted.
+func TestGuardHostProject(t *testing.T) {
+	pre := "asagao-realcheck-1"
+	c := &Created{Prefix: pre, HostProjects: []string{"7700007"}, HostTasks: []string{"7700008"}}
+	ok := []struct {
+		m, p string
+		b    M
+	}{
+		{"POST", "/tasks", M{"data": M{"name": pre + "-t", "projects": []string{"7700007"}}}},
+		{"PUT", "/tasks/7700008", M{"data": M{"custom_type_status_option": "1"}}},
+		{"PUT", "/tasks/7700008", M{"data": M{"resource_subtype": "custom", "custom_type": "2", "custom_type_status_option": "1"}}},
+	}
+	for _, a := range ok {
+		if err := c.guardBody(a.m, a.p, a.b); err != nil {
+			t.Errorf("%s %s %v refused: %v", a.m, a.p, a.b, err)
+		}
+	}
+	bad := []struct {
+		m, p string
+		b    M
+	}{
+		{"POST", "/tasks", M{"data": M{"name": "x", "projects": []string{"7700007"}}}},
+		{"PUT", "/tasks/7700008", M{"data": M{"name": "renamed"}}},
+		{"PUT", "/tasks/7700008", M{"data": M{"custom_type": "2", "notes": "x"}}},
+		{"PUT", "/tasks/7700008", M{"data": M{}}},
+		{"PUT", "/tasks/7700009", M{"data": M{"custom_type": "2"}}},
+		{"POST", "/projects/7700007/project_briefs", M{"data": M{"title": "x"}}},
+	}
+	for _, r := range bad {
+		if err := c.guardBody(r.m, r.p, r.b); err == nil {
+			t.Errorf("%s %s %v allowed", r.m, r.p, r.b)
+		}
+	}
+	for _, p := range []string{"/projects/7700007", "/tasks/7700008"} {
+		if err := c.guardWrite("DELETE", p, nil); err == nil {
+			t.Errorf("DELETE %s allowed", p)
+		}
+	}
+}
+
 func TestGuardBody(t *testing.T) {
 	pre := "asagao-realcheck-1"
 	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"}, Tags: []string{"3000003"},
