@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -151,5 +153,45 @@ func TestAttackReactionsAreSafe(t *testing.T) {
 		if b := fmt.Sprintf("%+v", st); strings.ContainsAny(b, "\x1b\x07") {
 			t.Errorf("control characters read: %q", b)
 		}
+	}
+}
+
+// Deleting an attachment removes only the cached copy, never the user's original file; and a
+// path shared by another attachment's row is not a reason to lose that other row's file silently.
+func TestAttackDeleteAttachmentKeepsTheOriginal(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "原本.txt")
+	must(t, os.WriteFile(src, []byte("x"), 0o600))
+	cache := t.TempDir()
+	local, err := s.UploadAttachmentLocal(ctx, "t1", src, cache, testNow)
+	must(t, err)
+	must(t, s.DeleteAttachmentLocal(ctx, local, testNow))
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("the user's original is gone: %v", err)
+	}
+	if ents, _ := os.ReadDir(cache); len(ents) != 0 {
+		t.Errorf("copy left in the cache: %v", ents)
+	}
+	// a downloaded attachment: its file goes, a missing file is no error
+	must(t, s.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "x"}, {GID: "a2", Name: "y"}}))
+	f := filepath.Join(cache, "dl.bin")
+	must(t, os.WriteFile(f, []byte("d"), 0o600))
+	must(t, s.SetAttachmentPath(ctx, "a1", f))
+	must(t, s.SetAttachmentPath(ctx, "a2", filepath.Join(cache, "never-existed")))
+	must(t, s.DeleteAttachmentLocal(ctx, "a1", testNow))
+	must(t, s.DeleteAttachmentLocal(ctx, "a2", testNow))
+	if _, err := os.Stat(f); err == nil {
+		t.Error("downloaded file kept")
+	}
+	// discard puts them back without a path
+	for _, op := range opsOfKind(t, s, OpDeleteAttachment) {
+		must(t, s.DiscardOp(ctx, op.ID))
+	}
+	a, err := s.GetAttachment(ctx, "a1")
+	must(t, err)
+	if a.LocalPath != "" {
+		t.Errorf("path after undo: %q", a.LocalPath)
 	}
 }
