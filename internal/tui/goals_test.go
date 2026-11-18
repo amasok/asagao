@@ -73,7 +73,7 @@ func mustShow(t *testing.T, screen string, wants ...string) {
 func TestGoalsScreen(t *testing.T) {
 	h := goalsHarness(t, goalsStore(t), func() time.Time { return testNow })
 	m := h.m
-	h.key(" ", "g")
+	h.key(" ", "Q")
 	mustShow(t, h.screen(), "ゴール", "[順調] 売上を伸ばす", "40 / 100（40%）", "Q4 FY26", "[遅れ] 新規顧客", "[達成] 昔のゴール")
 	h.key("c")
 	if s := h.screen(); strings.Contains(s, "昔のゴール") || !strings.Contains(s, "今日を含む期間") {
@@ -92,11 +92,11 @@ func TestGoalsScreen(t *testing.T) {
 	if m.goals.open || m.currentProject() != "p1" {
 		t.Fatalf("not moved to p1: open=%v project=%q", m.goals.open, m.currentProject())
 	}
-	h.key(" ", "g", "esc") // esc closes from the list
+	h.key(" ", "Q", "esc") // esc closes from the list
 	if m.goals.open {
 		t.Fatalf("esc did not close the list:\n%s", h.screen())
 	}
-	h.key(" ", "g", "tab")
+	h.key(" ", "Q", "tab")
 	mustShow(t, h.screen(), "ポートフォリオ", "今期の施策")
 	h.key("enter")
 	mustShow(t, h.screen(), "ポートフォリオ（今期の施策）", "プロジェクト  [遅れ] 新居プロジェクト")
@@ -117,7 +117,7 @@ func TestGoalsMenuHiddenByPlan(t *testing.T) {
 	if s := h.screen(); strings.Contains(s, "ゴール（期間・進み具合）") || !strings.Contains(s, "ポートフォリオ（自分がオーナーのもの）") {
 		t.Fatalf("menu:\n%s", s)
 	}
-	h.key("esc", " ", "G")
+	h.key("esc", " ", "l")
 	if s := h.screen(); strings.Contains(s, "tab ゴール") {
 		t.Fatalf("tab offers hidden goals:\n%s", s)
 	}
@@ -150,13 +150,13 @@ func TestGoalsScreenOnline402(t *testing.T) {
 	api.BaseURL, api.MaxRetries = srv.URL, 0
 	h := goalsHarness(t, st, time.Now) // the 402 is recorded with the syncer's clock
 	h.m.syncer = &sync.Syncer{API: api, Store: st}
-	h.key(" ", "g")
+	h.key(" ", "Q")
 	if s := h.screen(); !strings.Contains(s, "取ってきたゴール") || strings.Contains(s, "売上を伸ばす") {
 		t.Fatalf("not fetched:\n%s", s)
 	}
 	h.key("esc")
 	status = http.StatusPaymentRequired
-	h.key(" ", "g")
+	h.key(" ", "Q")
 	mustShow(t, h.screen(), "ゴールを API で使えません")
 	h.key("esc", " ")
 	if strings.Contains(h.screen(), "ゴール（期間・進み具合）") {
@@ -169,7 +169,7 @@ func TestGoalsScreenOnline402(t *testing.T) {
 func TestGoalsScreenIgnoresStaleAnswers(t *testing.T) {
 	h := goalsHarness(t, goalsStore(t), func() time.Time { return testNow })
 	m := h.m
-	h.key(" ", "g")
+	h.key(" ", "Q")
 	seq := m.goals.seq
 	fetched := &readmodel.GoalList{Goals: []readmodel.GoalView{{GID: "new", Name: "新しい"}}, FetchedAt: "x"}
 	cached := &readmodel.GoalList{Goals: []readmodel.GoalView{{GID: "old", Name: "古い"}}, FetchedAt: "x"}

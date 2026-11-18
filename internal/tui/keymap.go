@@ -124,8 +124,8 @@ func (m *Model) actions() []action {
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
-		{id: "goals", key: "g", group: groupProject, label: "ゴール（期間・進み具合）", ctx: ctxAll, plan: readmodel.PlanGoals, run: (*Model).openGoals},
-		{id: "portfolios", key: "G", group: groupProject, label: "ポートフォリオ（自分がオーナーのもの）", ctx: ctxAll, plan: readmodel.PlanPortfolios, run: (*Model).openPortfolios},
+		{id: "goals", key: "Q", group: groupProject, label: "ゴール（期間・進み具合）", ctx: ctxAll, plan: readmodel.PlanGoals, run: (*Model).openGoals},
+		{id: "portfolios", key: "l", group: groupProject, label: "ポートフォリオ（自分がオーナーのもの）", ctx: ctxAll, plan: readmodel.PlanPortfolios, run: (*Model).openPortfolios},
 		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other
 		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},
