@@ -67,7 +67,7 @@ func TestAttackTimeEntryAdd403(t *testing.T) {
 	if res, _ := s.Push(ctx); res.Failed != 1 {
 		t.Fatalf("Push = %+v", res)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanTimeTracking); v != "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v != "" {
 		t.Errorf("403 marked the plan unavailable: %q", v)
 	}
 }
