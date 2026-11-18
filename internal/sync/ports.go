@@ -101,6 +101,14 @@ type AsanaAPI interface {
 	TypeaheadUsers(ctx context.Context, workspaceGID, query string, count int) ([]model.User, error)
 	TypeaheadTags(ctx context.Context, workspaceGID, query string, count int) ([]model.Tag, error)
 	TaskByCustomID(ctx context.Context, workspaceGID, customID string) (*model.Task, error)
+
+	// Templates and jobs (#2).
+	TaskTemplates(ctx context.Context, projectGID string) ([]model.TaskTemplate, error)
+	ProjectTemplates(ctx context.Context, workspaceGID, teamGID string) ([]model.ProjectTemplate, error)
+	InstantiateTask(ctx context.Context, templateGID, name string) (*model.Job, error)
+	InstantiateProject(ctx context.Context, templateGID string, in model.ProjectFromTemplate) (*model.Job, error)
+	DuplicateProject(ctx context.Context, projectGID, name, teamGID string) (*model.Job, error)
+	Job(ctx context.Context, gid string) (*model.Job, error)
 }
 
 // LocalStore is the part of the local cache that syncing uses. *store.Store satisfies it;
@@ -152,6 +160,7 @@ type LocalStore interface {
 	OutboxCounts(ctx context.Context) (pending, conflict, failed int, err error)
 	PendingNotificationMarks(ctx context.Context, op outbox.Op, limit int) ([]outbox.Op, error)
 	PendingOps(ctx context.Context) ([]outbox.Op, error)
+	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
 	PruneProjects(ctx context.Context, workspaceGID string, keep []model.Project) error
 	PruneResults(ctx context.Context, now time.Time) (int, error)
 	PruneTasks(ctx context.Context, keep map[string]bool) (int64, error)

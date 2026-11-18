@@ -72,7 +72,7 @@ func newRoot(a *app) *cobra.Command {
 	root.PersistentFlags().BoolVar(&a.noContext, "no-context", false, ".asana.json（作業中のプロジェクト・タスク）を使わない")
 	root.Flags().BoolVar(&a.offline, "offline", false, "Asana と同期せず、ローカルストアだけで TUI を起動する")
 	root.AddCommand(a.contextCmd(), a.agentGuideCmd())
-	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.timeCmd(), a.outboxCmd(), a.mcpCmd(), a.tagCmd(), a.sectionCmd(), a.imageViewCmd(), a.keysCmd(), a.resetCmd(), a.inboxCmd(), a.searchesCmd(), a.apiCmd(), a.goalCmd(), a.portfolioCmd())
+	root.AddCommand(a.authCmd(), a.syncCmd(), a.taskCmd(), a.searchCmd(), a.projectCmd(), a.commentCmd(), a.timeCmd(), a.outboxCmd(), a.mcpCmd(), a.tagCmd(), a.sectionCmd(), a.imageViewCmd(), a.keysCmd(), a.resetCmd(), a.inboxCmd(), a.searchesCmd(), a.apiCmd(), a.goalCmd(), a.portfolioCmd(), a.templateCmd())
 	root.AddCommand(a.gitCmd())
 	return root
 }

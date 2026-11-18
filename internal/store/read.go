@@ -599,6 +599,16 @@ func (s *Store) DefaultWorkspace(ctx context.Context) (string, error) {
 	return gid, err
 }
 
+// ProjectWorkspace returns the workspace of a cached project ("" if it is not cached).
+func (s *Store) ProjectWorkspace(ctx context.Context, projectGID string) (string, error) {
+	var gid string
+	err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", projectGID).Scan(&gid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return gid, err
+}
+
 // FirstSection returns the first section of a project ("" if it has none).
 func (s *Store) FirstSection(ctx context.Context, projectGID string) (string, error) {
 	var gid string

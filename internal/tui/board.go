@@ -285,6 +285,9 @@ const (
 	pickTimeEntries // a task's time tracking entries
 	pickTimeAction  // edit / delete one entry
 	pickTimeDelete  // confirm deleting an entry
+	// templates.go
+	pickTaskTemplate
+	pickProjectTemplate
 )
 
 type pickerItem struct {
@@ -451,6 +454,10 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.archive(item.value)
 		case pickTeam:
 			return m, m.createProjectInTeam(m.newProjectName, item.value)
+		case pickTaskTemplate:
+			return m, m.makeTaskFromTemplate(p.project, item.value)
+		case pickProjectTemplate:
+			return m, m.chooseProjectTemplate(item.value)
 		case pickReset:
 			return m, m.reset(item.value)
 		case pickDue:

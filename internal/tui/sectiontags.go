@@ -41,6 +41,12 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !goals.PortfoliosAvailable(m.ctx) {
 			off[readmodel.PlanPortfolios] = true
 		}
+		// Project templates are listed and made in the default workspace. (Task templates
+		// are hidden per project: templates.go.)
+		ws, _ := st.DefaultWorkspace(m.ctx)
+		if !app.TemplatesOffered(m.ctx, st, readmodel.PlanProjectTemplates, ws, m.deps.Now()) {
+			off[readmodel.PlanProjectTemplates] = true
+		}
 		return planLoadedMsg{off: off}
 	}
 }

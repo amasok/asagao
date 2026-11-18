@@ -34,8 +34,10 @@ const (
 	promptDepSearch // search for a task to link (deps.go)
 	promptNewSection
 	promptRenameTag
-	promptTimeAdd  // record time on a task (timetracking.go)
-	promptTimeEdit // change a time tracking entry
+	promptTimeAdd          // record time on a task (timetracking.go)
+	promptTimeEdit         // change a time tracking entry
+	promptTemplateProject  // name of a project made from a template (templates.go)
+	promptDuplicateProject // name of a project's copy
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -335,6 +337,12 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptNewProject:
 		m.prompt.Prompt = "新しいプロジェクト: "
 		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+	case promptTemplateProject:
+		m.prompt.Prompt = "テンプレートから作るプロジェクト: "
+		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+	case promptDuplicateProject:
+		m.prompt.Prompt = "複製したプロジェクトの名前: "
+		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptDepSearch:
 		m.prompt.Prompt = "タスクを検索: "
 		m.prompt.Placeholder = "タスク名の一部"
@@ -386,6 +394,10 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.attach(value)
 		case promptNewProject:
 			return m, m.createProject(value)
+		case promptTemplateProject:
+			return m, m.makeProjectFromTemplate(value)
+		case promptDuplicateProject:
+			return m, m.duplicateProject(value)
 		case promptDepSearch:
 			return m, m.openDependencyTargets(m.depTask, m.depDependents, value)
 		}

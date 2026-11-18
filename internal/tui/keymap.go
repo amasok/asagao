@@ -55,11 +55,12 @@ type action struct {
 	group       string
 	label       string
 	ctx         keyCtx
-	needTask    bool   // needs a selected (or shown) task
-	needProject bool   // needs a project to be open
-	needInbox   bool   // only in the inbox (notifications)
-	plan        string // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
-	bulk        bool   // also acts on the marked tasks (bulk.go), so usable with them and no selection
+	needTask    bool                // needs a selected (or shown) task
+	needProject bool                // needs a project to be open
+	needInbox   bool                // only in the inbox (notifications)
+	plan        string              // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
+	bulk        bool                // also acts on the marked tasks (bulk.go), so usable with them and no selection
+	ready       func(m *Model) bool // offered only when it returns true (nil: always)
 	run         func(m *Model) tea.Cmd
 }
 
@@ -121,6 +122,9 @@ func (m *Model) actions() []action {
 		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
 		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
+		{id: "task_from_template", key: "G", group: groupProject, label: "テンプレートからタスクを作る（オンライン）", ctx: ctxList | ctxBoard, needProject: true, ready: (*Model).hasTaskTemplates, run: (*Model).startTaskFromTemplate},
+		{id: "project_from_template", key: "B", group: groupProject, label: "テンプレートからプロジェクトを作る（オンライン）", ctx: ctxAll, plan: readmodel.PlanProjectTemplates, ready: (*Model).hasProjectTemplates, run: (*Model).startProjectFromTemplate},
+		{id: "duplicate_project", key: "S", group: groupProject, label: "このプロジェクトを複製（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).startDuplicateProject},
 		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
@@ -164,7 +168,8 @@ func (m *Model) available() []action {
 	var out []action
 	for _, a := range m.withBindings(m.actions()) {
 		if a.ctx&ctx == 0 || (a.needTask && !hasTask && !(a.bulk && hasMarked)) || (a.needProject && m.currentProject() == "") ||
-			(a.needInbox && m.currentScope().kind != scopeInbox) || (a.plan != "" && !m.planOK(a.plan)) {
+			(a.needInbox && m.currentScope().kind != scopeInbox) || (a.plan != "" && !m.planOK(a.plan)) ||
+			(a.ready != nil && !a.ready(m)) {
 			continue
 		}
 		out = append(out, a)

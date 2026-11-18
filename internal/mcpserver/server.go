@@ -123,6 +123,7 @@ func (s *Server) New() *mcp.Server {
 	s.addSearchTools(srv)
 	s.addAgentTools(srv)
 	s.addTimeTrackingTools(srv)
+	s.addTemplateReadTools(srv)
 
 	if !s.ReadOnly {
 		write := func(destructive bool) *mcp.ToolAnnotations {
@@ -156,6 +157,7 @@ func (s *Server) New() *mcp.Server {
 			Description: "Post a status update on a project: status (on_track, at_risk, off_track, on_hold, complete), title and a Markdown text."}, s.createStatus)
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
 			Description: "Create a project in a team (needs Asana to be reachable)."}, s.createProject)
+		s.addTemplateWriteTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_project", Annotations: write(true),
 			Description: "Change a project's description (Markdown), owner, start / due dates or color (queued, sent now if Asana is reachable); " +
 				"archive / unarchive it or add / remove its members (needs Asana to be reachable). Ask before archiving."}, s.updateProject)
