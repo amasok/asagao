@@ -115,7 +115,9 @@ func (m *GoalMetric) Text() string {
 		return s
 	}
 	cur := m.Display
-	if cur == "" {
+	if cur == "" || (m.Kind == "percentage" && m.Current != nil) {
+		// Asana's display of a percentage is "0%" in a GET but "0.00" in other answers
+		// (#31): build it from the value instead.
 		cur = num(m.Current)
 	}
 	text := cur
