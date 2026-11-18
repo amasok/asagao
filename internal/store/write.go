@@ -173,6 +173,9 @@ func upsertTaskTx(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if err := reapplyCustomFieldOps(ctx, tx, t.GID); err != nil {
 		return err
 	}
+	if err := reapplySetParent(ctx, tx, t.GID); err != nil {
+		return err
+	}
 	return reapplyDependencyOps(ctx, tx, t.GID)
 }
 
@@ -300,11 +303,21 @@ func formatTimePtr(t *time.Time) any {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// ReplaceStories replaces the stories (comments and activity) of a task and records the fetch time.
+// ReplaceStories replaces the stories (comments and activity) of a task and records the fetch
+// time. fetchedAt is when the fetch started: the list may be older than what was stored
+// meanwhile, so these stay (#40):
+//
+//   - comments posted offline ("local:" gids), until they are sent;
+//   - stories created at or after fetchedAt that the list does not have: a comment sent
+//     (ReplaceLocalStory) while the list was being read. The next fetch drops them if
+//     they were deleted in Asana after all.
+//
+// Comments with an edit or a delete queued (update_story, delete_story) keep the local
+// text or stay deleted until it is sent.
 func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		// Keep comments posted offline ("local:" gids) until they are sent.
-		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ? AND gid NOT LIKE 'local:%'", taskGID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM stories WHERE task_gid = ? AND gid NOT LIKE 'local:%'
+			AND NOT (created_at <> '' AND created_at >= ?)`, taskGID, formatTime(fetchedAt)); err != nil {
 			return err
 		}
 		for _, st := range stories {
@@ -312,12 +325,22 @@ func (s *Store) ReplaceStories(ctx context.Context, taskGID string, stories []mo
 			if st.CreatedBy != nil {
 				byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
 			}
+			// A story kept above may be in the list too (an upsert keeps the full-text index right).
 			if _, err := tx.ExecContext(ctx, `INSERT INTO stories
-				(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
-				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText); err != nil {
+				(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text, reactions)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(gid) DO UPDATE SET task_gid = excluded.task_gid, type = excluded.type,
+					resource_subtype = excluded.resource_subtype, text = excluded.text, created_by_gid = excluded.created_by_gid,
+					created_by_name = excluded.created_by_name, created_at = excluded.created_at, html_text = excluded.html_text,
+					reactions = excluded.reactions`,
+				st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText,
+				reactionsJSON(st.ReactionSummary)); err != nil {
 				return err
 			}
+		}
+		// Edits and deletes of comments not sent yet are what the user sees (#34).
+		if err := reapplyStoryOps(ctx, tx, taskGID); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO task_details(task_gid, fetched_at) VALUES(?, ?)
 			ON CONFLICT(task_gid) DO UPDATE SET fetched_at = excluded.fetched_at`, taskGID, formatTime(fetchedAt))

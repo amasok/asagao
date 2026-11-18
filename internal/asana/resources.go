@@ -82,7 +82,8 @@ func (c *Client) Subtasks(ctx context.Context, taskGID string) ([]Task, error) {
 	})
 }
 
-var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at"}
+var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at",
+	"reaction_summary.emoji_base", "reaction_summary.variant", "reaction_summary.count", "reaction_summary.reacted"}
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
 	return c.task(ctx, gid, false)
@@ -129,7 +130,42 @@ func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, 
 
 // AddTaskToSection moves a task into a section (POST /sections/{gid}/addTask).
 func (c *Client) AddTaskToSection(ctx context.Context, sectionGID, taskGID string) error {
-	_, err := c.do(ctx, http.MethodPost, "/sections/"+url.PathEscape(sectionGID)+"/addTask", nil, map[string]any{"task": taskGID}, nil)
+	return c.InsertTaskInSection(ctx, sectionGID, taskGID, Position{})
+}
+
+// withPosition adds pos to a request body (insert_before / insert_after).
+func withPosition(body map[string]any, p Position) map[string]any {
+	if p.Before != "" {
+		body["insert_before"] = p.Before
+	}
+	if p.After != "" {
+		body["insert_after"] = p.After
+	}
+	return body
+}
+
+// InsertTaskInSection moves a task into a section at pos (POST /sections/{gid}/addTask
+// with insert_before / insert_after); within its own section, it only reorders it.
+func (c *Client) InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos Position) error {
+	_, err := c.do(ctx, http.MethodPost, "/sections/"+url.PathEscape(sectionGID)+"/addTask", nil, withPosition(map[string]any{"task": taskGID}, pos), nil)
+	return err
+}
+
+// DeleteTask deletes a task, with its subtasks (DELETE /tasks/{gid}). Asana keeps it in
+// the trash for a while.
+func (c *Client) DeleteTask(ctx context.Context, taskGID string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/tasks/"+url.PathEscape(taskGID), nil, nil, nil)
+	return err
+}
+
+// SetParent makes a task a subtask of parentGID at pos among its subtasks, or a top-level
+// task when parentGID is "" (POST /tasks/{gid}/setParent).
+func (c *Client) SetParent(ctx context.Context, taskGID, parentGID string, pos Position) error {
+	var parent any // null: no parent
+	if parentGID != "" {
+		parent = parentGID
+	}
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/setParent", nil, withPosition(map[string]any{"parent": parent}, pos), nil)
 	return err
 }
 
@@ -143,6 +179,31 @@ func (c *Client) AddComment(ctx context.Context, taskGID, text, htmlText string)
 	}
 	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/stories", fieldsQuery(storyFields), body, &s)
 	return &s, err
+}
+
+// UpdateStory changes the text of a comment (PUT /stories/{gid}). If htmlText (Asana rich
+// text) is set it is sent instead of text (Asana takes only one of them).
+func (c *Client) UpdateStory(ctx context.Context, gid, text, htmlText string) (*Story, error) {
+	var s Story
+	body := map[string]any{"text": text}
+	if htmlText != "" {
+		body = map[string]any{"html_text": htmlText}
+	}
+	_, err := c.do(ctx, http.MethodPut, "/stories/"+url.PathEscape(gid), fieldsQuery(storyFields), body, &s)
+	return &s, err
+}
+
+// DeleteStory deletes a comment (DELETE /stories/{gid}); Asana lets users delete only the
+// stories they created.
+func (c *Client) DeleteStory(ctx context.Context, gid string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/stories/"+url.PathEscape(gid), nil, nil, nil)
+	return err
+}
+
+// DeleteAttachment deletes an attachment (DELETE /attachments/{gid}).
+func (c *Client) DeleteAttachment(ctx context.Context, gid string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/attachments/"+url.PathEscape(gid), nil, nil, nil)
+	return err
 }
 
 func fieldsQuery(f []string) url.Values { return fields(f) }

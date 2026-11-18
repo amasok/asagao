@@ -127,7 +127,34 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 // MoveTaskLocal moves a task to another section of a project it belongs to, and queues it.
 // Moves are sent as-is (the last move wins); they are not conflict-checked.
 func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID string, now time.Time) error {
+	return s.MoveTaskAtLocal(ctx, gid, projectGID, sectionGID, Position{}, now)
+}
+
+// MoveTaskAtLocal moves a task as MoveTaskLocal, to pos in the section: just before or
+// after another task of it (pos.Before / pos.After). The store does not keep the order of
+// a section, so only Asana sees where; with a position, a move within the task's own
+// section is queued too.
+func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID string, pos Position, now time.Time) error {
+	if pos.Before != "" && pos.After != "" {
+		return errors.New("前と後は、どちらか一方だけ指定してください")
+	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
+		if err := refuseDeleted(ctx, tx, gid, pos.Before, pos.After); err != nil {
+			return err
+		}
+		for _, anchor := range []string{pos.Before, pos.After} {
+			if anchor == "" {
+				continue
+			}
+			var n int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM task_memberships WHERE task_gid = ? AND project_gid = ? AND section_gid = ?",
+				anchor, projectGID, sectionGID).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 || anchor == gid {
+				return fmt.Errorf("位置の目印 %s は、移動先のセクションにあるほかのタスクを指定してください", anchor)
+			}
+		}
 		var sectionName string
 		err := tx.QueryRowContext(ctx, "SELECT name FROM sections WHERE gid = ? AND project_gid = ?", sectionGID, projectGID).Scan(&sectionName)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -144,7 +171,7 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 		if err != nil {
 			return err
 		}
-		if current == sectionGID {
+		if current == sectionGID && pos.IsZero() {
 			return nil
 		}
 		if err := setSection(ctx, tx, gid, projectGID, sectionGID); err != nil {
@@ -156,7 +183,7 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 			if err != nil {
 				return err
 			}
-			if op != nil {
+			if op != nil && pos.IsZero() {
 				op.Payload["section"] = sectionGID
 				return saveOp(ctx, tx, op)
 			}
@@ -174,12 +201,29 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 			op = &Op{Kind: OpMoveTask, TaskGID: gid, Payload: map[string]any{"project": projectGID},
 				Base: map[string]any{"section": current}, State: OpPending, CreatedAt: formatTime(now)}
 		}
-		if op.Base["section"] == sectionGID { // moved back where it started
+		if op.Base["section"] == sectionGID && pos.IsZero() { // moved back where it started
+			if op.ID == 0 {
+				return nil
+			}
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
+		if !pos.IsZero() && op.ID != 0 {
+			// A place is next to a task that may have moved since: go after those moves.
+			if err := requeue(ctx, tx, op, now); err != nil {
+				return err
+			}
+		}
 		op.Payload["section"] = sectionGID
 		op.Payload["section_name"] = sectionName
+		delete(op.Payload, "insert_before") // the last move says where
+		delete(op.Payload, "insert_after")
+		if pos.Before != "" {
+			op.Payload["insert_before"] = pos.Before
+		}
+		if pos.After != "" {
+			op.Payload["insert_after"] = pos.After
+		}
 		return saveOp(ctx, tx, op)
 	})
 }
@@ -537,6 +581,17 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
 				return err
 			}
+			if err := dropChangesOf(ctx, tx, "story", gid, OpUpdateStory, OpDeleteStory); err != nil {
+				return err
+			}
+		}
+	case OpUpdateStory, OpDeleteStory:
+		if err := undoStoryOp(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpDeleteAttachment:
+		if err := undoAttachmentDelete(ctx, tx, op); err != nil {
+			return err
 		}
 	case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
 		if err := applyRelation(ctx, tx, *op, true); err != nil {
@@ -550,6 +605,9 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 	case OpUploadAttachment:
 		gid, _ := op.Payload["attachment"].(string)
 		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
+			return err
+		}
+		if err := dropChangesOf(ctx, tx, "attachment", gid, OpDeleteAttachment); err != nil {
 			return err
 		}
 	case OpAddTag, OpRemoveTag:
@@ -605,6 +663,12 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := applyDependency(ctx, tx, *op, true); err != nil {
 			return err
 		}
+	case OpSetParent:
+		if parent, ok := op.Base["parent"].(string); ok {
+			if err := setParent(ctx, tx, op.TaskGID, parent); err != nil {
+				return err
+			}
+		}
 	case OpUpdateTask:
 		// Restore the values from before the local edit.
 		if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
@@ -619,6 +683,9 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 // change queued for them. counted is whether the parent's num_subtasks includes it
 // (CreateTaskLocal counts subtasks; a local duplicate does not).
 func discardLocalTask(ctx context.Context, tx *sql.Tx, gid string, counted bool) error {
+	if err := undoSetParentsTo(ctx, tx, gid); err != nil {
+		return err
+	}
 	rows, err := tx.QueryContext(ctx, "SELECT gid FROM tasks WHERE parent_gid = ? AND gid LIKE 'local:%'", gid)
 	if err != nil {
 		return err
@@ -718,12 +785,16 @@ func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string
 		byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO stories
-		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText); err != nil {
+		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text, reactions)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText,
+		reactionsJSON(st.ReactionSummary)); err != nil {
 		return err
 	}
-	return recordResult(ctx, tx, ResultStory, localGID, st.GID)
+	if err := recordResult(ctx, tx, ResultStory, localGID, st.GID); err != nil {
+		return err
+	}
+	return reapplyStoryOps(ctx, tx, taskGID) // edits or a delete queued while it was being sent
 }
 
 // Prefixes of the sync_state keys that map a local gid to what Asana created for it

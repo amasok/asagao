@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -14,7 +15,9 @@ type SectionStore interface {
 	ResolveProject(ctx context.Context, arg string) (string, error)
 	ResolveSection(ctx context.Context, projectGID, arg string) (string, error)
 	ResolveMove(ctx context.Context, taskGID, project, section string) (projectGID, sectionGID string, err error)
+	ResolveMoveNear(ctx context.Context, taskGID, project, anchor string) (projectGID, sectionGID string, err error)
 	MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID string, now time.Time) error
+	MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID string, pos model.Position, now time.Time) error
 	RenameSectionLocal(ctx context.Context, sectionGID, name string, now time.Time) error
 	CreateSectionLocal(ctx context.Context, projectGID, name, before, after string, now time.Time) (string, error)
 	DeleteSectionLocal(ctx context.Context, sectionGID string, now time.Time) error

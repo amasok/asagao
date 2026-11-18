@@ -152,13 +152,17 @@ type (
 		original  taskDoc
 		err       error
 	}
+	// commentReadyMsg / commentDoneMsg: a new comment on task gid, or with story set, my
+	// comment story rewritten (original: its Markdown before).
 	commentReadyMsg struct {
-		gid, path string
-		err       error
+		gid, path       string
+		story, original string
+		err             error
 	}
 	commentDoneMsg struct {
-		gid, path string
-		err       error
+		gid, path       string
+		story, original string
+		err             error
 	}
 )
 
@@ -232,7 +236,7 @@ func (m *Model) updateEdit(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return m.deps.RunEditor(msg.path, func(err error) tea.Msg {
-			return commentDoneMsg{gid: msg.gid, path: msg.path, err: err}
+			return commentDoneMsg{gid: msg.gid, path: msg.path, story: msg.story, original: msg.original, err: err}
 		}), true
 	case commentDoneMsg:
 		return m.applyComment(msg), true
@@ -316,6 +320,9 @@ func (m *Model) applyComment(msg commentDoneMsg) tea.Cmd {
 	}
 	os.Remove(msg.path)
 	text := strings.TrimSpace(strings.Replace(string(data), strings.TrimSpace(commentTemplate), "", 1))
+	if msg.story != "" {
+		return m.applyCommentEdit(msg, text)
+	}
 	if text == "" {
 		m.status = "コメントを取り消しました"
 		return nil

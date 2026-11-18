@@ -169,6 +169,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if cmd, ok := m.updateDeps(msg); ok {
 		return m, cmd, true
 	}
+	if cmd, ok := m.updateTaskOps(msg); ok {
+		return m, cmd, true
+	}
 	if cmd, ok := m.updateSectionTags(msg); ok {
 		return m, cmd, true
 	}

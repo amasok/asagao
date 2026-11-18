@@ -55,6 +55,24 @@ func (f *postStore) AddRichCommentLocal(_ context.Context, taskGID, text, htmlTe
 	return "local:c1", nil
 }
 
+func (f *postStore) EditCommentLocal(_ context.Context, storyGID, text, htmlText string, now time.Time) error {
+	f.calls = append(f.calls, "EditCommentLocal")
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	f.wrote = append(f.wrote, fmt.Sprintf("story=%s text=%s html=%s now=%s", storyGID, text, htmlText, now.Format(time.RFC3339Nano)))
+	return nil
+}
+
+func (f *postStore) DeleteCommentLocal(_ context.Context, storyGID string, now time.Time) error {
+	f.calls = append(f.calls, "DeleteCommentLocal")
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	f.wrote = append(f.wrote, fmt.Sprintf("story=%s now=%s", storyGID, now.Format(time.RFC3339Nano)))
+	return nil
+}
+
 func (f *postStore) CreateStatusLocal(_ context.Context, projectGID, statusType, title, text, htmlText string, author readmodel.UserRef, now time.Time) (string, error) {
 	f.calls = append(f.calls, "CreateStatusLocal")
 	if f.writeErr != nil {
@@ -93,6 +111,38 @@ func TestCommentsAdd(t *testing.T) {
 	}
 	if text.calls != 1 || reads != 1 {
 		t.Errorf("converted %d times, read the clock %d times; want 1 and 1", text.calls, reads)
+	}
+}
+
+// Edit converts the Markdown like Add (rich text and its plain text) and passes the
+// comment's gid; Delete passes it as it is. Neither asks for the user: the store checks
+// that the comment is theirs. The store's error comes back as it is.
+func TestCommentsEditDelete(t *testing.T) {
+	st, text, reads := newPostStore(), &fakeText{}, 0
+	c := &Comments{Store: st, Text: text, Clock: clock(&reads)}
+	ctx := context.Background()
+	if err := c.Edit(ctx, "s1", "**直した**"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Delete(ctx, "s2"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"EditCommentLocal", "DeleteCommentLocal"}; !slices.Equal(st.calls, want) {
+		t.Errorf("calls %q, want %q", st.calls, want)
+	}
+	want := []string{
+		"story=s1 text=comment-plain:**直した** html=<comment>**直した**</comment> now=" + now.Format(time.RFC3339Nano),
+		"story=s2 now=" + now.Add(time.Second).Format(time.RFC3339Nano),
+	}
+	if !slices.Equal(st.wrote, want) {
+		t.Errorf("wrote %q\nwant %q", st.wrote, want)
+	}
+	st.writeErr = errWrite
+	if err := c.Edit(ctx, "s1", "x"); !errors.Is(err, errWrite) {
+		t.Errorf("Edit: err = %v, want the store's", err)
+	}
+	if err := c.Delete(ctx, "s1"); !errors.Is(err, errWrite) {
+		t.Errorf("Delete: err = %v, want the store's", err)
 	}
 }
 

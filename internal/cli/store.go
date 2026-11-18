@@ -21,6 +21,8 @@ type Store interface {
 	AddCommentOnceLocal(ctx context.Context, taskGID, marker string, changes map[string]any, text, htmlText string, author readmodel.UserRef, now time.Time) (gid string, added bool, err error)
 	// CopyTo writes a copy of the store to a new file (for --dry-run).
 	CopyTo(ctx context.Context, dst string) error
+	// SetAttachmentDir is where the attachment files it may delete are (a dry run's own).
+	SetAttachmentDir(dir string)
 	Close() error
 }
 

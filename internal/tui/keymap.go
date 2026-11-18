@@ -90,6 +90,8 @@ func (m *Model) actions() []action {
 		{id: "followers", key: "w", group: groupTask, label: "フォロワーを追加 / 外す", ctx: ctxTask, needTask: true, run: (*Model).openFollowers},
 		{id: "projects", key: "P", group: groupTask, label: "ほかのプロジェクトに追加 / 外す", ctx: ctxTask, needTask: true, run: (*Model).openProjects},
 		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
+		{id: "set_parent", key: "p", group: groupTask, label: "親タスクを付け替える", ctx: ctxTask, needTask: true, run: (*Model).openParentPicker},
+		{id: "delete_task", key: "Z", group: groupTask, label: "タスクを削除（確認あり）", ctx: ctxTask, needTask: true, run: (*Model).confirmDeleteTask},
 		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
@@ -215,25 +217,60 @@ func (m *Model) syncNow() tea.Cmd {
 
 // --- rendering ---
 
-// renderMenu draws the which-key style menu: the actions available here, grouped.
-func (m *Model) renderMenu(w int) []string {
+// renderMenu draws the which-key style menu: the actions available here, grouped, in
+// as many columns as it takes to be at most maxH lines high (labels are cut to fit the
+// columns when it has to be narrow).
+func (m *Model) renderMenu(w, maxH int) []string {
 	groups := map[string][]action{}
 	for _, a := range m.available() {
 		groups[a.group] = append(groups[a.group], a)
 	}
-	var cols [][]string
+	var lines []string
 	for _, g := range groupOrder {
 		if len(groups[g]) == 0 {
 			continue
 		}
-		col := []string{m.st.paneTitle.Render(g)}
-		for _, a := range groups[g] {
-			col = append(col, m.st.footerKey.Render(padRight(a.key, 2))+" "+a.label)
+		if len(lines) > 0 {
+			lines = append(lines, "")
 		}
-		cols = append(cols, col)
+		lines = append(lines, m.st.paneTitle.Render(g))
+		for _, a := range groups[g] {
+			lines = append(lines, m.st.footerKey.Render(padRight(a.key, 2))+" "+a.label)
+		}
 	}
-	return layoutColumns(cols, w-4)
+	inner := w - 4
+	widest := 0
+	for _, l := range lines {
+		widest = max(widest, ansi.StringWidth(l))
+	}
+	// as many columns as fit at full width, more (narrower) when still too high
+	n := max(1, min(len(lines), (inner+menuGap)/(widest+menuGap)))
+	for (len(lines)+n-1)/n > max(1, maxH) && (inner-menuGap*n)/(n+1) >= menuMinWidth {
+		n++
+	}
+	h := (len(lines) + n - 1) / n
+	cw := min(widest, (inner-menuGap*(n-1))/n)
+	out := make([]string, h)
+	for c := 0; c < n; c++ {
+		for r := 0; r < h; r++ {
+			cell := ""
+			if i := c*h + r; i < len(lines) {
+				cell = ansi.Truncate(lines[i], cw, "…")
+			}
+			if c < n-1 {
+				cell = padRight(cell, cw) + strings.Repeat(" ", menuGap)
+			}
+			out[r] += cell
+		}
+	}
+	return out
 }
+
+// menuGap is the space between the menu's columns; menuMinWidth the narrowest column.
+const (
+	menuGap      = 3
+	menuMinWidth = 18
+)
 
 // layoutColumns places columns side by side, wrapping to more rows of columns when narrow.
 func layoutColumns(cols [][]string, w int) []string {

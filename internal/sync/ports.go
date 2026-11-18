@@ -41,10 +41,14 @@ type AsanaAPI interface {
 	UserTaskList(ctx context.Context, userGID, workspaceGID string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
+	DeleteAttachment(ctx context.Context, gid string) error
+	DeleteStory(ctx context.Context, gid string) error
+	DeleteTask(ctx context.Context, taskGID string) error
 	Dependencies(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	Dependents(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	DuplicateTask(ctx context.Context, taskGID, name string) (*model.Ref, error)
 	Events(ctx context.Context, resource, token string) (model.EventPage, error)
+	InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos model.Position) error
 	FavoriteProjects(ctx context.Context, workspaceGID string) ([]model.Ref, error)
 	MarkNotifications(ctx context.Context, workspaceGID string, gids []string, read bool) (failed []string, err error)
 	Me(ctx context.Context) (*model.User, error)
@@ -60,6 +64,7 @@ type AsanaAPI interface {
 	RemoveTag(ctx context.Context, taskGID, tagGID string) error
 	Section(ctx context.Context, gid string) (*model.Section, error)
 	Sections(ctx context.Context, projectGID string) ([]model.Section, error)
+	SetParent(ctx context.Context, taskGID, parentGID string, pos model.Position) error
 	SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*model.Project, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
 	Stories(ctx context.Context, taskGID string) ([]model.Story, error)
@@ -72,6 +77,7 @@ type AsanaAPI interface {
 	TasksByGID(ctx context.Context, gids []string) (tasks []model.Task, gone []string, err error)
 	UpdateProject(ctx context.Context, gid string, changes map[string]any) (*model.Project, error)
 	UpdateSection(ctx context.Context, gid, name string) (*model.Section, error)
+	UpdateStory(ctx context.Context, gid, text, htmlText string) (*model.Story, error)
 	UpdateTask(ctx context.Context, gid string, fields map[string]any) (*model.Task, error)
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
 	Users(ctx context.Context, workspaceGID string) ([]model.User, error)
@@ -82,6 +88,7 @@ type AsanaAPI interface {
 // its types are domain/outbox's, readmodel's and asana/model's.
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
+	ApplyStory(ctx context.Context, gid, text, htmlText string) error
 	ApplyTag(ctx context.Context, t model.Tag) error
 	ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error
 	CompleteCreateSection(ctx context.Context, id int64, local, real string) error
@@ -92,6 +99,10 @@ type LocalStore interface {
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
+	CompleteDelete(ctx context.Context, id int64, gid string) error
+	// RemoveAttachmentFile deletes a local attachment file, only inside the store's
+	// attachments folder.
+	RemoveAttachmentFile(path string) error
 	CompleteCreate(ctx context.Context, id int64, local, real string, move *outbox.MoveTarget) error
 	CompleteOp(ctx context.Context, id int64) error
 	CompleteStatus(ctx context.Context, id int64, local string, u model.StatusUpdate) error
@@ -108,6 +119,7 @@ type LocalStore interface {
 	GetOp(ctx context.Context, id int64) (*outbox.Op, error)
 	GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error)
 	InboxState(ctx context.Context) (readmodel.InboxState, error)
+	LocalResult(ctx context.Context, prefix, gid string) (real string, waiting bool, err error)
 	MarkOpConflict(ctx context.Context, id int64, server map[string]any) error
 	MarkOpFailed(ctx context.Context, id int64, cause error) error
 	MarkOpVerify(ctx context.Context, id int64, note string) error
