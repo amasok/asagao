@@ -103,7 +103,7 @@ func (m *Model) actions() []action {
 		{id: "search_asana", key: "g", group: groupView, label: "Asana でも検索（キャッシュにないタスク。/ で語を入れてから）", ctx: ctxAll, run: (*Model).searchAsana},
 		{id: "saved_search", key: "/", group: groupView, label: "保存した検索を呼び出す", ctx: ctxAll, run: (*Model).openSavedSearchPicker},
 		{id: "field_filter", key: "F", group: groupView, label: "カスタムフィールドで絞り込む", ctx: ctxAll, run: (*Model).openFieldFilterPicker},
-		{id: "view", key: "v", shortcut: []string{"v"}, group: groupView, label: "表示を切り替え（リスト→ボード→カレンダー）", ctx: ctxList | ctxBoard | ctxCalendar, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},
+		{id: "view", key: "v", shortcut: []string{"v"}, group: groupView, label: "表示を切り替え（リスト→ボード→タイムライン→カレンダー）", ctx: ctxList | ctxBoard | ctxCalendar, run: func(m *Model) tea.Cmd { return m.viewKey("v") }},
 		{id: "zoom", key: "z", shortcut: []string{"z"}, group: groupView, label: "詳細を全画面 / 戻す", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.viewKey("z") }},
 		{id: "collapse", key: "-", shortcut: []string{"-"}, group: groupView, label: "このセクションを折りたたむ / 開く", ctx: ctxList, run: (*Model).toggleGroup},
 		{id: "collapse_all", key: "_", shortcut: []string{"_"}, group: groupView, label: "すべて折りたたむ", ctx: ctxList, run: func(m *Model) tea.Cmd { return m.setAllGroups(true) }},
@@ -423,6 +423,11 @@ func (m *Model) navHelp() [][2]string {
 		return [][2]string{{"h / l", "前日 / 翌日"}, {"j / k", "1 週間後 / 前"}, {"n / p", "翌月 / 前月"}, {".", "今日"},
 			{"enter", "その日のタスク（選ぶと詳細）"}, {"a", "その日が期日のタスクを追加"}}
 	}
+	if m.timelineActive() {
+		return [][2]string{{"j / k", "タスクを移動"}, {"l / →", "サブタスクを開く（なければ詳細）"}, {"h / ←", "閉じる / 親へ / プロジェクト一覧へ"},
+			{"[ / ]", "1 週前 / 後へ"}, {"{ / }", "1 日の幅を狭く / 広く"}, {".", "今日へ戻る"}, {"enter", "詳細を開く"},
+			{"前 / 後", "選んだタスクが待つタスク / 選んだタスクを待つタスク"}, {"待", "ほかのタスクを待っているタスク"}}
+	}
 	return [][2]string{{"j / k", "タスクを移動"}, {"l / →", "サブタスクを開く"}, {"h / ←", "閉じる / 親へ / プロジェクト一覧へ"},
 		{"enter", "詳細を開く"}, {"g / G", "先頭 / 末尾"}, {"tab", "ペインを切り替え"}}
 }
@@ -443,6 +448,9 @@ func (m *Model) footerHints() [][2]string {
 	if n := len(m.markedTasks()); n > 0 {
 		return append([][2]string{{fmt.Sprintf("印 %d 件:", n), ""}, {m.actionKey("complete"), "完了"}, {m.actionKey("move"), "移動"},
 			{m.actionKey("assignee"), "担当"}, {m.actionKey("due"), "期日"}, {m.actionKey("mark"), "印"}, {"esc", "印を外す"}}, common...)
+	}
+	if m.timelineActive() {
+		return append([][2]string{{"j/k", "移動"}, {"l/h", "サブタスク"}, {"[/]", "週"}, {"{/}", "幅"}, {".", "今日"}, {"enter", "詳細"}, {"v", "表示"}}, common...)
 	}
 	return append([][2]string{{"j/k", "移動"}, {"l/h", "サブタスク"}, {"enter", "詳細"}, {"x", "完了"}, {"a", "追加"}, {"e", "編集"}, {"/", "検索"}}, common...)
 }
