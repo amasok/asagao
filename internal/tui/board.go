@@ -538,7 +538,7 @@ func (m *Model) viewKey(key string) tea.Cmd {
 			m.focus = paneDetail
 		}
 	case "v":
-		// list -> board (projects only) -> calendar -> list
+		// list -> board -> timeline (projects only) -> calendar -> list
 		if m.query != "" {
 			m.status = "検索中は表示を切り替えられません（esc で検索を解除）"
 			return nil
@@ -550,9 +550,12 @@ func (m *Model) viewKey(key string) tea.Cmd {
 		selected := m.selectedTask()
 		switch {
 		case m.calendar:
-			m.calendar, m.board = false, false
-		case m.board || m.currentScope().kind != scopeProject:
-			m.calendar, m.board = true, false
+			m.calendar, m.board, m.timeline = false, false, false
+		case m.timeline || m.currentScope().kind != scopeProject:
+			m.calendar, m.board, m.timeline = true, false, false
+		case m.board:
+			m.board, m.timeline = false, true
+			m.tlFollow = "" // show the selected task's bar
 		default:
 			m.board = true
 		}
