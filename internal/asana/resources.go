@@ -457,7 +457,7 @@ func (c *Client) CreateStatusUpdate(ctx context.Context, projectGID, statusType,
 	// Asana takes only one of text and html_text ("400 Must supply only one of text or
 	// html_text"), like comments.
 	body := map[string]any{"parent": projectGID, "status_type": statusType, "title": title, "text": text}
-	if htmlText != "" {
+	if strings.TrimSpace(htmlText) != "" { // blank HTML would lose the text
 		delete(body, "text")
 		body["html_text"] = htmlText
 	}
