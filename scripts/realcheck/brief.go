@@ -74,7 +74,10 @@ func (c *Check) brief() {
 		str(third, "data", "title")+" / "+oneLine(str(third, "data", "html_text")))
 
 	// Changed in Asana meanwhile: asagao's next change is a conflict, not an overwrite.
-	s.write("brief-changed-in-asana", "PUT", "/project_briefs/"+bg, M{"data": M{"html_text": "<body><p>changed in Asana</p></body>"}})
+	// (a brief's html_text refuses <p>: "400 XML is invalid")
+	if ch := s.write("brief-changed-in-asana", "PUT", "/project_briefs/"+bg, M{"data": M{"html_text": "<body>changed in Asana</body>"}}); str(ch, "data", "gid") == "" {
+		c.Rep.fail("Asana 側でブリーフを変える", show(ch))
+	}
 	before := c.outbox()
 	var cr M
 	err := c.R.JSON(c.ctx, &cr, "project", "brief", c.p, "--title", pre+" brief 3")
@@ -126,6 +129,10 @@ func (c *Check) brief() {
 	}
 	s.write("brief-second-create", "POST", "/projects/"+c.p+"/project_briefs", M{"data": M{"title": pre + " second", "html_text": "<body>y</body>"}})
 	s.write("brief-text-and-html", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"text": "t", "html_text": "<body>h</body>"}})
+	s.write("brief-with-p", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": "<body><p>p</p></body>"}})
+	s.write("brief-with-table", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": "<body><table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table></body>"}})
+	s.get("brief-table-read", "/project_briefs/"+c.briefGID(), "opt_fields=html_text")
+	s.write("brief-with-img", "PUT", "/project_briefs/"+c.briefGID(), M{"data": M{"html_text": `<body><img src="https://example.com/realcheck.png"></body>`}})
 	c.syncClean("最後")
 }
 
