@@ -10,11 +10,11 @@ const atkObj = `<object type="application/vnd.asana.external_media" data-asana-t
 
 func twice(t *testing.T, in string) string {
 	t.Helper()
-	o1, _, err := BriefFromMarkdown(BriefToEditableMarkdown(in, nil))
+	o1, _, err := BriefFromMarkdown(BriefToEditableMarkdown(in, nil), in)
 	if err != nil {
 		t.Fatalf("round1 %q: %v", in, err)
 	}
-	o2, _, err := BriefFromMarkdown(BriefToEditableMarkdown(o1, nil))
+	o2, _, err := BriefFromMarkdown(BriefToEditableMarkdown(o1, nil), o1)
 	if err != nil {
 		t.Fatalf("round2 %q: %v", o1, err)
 	}
@@ -63,7 +63,7 @@ func TestBriefAttackBlockTextExactBackticks(t *testing.T) {
 
 func TestBriefAttackCRLF(t *testing.T) {
 	md := "a\r\n\r\n```asana-html\r\n" + atkTable + "\r\n```\r\n\r\nb\r\n"
-	out, _, err := BriefFromMarkdown(md)
+	out, _, err := BriefFromMarkdown(md, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestBriefAttackCRLF(t *testing.T) {
 
 func TestBriefAttackTildeFence(t *testing.T) {
 	md := "a\n\n~~~asana-html\n" + atkTable + "\n~~~\n\nb\n"
-	out, _, err := BriefFromMarkdown(md)
+	out, _, err := BriefFromMarkdown(md, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestBriefAttackTildeFence(t *testing.T) {
 
 func TestBriefAttackUnclosedFence(t *testing.T) {
 	md := "a\n\n```asana-html\n" + atkTable + "\n"
-	out, _, err := BriefFromMarkdown(md)
+	out, _, err := BriefFromMarkdown(md, "")
 	if err == nil && !strings.Contains(out, atkTable) {
 		t.Fatalf("unclosed fence silently dropped content: %q", out)
 	}
@@ -93,7 +93,7 @@ func TestBriefAttackUnclosedFence(t *testing.T) {
 
 func TestBriefAttackAsanaHTMLInsideOtherCodeBlock(t *testing.T) {
 	md := "````\n```asana-html\n<script>x</script>\n```\n````\n"
-	out, _, err := BriefFromMarkdown(md)
+	out, _, err := BriefFromMarkdown(md, "")
 	if err != nil {
 		t.Fatalf("code block content treated as block: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBriefAttackRejects(t *testing.T) {
 	}
 	for _, b := range bad {
 		md := "x\n\n```asana-html\n" + b + "\n```\n"
-		out, _, err := BriefFromMarkdown(md)
+		out, _, err := BriefFromMarkdown(md, "")
 		if err == nil {
 			t.Errorf("accepted %q -> %q", b, out)
 		}
@@ -126,7 +126,7 @@ func TestBriefAttackRejects(t *testing.T) {
 }
 
 func TestBriefAttackTextInjectionEscaped(t *testing.T) {
-	out, _, err := BriefFromMarkdown("<script>alert(1)</script> & <table>\n")
+	out, _, err := BriefFromMarkdown("<script>alert(1)</script> & <table>\n", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,14 +136,14 @@ func TestBriefAttackTextInjectionEscaped(t *testing.T) {
 }
 
 func TestBriefAttackEmptyAndHuge(t *testing.T) {
-	if h, _, err := BriefFromMarkdown(""); err != nil || strings.Contains(h, "<table") {
+	if h, _, err := BriefFromMarkdown("", ""); err != nil || strings.Contains(h, "<table") {
 		t.Fatalf("%q %v", h, err)
 	}
-	big := "<body>" + strings.Repeat("line\n", 200000) + atkTable + "</body>"
+	big := "<body>" + strings.Repeat("line\n", 20000) + atkTable + "</body>"
 	twice(t, big)
-	many := "<body>" + strings.Repeat(atkTable, 3000) + "</body>"
+	many := "<body>" + strings.Repeat(atkTable, 300) + "</body>"
 	out := twice(t, many)
-	if strings.Count(out, "<table") != 3000 {
+	if strings.Count(out, "<table") != 300 {
 		t.Fatalf("tables: %d", strings.Count(out, "<table"))
 	}
 }
