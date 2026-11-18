@@ -84,7 +84,8 @@ func (s *Syncer) FetchGoals(ctx context.Context) error {
 }
 
 // FetchGoal refreshes one goal (with its rich notes) and what supports it. A goal Asana
-// no longer has is forgotten (the error is returned).
+// no longer has, or no longer lets me see (it answers 403 "You do not have access to this
+// goal." for both), is forgotten (the error is returned).
 func (s *Syncer) FetchGoal(ctx context.Context, gid string) error {
 	if s.API == nil {
 		return ErrOffline
@@ -96,7 +97,7 @@ func (s *Syncer) FetchGoal(ctx context.Context, gid string) error {
 	if refused, serr := s.goalPlanRefused(ctx, readmodel.PlanGoals, err); refused || serr != nil {
 		return serr
 	}
-	if isNotFound(err) {
+	if isNotFound(err) || isForbidden(err) {
 		if derr := s.Store.DeleteGoal(ctx, gid); derr != nil {
 			return derr
 		}
@@ -147,8 +148,8 @@ func (s *Syncer) FetchPortfolios(ctx context.Context) error {
 	return s.Store.SetSyncState(ctx, readmodel.KeyPortfolios+ws, s.clock().UTC().Format(time.RFC3339))
 }
 
-// FetchPortfolio refreshes one portfolio and its items. A portfolio Asana no longer has
-// is forgotten (the error is returned).
+// FetchPortfolio refreshes one portfolio and its items. A portfolio Asana no longer has,
+// or no longer lets me see, is forgotten (the error is returned).
 func (s *Syncer) FetchPortfolio(ctx context.Context, gid string) error {
 	if s.API == nil {
 		return ErrOffline
@@ -160,7 +161,7 @@ func (s *Syncer) FetchPortfolio(ctx context.Context, gid string) error {
 	if refused, serr := s.goalPlanRefused(ctx, readmodel.PlanPortfolios, err); refused || serr != nil {
 		return serr
 	}
-	if isNotFound(err) {
+	if isNotFound(err) || isForbidden(err) {
 		if derr := s.Store.DeletePortfolio(ctx, gid); derr != nil {
 			return derr
 		}

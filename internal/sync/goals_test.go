@@ -251,9 +251,9 @@ func TestGoalsFailuresKeepTheCache(t *testing.T) {
 	}
 }
 
-// A goal Asana no longer has is forgotten.
+// A goal or portfolio Asana no longer has, or no longer lets me see, is forgotten.
 func TestFetchGoneGoal(t *testing.T) {
-	s, st, _, now := setupGoals(t)
+	s, st, f, now := setupGoals(t)
 	ctx := context.Background()
 	if err := s.FetchGoals(ctx); err != nil {
 		t.Fatal(err)
@@ -263,6 +263,30 @@ func TestFetchGoneGoal(t *testing.T) {
 	}
 	if _, err := goalUC(st, now).Get(ctx, "g2"); !errors.Is(err, readmodel.ErrNotFound) {
 		t.Fatalf("g2 kept: %v", err)
+	}
+	// Asana answers a goal or portfolio I cannot see with 403 ("You do not have access").
+	f.set(func() {
+		f.status["/goals/g1"] = http.StatusForbidden
+		f.status["/portfolios/pf1"] = http.StatusForbidden
+	})
+	if err := s.FetchPortfolios(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FetchGoal(ctx, "g1"); err == nil {
+		t.Fatal("a 403 is not returned")
+	}
+	if err := s.FetchPortfolio(ctx, "pf1"); err == nil {
+		t.Fatal("a 403 is not returned")
+	}
+	uc := goalUC(st, now)
+	if _, err := uc.Get(ctx, "g1"); !errors.Is(err, readmodel.ErrNotFound) {
+		t.Fatalf("g1 kept after a 403: %v", err)
+	}
+	if _, err := uc.Portfolio(ctx, "pf1"); !errors.Is(err, readmodel.ErrNotFound) {
+		t.Fatalf("pf1 kept after a 403: %v", err)
+	}
+	if !uc.Available(ctx) || !uc.PortfoliosAvailable(ctx) {
+		t.Fatal("a 403 hides the feature")
 	}
 }
 
