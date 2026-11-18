@@ -248,6 +248,9 @@ due = ["D", "ctrl+t"]
 | `task status <gid> <ステータス>` | カスタムタイプのタスクのステータスを変える（選べるものは `task show` に出る） |
 | `task create <名前> --parent <gid>` | サブタスクを作成 |
 | `section rename <セクション> <新しい名前> --project <プロジェクト>` | セクションの名前を変更 |
+| `section create <名前> --project <プロジェクト> [--before\|--after <セクション>]` | セクションを作成（位置を指定しなければ末尾） |
+| `section move <セクション> --project <プロジェクト> --before\|--after <セクション>` | セクションの並びを変える |
+| `section rm <セクション> --project <プロジェクト> --yes` | セクションを削除 |
 | `tag list` | タグと、そのタグが付いたタスクの数 |
 | `comment add <gid> <コメント>` | コメントする |
 | `time list <gid> [--offline]` | タスクに記録した作業時間と合計（[タイムトラッキング](#タイムトラッキング)） |
@@ -393,6 +396,7 @@ claude mcp add asana -- asagao mcp --read-only   # 読み取りだけ
 | `set_parent` | 親タスクを付け替える / 親から外す（`--read-only` では無効） |
 | `delete_task` | タスクをサブタスクごと削除（`dry_run` で消えるものを確かめられる。`--read-only` では無効） |
 | `rename_section` | セクションの名前を変更（`--read-only` では無効） |
+| `create_section` / `move_section` / `delete_section` | セクションを作成 / 並べ替え / 削除（`--read-only` では無効） |
 | `list_tags` | タグとタスク数 |
 | `list_saved_searches` / `run_saved_search` | 保存した検索の一覧 / 名前を指定して実行（読み取りだけ。保存・削除は CLI から） |
 | `get_project` | プロジェクトの説明（マークダウン）・オーナー・期間・色・進み具合・ブリーフ・セクション・メンバー・ステータス更新・カスタムフィールド（`include_available_fields` で追加できるワークスペースのフィールドも） |
