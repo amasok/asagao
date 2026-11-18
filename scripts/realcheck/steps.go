@@ -13,8 +13,21 @@ const taskFields = "name,notes,html_notes,due_on,completed,assignee.gid,parent.g
 	"resource_subtype,approval_status,assignee_section.gid,workspace.gid," +
 	"custom_fields.gid,custom_fields.number_value,custom_fields.date_value,custom_fields.people_value.gid"
 
+// gate stops the write steps after Ctrl-C, or when Asana rate-limited us twice.
+func (c *Check) gate() {
+	if c.ctx.Err() != nil {
+		c.Rep.fail("中断", c.ctx.Err().Error())
+		panic(errStop)
+	}
+	if c.R.RateLimited >= 2 {
+		c.Rep.fail("レート制限 (429) が 2 回出たので、書き込みをやめて片付けに進んだ", "")
+		panic(errStop)
+	}
+}
+
 // tool calls an MCP write tool and checks it reached Asana right away.
 func (c *Check) tool(step, name string, args M) M {
+	c.gate()
 	var out M
 	err := c.R.Tool(c.ctx, name, args, &out)
 	if err != nil {
@@ -28,6 +41,7 @@ func (c *Check) tool(step, name string, args M) M {
 }
 
 func (c *Check) cli(step string, args ...string) M {
+	c.gate()
 	var out M
 	if err := c.R.JSON(c.ctx, &out, args...); err != nil {
 		c.Rep.fail(step, err.Error())
@@ -411,7 +425,7 @@ func (c *Check) cacheStory(task, gid string) any {
 
 func (c *Check) attachments() {
 	c.group("添付 (upload_attachment・delete_attachment)")
-	dir, err := os.MkdirTemp("", "asagao-realcheck-")
+	dir, err := os.MkdirTemp(c.R.Env.Work, "attach-")
 	if err != nil {
 		c.Rep.fail("一時ファイル", err.Error())
 		return
@@ -574,26 +588,73 @@ func (c *Check) relations() {
 	}
 }
 
-// discardFailed drops what is left in the outbox (a paid feature refused) and records it.
-func (c *Check) discardFailed(step string) {
+func (c *Check) outbox() []M {
 	var ob []M
-	_ = c.R.JSON(c.ctx, &ob, "outbox", "list")
-	for _, e := range ob {
+	if err := c.R.JSON(c.ctx, &ob, "outbox", "list"); err != nil {
+		c.Rep.fail("outbox list", err.Error())
+	}
+	return ob
+}
+
+// discardFailed drops what the step left in the outbox (a paid feature refused) and
+// records it: only entries that were not there before the step and are about our tasks.
+func (c *Check) discardFailed(step string, before []M) {
+	for _, e := range toDiscard(before, c.outbox(), c.Made.Tasks) {
 		c.Rep.note(step+" の未送信", fmt.Sprintf("%s %s: %s", str(e, "kind"), str(e, "state"), str(e, "last_error")))
-		id := fmt.Sprint(get(e, "id"))
-		if f, ok := get(e, "id").(float64); ok {
-			id = fmt.Sprint(int64(f))
-		}
+		id := outboxID(e)
 		if _, err := c.R.CLI(c.ctx, "outbox", "discard", id); err != nil {
 			c.Rep.fail("outbox discard "+id, err.Error())
 		}
 	}
 }
 
+func outboxID(e M) string {
+	if f, ok := get(e, "id").(float64); ok {
+		return fmt.Sprint(int64(f))
+	}
+	return fmt.Sprint(get(e, "id"))
+}
+
+// toDiscard is the entries of after that are new since before and about one of tasks.
+func toDiscard(before, after []M, tasks []string) []M {
+	old := map[string]bool{}
+	for _, e := range before {
+		old[outboxID(e)] = true
+	}
+	var out []M
+	for _, e := range after {
+		if !old[outboxID(e)] && slices.Contains(tasks, str(e, "task_gid")) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// leftovers checks after cleanup that typeahead finds nothing with the prefix.
+func (c *Check) leftovers() {
+	for _, kind := range []string{"task", "tag", "project"} {
+		as, err := c.asana("/workspaces/"+TestWorkspace+"/typeahead", "resource_type="+kind, "query="+c.Made.Prefix, "opt_fields=name")
+		var left []string
+		for _, e := range asArray(as) {
+			if strings.HasPrefix(str(e, "name"), c.Made.Prefix) {
+				left = append(left, str(e, "gid")+" "+str(e, "name"))
+			}
+		}
+		c.Rep.check("typeahead で前置きの "+kind+" が見つからない", err == nil && len(left) == 0, errText(err)+strings.Join(left, ", "))
+	}
+}
+
+func asArray(v any) []any {
+	a, _ := v.([]any)
+	return a
+}
+
 // premium tries the paid features' writes and records how this plan answers.
 func (c *Check) premium() {
 	c.group("有料機能の書き込み (依存関係・種類・承認・カスタムフィールド)")
 	try := func(step string, args M, check func()) {
+		c.gate()
+		before := c.outbox()
 		var out M
 		err := c.R.Tool(c.ctx, "update_task", args, &out)
 		c.Rep.note(step, describeWrite(out, err))
@@ -601,7 +662,7 @@ func (c *Check) premium() {
 		if err == nil && boolean(out, "sent") {
 			check()
 		}
-		c.discardFailed(step)
+		c.discardFailed(step, before)
 	}
 	try("add_dependencies T2 ← T3", M{"gid": c.t2, "add_dependencies": []string{c.t3}}, func() {
 		c.eq("T2 が T3 を待つ", c.t2, []string{"dependencies", "#gid"}, nil, []any{c.t3})

@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,49 +24,78 @@ import (
 )
 
 func main() {
+	os.Exit(realMain())
+}
+
+func realMain() int {
 	home, _ := os.UserHomeDir()
 	bin := flag.String("bin", filepath.Join(home, "asagao-test", "bin", "asagao-realcheck"), "asagao built from this branch")
-	out := flag.String("out", "", "write the report (Markdown) here as well")
+	out := flag.String("out", "", "write the report (Markdown) here as well (default: the run directory)")
 	probe := flag.Bool("probe", false, "only read: probe the paid features")
 	pause := flag.Duration("pause", 2*time.Second, "pause after every command (free plan: 150 requests a minute)")
 	flag.Parse()
 
-	env := NewEnv(home, *bin, os.Getenv("PATH"))
+	runID := time.Now().Format("20060102-150405")
+	env := NewEnv(home, *bin, os.Getenv("PATH"), runID)
 	if err := CheckEnv(env); err != nil {
 		fmt.Fprintln(os.Stderr, "realcheck: refusing to run:", err)
-		os.Exit(2)
+		return 2
+	}
+	if err := env.MakeRunDirs(); err != nil {
+		fmt.Fprintln(os.Stderr, "realcheck:", err)
+		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	rep := &Report{}
-	r := &Runner{Env: env, Pause: *pause, Log: io.MultiWriter(os.Stderr, &rep.log)}
-	code := run(ctx, r, rep, *probe)
+	r := &Runner{Env: env, Pause: *pause, Log: os.Stderr}
+	c := &Check{R: r, Rep: rep, Made: &Created{Prefix: "asagao-realcheck-" + runID}}
+	go func() {
+		// The first Ctrl-C stops the steps and cleanup runs; a second one leaves at once
+		// and says what is left in Asana.
+		<-ctx.Done()
+		stop()
+		again := make(chan os.Signal, 1)
+		signal.Notify(again, os.Interrupt, syscall.SIGTERM)
+		<-again
+		fmt.Fprintln(os.Stderr, "realcheck: interrupted twice; these may be left in Asana:", show(c.Made))
+		os.Exit(130)
+	}()
+	code := run(ctx, c, *probe)
 	md := rep.Markdown()
 	fmt.Print(md)
-	if *out != "" {
-		if err := os.WriteFile(*out, []byte(md), 0o644); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
+	if *out == "" {
+		*out = filepath.Join(env.Run, "report.md")
 	}
-	os.Exit(code)
+	if err := os.WriteFile(*out, []byte(md), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	fmt.Fprintln(os.Stderr, "realcheck: report:", *out)
+	return code
 }
 
-func run(ctx context.Context, r *Runner, rep *Report, probeOnly bool) (code int) {
+func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
+	r, rep := c.R, c.Rep
 	data, err := r.CLI(ctx, "api", "/users/me", "-f", "opt_fields=gid,workspaces.gid")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "realcheck: users/me:", err)
 		return 2
 	}
-	me, err := CheckMe(data)
-	if err != nil {
+	if c.Me, err = CheckMe(data); err != nil {
 		fmt.Fprintln(os.Stderr, "realcheck: refusing to run:", err)
 		return 2
 	}
-	c := &Check{R: r, Rep: rep, Me: me, Made: &Created{Prefix: "asagao-realcheck-" + time.Now().Format("20060102-150405")}}
+	team, err := r.API(ctx, "GET", "/teams/"+TestTeam, "opt_fields=organization.gid")
+	if err != nil || str(decode(team), "organization", "gid") != TestWorkspace {
+		fmt.Fprintln(os.Stderr, "realcheck: refusing to run: team", TestTeam, "is not in the test workspace:", err)
+		return 2
+	}
+	c.team = TestTeam
+	c.ctx = ctx
 
 	c.group("sync (受信トレイ・依存関係・承認の取得)")
-	c.syncClean("最初の同期")
+	c.syncClean("最初の同期 (全件)")
 	c.inbox()
 	c.probes()
 	if probeOnly {
@@ -81,14 +109,14 @@ func run(ctx context.Context, r *Runner, rep *Report, probeOnly bool) (code int)
 		}
 		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
+		c.ctx = cctx
 		rep.group("片付け")
 		left := r.Cleanup(cctx, c.Made)
 		rep.check("作ったものを全部消した", len(left) == 0, strings.Join(left, "\n"))
-		c.ctx = cctx
+		c.leftovers()
 		c.syncClean("片付けのあとの同期")
 		code = rep.exitCode()
 	}()
-	c.ctx = ctx
 	c.writes()
 	return rep.exitCode()
 }

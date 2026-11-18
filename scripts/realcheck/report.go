@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 )
@@ -10,7 +9,6 @@ import (
 type Report struct {
 	lines  []string
 	failed int
-	log    bytes.Buffer
 }
 
 func (r *Report) group(name string) { r.lines = append(r.lines, "", "### "+name) }

@@ -21,7 +21,24 @@ type Runner struct {
 	Pause time.Duration // after every command that may reach Asana
 	Log   io.Writer
 
+	// RateLimited counts the commands whose output mentions Asana's rate limit (429).
+	RateLimited int
+
 	mcp *mcpClient
+}
+
+func (r *Runner) command(ctx context.Context, args ...string) *exec.Cmd {
+	// --no-context: never read a .asana.json (the working directory is the run's own).
+	cmd := exec.CommandContext(ctx, r.Env.Bin, append([]string{"--no-context"}, args...)...)
+	cmd.Env = r.Env.Vars
+	cmd.Dir = r.Env.Work
+	detach(cmd)
+	return cmd
+}
+
+func rateLimited(out string) bool {
+	l := strings.ToLower(out)
+	return strings.Contains(l, "429") || strings.Contains(l, "rate limit") || strings.Contains(l, "too many requests")
 }
 
 func (r *Runner) pause() { time.Sleep(r.Pause) }
@@ -32,12 +49,14 @@ func (r *Runner) CLI(ctx context.Context, args ...string) ([]byte, error) {
 	defer r.pause()
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, r.Env.Bin, args...)
-	cmd.Env = r.Env.Vars
+	cmd := r.command(ctx, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
 	fmt.Fprintf(r.Log, "  $ asagao %s\n", strings.Join(args, " "))
+	if err != nil && rateLimited(out.String()+errb.String()) {
+		r.RateLimited++
+	}
 	if err != nil {
 		return out.Bytes(), fmt.Errorf("asagao %s: %w: %s%s", args[0], err, strings.TrimSpace(out.String()), strings.TrimSpace(errb.String()))
 	}
@@ -107,7 +126,7 @@ func (r *Runner) JSON(ctx context.Context, v any, args ...string) error {
 func (r *Runner) Tool(ctx context.Context, name string, args map[string]any, v any) error {
 	defer r.pause()
 	if r.mcp == nil {
-		c, err := startMCP(ctx, r.Env)
+		c, err := startMCP(ctx, r)
 		if err != nil {
 			return err
 		}
@@ -134,6 +153,9 @@ func (r *Runner) Tool(ctx context.Context, name string, args map[string]any, v a
 		text = append(text, c.Text)
 	}
 	if tr.IsError {
+		if rateLimited(strings.Join(text, " ")) {
+			r.RateLimited++
+		}
 		return fmt.Errorf("mcp %s: %s", name, strings.Join(text, " "))
 	}
 	if v == nil {
@@ -171,9 +193,8 @@ type mcpClient struct {
 	stder bytes.Buffer
 }
 
-func startMCP(ctx context.Context, e Env) (*mcpClient, error) {
-	cmd := exec.Command(e.Bin, "mcp")
-	cmd.Env = e.Vars
+func startMCP(ctx context.Context, r *Runner) (*mcpClient, error) {
+	cmd := r.command(context.Background(), "mcp") // not ctx: cleanup closes it itself
 	c := &mcpClient{cmd: cmd}
 	cmd.Stderr = &c.stder
 	in, err := cmd.StdinPipe()

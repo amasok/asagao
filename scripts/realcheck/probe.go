@@ -12,12 +12,6 @@ func (c *Check) probes() {
 	ctx := c.ctxOr()
 	c.group("プランごとの機能 (読み取りだけ)")
 	ws := "/workspaces/" + TestWorkspace
-	var team []struct {
-		GID string `json:"gid"`
-	}
-	if err := c.R.JSON(ctx, &team, "project", "teams"); err == nil && len(team) > 0 {
-		c.team = team[0].GID
-	}
 	list := []struct {
 		name, path string
 		fields     []string

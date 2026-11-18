@@ -58,3 +58,19 @@ func TestWriteAPIRefusesWithoutRunning(t *testing.T) {
 		t.Fatal("query on a write allowed")
 	}
 }
+
+func TestToDiscard(t *testing.T) {
+	mine := []string{"2000002"}
+	before := []M{{"id": 1.0, "task_gid": "2000002"}, {"id": 2.0, "task_gid": "9999999"}}
+	after := []M{
+		{"id": 1.0, "task_gid": "2000002"}, // there before the step
+		{"id": 2.0, "task_gid": "9999999"}, // someone else's, there before
+		{"id": 3.0, "task_gid": "2000002"}, // new, ours: discard
+		{"id": 4.0, "task_gid": "9999999"}, // new but not our task
+		{"id": 5.0, "task_gid": ""},        // new, not about a task (tag, section, ...)
+	}
+	got := toDiscard(before, after, mine)
+	if len(got) != 1 || outboxID(got[0]) != "3" {
+		t.Fatalf("got %v", got)
+	}
+}

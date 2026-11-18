@@ -84,13 +84,12 @@ func (r *Runner) WriteAPI(ctx context.Context, c *Created, method, path string, 
 }
 
 // owned checks in Asana, right before deleting, that an object is in the test workspace
-// and was made by this run: its name has the prefix, or (tasks) it is in one of our
-// projects or under one of our tasks.
+// and has this run's prefix (tasks, tags, custom fields), or (status updates) is on one of
+// our projects. The callers pass only gids this run recorded or collected from its own
+// projects and tasks.
 func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool, string) {
 	var fields string
 	switch kind {
-	case "tasks":
-		fields = "name,workspace.gid,projects.gid,parent.gid"
 	case "status_updates":
 		fields = "title,parent.gid"
 	default:
@@ -105,9 +104,6 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 		Workspace struct {
 			GID string `json:"gid"`
 		} `json:"workspace"`
-		Projects []struct {
-			GID string `json:"gid"`
-		} `json:"projects"`
 		Parent *struct {
 			GID string `json:"gid"`
 		} `json:"parent"`
@@ -124,38 +120,92 @@ func (r *Runner) owned(ctx context.Context, c *Created, kind, gid string) (bool,
 	if o.Workspace.GID != TestWorkspace {
 		return false, "workspace " + o.Workspace.GID
 	}
-	if strings.HasPrefix(o.Name, c.Prefix) {
-		return true, ""
+	if !strings.HasPrefix(o.Name, c.Prefix) {
+		return false, fmt.Sprintf("name %q has no prefix %q", o.Name, c.Prefix)
 	}
-	if kind == "tasks" {
-		for _, p := range o.Projects {
-			if slices.Contains(c.Projects, p.GID) {
-				return true, ""
+	return true, ""
+}
+
+// collect adds to c the tasks and tags of this run that were not recorded: every task of
+// our projects and their subtasks (recursively), and what typeahead finds by the prefix
+// (a copy made by a job, a task adopted by the reconciliation, ...). owned still checks
+// each one before it is deleted.
+func (r *Runner) collect(ctx context.Context, c *Created) {
+	gidsOf := func(data json.RawMessage) []string {
+		var a []struct {
+			GID  string `json:"gid"`
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(data, &a)
+		var out []string
+		for _, e := range a {
+			out = append(out, e.GID)
+		}
+		return out
+	}
+	for _, p := range c.Projects {
+		if data, err := r.API(ctx, "GET", "/projects/"+p+"/tasks", "opt_fields=gid"); err == nil {
+			for _, g := range gidsOf(data) {
+				c.add(&c.Tasks, g)
 			}
 		}
-		if o.Parent != nil && slices.Contains(c.Tasks, o.Parent.GID) {
-			return true, ""
+	}
+	for i := 0; i < len(c.Tasks); i++ { // c.Tasks grows: subtasks of subtasks
+		if data, err := r.API(ctx, "GET", "/tasks/"+c.Tasks[i]+"/subtasks", "opt_fields=gid"); err == nil {
+			for _, g := range gidsOf(data) {
+				c.add(&c.Tasks, g)
+			}
 		}
 	}
-	return false, fmt.Sprintf("name %q has no prefix %q", o.Name, c.Prefix)
+	for _, rt := range []struct {
+		kind string
+		list *[]string
+	}{{"task", &c.Tasks}, {"tag", &c.Tags}} {
+		data, err := r.API(ctx, "GET", "/workspaces/"+TestWorkspace+"/typeahead",
+			"resource_type="+rt.kind, "query="+c.Prefix, "count=100", "opt_fields=name")
+		if err != nil {
+			continue
+		}
+		var a []struct {
+			GID  string `json:"gid"`
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(data, &a)
+		for _, e := range a {
+			if strings.HasPrefix(e.Name, c.Prefix) {
+				c.add(rt.list, e.GID)
+			}
+		}
+	}
+}
+
+// gone reports whether an error from GET means the object does not exist (any more).
+func gone(why string) bool {
+	for _, s := range []string{"Not Found", "Unknown object", "does not exist", "not found"} {
+		if strings.Contains(why, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Cleanup deletes what the run created: tasks first (deleting a project leaves its tasks),
 // then status updates, tags, custom fields and projects. It returns what was left behind.
 func (r *Runner) Cleanup(ctx context.Context, c *Created) (left []string) {
 	r.Close() // no MCP server pushing while we delete
+	r.collect(ctx, c)
 	del := func(kind string, gids []string) {
 		for i := len(gids) - 1; i >= 0; i-- { // subtasks and copies were added after parents
 			g := gids[i]
 			ok, why := r.owned(ctx, c, kind, g)
 			if !ok {
-				if strings.Contains(why, "Not Found") || strings.Contains(why, "Unknown object") || strings.Contains(why, "does not exist") {
+				if gone(why) {
 					continue // already gone (deleted by the run, or with its parent)
 				}
 				left = append(left, fmt.Sprintf("%s/%s (not deleted: %s)", kind, g, why))
 				continue
 			}
-			if _, err := r.WriteAPI(ctx, c, "DELETE", "/"+kind+"/"+g); err != nil {
+			if _, err := r.WriteAPI(ctx, c, "DELETE", "/"+kind+"/"+g); err != nil && !gone(err.Error()) {
 				left = append(left, fmt.Sprintf("%s/%s (%v)", kind, g, err))
 			}
 		}
