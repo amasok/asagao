@@ -202,7 +202,8 @@ func BriefFromMarkdown(md, original string) (htmlText, plain string, err error) 
 		if asGiven[strings.TrimSpace(raw)] {
 			continue
 		}
-		if err := checkBriefHTML(raw); err != nil {
+		// an image as Asana reads it back (src, sizes, style) is checked as it is written
+		if err := checkBriefHTML(writeImagesWithGID(raw)); err != nil {
 			return "", "", fmt.Errorf("%d 番目の %s ブロック: %w", i+1, BriefFence, err)
 		}
 	}
@@ -507,8 +508,20 @@ func hasAttr(t xml.StartElement, name string) bool {
 var (
 	imgTag   = regexp.MustCompile(`(?i)<img\b[^>]*>`)
 	imgEnd   = regexp.MustCompile(`(?i)</img\s*>`)
-	imgGIDRe = regexp.MustCompile(`(?i)\bdata-asana-gid\s*=\s*"([^"]*)"`)
+	imgGIDRe = regexp.MustCompile(`(?i)\bdata-asana-gid\s*=\s*(?:"([^"]*)"|'([^']*)')`)
 )
+
+// writeImagesWithGID is writeImages for the images that have a gid only: one without is
+// left as it is (for checkBriefHTML to refuse).
+func writeImagesWithGID(raw string) string {
+	raw = imgEnd.ReplaceAllString(raw, "")
+	return imgTag.ReplaceAllStringFunc(raw, func(tag string) string {
+		if gid := imgGID(tag); gid != "" {
+			return `<img data-asana-gid="` + html.EscapeString(gid) + `"/>`
+		}
+		return tag
+	})
+}
 
 // writeImages writes the images of a block as Asana takes them: <img data-asana-gid="…"/>
 // only. Asana reads an image back with src, sizes and a style, and refuses src when it is
@@ -517,10 +530,18 @@ var (
 func writeImages(raw string) string {
 	raw = imgEnd.ReplaceAllString(raw, "")
 	return imgTag.ReplaceAllStringFunc(raw, func(tag string) string {
-		m := imgGIDRe.FindStringSubmatch(tag)
-		if m == nil || m[1] == "" {
-			return ""
+		if gid := imgGID(tag); gid != "" {
+			return `<img data-asana-gid="` + html.EscapeString(gid) + `"/>`
 		}
-		return `<img data-asana-gid="` + m[1] + `"/>`
+		return ""
 	})
+}
+
+// imgGID is the data-asana-gid of an <img> tag ("" for none).
+func imgGID(tag string) string {
+	m := imgGIDRe.FindStringSubmatch(tag)
+	if m == nil {
+		return ""
+	}
+	return m[1] + m[2]
 }

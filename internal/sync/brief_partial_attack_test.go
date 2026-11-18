@@ -147,8 +147,17 @@ func TestBriefAttackKeepLocalThenEditKeepsServerTitle(t *testing.T) {
 	if err := st.ResolveKeepLocal(ctx, ops[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit("目的", "秋"), now); err != nil {
+	// the brief shown is Asana's with the change over it: the next edit (as app.Briefs makes
+	// it, from what is shown) keeps Asana's title
+	o, _ := st.ProjectOverview(ctx, "p1")
+	if o.Brief == nil || o.Brief.Title != "あちら" || o.Brief.Text != "春" {
+		t.Fatalf("shown after keep_local: %+v", o.Brief)
+	}
+	if err := st.UpdateProjectBriefLocal(ctx, "p1", edit(o.Brief.Title, "秋"), now); err != nil {
 		t.Fatal(err)
+	}
+	if ops := briefOps(t, st); ops[0].Payload["title"] != nil {
+		t.Fatalf("the title is queued: %+v", ops[0].Payload)
 	}
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
 		t.Fatalf("%+v %v", res, err)

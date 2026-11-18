@@ -200,3 +200,18 @@ func TestBriefBlockImages(t *testing.T) {
 		t.Fatal("an image without a gid accepted")
 	}
 }
+
+// An image in a table Asana gave, as it reads it back (src, sizes, style), does not stop a
+// change of that table: it is checked and sent as Asana takes it (tester, #60).
+func TestBriefChangedBlockWithAsanaImage(t *testing.T) {
+	table := `<table><tr><td><IMG DATA-ASANA-GID='5' src="https://x" width="10" style="s"></img>a</td></tr></table>`
+	orig := "<body>" + table + "</body>"
+	md := strings.Replace(BriefToEditableMarkdown(orig, nil), ">a</td>", ">b</td>", 1)
+	out, _, err := BriefFromMarkdown(md, orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != `<body><table><tr><td><img data-asana-gid="5"/>b</td></tr></table></body>` {
+		t.Fatalf("out = %q", out)
+	}
+}

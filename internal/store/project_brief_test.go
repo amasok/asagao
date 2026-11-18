@@ -131,3 +131,47 @@ func TestBriefDiscardKeepsLaterChange(t *testing.T) {
 		t.Fatalf("overview = %+v", o)
 	}
 }
+
+// "Keep mine" on a brief change in conflict shows Asana's brief with the change over it,
+// and for a brief Asana deleted meanwhile, queues the whole brief to make it again (a
+// change of the body only would make one without its title).
+func TestBriefKeepLocal(t *testing.T) {
+	s, ctx := briefStore(t, asanaBrief)
+	now := time.Now()
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>春</body>", Text: "春"}, now))
+	op := briefEntries(t, s)[0]
+	must(t, s.MarkOpConflict(ctx, op.ID, map[string]any{"state": BriefAvailable, "title": "あちら", "text": "夏", "html_text": "<body>夏</body>"}))
+	must(t, s.ResolveKeepLocal(ctx, op.ID))
+	if o, _ := s.ProjectOverview(ctx, "p1"); o.Brief == nil || o.Brief.Title != "あちら" || o.Brief.Text != "春" {
+		t.Fatalf("shown = %+v", o.Brief)
+	}
+
+	s2, ctx := briefStore(t, asanaBrief)
+	must(t, s2.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>春</body>", Text: "春"}, now))
+	op = briefEntries(t, s2)[0]
+	must(t, s2.MarkOpConflict(ctx, op.ID, map[string]any{"state": BriefNone, "title": "", "text": "", "html_text": ""}))
+	must(t, s2.ResolveKeepLocal(ctx, op.ID))
+	op = briefEntries(t, s2)[0]
+	if op.Payload["title"] != "目的" || op.Payload["html_text"] != "<body>春</body>" || op.Base["state"] != BriefNone {
+		t.Fatalf("op = %+v", op)
+	}
+}
+
+// Discarding a change in conflict ("keep Asana's") shows Asana's brief as the conflict
+// found it, so that the next change is made from it (found on the real Asana, #60: a
+// delete after that was a conflict again, its base the old brief).
+func TestBriefDiscardConflictShowsAsana(t *testing.T) {
+	s, ctx := briefStore(t, asanaBrief)
+	now := time.Now()
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Title: "目的", HTMLText: "<body>春</body>", Text: "春"}, now))
+	op := briefEntries(t, s)[0]
+	must(t, s.MarkOpConflict(ctx, op.ID, map[string]any{"state": BriefAvailable, "title": "目的", "text": "夏", "html_text": "<body>夏</body>"}))
+	must(t, s.DiscardOp(ctx, op.ID))
+	if o, _ := s.ProjectOverview(ctx, "p1"); o.Brief == nil || o.Brief.Text != "夏" || o.BriefPending {
+		t.Fatalf("shown = %+v", o.Brief)
+	}
+	must(t, s.UpdateProjectBriefLocal(ctx, "p1", BriefEdit{Delete: true}, now))
+	if op := briefEntries(t, s)[0]; op.Base["text"] != "夏" {
+		t.Fatalf("base = %+v", op.Base)
+	}
+}

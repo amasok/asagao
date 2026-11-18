@@ -185,12 +185,19 @@ func briefWith(cur cachedBrief, p map[string]any) cachedBrief {
 	return b
 }
 
-// undoBriefOp puts back the brief as it was before a discarded entry, with the project's
+// undoBriefOp puts back the brief as it was before a discarded entry (or, for one in
+// conflict, as Asana has it), with the project's
 // other brief changes still queued (a later one made while it was failed or being sent)
 // applied over it.
 func undoBriefOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	if err := writeBrief(ctx, tx, op.TaskGID, cachedBrief{state: briefStr(op.Base, "state"), title: briefStr(op.Base, "title"),
-		text: briefStr(op.Base, "text"), html: briefStr(op.Base, "html_text")}); err != nil {
+	was := op.Base
+	if op.State == OpConflict && briefStr(op.Conflict, "state") != "" {
+		// Asana's brief, as the conflict found it: newer than the base, and what the next
+		// change must be made from (found on the real Asana, #60)
+		was = op.Conflict
+	}
+	if err := writeBrief(ctx, tx, op.TaskGID, cachedBrief{state: briefStr(was, "state"), title: briefStr(was, "title"),
+		text: briefStr(was, "text"), html: briefStr(was, "html_text")}); err != nil {
 		return err
 	}
 	return reapplyBriefEditsBut(ctx, tx, op.TaskGID, op.ID)
@@ -212,4 +219,21 @@ func (s *Store) CompleteBriefOp(ctx context.Context, id int64, projectGID string
 		}
 		return reapplyBriefEdits(ctx, tx, projectGID)
 	})
+}
+
+// keepLocalBrief readies a brief change in conflict for "keep mine" (before its base
+// becomes Asana's brief): a change of part of a brief that Asana deleted meanwhile makes
+// the whole brief again, as it is shown here.
+func keepLocalBrief(ctx context.Context, tx *sql.Tx, op *Op) error {
+	if op.Payload["delete"] == true || briefStr(op.Conflict, "state") == BriefAvailable {
+		return nil
+	}
+	cur, err := readBrief(ctx, tx, op.TaskGID)
+	if err != nil {
+		return err
+	}
+	if cur.state == BriefAvailable {
+		op.Payload = map[string]any{"title": cur.title, "html_text": cur.html, "text": cur.text}
+	}
+	return nil
 }

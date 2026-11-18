@@ -562,8 +562,26 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 		if err := ensureNotSending(op); err != nil {
 			return err
 		}
+		if op.Kind == OpUpdateBrief {
+			if err := keepLocalBrief(ctx, tx, op); err != nil {
+				return err
+			}
+		}
 		maps.Copy(op.Base, op.Conflict)
 		op.Conflict, op.State, op.LastError = map[string]any{}, OpPending, ""
+		if op.Kind == OpUpdateBrief { // shown: Asana's brief with this change over it
+			cur, err := readBrief(ctx, tx, op.TaskGID)
+			if err != nil {
+				return err
+			}
+			base := cachedBrief{state: briefStr(op.Base, "state"), title: briefStr(op.Base, "title"),
+				text: briefStr(op.Base, "text"), html: briefStr(op.Base, "html_text")}
+			if cur.state != BriefUnavailable {
+				if err := writeBrief(ctx, tx, op.TaskGID, briefWith(base, op.Payload)); err != nil {
+					return err
+				}
+			}
+		}
 		return saveOp(ctx, tx, op)
 	})
 }
