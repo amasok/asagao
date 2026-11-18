@@ -3,6 +3,7 @@ package asana
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 )
@@ -71,7 +72,9 @@ func (c *Client) TypeaheadTags(ctx context.Context, workspaceGID, query string, 
 var errBadCustomID = errors.New("asana: invalid custom ID")
 
 // TaskByCustomID reads the task with the custom ID (e.g. "ENG-123") in the workspace.
-// Asana answers 404 when there is none.
+// Asana answers 404 when there is none, and also 500 for some IDs it does not know (an
+// uppercase prefix no project has, seen on a real workspace): a 5xx is therefore not
+// retried here, only a 429.
 func (c *Client) TaskByCustomID(ctx context.Context, workspaceGID, customID string) (*Task, error) {
 	if customID == "" || customID == "." || customID == ".." {
 		return nil, errBadCustomID
@@ -79,7 +82,8 @@ func (c *Client) TaskByCustomID(ctx context.Context, workspaceGID, customID stri
 	ts, err := readTasks(c, false, func(f []string) ([]Task, error) {
 		var t Task
 		path := "/workspaces/" + url.PathEscape(workspaceGID) + "/tasks/custom_id/" + url.PathEscape(customID)
-		if err := c.get(ctx, path, fields(f), &t); err != nil {
+		_, err := c.doWith(ctx, http.MethodGet, path, fields(f), nil, &t, func(status int) bool { return status == http.StatusTooManyRequests })
+		if err != nil {
 			return nil, err
 		}
 		return []Task{t}, nil

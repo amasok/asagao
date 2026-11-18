@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/commitref"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -251,7 +252,13 @@ func ResolveCustomIDs(ctx context.Context, st SyncStateReader, find CustomIDFind
 			if errors.Is(err, readmodel.ErrNotFound) {
 				continue
 			}
-			last, find = err, nil
+			last = err
+			// Asana not reached (offline, out of time): not asked for the other IDs. An
+			// answer (a 500 that Asana gives for some unknown IDs) is about this ID only.
+			var apiErr *model.Error
+			if !errors.As(err, &apiErr) {
+				find = nil
+			}
 		}
 		gid, err := st.SyncState(ctx, readmodel.KeyCustomID+id)
 		if err != nil {
