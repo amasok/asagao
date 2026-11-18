@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"regexp"
 	"strconv"
@@ -41,8 +42,7 @@ var briefTags = map[string]map[string]bool{
 	"object": {"type": true, "data-asana-gid": true, "data-asana-type": true, "data": true},
 	"a": {"href": true, "data-asana-gid": true, "data-asana-type": true, "data-asana-accessible": true,
 		"data-asana-dynamic": true, "data-asana-project": true, "data-asana-tag": true},
-	"img": {"data-asana-gid": true, "data-asana-type": true, "src": true, "data-src-width": true, "data-src-height": true,
-		"data-thumbnail-url": true, "data-thumbnail-width": true, "data-thumbnail-height": true, "style": true, "alt": true},
+	"img":    {"data-asana-gid": true, "alt": true}, // an image attached to the brief (no src: 400)
 	"strong": {}, "em": {}, "b": {}, "i": {}, "u": {}, "s": {}, "code": {}, "br": {}, "hr": {},
 	"ul": {}, "ol": {}, "li": {}, "blockquote": {}, "pre": {}, "h1": {}, "h2": {},
 }
@@ -211,7 +211,7 @@ func BriefFromMarkdown(md, original string) (htmlText, plain string, err error) 
 	if len(blocks) == 0 {
 		return htmlText, plain, nil
 	}
-	htmlText = putBlocks(htmlText, blocks, func(raw string) string { return raw }, true)
+	htmlText = putBlocks(htmlText, blocks, writeImages, true)
 	htmlText = textBeforeBlock.ReplaceAllString(htmlText, "$1\n$2")
 	plain = putBlocks(plain, blocks, briefPlain, false)
 	return htmlText, plain, nil
@@ -239,13 +239,21 @@ var textBeforeBlock = regexp.MustCompile(`([^>\n])(<(?:table|object)[\s>/])`)
 
 // cutFences returns md with each top-level asana-html block replaced by a placeholder
 // paragraph, and the text of each block. Other fenced blocks are left as they are (an
-// asana-html fence inside one is code).
+// asana-html fence inside one is code). A top-level Markdown table (GFM: a header row, a
+// delimiter row, rows; after a blank line) becomes a block of its <table>.
 func cutFences(md string) (string, []string) {
 	lines := strings.Split(md, "\n")
 	var out []string
 	var blocks []string
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
+		if rows := tableAt(lines, i, len(out) == 0 || strings.TrimSpace(out[len(out)-1]) == ""); rows > 0 {
+			// a Markdown table: Asana takes no Markdown, but a brief takes <table>
+			blocks = append(blocks, tableHTML(lines[i:i+rows]))
+			out = append(out, "", blockMark(len(blocks)-1), "")
+			i += rows - 1
+			continue
+		}
 		ch, n, info := fenceOpen(line)
 		if n == 0 {
 			out = append(out, line)
@@ -337,6 +345,9 @@ func checkBriefHTML(raw string) error {
 					return fmt.Errorf("<%s> の属性 %s は使えません", t.Name.Local, a.Name.Local)
 				}
 			}
+			if name == "img" && !hasAttr(t, "data-asana-gid") {
+				return errors.New("<img> には、ブリーフに添付した画像の data-asana-gid が要ります (Asana は src の画像を受け付けません)")
+			}
 			if !voidTags[name] {
 				open = append(open, name)
 			}
@@ -392,4 +403,124 @@ func briefPlain(raw string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// tableDelimiter matches a GFM table's delimiter row ("| --- | :-: |").
+var tableDelimiter = regexp.MustCompile(`^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$`)
+
+// tableAt returns how many lines from lines[i] are a Markdown table (0: none there). It
+// starts a table only after a blank line (afterBlank), not indented, and its header and
+// delimiter rows have as many cells.
+func tableAt(lines []string, i int, afterBlank bool) int {
+	if !afterBlank || i+1 >= len(lines) {
+		return 0
+	}
+	head, delim := lines[i], strings.TrimRight(lines[i+1], " \t")
+	if head == "" || head[0] == ' ' || head[0] == '\t' || !strings.Contains(head, "|") ||
+		!tableDelimiter.MatchString(delim) ||
+		!strings.Contains(delim, "-") || len(tableCells(head)) != len(tableCells(delim)) {
+		return 0
+	}
+	n := 2
+	for i+n < len(lines) {
+		l := lines[i+n]
+		if strings.TrimSpace(l) == "" || !strings.Contains(l, "|") || indentWidth(l) >= 4 {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// tableCells splits a table row into its cells: around "|" not escaped ("\|"), without the
+// outer pipes.
+func tableCells(row string) []string {
+	row = strings.TrimSpace(row)
+	row = strings.TrimPrefix(row, "|")
+	if strings.HasSuffix(row, "|") && !strings.HasSuffix(row, "\\|") {
+		row = row[:len(row)-1]
+	}
+	var cells []string
+	var b strings.Builder
+	for i := 0; i < len(row); i++ {
+		switch {
+		case row[i] == '\\' && i+1 < len(row) && row[i+1] == '|':
+			b.WriteByte('|')
+			i++
+		case row[i] == '|':
+			cells = append(cells, strings.TrimSpace(b.String()))
+			b.Reset()
+		default:
+			b.WriteByte(row[i])
+		}
+	}
+	return append(cells, strings.TrimSpace(b.String()))
+}
+
+// tableHTML writes a Markdown table (its header row, delimiter row and rows) as a brief's
+// <table>: Asana's rich text has no header cells, so the header is the first row. A cell's
+// Markdown is converted as a line of text (bold, links...); one that would be a block (a
+// heading, a list) is its text as written.
+func tableHTML(rows []string) string {
+	width := len(tableCells(rows[0]))
+	var b strings.Builder
+	b.WriteString("<table>")
+	for k, row := range rows {
+		if k == 1 {
+			continue // the delimiter row
+		}
+		cells := tableCells(row)
+		b.WriteString("<tr>")
+		for c := 0; c < width; c++ {
+			cell := ""
+			if c < len(cells) {
+				cell = cells[c]
+			}
+			b.WriteString("<td>" + cellHTML(cell) + "</td>")
+		}
+		b.WriteString("</tr>")
+	}
+	b.WriteString("</table>")
+	return b.String()
+}
+
+// cellHTML is a table cell's Markdown as inline rich text.
+func cellHTML(md string) string {
+	h := strings.TrimSuffix(strings.TrimPrefix(TaskNotes.FromMarkdown(md), "<body>"), "</body>")
+	for _, block := range []string{"<h1", "<h2", "<ul", "<ol", "<blockquote", "<pre", "<hr", "<img", "\n"} {
+		if strings.Contains(h, block) {
+			return html.EscapeString(md)
+		}
+	}
+	return h
+}
+
+func hasAttr(t xml.StartElement, name string) bool {
+	for _, a := range t.Attr {
+		if strings.EqualFold(a.Name.Local, name) && a.Value != "" {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	imgTag   = regexp.MustCompile(`(?i)<img\b[^>]*>`)
+	imgEnd   = regexp.MustCompile(`(?i)</img\s*>`)
+	imgGIDRe = regexp.MustCompile(`(?i)\bdata-asana-gid\s*=\s*"([^"]*)"`)
+)
+
+// writeImages writes the images of a block as Asana takes them: <img data-asana-gid="…"/>
+// only. Asana reads an image back with src, sizes and a style, and refuses src when it is
+// written (400 "XML is invalid", found on the real Asana, #60); an image without a gid
+// (not an attachment) cannot be written, and is left out.
+func writeImages(raw string) string {
+	raw = imgEnd.ReplaceAllString(raw, "")
+	return imgTag.ReplaceAllStringFunc(raw, func(tag string) string {
+		m := imgGIDRe.FindStringSubmatch(tag)
+		if m == nil || m[1] == "" {
+			return ""
+		}
+		return `<img data-asana-gid="` + m[1] + `"/>`
+	})
 }

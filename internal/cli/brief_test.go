@@ -1,15 +1,21 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	gosync "sync"
 	"testing"
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -139,5 +145,70 @@ func TestProjectBriefRefuses(t *testing.T) {
 	st.Close()
 	if _, err := runCLI(t, "project", "brief", "新居", "--offline", "--title", "y"); err == nil || !strings.Contains(err.Error(), "ブリーフ") {
 		t.Fatalf("unavailable: %v", err)
+	}
+}
+
+// briefAsana is a fake Asana whose brief of p1 was changed there to "あちら".
+type briefAsana struct {
+	mu   gosync.Mutex
+	puts int
+}
+
+func (f *briefAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	reply := func(v string) { fmt.Fprintf(w, `{"data":%s}`, v) }
+	switch r.Method + " " + r.URL.Path {
+	case "GET /users/me":
+		reply(`{"gid":"me","name":"Me"}`)
+	case "GET /projects/p1":
+		reply(`{"gid":"p1","name":"新居","workspace":{"gid":"w1"},"project_brief":{"gid":"b1"}}`)
+	case "GET /projects/p1/task_counts":
+		reply(`{"num_tasks":4}`)
+	case "GET /project_briefs/b1":
+		reply(`{"gid":"b1","title":"目的","text":"あちら","html_text":"<body>あちら</body>"}`)
+	case "PUT /project_briefs/b1":
+		f.puts++
+		reply(`{"gid":"b1","title":"目的","text":"こちら","html_text":"<body>こちら</body>"}`)
+	default:
+		http.Error(w, `{"errors":[{"message":"not in the fake"}]}`, http.StatusNotFound)
+	}
+}
+
+// --file is made from the cached brief: a body changed in Asana since is a conflict when it
+// is sent, not overwritten (found on the real Asana, #60: the brief was fetched first and
+// taken as the base). A write that changes nothing prints {"changed": false} with --json.
+func TestProjectBriefFileDoesNotOverwriteAsana(t *testing.T) {
+	path := briefCLIEnv(t, &asana.ProjectBrief{GID: "b1", Title: "目的", Text: "年内", HTMLText: "<body>年内</body>"})
+	t.Setenv(auth.EnvToken, "test-pat")
+	fake := &briefAsana{}
+	srv := httptest.NewServer(fake)
+	t.Cleanup(srv.Close)
+	run := func(args ...string) (string, error) {
+		cmd := newRoot(&app{baseURL: srv.URL})
+		var out, errOut bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(context.Background())
+		return out.String() + errOut.String(), err
+	}
+	file := filepath.Join(t.TempDir(), "b.md")
+	_ = os.WriteFile(file, []byte("年内\n"), 0o600)
+	out, err := run("--json", "project", "brief", "新居", "--file", file)
+	var nc briefWriteJSON
+	if err != nil || json.Unmarshal([]byte(out), &nc) != nil || nc.Changed || nc.ProjectGID != "p1" {
+		t.Fatalf("unchanged --json: %v %q", err, out)
+	}
+	_ = os.WriteFile(file, []byte("こちら\n"), 0o600)
+	if out, err := run("project", "brief", "新居", "--file", file); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if fake.puts != 0 {
+		t.Fatal("Asana's change was overwritten")
+	}
+	ops := cliOps(t, path)
+	if len(ops) != 1 || ops[0].State != store.OpConflict || ops[0].Conflict["text"] != "あちら" {
+		t.Fatalf("ops = %+v", ops)
 	}
 }

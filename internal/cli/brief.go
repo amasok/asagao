@@ -30,6 +30,12 @@ type briefJSON struct {
 	Pending    bool   `json:"pending,omitempty"`
 }
 
+// briefWriteJSON is what --json prints for a write that changes nothing.
+type briefWriteJSON struct {
+	ProjectGID string `json:"project_gid"`
+	Changed    bool   `json:"changed"`
+}
+
 func (a *app) projectBriefCmd() *cobra.Command {
 	var title, file string
 	var edit, offline bool
@@ -37,7 +43,7 @@ func (a *app) projectBriefCmd() *cobra.Command {
 		Use:   "brief <プロジェクト> [--title タイトル] [--file ファイル | --edit]",
 		Short: "プロジェクトブリーフ（概要のページ）を表示する・書く（オフラインでも積む）",
 		Long: `プロジェクトブリーフを表示します。--title・--file・--edit を付けると、書き換えます（無ければ作ります）。
-本文はマークダウンです。表や埋め込み（外部メディア・マイルストーン・ゴール）は ` + "```asana-html" + ` のブロックに
+本文はマークダウンです（| a | b | の表は Asana の表にします）。Asana にある表や埋め込み（外部メディア・マイルストーン・ゴール）は ` + "```asana-html" + ` のブロックに
 Asana の HTML のまま入っています。ブロックを残せば、そのまま送り返します（表の文字はその中で直せます）。`,
 		Example: `  asagao project brief 新居 > brief.md          # 今のブリーフをファイルに
   asagao project brief 新居 --file brief.md      # 直したファイルで書き換える
@@ -60,8 +66,10 @@ Asana の HTML のまま入っています。ブロックを残せば、その�
 			if err != nil {
 				return err
 			}
-			if !offline && !a.dryRun {
-				// the latest brief: what is shown, and what an edit starts from
+			// The latest brief for what is shown, or opened in the editor. Not before --file or
+			// --title: what they were made from is the cached brief, and a change made in Asana
+			// since must be found when it is sent (a conflict), not taken as the base.
+			if !offline && !a.dryRun && (!writing || edit) {
 				if s, err := a.onlineSyncer(ctx, st); err == nil {
 					if err := s.FetchProjectOverview(ctx, gid); err != nil && !writing {
 						fmt.Fprintf(cmd.ErrOrStderr(), "（Asana から取れなかったため、キャッシュの内容です: %v）\n", err)
@@ -98,6 +106,9 @@ Asana の HTML のまま入っています。ブロックを残せば、その�
 				return flagErr(err, map[string]string{})
 			}
 			if !changed {
+				if a.json {
+					return a.printJSON(briefWriteJSON{ProjectGID: gid, Changed: false})
+				}
 				fmt.Fprintln(cmd.ErrOrStderr(), "変更はありません")
 				return nil
 			}

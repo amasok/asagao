@@ -151,3 +151,52 @@ func TestBriefCheckWrittenBlocks(t *testing.T) {
 		}
 	}
 }
+
+// A Markdown table becomes a brief's <table> (Asana shows "| a | b |" as text otherwise,
+// found on the real Asana, #60): the header is the first row, a cell's Markdown is inline
+// rich text, "\|" is a pipe in a cell. A table not after a blank line, or inside a code
+// block, stays as it is.
+func TestBriefMarkdownTable(t *testing.T) {
+	md := "前\n\n| 項目 | 金額 |\n| --- | ---: |\n| **家賃** | 10\\|万 |\n| 敷金 |\n\n後"
+	out, plain, err := BriefFromMarkdown(md, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<body>前\n<table><tr><td>項目</td><td>金額</td></tr><tr><td><strong>家賃</strong></td><td>10|万</td></tr>" +
+		"<tr><td>敷金</td><td></td></tr></table>後</body>"
+	if out != want {
+		t.Fatalf("got  %q\nwant %q", out, want)
+	}
+	if !strings.Contains(plain, "項目\t金額") {
+		t.Fatalf("plain = %q", plain)
+	}
+	for _, keep := range []string{"段落\n| a | b |\n| - | - |", "```\n| a | b |\n| - | - |\n```", "| a | b |\nただの行"} {
+		out, _, err := BriefFromMarkdown(keep, "")
+		if err != nil || strings.Contains(out, "<table>") {
+			t.Errorf("%q: %v %q", keep, err, out)
+		}
+	}
+	// a heading in a cell is its text
+	out, _, _ = BriefFromMarkdown("| # x |\n| - |", "")
+	if !strings.Contains(out, "<td># x</td>") {
+		t.Fatalf("heading cell: %q", out)
+	}
+}
+
+// An image in a block is written as Asana takes it, <img data-asana-gid/> only, also in a
+// block Asana gave (it reads it back with src, which it refuses when written: #60
+// realcheck). An image written here without a gid is refused.
+func TestBriefBlockImages(t *testing.T) {
+	table := `<table><tr><td><img data-asana-gid="77" data-asana-type="attachment" src="https://x/y.png" style="w"></img>a</td></tr></table>`
+	orig := "<body>" + table + "</body>"
+	out, _, err := BriefFromMarkdown(BriefToEditableMarkdown(orig, nil), orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != `<body><table><tr><td><img data-asana-gid="77"/>a</td></tr></table></body>` {
+		t.Fatalf("out = %q", out)
+	}
+	if _, _, err := BriefFromMarkdown("```asana-html\n<table><tr><td><img src=\"https://x/y.png\"/></td></tr></table>\n```", ""); err == nil {
+		t.Fatal("an image without a gid accepted")
+	}
+}
