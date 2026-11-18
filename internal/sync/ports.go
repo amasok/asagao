@@ -50,10 +50,16 @@ type AsanaAPI interface {
 	Events(ctx context.Context, resource, token string) (model.EventPage, error)
 	InsertTaskInSection(ctx context.Context, sectionGID, taskGID string, pos model.Position) error
 	FavoriteProjects(ctx context.Context, workspaceGID string) ([]model.Ref, error)
+	Goal(ctx context.Context, gid string) (*model.Goal, error)
+	GoalRelationships(ctx context.Context, goalGID string) ([]model.GoalRelationship, error)
+	Goals(ctx context.Context, workspaceGID string) ([]model.Goal, error)
 	MarkNotifications(ctx context.Context, workspaceGID string, gids []string, read bool) (failed []string, err error)
 	Me(ctx context.Context) (*model.User, error)
 	MyTeams(ctx context.Context, workspaceGID string) ([]model.Team, error)
 	Notifications(ctx context.Context, workspaceGID string, max int) ([]model.Notification, error)
+	Portfolio(ctx context.Context, gid string) (*model.Portfolio, error)
+	PortfolioItems(ctx context.Context, portfolioGID string) ([]model.PortfolioItem, error)
+	Portfolios(ctx context.Context, workspaceGID string) ([]model.Portfolio, error)
 	Project(ctx context.Context, gid string) (*model.Project, error)
 	ProjectBrief(ctx context.Context, briefGID string) (*model.ProjectBrief, error)
 	Projects(ctx context.Context, workspaceGID string, archived bool) ([]model.Project, error)
@@ -73,6 +79,7 @@ type AsanaAPI interface {
 	Task(ctx context.Context, gid string) (*model.Task, error)
 	TaskCounts(ctx context.Context, projectGID string) (*model.TaskCounts, error)
 	TaskDetail(ctx context.Context, gid string) (*model.Task, error)
+	TimePeriods(ctx context.Context, workspaceGID string) ([]model.TimePeriod, error)
 	Tasks(ctx context.Context, tq model.TaskQuery) ([]model.Task, error)
 	TasksByGID(ctx context.Context, gids []string) (tasks []model.Task, gone []string, err error)
 	UpdateProject(ctx context.Context, gid string, changes map[string]any) (*model.Project, error)
@@ -118,6 +125,8 @@ type LocalStore interface {
 	CountAttempt(ctx context.Context, id int64, now time.Time) error
 	CreateQueued(ctx context.Context, gid string) (bool, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
+	DeleteGoal(ctx context.Context, gid string) error
+	DeletePortfolio(ctx context.Context, gid string) error
 	DeleteGoneTasks(ctx context.Context, gids []string) (int64, error)
 	DiscardDeletedTask(ctx context.Context, taskGID, reason string, now time.Time) ([]readmodel.Discard, error)
 	DiscardGoneOp(ctx context.Context, id int64, reason string, now time.Time) (readmodel.Discard, error)
@@ -149,15 +158,20 @@ type LocalStore interface {
 	ReplaceAttachments(ctx context.Context, taskGID string, atts []model.Attachment) error
 	ReplaceDependencies(ctx context.Context, taskGID string, deps, dependents []model.TaskRef) error
 	ReplaceFavoriteProjects(ctx context.Context, workspaceGID string, favorites []model.Ref) error
+	ReplaceGoals(ctx context.Context, workspaceGID string, goals []model.Goal) error
 	ReplaceLocalTagGID(ctx context.Context, local, real string) error
 	ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error
+	ReplacePortfolios(ctx context.Context, workspaceGID string, ps []model.Portfolio) error
 	ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error
 	ReplaceTeams(ctx context.Context, workspaceGID string, teams []model.Team) error
+	ReplaceTimePeriods(ctx context.Context, workspaceGID string, periods []model.TimePeriod) error
 	SafeToResend(ctx context.Context, op outbox.Op) (bool, error)
 	SaveProjectOverview(ctx context.Context, projectGID string, counts *model.TaskCounts, briefState string, brief *model.ProjectBrief, now time.Time) error
+	SaveGoal(ctx context.Context, g model.Goal, supports []model.GoalRelationship, now time.Time) error
+	SavePortfolio(ctx context.Context, p model.Portfolio, items []model.PortfolioItem, now time.Time) error
 	SetAttachmentPath(ctx context.Context, gid, path string) error
 	SetInboxState(ctx context.Context, st readmodel.InboxState) error
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error

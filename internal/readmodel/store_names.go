@@ -48,6 +48,15 @@ const (
 	KeyCustomID = "custom_id:"
 )
 
+// Keys of the sync state for goals and portfolios (#7).
+const (
+	// KeyGoals + workspace gid: when the goals and time periods of the workspace were last
+	// fetched.
+	KeyGoals = "goals:"
+	// KeyPortfolios + workspace gid: when my portfolios of the workspace were last fetched.
+	KeyPortfolios = "portfolios:"
+)
+
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not
 // fetched yet). Stored, so they must not change.
 const (
@@ -66,6 +75,12 @@ const (
 	PlanCustomID  = "custom_id"  // tasks by custom ID: only the gids found before are used
 )
 
+// Features of #7 that a plan may lack (PlanKey).
+const (
+	PlanGoals      = "goals"      // goals and time periods
+	PlanPortfolios = "portfolios" // portfolios
+)
+
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
 func PlanFeatureOf(kind string) string {
 	switch kind {
@@ -82,12 +97,14 @@ func PlanFeatureOf(kind string) string {
 // PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
 func PlanUnavailableMessage(feature string) string {
 	what := map[string]string{
-		PlanSections:  "セクションの作成・削除・並べ替え",
-		PlanTags:      "タグの名前・色の変更と削除",
-		PlanMySection: "マイタスクのセクション",
-		PlanSearch:    "タスクの検索",
-		PlanTypeahead: "名前での検索 (typeahead)",
-		PlanCustomID:  "タスクの ID (custom ID) での取得",
+		PlanSections:   "セクションの作成・削除・並べ替え",
+		PlanTags:       "タグの名前・色の変更と削除",
+		PlanMySection:  "マイタスクのセクション",
+		PlanSearch:     "タスクの検索",
+		PlanTypeahead:  "名前での検索 (typeahead)",
+		PlanCustomID:   "タスクの ID (custom ID) での取得",
+		PlanGoals:      "ゴール",
+		PlanPortfolios: "ポートフォリオ",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
