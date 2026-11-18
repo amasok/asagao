@@ -2,24 +2,28 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
+	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
 )
 
 func (a *app) projectCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "project", Short: "プロジェクトの一覧"}
+	cmd := &cobra.Command{Use: "project", Short: "プロジェクトの一覧・概要・編集"}
 	var all bool
+	var team string
 	list := &cobra.Command{
 		Use:   "list",
-		Short: "プロジェクトとセクションを一覧表示する（デフォルトは参加しているプロジェクト）",
+		Short: "プロジェクトとセクションを一覧表示する（お気に入り→チームの順。デフォルトは参加しているプロジェクト）",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)
@@ -27,7 +31,7 @@ func (a *app) projectCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			projects, err := query(st).ListProjects(ctx, !all)
+			projects, err := query(st).ListProjectsInTeam(ctx, !all, team)
 			if err != nil {
 				return err
 			}
@@ -35,7 +39,17 @@ func (a *app) projectCmd() *cobra.Command {
 				return a.printJSON(projects)
 			}
 			out := cmd.OutOrStdout()
+			// Under headings (favorites, then each team) when there is more than one.
+			groups := map[string]bool{}
 			for _, p := range projects {
+				groups[readmodel.ProjectGroup(p)] = true
+			}
+			group := ""
+			for _, p := range projects {
+				if g := readmodel.ProjectGroup(p); len(groups) > 1 && g != group {
+					group = g
+					fmt.Fprintf(out, "[%s]\n", g)
+				}
 				fmt.Fprintf(out, "%s  (%s)\n", p.Name, p.GID)
 				for _, s := range p.Sections {
 					fmt.Fprintf(out, "  - %s  (%s)\n", s.Name, s.GID)
@@ -45,8 +59,172 @@ func (a *app) projectCmd() *cobra.Command {
 		},
 	}
 	list.Flags().BoolVar(&all, "all", false, "参加していないプロジェクトも表示する")
-	cmd.AddCommand(list, a.projectStatusCmd(), a.projectCreateCmd(), a.projectArchiveCmd(), a.projectMembersCmd())
+	list.Flags().StringVar(&team, "team", "", "このチームのプロジェクトだけ（gid または名前。部分一致可）")
+	cmd.AddCommand(list, a.projectTeamsCmd(), a.projectShowCmd(), a.projectEditCmd(), a.projectStatusCmd(),
+		a.projectCreateCmd(), a.projectArchiveCmd(), a.projectMembersCmd())
 	return cmd
+}
+
+func (a *app) projectTeamsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "teams",
+		Short: "プロジェクトを作れるチーム（参加しているチーム）を表示する",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			teams, err := query(st).ListTeams(ctx)
+			if err != nil {
+				return err
+			}
+			if a.json {
+				return a.printJSON(teams)
+			}
+			if len(teams) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "チームはありません（チームのないワークスペースか、まだ同期していません）")
+			}
+			for _, t := range teams {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  (%s)\n", t.Name, t.GID)
+			}
+			return nil
+		},
+	}
+}
+
+func (a *app) projectShowCmd() *cobra.Command {
+	var offline bool
+	cmd := &cobra.Command{
+		Use:   "show <プロジェクト>",
+		Short: "プロジェクトの概要（説明・オーナー・期日・進み具合・最新のステータス・ブリーフ）を表示する",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			gid, err := query(st).ResolveProject(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			var stale error
+			if !offline {
+				if s, err := a.onlineSyncer(ctx, st); err == nil {
+					_ = s.FetchStatusUpdates(ctx, gid)
+					stale = s.FetchProjectOverview(ctx, gid)
+				}
+			}
+			o, err := query(st).ProjectOverview(ctx, gid)
+			if err != nil {
+				return err
+			}
+			if a.json {
+				return a.printJSON(o)
+			}
+			printProjectOverview(cmd.OutOrStdout(), o)
+			if stale != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "（Asana から取れなかったため、一部はキャッシュの内容です: %v）\n", stale)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&offline, "offline", false, "Asana に問い合わせず、ローカルストアだけで表示する")
+	return cmd
+}
+
+// printProjectOverview prints a project's overview as text.
+func printProjectOverview(out io.Writer, o *readmodel.ProjectOverview) {
+	title := o.Name
+	if o.Favorite {
+		title = "★ " + title
+	}
+	fmt.Fprintf(out, "%s  (%s)\n", title, o.GID)
+	line := func(label, v string) {
+		if v != "" {
+			fmt.Fprintf(out, "  %s: %s\n", label, v)
+		}
+	}
+	line("チーム", o.TeamName)
+	if o.Owner != nil {
+		line("オーナー", o.Owner.Name)
+	}
+	if o.StartOn != "" || o.DueOn != "" {
+		line("期間", strings.TrimSpace(o.StartOn+" 〜 "+o.DueOn))
+	}
+	line("色", o.Color)
+	if o.Counts != nil {
+		progress := fmt.Sprintf("%d / %d 件完了", o.Counts.CompletedTasks, o.Counts.Tasks)
+		if o.Counts.Tasks > 0 {
+			progress += fmt.Sprintf("（%d%%）", o.Counts.CompletedTasks*100/o.Counts.Tasks)
+		}
+		if o.Counts.Milestones > 0 {
+			progress += fmt.Sprintf("、マイルストーン %d / %d", o.Counts.CompletedMilestones, o.Counts.Milestones)
+		}
+		line("進み具合", progress)
+	}
+	if o.Status != nil {
+		line("最新のステータス", strings.TrimSpace("["+readmodel.StatusLabel(o.Status.StatusType)+"] "+o.Status.Title+"  "+o.Status.CreatedAt))
+	}
+	if o.Pending {
+		line("未送信", "説明などの変更がまだ Asana に送られていません")
+	}
+	line("URL", o.PermalinkURL)
+	if notes := strings.TrimSpace(o.Notes); notes != "" {
+		fmt.Fprintf(out, "\n説明:\n%s\n", indent(notes))
+	}
+	if o.Brief != nil {
+		heading := "ブリーフ"
+		if o.Brief.Title != "" {
+			heading += "「" + o.Brief.Title + "」"
+		}
+		fmt.Fprintf(out, "\n%s:\n%s\n", heading, indent(strings.TrimSpace(o.Brief.Text)))
+	}
+}
+
+func (a *app) projectEditCmd() *cobra.Command {
+	var notes, owner, start, due, color string
+	cmd := &cobra.Command{
+		Use:   "edit <プロジェクト> [--notes 説明] [--owner ユーザー] [--start 日付] [--due 日付] [--color 色]",
+		Short: "プロジェクトの説明・オーナー・開始日・期日・色を変える（オフラインでも積む）",
+		Example: `  asagao project edit 新居 --owner me --due 2026-12-31
+  asagao project edit 新居 --notes "引っ越しを **年内** に終える"
+  asagao project edit 新居 --start "" --due ""   # 日付を外す`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			in := usecase.UpdateProjectInput{}
+			for flag, v := range map[string]**string{"notes": &in.Notes, "owner": &in.Owner, "start": &in.StartOn, "due": &in.DueOn, "color": &in.Color} {
+				if cmd.Flags().Changed(flag) {
+					val, _ := cmd.Flags().GetString(flag)
+					*v = &val
+				}
+			}
+			if in == (usecase.UpdateProjectInput{}) {
+				return errors.New("変える項目を --notes / --owner / --start / --due / --color で指定してください")
+			}
+			st, err := a.openStore(ctx)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			projects := &usecase.Projects{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			if _, _, err := projects.Update(ctx, args[0], in); err != nil {
+				return flagErr(err, map[string]string{"owner": "owner", "start_on": "start", "due_on": "due"})
+			}
+			return a.reportWrite(cmd, st, writeResult{}, "プロジェクトを変更しました")
+		},
+	}
+	cmd.Flags().StringVar(&notes, "notes", "", "説明（マークダウン。全体を置き換える）")
+	cmd.Flags().StringVar(&owner, "owner", "", `オーナー（"me"・ユーザーの gid か名前。"none" か "" で外す）`)
+	cmd.Flags().StringVar(&start, "start", "", `開始日（YYYY-MM-DD / today / tomorrow / +Nd。"" で外す。期日が必要）`)
+	cmd.Flags().StringVar(&due, "due", "", `期日（YYYY-MM-DD / today / tomorrow / +Nd。"" で外す）`)
+	cmd.Flags().StringVar(&color, "color", "", "色（"+strings.Join(project.Colors, " / ")+"）")
+	return a.addDryRunFlag(cmd)
 }
 
 // onlineSyncer returns a syncer with an API client (for online-only project operations).
@@ -123,9 +301,10 @@ func (a *app) projectStatusCmd() *cobra.Command {
 }
 
 func (a *app) projectCreateCmd() *cobra.Command {
-	return a.addDryRunFlag(&cobra.Command{
-		Use:   "create <名前>",
-		Short: "プロジェクトを作る（オンラインのみ）",
+	var team string
+	cmd := &cobra.Command{
+		Use:   "create <名前> [--team チーム]",
+		Short: "プロジェクトを作る（オンラインのみ。チームが複数あれば --team で選ぶ。候補は project teams）",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -135,21 +314,31 @@ func (a *app) projectCreateCmd() *cobra.Command {
 			}
 			defer st.Close()
 			name := strings.Join(args, " ")
+			teamGID, err := query(st).TeamForNewProject(ctx, team)
+			if err != nil {
+				return fmt.Errorf("--team: %w", err)
+			}
 			if a.dryRun {
-				return a.dryRunPlan(cmd, plannedChange{Kind: "create_project", Description: "プロジェクト「" + name + "」の作成"})
+				planned := plannedChange{Kind: "create_project", Description: "プロジェクト「" + name + "」の作成"}
+				if teamGID != "" {
+					planned.Payload = map[string]any{"team": teamGID}
+				}
+				return a.dryRunPlan(cmd, planned)
 			}
 			s, err := a.onlineSyncer(ctx, st)
 			if err != nil {
 				return err
 			}
-			p, err := s.CreateProject(ctx, name)
+			p, err := s.CreateProject(ctx, name, teamGID)
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "プロジェクトを作りました: %s (%s)\n", p.Name, p.GID)
 			return nil
 		},
-	})
+	}
+	cmd.Flags().StringVar(&team, "team", "", "チーム（gid または名前。部分一致可）")
+	return a.addDryRunFlag(cmd)
 }
 
 func (a *app) projectArchiveCmd() *cobra.Command {

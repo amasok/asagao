@@ -243,6 +243,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 				}
 			}
 		}
+		if err := s.syncTeamsAndFavorites(ctx, w, res.Poll); err != nil {
+			return res, err
+		}
 		// My Tasks may hold tasks in no project, which no project's events report: they are
 		// fetched with modified_since on every sync (one request, only what changed).
 		s.progress("ワークスペース %s: 自分のタスク", w.Name)
@@ -447,6 +450,53 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 		}
 	default:
 		return nil // e.g. an expired token or a 5xx: keep what is cached, try again next time
+	}
+	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+}
+
+// syncTeamsAndFavorites fetches the teams I am in and my favorite projects of a workspace
+// (to group the project list and to choose a team for a new project). They change rarely:
+// fetched with the poll, or if they were never fetched. A workspace that is not an
+// organization has no teams. A failure keeps what is cached and is tried again on the
+// next sync; only a local error stops the sync.
+func (s *Syncer) syncTeamsAndFavorites(ctx context.Context, w model.Workspace, poll bool) error {
+	key := readmodel.KeyTeams + w.GID
+	if !poll {
+		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+			return err
+		}
+	}
+	done := true
+	if w.IsOrganization {
+		teams, err := s.API.MyTeams(ctx, w.GID)
+		switch {
+		case err == nil:
+			if err := s.Store.ReplaceTeams(ctx, w.GID, teams); err != nil {
+				return err
+			}
+		case model.IsPaymentRequired(err) || isForbidden(err):
+			if err := s.Store.ReplaceTeams(ctx, w.GID, nil); err != nil {
+				return err
+			}
+		default:
+			done = false
+		}
+	}
+	favorites, err := s.API.FavoriteProjects(ctx, w.GID)
+	switch {
+	case err == nil:
+		if err := s.Store.ReplaceFavoriteProjects(ctx, w.GID, favorites); err != nil {
+			return err
+		}
+	case model.IsPaymentRequired(err) || isForbidden(err):
+		if err := s.Store.ReplaceFavoriteProjects(ctx, w.GID, nil); err != nil {
+			return err
+		}
+	default:
+		done = false
+	}
+	if !done { // tried again on the next sync
+		return s.Store.SetSyncState(ctx, key, "")
 	}
 	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
 }

@@ -29,12 +29,41 @@ type Project struct {
 	Archived     bool      `json:"archived"`
 	Color        string    `json:"color"`
 	Notes        string    `json:"notes"`
+	HTMLNotes    string    `json:"html_notes"`
+	Owner        *Ref      `json:"owner"`
+	StartOn      string    `json:"start_on"`
+	DueOn        string    `json:"due_on"`
 	Workspace    *Ref      `json:"workspace"`
 	Team         *Ref      `json:"team"`
 	Members      []Ref     `json:"members"`
 	PermalinkURL string    `json:"permalink_url"`
 	CreatedAt    time.Time `json:"created_at"`
 	ModifiedAt   time.Time `json:"modified_at"`
+	// ProjectBrief is the project's brief, if it has one (only asked for by Client.Project).
+	ProjectBrief *Ref `json:"project_brief,omitempty"`
+}
+
+// Team is a team of an organization.
+type Team struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+}
+
+// TaskCounts is how many tasks a project has (GET /projects/{gid}/task_counts).
+type TaskCounts struct {
+	NumTasks           int `json:"num_tasks"`
+	NumCompletedTasks  int `json:"num_completed_tasks"`
+	NumIncompleteTasks int `json:"num_incomplete_tasks"`
+	NumMilestones      int `json:"num_milestones"`
+	NumCompletedMiles  int `json:"num_completed_milestones"`
+}
+
+// ProjectBrief is a project's brief (the "概要" note; a preview API).
+type ProjectBrief struct {
+	GID      string `json:"gid"`
+	Title    string `json:"title"`
+	Text     string `json:"text"`
+	HTMLText string `json:"html_text"`
 }
 
 type Section struct {

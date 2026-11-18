@@ -93,6 +93,7 @@ type scope struct {
 	project  string // gid
 	sections []readmodel.SectionView
 	status   string // latest status update type of the project
+	group    string // the sidebar heading it is under (readmodel.ProjectGroup)
 	notice   string // scopeRecent: why the inbox is not shown (inbox.go)
 }
 
@@ -224,6 +225,11 @@ type Model struct {
 	statusOffset       int
 	statuses           []readmodel.StatusUpdateView
 	selectProjectAfter string
+	// the project overview (project_overview.go)
+	overviewView   bool
+	overviewOffset int
+	overview       *readmodel.ProjectOverview
+	newProjectName string // pickTeam: the project to create
 
 	// subtasks (subtasks.go)
 	expanded      map[string]bool // tasks whose subtasks are shown under them
@@ -237,13 +243,13 @@ type Model struct {
 	commentGID   string       // task the comment prompt posts to
 
 	// keys (keymap.go) and choosers (pickers.go)
-	leader         bool                  // space was pressed: the menu is open
-	renderedActive bool                  // the detail was last rendered with selectable items
-	dueTask        readmodel.TaskSummary // task for promptDue
+	leader         bool                    // space was pressed: the menu is open
+	renderedActive bool                    // the detail was last rendered with selectable items
+	dueTask        readmodel.TaskSummary   // task for promptDue
 	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
 	marked         map[string]bool         // gids of the tasks marked in the list (bulk.go)
 	bulkAsk        *bulkPlan               // a change to the marked tasks waiting for y/n
-	tagTask        readmodel.TaskSummary // task for promptNewTag
+	tagTask        readmodel.TaskSummary   // task for promptNewTag
 	// custom fields (fields.go)
 	fieldTask   readmodel.TaskSummary     // task for promptField
 	fieldEdit   readmodel.CustomFieldView // field for promptField
@@ -492,6 +498,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, ok := m.updateEdit(msg); ok {
 		return m, cmd
 	}
+	if cmd, ok := m.updateOverview(msg); ok {
+		return m, cmd
+	}
 	if cmd, ok := m.updateProjects(msg); ok {
 		return m, cmd
 	}
@@ -689,6 +698,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleOutboxKey(key)
 	case m.statusView:
 		return m.handleStatusKey(key)
+	case m.overviewView:
+		return m.handleOverviewKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
 	case m.searching:
@@ -866,7 +877,8 @@ func (m *Model) setProjects(ps []readmodel.ProjectView) {
 	current := m.currentScope()
 	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, m.inboxScope()}
 	for _, p := range ps {
-		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status})
+		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status,
+			group: readmodel.ProjectGroup(p)})
 	}
 	m.scopes = scopes
 	m.scopeCursor = 0

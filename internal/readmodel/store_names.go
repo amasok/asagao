@@ -33,6 +33,17 @@ const (
 	KeyCustomFields = "custom_fields:"
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
 	KeyEvents = "events:"
+	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
+	// fetched.
+	KeyTeams = "teams:"
+)
+
+// States of a project's brief in the local cache (project_overviews.brief_state; "" is not
+// fetched yet). Stored, so they must not change.
+const (
+	BriefNone        = "none"        // the project has no brief
+	BriefUnavailable = "unavailable" // Asana does not give it (plan, preview API)
+	BriefAvailable   = "available"
 )
 
 // Prefixes of the sync_state keys that map a local gid to what Asana created for it (a

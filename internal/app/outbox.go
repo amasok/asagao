@@ -128,7 +128,7 @@ func refreshTarget(op outbox.Op) string {
 	}
 	switch op.Kind {
 	case outbox.KindCreateTask, outbox.KindDuplicateTask, // the task was local and is gone
-		outbox.KindRenameSection, outbox.KindCreateStatus, // task_gid is a section / project
+		outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindUpdateProject, // task_gid is a section / project
 		outbox.KindMarkNotification: // task_gid is a notification
 		return ""
 	}

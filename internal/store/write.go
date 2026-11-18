@@ -53,24 +53,33 @@ func (s *Store) UpsertProjects(ctx context.Context, workspaceGID string, ps []mo
 					}
 				}
 			}
-			var teamGID, teamName string
+			var teamGID, teamName, ownerGID string
 			if p.Team != nil {
 				teamGID, teamName = p.Team.GID, p.Team.Name
 			}
+			if p.Owner != nil {
+				ownerGID = p.Owner.GID
+				if _, err := tx.ExecContext(ctx, `INSERT INTO users(gid, name) VALUES(?, ?)
+					ON CONFLICT(gid) DO UPDATE SET name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE users.name END`, p.Owner.GID, p.Owner.Name); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO projects
-				(gid, workspace_gid, name, archived, color, notes, team_gid, team_name, is_member, permalink_url, modified_at)
-				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				(gid, workspace_gid, name, archived, color, notes, html_notes, owner_gid, start_on, due_on,
+				 team_gid, team_name, is_member, permalink_url, modified_at)
+				VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(gid) DO UPDATE SET
 					workspace_gid = excluded.workspace_gid, name = excluded.name, archived = excluded.archived,
-					color = excluded.color, notes = excluded.notes, team_gid = excluded.team_gid,
-					team_name = excluded.team_name, is_member = excluded.is_member,
+					color = excluded.color, notes = excluded.notes, html_notes = excluded.html_notes,
+					owner_gid = excluded.owner_gid, start_on = excluded.start_on, due_on = excluded.due_on,
+					team_gid = excluded.team_gid, team_name = excluded.team_name, is_member = excluded.is_member,
 					permalink_url = excluded.permalink_url, modified_at = excluded.modified_at`,
-				p.GID, workspaceGID, p.Name, p.Archived, p.Color, p.Notes, teamGID, teamName, isMember,
-				p.PermalinkURL, formatTime(p.ModifiedAt)); err != nil {
+				p.GID, workspaceGID, p.Name, p.Archived, p.Color, p.Notes, p.HTMLNotes, ownerGID, p.StartOn, p.DueOn,
+				teamGID, teamName, isMember, p.PermalinkURL, formatTime(p.ModifiedAt)); err != nil {
 				return err
 			}
 		}
-		return nil
+		return reapplyProjectUpdates(ctx, tx) // unsent local edits stay until they are sent
 	})
 }
 
@@ -392,6 +401,10 @@ const (
 	KeyEvents = readmodel.KeyEvents
 )
 
+// KeyTeams + workspace gid: when the teams and favorite projects were last fetched
+// (deleted with the workspace).
+const KeyTeams = readmodel.KeyTeams
+
 // projectKeys lists, for each per-project key prefix, the SQL condition that tells a
 // project's key from other keys with the same prefix ({gid} is the part after the prefix).
 var projectKeys = []struct{ prefix, isProject string }{
@@ -434,6 +447,8 @@ func pruneProjects(ctx context.Context, tx *sql.Tx, workspaceGID string, keep []
 			"DELETE FROM status_updates WHERE project_gid = ?",
 			"DELETE FROM project_custom_fields WHERE project_gid = ?",
 			"DELETE FROM task_memberships WHERE project_gid = ?",
+			"DELETE FROM project_favorites WHERE project_gid = ?",
+			"DELETE FROM project_overviews WHERE project_gid = ?",
 			"DELETE FROM projects WHERE gid = ?",
 		} {
 			if _, err := tx.ExecContext(ctx, q, gid); err != nil {
@@ -491,8 +506,15 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) err
 			if err := pruneProjects(ctx, tx, gid, nil); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, "DELETE FROM workspaces WHERE gid = ?", gid); err != nil {
-				return err
+			for _, q := range []string{
+				"DELETE FROM teams WHERE workspace_gid = ?",
+				"DELETE FROM project_favorites WHERE workspace_gid = ?",
+				"DELETE FROM sync_state WHERE key = '" + KeyTeams + "' || ?",
+				"DELETE FROM workspaces WHERE gid = ?",
+			} {
+				if _, err := tx.ExecContext(ctx, q, gid); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

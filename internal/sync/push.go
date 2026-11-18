@@ -387,7 +387,8 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	switch op.Kind {
 	case outbox.KindCreateTask:
 		gid, _ = op.Payload["parent"].(string)
-	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification:
+	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
+		outbox.KindUpdateProject:
 		return false, nil
 	}
 	if !localgid.IsLocal(gid) {
@@ -410,6 +411,8 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		return s.pushCustomField(ctx, op)
 	case outbox.KindRenameSection:
 		return s.pushRenameSection(ctx, op)
+	case outbox.KindUpdateProject:
+		return s.pushUpdateProject(ctx, op)
 	case outbox.KindCreateTask:
 		return s.pushCreate(ctx, op)
 	case outbox.KindAddComment:
@@ -537,7 +540,7 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification:
+	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject:
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}

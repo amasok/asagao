@@ -40,6 +40,8 @@ func (m *Model) render() string {
 		body = m.renderOutbox(m.width, bodyH)
 	} else if m.statusView {
 		body = m.renderStatuses(m.width, bodyH)
+	} else if m.overviewView {
+		body = m.renderOverview(m.width, bodyH)
 	} else if m.picker != nil {
 		body = m.renderPicker(m.width, bodyH)
 	} else if m.leader {
@@ -297,7 +299,19 @@ func (m *Model) renderHelp(w, h int) string {
 
 func (m *Model) sidebarLines(w, h int) []string {
 	lines := make([]string, 0, len(m.scopes))
+	cursorLine, group := 0, ""
 	for i, s := range m.scopes {
+		// Projects are under headings: my favorites, then each team (only when there is
+		// more than one heading, so a list of one team's projects stays as it was).
+		if s.kind == scopeProject && s.group != group {
+			group = s.group
+			if m.sidebarGrouped() {
+				lines = append(lines, m.st.dim.Render(ansi.Truncate(group, max(1, w), "…")))
+			}
+		}
+		if i == m.scopeCursor {
+			cursorLine = len(lines)
+		}
 		label := s.name
 		switch s.kind {
 		case scopeMyTasks:
@@ -311,8 +325,24 @@ func (m *Model) sidebarLines(w, h int) []string {
 		}
 		lines = append(lines, m.highlight(label, w, i == m.scopeCursor, m.focus == paneSidebar))
 	}
-	offset := clamp(m.scopeCursor-h+1, 0, max(0, len(lines)-h))
+	offset := clamp(cursorLine-h+1, 0, max(0, len(lines)-h))
 	return lines[offset:]
+}
+
+// sidebarGrouped reports whether the projects are under more than one heading.
+func (m *Model) sidebarGrouped() bool {
+	first := ""
+	for _, s := range m.scopes {
+		if s.kind != scopeProject {
+			continue
+		}
+		if first == "" {
+			first = s.group
+		} else if s.group != first {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) listTitle() string {
