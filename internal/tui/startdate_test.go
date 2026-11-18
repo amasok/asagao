@@ -94,3 +94,34 @@ func TestDetailStartDateHiddenByPlan(t *testing.T) {
 		t.Errorf("the start date is not shown:\n%s", h.screen())
 	}
 }
+
+// The start date set from the timeline (its detail) moves the start of the task's bar.
+func TestTimelineStartDate(t *testing.T) {
+	h := timelineHarness(t)
+	col := func(day int) int { return (day - 6) * 2 } // November day -> column
+	h.selectTask("t10")                                // 家具を運ぶ: due 11/21, no start date
+	if got := h.ganttOf("家具を運ぶ"); !strings.HasPrefix(strings.ReplaceAll(got, "│", " "), strings.Repeat(" ", col(21))+"██") {
+		t.Fatalf("before: %q", got)
+	}
+	h.key("enter")
+	h.key("g")
+	for range 30 {
+		if it := h.m.currentItem(); it != nil && it.kind == itemStart {
+			break
+		}
+		h.key("j")
+	}
+	h.key("enter", "G", "k", "enter") // 日付を入力…
+	h.m.prompt.SetValue("")
+	h.typeText("2026-11-16")
+	h.key("enter")
+	h.key("esc")
+	if !h.m.timelineActive() {
+		t.Fatalf("not back in the timeline:\n%s", h.screen())
+	}
+	want := strings.Repeat(" ", col(16)) + strings.Repeat("█", 12) // 11/16 to 11/21
+	got := strings.ReplaceAll(h.ganttOf("家具を運ぶ"), "│", " ")
+	if !strings.HasPrefix(got, want) || strings.Trim(strings.TrimPrefix(got, want), " ") != "" {
+		t.Fatalf("after: %q, want %q", got, want)
+	}
+}
