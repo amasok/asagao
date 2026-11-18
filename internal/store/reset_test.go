@@ -55,6 +55,7 @@ func TestResetDeletesEverything(t *testing.T) {
 			s := newTestStore(t)
 			ctx := context.Background()
 			dir := t.TempDir()
+			s.SetAttachmentDir(dir) // the files a reset may delete
 			src := filepath.Join(t.TempDir(), "a.txt")
 			must(t, os.WriteFile(src, []byte("x"), 0o600))
 			downloaded := filepath.Join(dir, "77-img.png")

@@ -199,7 +199,9 @@ func (s *Store) DeleteSectionLocal(ctx context.Context, sectionGID string, now t
 			return err
 		}
 		var tasks, sections int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM task_memberships WHERE project_gid = ? AND section_gid = ?",
+		// Tasks whose delete is queued do not count: their deletes are sent first (earlier
+		// in the queue), and the section's waits for them (sync.Push).
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM task_memberships WHERE project_gid = ? AND section_gid = ? AND task_gid NOT IN "+deletedTasks,
 			projectGID, sectionGID).Scan(&tasks); err != nil {
 			return err
 		}

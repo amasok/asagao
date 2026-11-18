@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -87,3 +90,39 @@ func TestAttackUnsentCommentEditDeleteSendsNothing(t *testing.T) {
 }
 
 func store_UserRef() store.UserRef { return store.UserRef{GID: "me", Name: "Me"} }
+
+// After deleting a downloaded attachment and discarding the delete, opening it downloads again.
+func TestAttackAttachmentRedownloadsAfterUndo(t *testing.T) {
+	s, st, cache, downloads := attachmentAttackSetup(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"gid":"a1","name":"x.png","host":"asana","download_url":"https://files.example/a1","parent":{"gid":"t1"}}}`)
+	})
+	ctx := context.Background()
+	st.SetAttachmentDir(cache) // where it downloads
+	if err := st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "x.png", Host: "asana"}}); err != nil {
+		t.Fatal(err)
+	}
+	if st.SetSyncState(ctx, store.KeyMeGID, "me") != nil {
+		t.Fatal("me")
+	}
+	p, err := s.DownloadAttachment(ctx, "t1", "a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAttachmentLocal(ctx, "a1", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); err == nil {
+		t.Fatal("file kept")
+	}
+	ops, _ := st.ListOps(ctx)
+	if err := st.DiscardOp(ctx, ops[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.DownloadAttachment(ctx, "t1", "a1")
+	if err != nil {
+		t.Fatalf("redownload: %v", err)
+	}
+	if _, err := os.Stat(p2); err != nil || filepath.Dir(p2) != filepath.Clean(cache) || len(*downloads) != 2 {
+		t.Fatalf("path %q %v downloads %v", p2, err, *downloads)
+	}
+}
