@@ -26,6 +26,8 @@ import (
 type writeResult struct {
 	TaskGID   string `json:"task_gid,omitempty"`
 	CommentID string `json:"comment_gid,omitempty"`
+	// TimeEntryID is the time tracking entry `time add` recorded (a local gid until sent).
+	TimeEntryID string `json:"time_entry_gid,omitempty"`
 	// SectionGID is the section `section create` made (its Asana gid once sent).
 	SectionGID string           `json:"section_gid,omitempty"`
 	Sent       bool             `json:"sent"`

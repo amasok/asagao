@@ -429,4 +429,23 @@ CREATE TABLE portfolio_items (
 	PRIMARY KEY (portfolio_gid, position)
 );
 `,
+	`
+-- Time tracking entries of tasks (#6), read when asked for (not by the sync). categories
+-- is a JSON array of names; added_at is when Asana created an entry recorded here (kept by a
+-- refresh that read the list before it), '' for the ones read from Asana.
+CREATE TABLE time_entries (
+	gid              TEXT PRIMARY KEY,
+	task_gid         TEXT NOT NULL REFERENCES tasks(gid) ON DELETE CASCADE,
+	duration_minutes INTEGER NOT NULL,
+	entered_on       TEXT NOT NULL DEFAULT '',
+	assignee_gid     TEXT NOT NULL DEFAULT '',
+	assignee_name    TEXT NOT NULL DEFAULT '',
+	created_by_gid   TEXT NOT NULL DEFAULT '',
+	created_by_name  TEXT NOT NULL DEFAULT '',
+	project_name     TEXT NOT NULL DEFAULT '',
+	categories       TEXT NOT NULL DEFAULT '',
+	added_at         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX time_entries_task ON time_entries(task_gid, entered_on);
+`,
 }

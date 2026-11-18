@@ -92,6 +92,7 @@ func (m *Model) actions() []action {
 		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
 		{id: "set_parent", key: "p", group: groupTask, label: "親タスクを付け替える", ctx: ctxTask, needTask: true, run: (*Model).openParentPicker},
 		{id: "delete_task", key: "Z", group: groupTask, label: "タスクを削除（確認あり）", ctx: ctxTask, needTask: true, run: (*Model).confirmDeleteTask},
+		{id: "time", key: "h", group: groupTask, label: "作業時間を見る / 記録する", ctx: ctxTask, needTask: true, plan: readmodel.PlanTimeTracking, run: (*Model).openTimeEntries},
 		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},

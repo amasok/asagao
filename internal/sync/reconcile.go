@@ -184,6 +184,9 @@ func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 		}
 		return sent, matched, s.Store.CompleteComment(ctx, op.ID, str("story_gid"), op.TaskGID, st)
 
+	case outbox.KindAddTimeEntry:
+		return s.findTimeEntry(ctx, op, byMe, recent)
+
 	case outbox.KindUploadAttachment:
 		atts, err := s.API.Attachments(ctx, op.TaskGID)
 		if err != nil {

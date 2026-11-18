@@ -43,6 +43,8 @@ const (
 	// KeyTeams + workspace gid: when the teams I am in and my favorite projects were last
 	// fetched.
 	KeyTeams = "teams:"
+	// KeyTimeEntries + task gid: when the task's time tracking entries were last fetched.
+	KeyTimeEntries = "time_entries:"
 	// KeyCustomID + a task's custom ID ("ENG-123"): the gid Asana gave for it, so that a
 	// commit can name the task while offline once it was found (Issue #36).
 	KeyCustomID = "custom_id:"
@@ -75,6 +77,12 @@ const (
 	PlanCustomID  = "custom_id"  // tasks by custom ID: only the gids found before are used
 )
 
+// Features of #6 that a plan may lack (PlanKey).
+const (
+	// PlanTimeTracking is the time tracking entries of tasks (#6).
+	PlanTimeTracking = "time_tracking"
+)
+
 // Features of #7 that a plan may lack (PlanKey).
 const (
 	PlanGoals      = "goals"      // goals and time periods
@@ -90,6 +98,8 @@ func PlanFeatureOf(kind string) string {
 		return PlanTags
 	case outbox.KindMoveMySection:
 		return PlanMySection
+	case outbox.KindAddTimeEntry, outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
+		return PlanTimeTracking
 	}
 	return ""
 }
@@ -97,14 +107,15 @@ func PlanFeatureOf(kind string) string {
 // PlanUnavailableMessage says that a feature cannot be used with the workspace's plan.
 func PlanUnavailableMessage(feature string) string {
 	what := map[string]string{
-		PlanSections:   "セクションの作成・削除・並べ替え",
-		PlanTags:       "タグの名前・色の変更と削除",
-		PlanMySection:  "マイタスクのセクション",
-		PlanSearch:     "タスクの検索",
-		PlanTypeahead:  "名前での検索 (typeahead)",
-		PlanCustomID:   "タスクの ID (custom ID) での取得",
-		PlanGoals:      "ゴール",
-		PlanPortfolios: "ポートフォリオ",
+		PlanSections:     "セクションの作成・削除・並べ替え",
+		PlanTags:         "タグの名前・色の変更と削除",
+		PlanMySection:    "マイタスクのセクション",
+		PlanTimeTracking: "タイムトラッキング (作業時間の記録)",
+		PlanSearch:       "タスクの検索",
+		PlanTypeahead:    "名前での検索 (typeahead)",
+		PlanCustomID:     "タスクの ID (custom ID) での取得",
+		PlanGoals:        "ゴール",
+		PlanPortfolios:   "ポートフォリオ",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
@@ -120,6 +131,8 @@ const (
 	ResultTag = "tag:"
 	// ResultSection maps a section created offline to the section Asana created.
 	ResultSection = "section:"
+	// ResultTimeEntry maps a time tracking entry recorded offline to the one Asana created.
+	ResultTimeEntry = "time:"
 )
 
 // ResetResult says what a reset with a backup did.

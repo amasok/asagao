@@ -19,6 +19,7 @@ type AsanaAPI interface {
 	ClockKnown() bool
 
 	AddComment(ctx context.Context, taskGID, text, htmlText string) (*model.Story, error)
+	CreateTimeEntry(ctx context.Context, taskGID string, minutes int, enteredOn string) (*model.TimeEntry, error)
 	AddDependencies(ctx context.Context, taskGID string, deps []string) error
 	AddFollowers(ctx context.Context, taskGID string, users []string) error
 	AddMembers(ctx context.Context, projectGID string, users []string) (*model.Project, error)
@@ -43,6 +44,7 @@ type AsanaAPI interface {
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
 	DeleteAttachment(ctx context.Context, gid string) error
 	DeleteStory(ctx context.Context, gid string) error
+	DeleteTimeEntry(ctx context.Context, gid string) error
 	DeleteTask(ctx context.Context, taskGID string) error
 	Dependencies(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	Dependents(ctx context.Context, taskGID string) ([]model.TaskRef, error)
@@ -74,6 +76,8 @@ type AsanaAPI interface {
 	SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*model.Project, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
 	Stories(ctx context.Context, taskGID string) ([]model.Story, error)
+	TimeEntries(ctx context.Context, taskGID string) ([]model.TimeEntry, error)
+	TimeEntry(ctx context.Context, gid string) (*model.TimeEntry, error)
 	Subtasks(ctx context.Context, taskGID string) ([]model.Task, error)
 	Tags(ctx context.Context, workspaceGID string) ([]model.Tag, error)
 	Task(ctx context.Context, gid string) (*model.Task, error)
@@ -85,6 +89,7 @@ type AsanaAPI interface {
 	UpdateProject(ctx context.Context, gid string, changes map[string]any) (*model.Project, error)
 	UpdateSection(ctx context.Context, gid, name string) (*model.Section, error)
 	UpdateStory(ctx context.Context, gid, text, htmlText string) (*model.Story, error)
+	UpdateTimeEntry(ctx context.Context, gid string, minutes int, enteredOn string) (*model.TimeEntry, error)
 	UpdateTask(ctx context.Context, gid string, fields map[string]any) (*model.Task, error)
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
 	Users(ctx context.Context, workspaceGID string) ([]model.User, error)
@@ -103,6 +108,7 @@ type AsanaAPI interface {
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
 	ApplyStory(ctx context.Context, gid, text, htmlText string) error
+	ApplyTimeEntry(ctx context.Context, e model.TimeEntry) error
 	ApplyTag(ctx context.Context, t model.Tag) error
 	ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error
 	CompleteCreateSection(ctx context.Context, id int64, local, real string) error
@@ -113,6 +119,7 @@ type LocalStore interface {
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
+	CompleteTimeEntry(ctx context.Context, id int64, localGID, taskGID string, e model.TimeEntry) error
 	CompleteDelete(ctx context.Context, id int64, gid string) error
 	TaskDeletesQueuedIn(ctx context.Context, sectionGID string) (bool, error)
 	// RemoveAttachmentFile deletes a local attachment file, only inside the store's
@@ -166,6 +173,7 @@ type LocalStore interface {
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error
+	ReplaceTimeEntries(ctx context.Context, taskGID string, entries []model.TimeEntry, fetchedAt time.Time) error
 	ReplaceTeams(ctx context.Context, workspaceGID string, teams []model.Team) error
 	ReplaceTimePeriods(ctx context.Context, workspaceGID string, periods []model.TimePeriod) error
 	SafeToResend(ctx context.Context, op outbox.Op) (bool, error)
@@ -178,6 +186,7 @@ type LocalStore interface {
 	SetProjectArchivedLocal(ctx context.Context, projectGID string, archived bool) error
 	SetSyncState(ctx context.Context, key, value string) error
 	SyncState(ctx context.Context, key string) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error
 	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error
