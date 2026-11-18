@@ -107,11 +107,14 @@ type row struct {
 	task      *readmodel.TaskSummary
 	notif     *readmodel.Notification // inbox: the notification (task is what it is about, if a task)
 	note      bool                    // header is an explanation, not a group (never collapsed)
+	empty     bool                    // header of a section with no tasks (shown so it can be changed)
 }
 
-// selectable rows: tasks, notifications, and collapsed group headers (so they can be
-// expanded again).
-func (r row) selectable() bool { return r.task != nil || r.notif != nil || r.collapsed }
+// selectable rows: tasks, notifications, collapsed group headers (so they can be expanded
+// again) and empty sections (so they can be renamed, moved or deleted).
+func (r row) selectable() bool {
+	return r.task != nil || r.notif != nil || r.collapsed || r.empty
+}
 
 // isHeader reports whether r is a group header (or a note).
 func (r row) isHeader() bool { return r.task == nil && r.notif == nil }
@@ -197,6 +200,11 @@ type Model struct {
 	allRows   []row           // every row; rows is allRows minus collapsed groups
 	collapsed map[string]bool // keys of collapsed groups in the current scope
 	renameGID string          // section being renamed (promptRenameSection)
+	// sections and tags (sectiontags.go)
+	planOff         map[string]bool      // features the workspace's plan lacks (402)
+	newSectionAfter string               // promptNewSection: the section to add it after
+	tagList         []readmodel.TagCount // the tags the tag manager shows
+	tagTarget       readmodel.TagCount   // the tag being changed
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
 	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).

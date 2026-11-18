@@ -242,6 +242,9 @@ func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
 					return res, err
 				}
 			}
+			if err := s.syncMySections(ctx, w.GID); err != nil {
+				return res, err
+			}
 		}
 		if err := s.syncTeamsAndFavorites(ctx, w, res.Poll); err != nil {
 			return res, err

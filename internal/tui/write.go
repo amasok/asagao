@@ -32,6 +32,8 @@ const (
 	promptNewProject
 	promptField     // a custom field (fields.go)
 	promptDepSearch // search for a task to link (deps.go)
+	promptNewSection
+	promptRenameTag
 )
 
 type outboxCounts struct{ pending, conflict, failed int }
@@ -55,6 +57,10 @@ type (
 )
 
 func (m *Model) loadOutbox() tea.Cmd {
+	return tea.Batch(m.loadOutboxOnly(), m.loadPlan())
+}
+
+func (m *Model) loadOutboxOnly() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		var c outboxCounts
@@ -161,6 +167,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, cmd, true
 	}
 	if cmd, ok := m.updateDeps(msg); ok {
+		return m, cmd, true
+	}
+	if cmd, ok := m.updateSectionTags(msg); ok {
 		return m, cmd, true
 	}
 	switch msg := msg.(type) {
@@ -294,6 +303,12 @@ func (m *Model) openPrompt(kind promptKind) {
 	case promptRenameSection:
 		m.prompt.Prompt = "セクション名: "
 		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+	case promptNewSection:
+		m.prompt.Prompt = "新しいセクション: "
+		m.prompt.Placeholder = "Enter で追加 / Esc で取り消し"
+	case promptRenameTag:
+		m.prompt.Prompt = "タグ名: "
+		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
 	case promptSubtask:
 		m.prompt.Prompt = "サブタスク: "
 		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
@@ -344,6 +359,10 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.createTask(value)
 		case promptRenameSection:
 			return m, m.renameSection(m.renameGID, value)
+		case promptNewSection:
+			return m, m.createSection(value)
+		case promptRenameTag:
+			return m, m.submitTagName(value)
 		case promptSubtask:
 			return m, m.createSubtask(m.subtaskParent, value)
 		case promptNewTag:

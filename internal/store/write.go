@@ -95,7 +95,7 @@ func (s *Store) ReplaceSections(ctx context.Context, projectGID string, secs []m
 				return err
 			}
 		}
-		return reapplySectionRenames(ctx, tx)
+		return reapplySectionOps(ctx, tx, projectGID)
 	})
 }
 
@@ -261,6 +261,9 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if err := upsertTaskCustomFields(ctx, tx, t); err != nil {
 		return err
 	}
+	if err := upsertAssigneeSection(ctx, tx, t, workspace); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ?", t.GID); err != nil {
 		return err
 	}
@@ -272,6 +275,13 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)", t.GID, tag.GID); err != nil {
 			return err
 		}
+	}
+	if len(t.Tags) > 0 {
+		gids := make([]string, len(t.Tags))
+		for i, tag := range t.Tags {
+			gids[i] = tag.GID
+		}
+		return reapplyTagEdits(ctx, tx, gids...)
 	}
 	return nil
 }

@@ -25,7 +25,7 @@ func writeCLIEnv(t *testing.T) string {
 	if err := st.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "家具"}, {GID: "s2", Name: "完了"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertTags(ctx, []asana.Ref{{GID: "g1", Name: "急ぎ"}}); err != nil {
+	if err := st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -68,6 +68,15 @@ func TestWriteCommandsOfflineQueue(t *testing.T) {
 		{"comment", []string{"comment", "add", "t1", "**明日**", "届く"}, store.OpAddComment, "t1", nil},
 		{"tag", []string{"task", "tag", "t1", "--add", "急ぎ"}, store.OpAddTag, "t1", nil},
 		{"section rename", []string{"section", "rename", "家具", "大型家具", "--project", "新居"}, store.OpRenameSection, "s1", nil},
+		{"section move", []string{"section", "move", "完了", "--project", "新居", "--before", "家具"}, store.OpInsertSection, "s2", nil},
+		{"section rm", []string{"section", "rm", "完了", "--project", "新居", "--yes"}, store.OpDeleteSection, "s2", nil},
+		{"tag rename", []string{"tag", "rename", "急ぎ", "至急"}, store.OpUpdateTag, "g1", nil},
+		{"tag color", []string{"tag", "color", "急ぎ", "Dark-Red"}, store.OpUpdateTag, "g1", func(t *testing.T, st *store.Store) {
+			if g, _ := st.GetTag(context.Background(), "g1"); g.Color != "dark-red" {
+				t.Errorf("g1 = %+v", g)
+			}
+		}},
+		{"tag rm", []string{"tag", "rm", "急ぎ", "--yes"}, store.OpDeleteTag, "g1", nil},
 		{"project edit", []string{"project", "edit", "新居", "--owner", "Partner", "--start", "2026-12-01", "--due", "2026-12-31",
 			"--color", "dark-red", "--notes", "**年内**に引っ越す"}, store.OpUpdateProject, "p1", func(t *testing.T, st *store.Store) {
 			o, _ := st.ProjectOverview(context.Background(), "p1")
@@ -159,6 +168,15 @@ func TestWriteCommandsRefuseUnknown(t *testing.T) {
 		{"comment", "add", "t1"},
 		{"section", "rename", "ない", "新", "--project", "新居"},
 		{"section", "rename", "家具", "新"}, // --project is required
+		{"section", "create", "新"},       // --project is required
+		{"section", "create", "新", "--project", "新居", "--after", "ない"},
+		{"section", "create", "新", "--project", "新居", "--before", "家具", "--after", "完了"},
+		{"section", "move", "完了", "--project", "新居"}, // where to?
+		{"section", "move", "完了", "--project", "新居", "--before", "完了"},
+		{"section", "rm", "完了", "--project", "新居"}, // --yes is required
+		{"tag", "rm", "急ぎ"}, // --yes is required
+		{"tag", "color", "急ぎ", "green"},
+		{"tag", "rename", "ないタグ", "x"},
 		{"task", "tag", "t1", "--remove", "ないタグ"},
 		{"task", "create", "x", "--due", "そのうち"},
 		{"task", "create", "x", "--project", "ない"},

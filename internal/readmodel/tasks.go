@@ -30,6 +30,9 @@ type TaskSummary struct {
 	NumLikes int  `json:"num_likes"`
 	// ApprovalStatus of an approval task: pending, approved, rejected or changes_requested.
 	ApprovalStatus string `json:"approval_status,omitempty"`
+	// MySection is the section of My Tasks the task is in (tasks assigned to me; nil when
+	// unknown).
+	MySection *SectionView `json:"my_section,omitempty"`
 	// OpenDependencies is how many incomplete tasks this task waits for.
 	OpenDependencies int `json:"open_dependencies,omitempty"`
 	// CustomFields: in lists, the fields that have a value; in a task's detail, every field
@@ -101,6 +104,7 @@ type TaskFilter struct {
 type TagCount struct {
 	GID   string `json:"gid"`
 	Name  string `json:"name"`
+	Color string `json:"color,omitempty"` // one of Asana's tag colors, "" for none
 	Open  int    `json:"open_tasks"`
 	Total int    `json:"tasks"`
 }

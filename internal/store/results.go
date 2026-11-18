@@ -38,6 +38,7 @@ var resultKinds = map[string][]string{
 	ResultAttachment: {OpUploadAttachment},
 	ResultStatus:     {OpCreateStatus},
 	ResultTag:        nil,
+	ResultSection:    {OpCreateSection},
 }
 
 // resultTables are, per mapping prefix, the local gids in the rows that would still carry
@@ -49,6 +50,7 @@ var resultTables = map[string][]string{
 	ResultAttachment: {localIn("attachments", "gid")},
 	ResultStatus:     {localIn("status_updates", "gid")},
 	ResultTag:        {localIn("tags", "gid"), localIn("task_tags", "tag_gid")},
+	ResultSection:    {localIn("sections", "gid"), localIn("task_memberships", "section_gid")},
 }
 
 // localIn selects the local gids in a column (substr, not LIKE: "_" and "%" are literal).

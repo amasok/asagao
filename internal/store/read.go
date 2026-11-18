@@ -59,7 +59,8 @@ const taskColumns = `t.gid, t.name, t.resource_subtype, t.completed, COALESCE(t.
 	EXISTS (SELECT 1 FROM outbox o WHERE o.task_gid = t.gid), t.liked, t.num_likes, t.approval_status,
 	(SELECT count(*) FROM task_dependencies dp LEFT JOIN tasks bt ON bt.gid = dp.dependency_gid
 		LEFT JOIN task_refs br ON br.gid = dp.dependency_gid
-		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed) = 0)`
+		WHERE dp.task_gid = t.gid AND COALESCE(bt.completed, br.completed) = 0),
+	t.assignee_section_gid, COALESCE((SELECT ms.name FROM my_task_sections ms WHERE ms.gid = t.assignee_section_gid), '')`
 
 func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, error) {
 	var where []string
@@ -146,12 +147,15 @@ func (s *Store) queryTasks(ctx context.Context, q string, args ...any) ([]TaskSu
 	tasks := []TaskSummary{}
 	for rows.Next() {
 		var t TaskSummary
-		var assigneeGID, assigneeName string
+		var assigneeGID, assigneeName, mySection, mySectionName string
 		if err := rows.Scan(&t.GID, &t.Name, &t.ResourceSubtype, &t.Completed, &t.CompletedAt,
 			&t.DueOn, &t.DueAt, &t.StartOn, &assigneeGID, &assigneeName,
 			&t.ParentGID, &t.ParentName, &t.NumSubtasks, &t.PermalinkURL, &t.ModifiedAt, &t.Pending, &t.Liked, &t.NumLikes,
-			&t.ApprovalStatus, &t.OpenDependencies); err != nil {
+			&t.ApprovalStatus, &t.OpenDependencies, &mySection, &mySectionName); err != nil {
 			return nil, err
+		}
+		if mySection != "" && mySectionName != "" {
+			t.MySection = &SectionView{GID: mySection, Name: mySectionName}
 		}
 		if assigneeGID != "" {
 			t.Assignee = &UserRef{GID: assigneeGID, Name: assigneeName}
@@ -506,9 +510,25 @@ type TagCount = readmodel.TagCount
 
 // ListTags returns the workspace tags (with how many tasks use them), ordered by name.
 func (s *Store) ListTags(ctx context.Context) ([]TagCount, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.gid, g.name, COALESCE(SUM(t.completed = 0), 0), COUNT(t.gid)
+	return s.queryTags(ctx, "")
+}
+
+// GetTag returns one tag of the cache (with how many tasks use it).
+func (s *Store) GetTag(ctx context.Context, gid string) (TagCount, error) {
+	tags, err := s.queryTags(ctx, "WHERE g.gid = ?", gid)
+	if err != nil {
+		return TagCount{}, err
+	}
+	if len(tags) == 0 {
+		return TagCount{}, fmt.Errorf("tag %s: %w", gid, ErrNotFound)
+	}
+	return tags[0], nil
+}
+
+func (s *Store) queryTags(ctx context.Context, where string, args ...any) ([]TagCount, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT g.gid, g.name, g.color, COALESCE(SUM(t.completed = 0), 0), COUNT(t.gid)
 		FROM tags g LEFT JOIN task_tags tt ON tt.tag_gid = g.gid LEFT JOIN tasks t ON t.gid = tt.task_gid
-		GROUP BY g.gid ORDER BY g.name`)
+		`+where+` GROUP BY g.gid ORDER BY g.name`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -516,7 +536,7 @@ func (s *Store) ListTags(ctx context.Context) ([]TagCount, error) {
 	tags := []TagCount{}
 	for rows.Next() {
 		var t TagCount
-		if err := rows.Scan(&t.GID, &t.Name, &t.Open, &t.Total); err != nil {
+		if err := rows.Scan(&t.GID, &t.Name, &t.Color, &t.Open, &t.Total); err != nil {
 			return nil, err
 		}
 		tags = append(tags, t)

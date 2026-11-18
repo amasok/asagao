@@ -14,6 +14,7 @@ type Store interface {
 	app.ProjectStore
 	app.RelationStore
 	app.SectionStore
+	app.TagStore
 	app.CopyStore
 	app.NotificationStore
 	app.OutboxStore

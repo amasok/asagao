@@ -334,4 +334,19 @@ CREATE TABLE project_overviews (
 	fetched_at               TEXT NOT NULL DEFAULT ''
 );
 `,
+	`
+-- Tag colors (#33), and the sections of each user's My Tasks list (#35): the section a
+-- task is in there, and the sections of the list per workspace. Forget the last full sync
+-- so the next sync fetches them.
+ALTER TABLE tags ADD COLUMN color TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN assignee_section_gid TEXT NOT NULL DEFAULT '';
+CREATE TABLE my_task_sections (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	name          TEXT NOT NULL,
+	position      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX my_task_sections_workspace ON my_task_sections(workspace_gid, position);
+DELETE FROM sync_state WHERE key = 'last_full_sync';
+`,
 }

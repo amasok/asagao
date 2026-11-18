@@ -199,7 +199,9 @@ func ConflictLines(op outbox.Op) []string {
 func DescribeOp(op outbox.Op) string {
 	what := DescribeChange(op)
 	switch op.Kind {
-	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection:
+	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection,
+		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection,
+		outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return what
 	}
 	name := op.TaskName
@@ -262,6 +264,32 @@ func DescribeChange(op outbox.Op) string {
 			return "通知を既読にする"
 		}
 		return "通知を未読に戻す"
+	case outbox.KindCreateSection:
+		return fmt.Sprintf("セクション「%s」の作成", str("name"))
+	case outbox.KindDeleteSection:
+		return fmt.Sprintf("セクション「%s」の削除", str("name"))
+	case outbox.KindInsertSection:
+		return fmt.Sprintf("セクション「%s」の並べ替え", str("name"))
+	case outbox.KindUpdateTag:
+		old, _ := op.Base["name"].(string)
+		if old == "" {
+			old, _ = op.Payload["name"].(string)
+		}
+		var parts []string
+		if v, ok := op.Payload["name"].(string); ok {
+			parts = append(parts, fmt.Sprintf("名前を「%s」に変更", v))
+		}
+		if v, ok := op.Payload["color"].(string); ok {
+			if v == "" {
+				v = "なし"
+			}
+			parts = append(parts, fmt.Sprintf("色を %s に変更", v))
+		}
+		return fmt.Sprintf("タグ「%s」の%s", old, strings.Join(parts, "、"))
+	case outbox.KindDeleteTag:
+		return fmt.Sprintf("タグ「%s」の削除", str("name"))
+	case outbox.KindMoveMySection:
+		return fmt.Sprintf("マイタスクのセクション「%s」への移動", str("section_name"))
 	case outbox.KindUpdateProject:
 		var parts []string
 		for _, k := range []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"} {

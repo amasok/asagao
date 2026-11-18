@@ -14,6 +14,7 @@ type (
 	TaskCounts         = model.TaskCounts
 	ProjectBrief       = model.ProjectBrief
 	Section            = model.Section
+	Tag                = model.Tag
 	Membership         = model.Membership
 	Task               = model.Task
 	TaskQuery          = model.TaskQuery

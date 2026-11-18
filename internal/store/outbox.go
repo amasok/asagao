@@ -573,6 +573,19 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 				return err
 			}
 		}
+	case OpMoveMySection:
+		section, _ := op.Base["section"].(string)
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET assignee_section_gid = ? WHERE gid = ?", section, op.TaskGID); err != nil {
+			return err
+		}
+	case OpUpdateTag, OpDeleteTag:
+		if err := undoTagOp(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpCreateSection, OpDeleteSection, OpInsertSection:
+		if err := undoSectionOp(ctx, tx, op); err != nil {
+			return err
+		}
 	case OpUpdateProject:
 		// Restore the values from before the local edit.
 		if err := applyProjectFields(ctx, tx, op.TaskGID, op.Base); err != nil {

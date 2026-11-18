@@ -110,7 +110,7 @@ func TestPruneResultsKeepsReferenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	// a tag row that still has the local gid
-	if err := st.UpsertTags(ctx, []asana.Ref{{GID: "local:tag", Name: "急ぎ"}}); err != nil {
+	if err := st.UpsertTags(ctx, []asana.Tag{{GID: "local:tag", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
 	later := now.Add(2 * ResultGrace)

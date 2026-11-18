@@ -23,10 +23,12 @@ import (
 
 // writeResult is the JSON output of write commands.
 type writeResult struct {
-	TaskGID   string           `json:"task_gid,omitempty"`
-	CommentID string           `json:"comment_gid,omitempty"`
-	Sent      bool             `json:"sent"`
-	Push      *sync.PushResult `json:"push,omitempty"`
+	TaskGID   string `json:"task_gid,omitempty"`
+	CommentID string `json:"comment_gid,omitempty"`
+	// SectionGID is the section `section create` made (its Asana gid once sent).
+	SectionGID string           `json:"section_gid,omitempty"`
+	Sent       bool             `json:"sent"`
+	Push       *sync.PushResult `json:"push,omitempty"`
 	// Discarded lists queued changes dropped because what they changed was deleted in Asana
 	// (by this push or an earlier one not shown yet).
 	Discarded []readmodel.Discard `json:"discarded,omitempty"`
@@ -117,6 +119,11 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 	// The gid may have changed from local:... to the real one.
 	if r.TaskGID != "" && localgid.IsLocal(r.TaskGID) && r.Sent {
 		r.TaskGID = ""
+	}
+	if localgid.IsLocal(r.SectionGID) {
+		if real, err := st.RealSectionGID(cmd.Context(), r.SectionGID); err == nil {
+			r.SectionGID = real
+		}
 	}
 	if a.json {
 		return a.printJSON(r)
@@ -507,11 +514,13 @@ func (a *app) taskAssignCmd() *cobra.Command {
 
 func (a *app) taskMoveCmd() *cobra.Command {
 	var project, section string
+	var mine bool
 	cmd := &cobra.Command{
-		Use:     "move <gid> --section <セクション>",
-		Short:   "タスクを別のセクションに移動する",
-		Example: `  asagao task move 1203455468597469 --section Done`,
-		Args:    cobra.ExactArgs(1),
+		Use:   "move <gid> --section <セクション> [--my-tasks]",
+		Short: "タスクを別のセクションに移動する（--my-tasks でマイタスクのセクション）",
+		Example: `  asagao task move 1203455468597469 --section Done
+  asagao task move 1203455468597469 --section 今日やる --my-tasks`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			st, err := a.openStore(ctx)
@@ -520,6 +529,15 @@ func (a *app) taskMoveCmd() *cobra.Command {
 			}
 			defer st.Close()
 			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			if mine {
+				if project != "" {
+					return fmt.Errorf("--my-tasks と --project は一緒に使えません")
+				}
+				if err := sections.MoveMine(ctx, args[0], section); err != nil {
+					return err
+				}
+				return a.reportWrite(cmd, st, writeResult{TaskGID: args[0]}, "移動しました: → "+section+"（マイタスク）")
+			}
 			if err := sections.Move(ctx, args[0], project, section); err != nil {
 				return err
 			}
@@ -528,6 +546,7 @@ func (a *app) taskMoveCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&section, "section", "", "移動先のセクション（gid または名前）")
 	cmd.Flags().StringVar(&project, "project", "", "プロジェクト（タスクが複数のプロジェクトに入っている場合）")
+	cmd.Flags().BoolVar(&mine, "my-tasks", false, "マイタスクのセクション（今日やる・あとで など）に移す")
 	_ = cmd.MarkFlagRequired("section")
 	return a.addDryRunFlag(cmd)
 }
@@ -557,7 +576,7 @@ func (a *app) sectionCmd() *cobra.Command {
 	}
 	rename.Flags().StringVar(&project, "project", "", "プロジェクト（gid または名前）")
 	_ = rename.MarkFlagRequired("project")
-	cmd.AddCommand(a.addDryRunFlag(rename))
+	cmd.AddCommand(a.addDryRunFlag(rename), a.sectionCreateCmd(), a.sectionRmCmd(), a.sectionMoveCmd(), a.sectionMineCmd())
 	return cmd
 }
 
@@ -581,12 +600,13 @@ func (a *app) tagCmd() *cobra.Command {
 			}
 			rows := [][]string{}
 			for _, t := range tags {
-				rows = append(rows, []string{"#" + t.Name, fmt.Sprintf("未完了 %d / 全 %d", t.Open, t.Total)})
+				rows = append(rows, []string{"#" + t.Name, fmt.Sprintf("未完了 %d / 全 %d", t.Open, t.Total), t.Color})
 			}
 			printTable(cmd.OutOrStdout(), rows)
 			return nil
 		},
 	})
+	cmd.AddCommand(a.tagRenameCmd(), a.tagColorCmd(), a.tagRmCmd())
 	return cmd
 }
 
