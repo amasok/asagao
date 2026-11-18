@@ -158,6 +158,12 @@ func importRule(from, to string) string {
 	if lt == layerTest {
 		return "packages with only tests are not imported"
 	}
+	if lt == layerTestSupport {
+		return "only tests import testguard (Issue #53)"
+	}
+	if lf == layerTestSupport {
+		return "testguard imports only the standard library"
+	}
 	switch lf {
 	case layerWire:
 		return ""
@@ -310,7 +316,7 @@ func unknownPackages(g *graph) []string {
 
 // stdOnly are the layers whose packages use the standard library only, even indirectly
 // (ADR 0004, decision 1).
-var stdOnly = []layer{layerDomain, layerApp, layerShared, layerCommon}
+var stdOnly = []layer{layerDomain, layerApp, layerShared, layerCommon, layerTestSupport}
 
 // indirectExternal reports, for each package in a stdOnly layer, the external modules it
 // reaches through the module's packages, with the shortest chain of imports. The walk does
@@ -420,6 +426,7 @@ func clockUses(fset *token.FileSet, f *ast.File) []string {
 
 // graph is the import graph of the module's packages, merged over goosList.
 type graph struct {
+	root    string              // the module's root folder
 	pkgs    map[string]*pkgInfo // the module's packages, by path relative to the module ("internal/store")
 	std     map[string]bool     // standard packages
 	modules map[string]string   // other packages: import path → module path
@@ -482,7 +489,7 @@ func loadModule(t *testing.T) *graph {
 		t.Fatal(err)
 	}
 
-	g := &graph{pkgs: map[string]*pkgInfo{}, std: map[string]bool{}, modules: map[string]string{}}
+	g := &graph{root: mod.Dir, pkgs: map[string]*pkgInfo{}, std: map[string]bool{}, modules: map[string]string{}}
 	local := func(p string) string {
 		if rel, ok := strings.CutPrefix(p, mod.Path+"/"); ok {
 			return rel

@@ -448,4 +448,14 @@ CREATE TABLE time_entries (
 );
 CREATE INDEX time_entries_task ON time_entries(task_gid, entered_on);
 `,
+	`
+-- The custom fields of each workspace (#37), to add one to a project. Their definitions
+-- are in custom_fields.
+CREATE TABLE workspace_custom_fields (
+	workspace_gid TEXT NOT NULL,
+	field_gid     TEXT NOT NULL,
+	position      INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (workspace_gid, field_gid)
+);
+`,
 }

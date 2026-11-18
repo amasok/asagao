@@ -146,6 +146,7 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "rename_section", Annotations: write(false),
 			Description: "Rename a section (a list/column) of a project."}, s.renameSection)
 		s.addSectionTagTools(srv, write)
+		s.addFieldTools(srv, write)
 		s.addTimeTrackingWriteTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "duplicate_task", Annotations: write(false),
 			Description: "Duplicate a task (with its description, assignee, dates, projects, tags, subtasks, attachments and followers)."}, s.duplicateTask)
@@ -312,6 +313,7 @@ type UpdateTaskInput struct {
 	AddDependents      []string       `json:"add_dependents,omitempty" jsonschema:"gids of tasks that should wait for this task"`
 	RemoveDependents   []string       `json:"remove_dependents,omitempty" jsonschema:"gids of tasks that should stop waiting for this task"`
 	CustomFields       map[string]any `json:"custom_fields,omitempty" jsonschema:"custom fields to set, by field name or gid (see get_task custom_fields): an option name for enum, a list of option names for multi_enum, a number, text, a date (YYYY-MM-DD, +7d), user names or gids for people; null or empty string clears"`
+	AddMissingOptions  bool           `json:"add_missing_options,omitempty" jsonschema:"with custom_fields: an option name an enum / multi_enum field does not have (exactly, ignoring case) is added to the field and set (only where get_task shows can_add_option)"`
 }
 
 type DuplicateTaskInput struct {
@@ -651,7 +653,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 		return nil, WriteOutput{}, err
 	}
 	// Resolve every custom field value before changing anything.
-	fields, err := relations.ResolveFields(ctx, in.GID, in.CustomFields)
+	fields, err := relations.ResolveFieldsAdding(ctx, in.GID, in.CustomFields, in.AddMissingOptions)
 	if err != nil {
 		return nil, WriteOutput{}, err // "custom_fields: …"
 	}
@@ -916,6 +918,8 @@ func (s *Server) uploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, i
 
 type ProjectInput struct {
 	Project string `json:"project" jsonschema:"project gid or name"`
+	// IncludeAvailableFields also lists the workspace's custom fields the project does not have.
+	IncludeAvailableFields bool `json:"include_available_fields,omitempty" jsonschema:"also list the workspace's custom fields that can be added to the project (available_custom_fields)"`
 }
 
 type ProjectOutput struct {
@@ -933,7 +937,11 @@ type ProjectOutput struct {
 	Pending  bool                `json:"pending,omitempty"`
 	Members  []readmodel.UserRef `json:"members"`
 	Statuses []StatusOutput      `json:"status_updates"`
-	Note     string              `json:"note,omitempty"`
+	// CustomFields are the project's custom fields; AvailableCustomFields the workspace's
+	// others (include_available_fields), which update_project_custom_fields can add.
+	CustomFields          []readmodel.ProjectFieldView `json:"custom_fields"`
+	AvailableCustomFields []readmodel.ProjectFieldView `json:"available_custom_fields,omitempty"`
+	Note                  string                       `json:"note,omitempty"`
 }
 
 // BriefOutput is a project's brief (read only).
@@ -986,6 +994,18 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 	}
 	if out.Members, err = s.query().ProjectMembers(ctx, gid); err != nil {
 		return nil, out, err
+	}
+	fields, err := s.Store.ProjectFields(ctx, gid)
+	if err != nil {
+		return nil, out, err
+	}
+	out.CustomFields = []readmodel.ProjectFieldView{}
+	for _, f := range fields {
+		if f.Attached {
+			out.CustomFields = append(out.CustomFields, f)
+		} else if in.IncludeAvailableFields {
+			out.AvailableCustomFields = append(out.AvailableCustomFields, f)
+		}
 	}
 	updates, err := s.query().StatusUpdates(ctx, gid)
 	if err != nil {

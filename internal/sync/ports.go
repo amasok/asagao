@@ -42,6 +42,11 @@ type AsanaAPI interface {
 	UserTaskList(ctx context.Context, userGID, workspaceGID string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
+	CustomField(ctx context.Context, gid string) (*model.CustomField, error)
+	WorkspaceCustomFields(ctx context.Context, workspaceGID string) ([]model.CustomField, error)
+	CreateEnumOption(ctx context.Context, fieldGID, name string) (*model.EnumOption, error)
+	AddCustomFieldSetting(ctx context.Context, projectGID, fieldGID string) error
+	RemoveCustomFieldSetting(ctx context.Context, projectGID, fieldGID string) error
 	DeleteAttachment(ctx context.Context, gid string) error
 	DeleteStory(ctx context.Context, gid string) error
 	DeleteTimeEntry(ctx context.Context, gid string) error
@@ -179,6 +184,10 @@ type LocalStore interface {
 	ReplaceNotifications(ctx context.Context, workspaceGID string, ns []model.Notification) error
 	ReplacePortfolios(ctx context.Context, workspaceGID string, ps []model.Portfolio) error
 	ReplaceProjectCustomFields(ctx context.Context, projectGID string, settings []model.CustomFieldSetting) error
+	ReplaceWorkspaceCustomFields(ctx context.Context, workspaceGID string, fields []model.CustomField) error
+	CompleteCreateEnumOption(ctx context.Context, id int64, local string, real model.EnumOption) error
+	EnumOptionCreateQueued(ctx context.Context, gid string) (bool, error)
+	FieldSettingQueued(ctx context.Context, taskGID, fieldGID string) (bool, error)
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error

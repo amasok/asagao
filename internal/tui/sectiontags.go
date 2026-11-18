@@ -47,6 +47,10 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !app.TemplatesOffered(m.ctx, st, readmodel.PlanProjectTemplates, ws, m.deps.Now()) {
 			off[readmodel.PlanProjectTemplates] = true
 		}
+		// Per workspace (24 hours): the default workspace's, like the other menus.
+		if ws, err := st.DefaultWorkspace(m.ctx); err == nil && !(&app.ProjectFields{Store: st, Clock: m.deps.Now}).Available(m.ctx, ws) {
+			off[readmodel.PlanCustomFields] = true
+		}
 		return planLoadedMsg{off: off}
 	}
 }

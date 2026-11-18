@@ -83,10 +83,11 @@ func TestTUIMenuReachesEveryEntry(t *testing.T) {
 	}
 }
 
-// The menu is on one page where it fits, below the task list as before.
+// The menu is on one page where it fits, below the task list as before. (The height
+// leaves room for the menu as it grows: 41 rows are needed with #37's entries.)
 func TestTUIMenuOnePageWhenItFits(t *testing.T) {
 	h := openProjectList(t, fixtureStore(t))
-	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 44})
 	h.key("space")
 	s := h.screen()
 	if menuPageRe.MatchString(s) || !strings.Contains(s, "メニュー（キーを押す・esc で閉じる）") {
