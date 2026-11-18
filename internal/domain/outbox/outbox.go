@@ -94,6 +94,12 @@ const (
 	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
 	// start_on, due_on, color); base: their values before the local edit.
 	KindUpdateProject = "update_project"
+	// KindUpdateProjectBrief creates, changes or deletes a project's brief (#60). The outbox
+	// task_gid column holds the project gid. payload: title, html_text and text (its plain
+	// text, to compare), or delete (true); base: the brief as it was before the local edit:
+	// state (none, available, or "" when it was never fetched), title and text. Asana's
+	// brief is compared with the base when it is sent: a change there is a conflict.
+	KindUpdateProjectBrief = "update_project_brief"
 
 	// Time tracking entries of a task (#6). task_gid holds the task.
 	//

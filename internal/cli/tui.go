@@ -102,19 +102,7 @@ func inlineImagesEnabled(setting, protocol string, getenv func(string) string) b
 // runEditor opens path in ui.editor, $VISUAL, $EDITOR, nvim or vi (in that order) while the
 // TUI is suspended.
 func (a *app) runEditor(path string, done func(error) tea.Msg) tea.Cmd {
-	cmdline := a.cfg.UI.Editor
-	for _, env := range []string{"VISUAL", "EDITOR"} {
-		if cmdline == "" {
-			cmdline = os.Getenv(env)
-		}
-	}
-	if cmdline == "" {
-		cmdline = "vi"
-		if _, err := exec.LookPath("nvim"); err == nil {
-			cmdline = "nvim"
-		}
-	}
-	args := strings.Fields(cmdline)
+	args := strings.Fields(a.editorCommand())
 	return tea.ExecProcess(exec.Command(args[0], append(args[1:], path)...), done)
 }
 

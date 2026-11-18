@@ -40,7 +40,7 @@ func (m *Model) render() string {
 		body = m.renderOutbox(m.width, bodyH)
 	} else if m.statusView {
 		body = m.renderStatuses(m.width, bodyH)
-	} else if m.overviewView {
+	} else if m.overviewView && m.picker == nil { // (a confirmation of the overview is shown over it)
 		body = m.renderOverview(m.width, bodyH)
 	} else if m.goals.open {
 		body = m.renderGoals(m.width, bodyH)

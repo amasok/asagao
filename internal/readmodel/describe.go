@@ -146,6 +146,9 @@ func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDet
 		addRich("説明", "notes", "html_notes")
 	case outbox.KindUpdateProject:
 		addRich("説明", "notes", "html_notes")
+	case outbox.KindUpdateProjectBrief:
+		add("ブリーフのタイトル", "title")
+		addRich("ブリーフ", "text", "html_text")
 	}
 	return out
 }
@@ -182,6 +185,9 @@ func ConflictLines(op outbox.Op) []string {
 		}
 		name, _ := op.Payload["field_name"].(string)
 		return []string{fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict))}
+	}
+	if op.Kind == outbox.KindUpdateProjectBrief {
+		return BriefConflictLines(op)
 	}
 	label := FieldLabel
 	if op.Kind == outbox.KindUpdateProject {
@@ -320,6 +326,17 @@ func DescribeChange(op outbox.Op) string {
 		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトに追加", str("field_name"))
 	case outbox.KindRemoveFieldSetting:
 		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトから外す", str("field_name"))
+	case outbox.KindUpdateProjectBrief:
+		if op.Payload["delete"] == true {
+			return "ブリーフの削除"
+		}
+		if state, _ := op.Base["state"].(string); state != BriefAvailable {
+			return fmt.Sprintf("ブリーフ「%s」の作成", clip(str("title"), 40))
+		}
+		if _, ok := op.Payload["title"]; !ok { // the body only
+			return "ブリーフの本文の変更"
+		}
+		return fmt.Sprintf("ブリーフ「%s」の変更", clip(str("title"), 40))
 	case outbox.KindUpdateProject:
 		var parts []string
 		for _, k := range []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"} {
@@ -460,4 +477,34 @@ func intOf(v any) int {
 		return int(n)
 	}
 	return 0
+}
+
+// BriefConflictLines describes a brief change in conflict (#60): how the brief is here and
+// in Asana, one line for the title and one for the text (or that it was deleted or made
+// there). The conflict holds Asana's brief as the base does: state, title, text.
+func BriefConflictLines(op outbox.Op) []string {
+	str := func(m map[string]any, k string) string { v, _ := m[k].(string); return v }
+	local := func(k string) string {
+		if op.Payload["delete"] == true {
+			return "（削除）"
+		}
+		return clip(str(op.Payload, k), 60)
+	}
+	if str(op.Conflict, "state") != BriefAvailable {
+		return []string{"ブリーフ: こちら=" + local("title") + " / Asana=（ブリーフがありません。削除されています）"}
+	}
+	var lines []string
+	del := op.Payload["delete"] == true
+	_, title := op.Payload["title"] // a change sends only what it changes
+	_, text := op.Payload["text"]
+	if del || title && str(op.Payload, "title") != str(op.Conflict, "title") {
+		lines = append(lines, fmt.Sprintf("ブリーフのタイトル: こちら=%s / Asana=%s", local("title"), clip(str(op.Conflict, "title"), 60)))
+	}
+	if del || text && str(op.Payload, "text") != str(op.Conflict, "text") {
+		lines = append(lines, fmt.Sprintf("ブリーフ: こちら=%s / Asana=%s", local("text"), clip(str(op.Conflict, "text"), 60)))
+	}
+	if len(lines) == 0 {
+		lines = append(lines, "ブリーフ: Asana でも変更されています")
+	}
+	return lines
 }

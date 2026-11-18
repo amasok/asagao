@@ -101,6 +101,7 @@ func (s *Server) New() *mcp.Server {
 		Description: "List workspace members (gid and name), e.g. to choose an assignee."}, s.listUsers)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_project", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		Description: "Get a project: its description (Markdown), owner, start and due dates, color, progress (task counts), brief, sections, members and its status updates (Markdown, newest first)."}, s.getProject)
+	s.addBriefTools(srv)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_my_sections", Annotations: readOnly,
 		Description: "List the sections of my My Tasks list (e.g. Today / This week / Later), in order. " +
 			"Tasks show theirs as my_section; move_task with my_tasks=true moves between them."}, s.listMySections)
@@ -159,6 +160,7 @@ func (s *Server) New() *mcp.Server {
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_project", Annotations: write(false),
 			Description: "Create a project in a team (needs Asana to be reachable)."}, s.createProject)
 		s.addTemplateWriteTools(srv, write)
+		s.addBriefWriteTools(srv, write)
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_project", Annotations: write(true),
 			Description: "Change a project's description (Markdown), owner, start / due dates or color (queued, sent now if Asana is reachable); " +
 				"archive / unarchive it or add / remove its members (needs Asana to be reachable). Ask before archiving."}, s.updateProject)
@@ -954,7 +956,7 @@ type ProjectOutput struct {
 	Note                  string                       `json:"note,omitempty"`
 }
 
-// BriefOutput is a project's brief (read only).
+// BriefOutput is a project's brief (update_project_brief changes it).
 type BriefOutput struct {
 	Title    string `json:"title,omitempty"`
 	Markdown string `json:"markdown"`
@@ -991,7 +993,7 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 	out.Markdown = editableMarkdown(o.HTMLNotes, o.Notes)
 	out.Owner, out.StartOn, out.DueOn, out.Color, out.Counts, out.Pending = o.Owner, o.StartOn, o.DueOn, o.Color, o.Counts, o.Pending
 	if o.Brief != nil {
-		out.Brief = &BriefOutput{Title: o.Brief.Title, Markdown: editableMarkdown(o.Brief.HTMLText, o.Brief.Text)}
+		out.Brief = &BriefOutput{Title: o.Brief.Title, Markdown: briefMarkdown(o.Brief.HTMLText, o.Brief.Text)}
 	}
 	projects, err := s.query().ListProjects(ctx, false)
 	if err != nil {

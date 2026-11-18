@@ -61,6 +61,9 @@ func (m *Model) loadOverview(project string, fetch bool) tea.Cmd {
 }
 
 func (m *Model) handleOverviewKey(key string) (tea.Model, tea.Cmd) {
+	if m.picker != nil { // the confirmation of B, over the overview
+		return m.handlePickerKey(key)
+	}
 	switch key {
 	case "esc", "q", "O":
 		m.overviewView = false
@@ -76,6 +79,10 @@ func (m *Model) handleOverviewKey(key string) (tea.Model, tea.Cmd) {
 		m.overviewOffset = max(0, m.overviewOffset-10)
 	case "e":
 		return m, m.editProject()
+	case "b":
+		return m, m.editBrief()
+	case "B":
+		return m, m.confirmDeleteBrief()
 	case "U":
 		m.overviewView = false
 		return m, m.openStatuses()
@@ -87,8 +94,12 @@ func (m *Model) handleOverviewKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) renderOverview(w, h int) string {
-	lines := []string{m.st.dim.Render("j/k スクロール  e 編集（エディタ）  U ステータス更新  W ステータスを書く  esc 閉じる"), ""}
 	o := m.overview
+	help := "j/k スクロール  e 編集（エディタ）  U ステータス更新  W ステータスを書く  esc 閉じる"
+	if o != nil && o.BriefState != readmodel.BriefUnavailable { // Asana gives the brief
+		help = "j/k スクロール  e 編集（エディタ）  b ブリーフを書く  B ブリーフを削除  U ステータス更新  W ステータスを書く  esc 閉じる"
+	}
+	lines := []string{m.st.dim.Render(help), ""}
 	if o == nil {
 		lines = append(lines, m.st.dim.Render("読み込んでいます…"))
 		return m.pane("プロジェクトの概要（"+m.currentScope().name+"）", lines, w, h, true)
@@ -129,13 +140,21 @@ func (m *Model) renderOverview(w, h int) string {
 	} else {
 		lines = append(lines, m.st.dim.Render("（説明はありません。e で書けます）"))
 	}
-	if o.Brief != nil {
+	switch {
+	case o.Brief != nil:
 		title := "ブリーフ"
 		if o.Brief.Title != "" {
 			title += "「" + o.Brief.Title + "」"
 		}
 		lines = append(lines, "", m.st.headerScope.Render(title))
+		if o.BriefPending {
+			lines = append(lines, m.st.today.Render("（ブリーフの変更は未送信です）"))
+		}
 		lines = append(lines, strings.Split(m.markdown(textMarkdown(o.Brief.HTMLText, o.Brief.Text), max(10, w-6)), "\n")...)
+	case o.BriefPending: // deleted here, not sent yet
+		lines = append(lines, "", m.st.headerScope.Render("ブリーフ"), m.st.today.Render("（ブリーフの削除は未送信です）"))
+	case o.BriefState == readmodel.BriefNone:
+		lines = append(lines, "", m.st.headerScope.Render("ブリーフ"), m.st.dim.Render("（ブリーフはありません。b で書けます）"))
 	}
 	m.overviewOffset = clamp(m.overviewOffset, 0, max(0, len(lines)-(h-3)))
 	return m.pane("プロジェクトの概要（"+o.Name+"）", lines[m.overviewOffset:], w, h, true)

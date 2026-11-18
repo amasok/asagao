@@ -423,7 +423,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 		}
 	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
 		return false, nil
 	case outbox.KindUpdateTag, outbox.KindDeleteTag:
 		return s.waitsForTag(ctx, op.TaskGID)
@@ -486,7 +486,7 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
 				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
 			}
-		} else if feature != "" {
+		} else if feature != "" && feature != readmodel.PlanProjectBrief { // the brief's is per workspace (brief.go)
 			_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
 		}
 	}
@@ -565,6 +565,8 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushMoveMySection(ctx, op)
 	case outbox.KindUpdateProject:
 		return s.pushUpdateProject(ctx, op)
+	case outbox.KindUpdateProjectBrief:
+		return s.pushUpdateBrief(ctx, op)
 	case outbox.KindCreateEnumOption:
 		return s.pushCreateEnumOption(ctx, op)
 	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
@@ -712,7 +714,7 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		}
 	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
 		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}
