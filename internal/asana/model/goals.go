@@ -25,9 +25,11 @@ type Goal struct {
 
 // GoalMetric is how a goal's progress is measured.
 type GoalMetric struct {
-	// ResourceSubtype is number, percentage or currency.
+	// ResourceSubtype is "number" on the real Asana for every metric (the reference also
+	// names percentage and currency); the kind is in Unit.
 	ResourceSubtype string `json:"resource_subtype"`
-	// Unit is none, currency or percentage.
+	// Unit is none, currency or percentage. A percentage's values are fractions: a target
+	// of 1 is 100% (a new goal's default metric is percentage, 0 → 1).
 	Unit                string   `json:"unit"`
 	Precision           int      `json:"precision"`
 	CurrencyCode        string   `json:"currency_code"`
