@@ -33,20 +33,44 @@ type typesServer struct {
 	// task is t1 as Asana has it.
 	subtype, typ, status string
 	name                 string // "" is "A"
+	completed            bool
 }
 
-func (f *typesServer) taskJSON() string {
+// taskJSON is t1 as Asana answers r. Like Asana, a custom type or status asked for by its
+// name only (custom_type.name) comes without its gid: the gid comes with custom_type or
+// custom_type.gid (found against the real Asana, #59).
+func (f *typesServer) taskJSON(r *http.Request) string {
 	ct, cs := "null", "null"
 	if f.subtype == "custom" {
-		ct = fmt.Sprintf(`{"gid":%q,"name":"バグ"}`, f.typ)
-		cs = fmt.Sprintf(`{"gid":%q,"name":"対応中"}`, f.status)
+		ct = askedRef(r, "custom_type", f.typ, "バグ")
+		cs = askedRef(r, "custom_type_status_option", f.status, "対応中")
 	}
 	name := f.name
 	if name == "" {
 		name = "A"
 	}
-	return fmt.Sprintf(`{"gid":"t1","name":%q,"resource_subtype":%q,"custom_type":%s,"custom_type_status_option":%s,"due_on":"2026-12-31",
-		"workspace":{"gid":"w1"},"memberships":[{"project":{"gid":"p1"}}],"modified_at":"2026-11-13T00:00:00Z"}`, name, f.subtype, ct, cs)
+	return fmt.Sprintf(`{"gid":"t1","name":%q,"resource_subtype":%q,"custom_type":%s,"custom_type_status_option":%s,"due_on":"2026-12-31","completed":%t,
+		"workspace":{"gid":"w1"},"memberships":[{"project":{"gid":"p1"}}],"modified_at":"2026-11-13T00:00:00Z"}`, name, f.subtype, ct, cs, f.completed)
+}
+
+// askedRef is a reference field (custom_type) as Asana answers it for the opt_fields of r.
+func askedRef(r *http.Request, field, gid, name string) string {
+	asked := map[string]bool{}
+	for _, o := range strings.Split(r.URL.Query().Get("opt_fields"), ",") {
+		asked[o] = true
+	}
+	ref := map[string]string{}
+	if asked[field] || asked[field+".gid"] {
+		ref["gid"] = gid
+	}
+	if asked[field] || asked[field+".name"] {
+		ref["name"] = name
+	}
+	if len(ref) == 0 {
+		return "null"
+	}
+	b, _ := json.Marshal(ref)
+	return string(b)
 }
 
 func (f *typesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +114,7 @@ func (f *typesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.name = v
 		}
 		if f.ignore {
-			fmt.Fprintf(w, `{"data":%s}`, f.taskJSON())
+			fmt.Fprintf(w, `{"data":%s}`, f.taskJSON(r))
 			return
 		}
 		if v, ok := body.Data["resource_subtype"].(string); ok {
@@ -101,10 +125,18 @@ func (f *typesServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := body.Data["custom_type_status_option"].(string); ok {
 			f.status = v
+			// Assumption (not yet checked against the real Asana): a task put in a
+			// status whose completion_state is Complete is completed by Asana.
+			f.completed = v == "cs-done"
 		}
-		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON())
+		if v, ok := body.Data["completed"].(bool); ok {
+			f.completed = v
+		}
+		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON(r))
+	case strings.HasPrefix(r.URL.Path, "/tasks/t1/") || r.URL.Path == "/attachments": // subtasks, stories, attachments
+		fmt.Fprint(w, `{"data":[]}`)
 	case r.URL.Path == "/tasks/t1":
-		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON())
+		fmt.Fprintf(w, `{"data":%s}`, f.taskJSON(r))
 	default:
 		http.NotFound(w, r)
 	}

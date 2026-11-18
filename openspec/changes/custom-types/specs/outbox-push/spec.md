@@ -55,8 +55,8 @@
 - **THEN** 本文に `resource_subtype: custom`・`custom_type`・`custom_type_status_option` が入る
 
 ### Requirement: Asana が受け付けないカスタムタイプ
-Asana が断ったとき (402・400・403・422)、または 200 でも答えに送った種類・ステータスが無いときは、種類の部分だけを操作から外し、理由付きで捨てた変更に残して、タスクの種類・ステータス・完了をローカルで base に戻す (MUST)。残りは、断られたときは送り直し、200 のときは完了にする。
-根拠: sync/push_customtypes.go (customTypeRefused, customTypeApplied); store/customtypes_write.go (WithdrawCustomType); TestPushCustomTypeNotSupported
+Asana が断ったとき (402・400・403・422)、または 200 でも答えに送った種類・ステータスが無いときは、種類の部分だけを操作から外し、理由付きで捨てた変更に残して、タスクの種類・ステータス・完了をローカルで base に戻す (MUST)。残りは、断られたときは送り直し、200 のときは完了にする。答えの種類かステータスに gid が無いときは比べられないので、断られたとはみなさない。
+根拠: sync/push_customtypes.go (customTypeRefused, customTypeApplied); store/customtypes_write.go (WithdrawCustomType); TestPushCustomTypeNotSupported, TestCustomTypeAppliedWithoutGid
 
 #### Scenario: Asana が種類を受け付けない
 - **WHEN** 種類と名前を変えた変更に、Asana が 400 を返す (または種類を変えずに 200 を返す)
