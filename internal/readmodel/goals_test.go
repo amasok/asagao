@@ -45,3 +45,16 @@ func TestPlanOffFor(t *testing.T) {
 		}
 	}
 }
+
+// Every whole percent of 100 is shown as itself (29/100*100 is 28.999… in floating point).
+func TestGoalMetricWholePercents(t *testing.T) {
+	for i := 0; i <= 100; i++ {
+		for _, span := range []float64{100, 1000} {
+			cur := float64(i) * span / 100
+			m := &GoalMetric{Kind: "number", Initial: f(0), Target: f(span), Current: f(cur)}
+			if pct, ok := m.percent(); !ok || pct != i {
+				t.Errorf("%v of %v: %d%%", cur, span, pct)
+			}
+		}
+	}
+}

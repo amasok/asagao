@@ -74,6 +74,24 @@ func (m *GoalMetric) Progress() (p float64, ok bool) {
 	return math.Max(0, math.Min(1, p)), true
 }
 
+// percent is the progress in whole percent, rounded down: computed as (current - initial)
+// * 100 / span so that e.g. 29 of 100 is 29 (29/100*100 is 28.999…), with a margin for
+// what is left of the rounding.
+func (m *GoalMetric) percent() (int, bool) {
+	if _, ok := m.Progress(); !ok {
+		return 0, false
+	}
+	start := 0.0
+	if m.Initial != nil {
+		start = *m.Initial
+	}
+	pct := math.Floor((*m.Current-start)*100/(*m.Target-start) + 1e-9)
+	if math.IsNaN(pct) {
+		return 0, false
+	}
+	return int(math.Max(0, math.Min(100, pct))), true
+}
+
 // Text describes the metric's progress, e.g. "40 / 100（40%）".
 func (m *GoalMetric) Text() string {
 	if m == nil {
@@ -100,8 +118,8 @@ func (m *GoalMetric) Text() string {
 	if t := num(m.Target); t != "" {
 		text = strings.TrimSpace(cur + " / " + t)
 	}
-	if p, ok := m.Progress(); ok {
-		text += "（" + strconv.Itoa(int(math.Floor(p*100))) + "%）"
+	if pct, ok := m.percent(); ok {
+		text += "（" + strconv.Itoa(pct) + "%）"
 	}
 	return text
 }
