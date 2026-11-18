@@ -104,6 +104,13 @@ type envelope struct {
 // do sends one request and decodes the "data" field into out. It retries on 429, and on
 // 5xx for idempotent methods (see retryable).
 func (c *Client) do(ctx context.Context, method, path string, q url.Values, body, out any) (*envelope, error) {
+	return c.doWith(ctx, method, path, q, body, out, func(status int) bool {
+		return retryable(method, status) || (path == batchPath && status >= 500)
+	})
+}
+
+// doWith is do with its own choice of the statuses to retry.
+func (c *Client) doWith(ctx context.Context, method, path string, q url.Values, body, out any, retry func(status int) bool) (*envelope, error) {
 	u := c.BaseURL + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
@@ -115,9 +122,7 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 			return nil, err
 		}
 	}
-	rep, err := c.send(ctx, c.HTTP, method, u, payload, func(status int) bool {
-		return retryable(method, status) || (path == batchPath && status >= 500)
-	})
+	rep, err := c.send(ctx, c.HTTP, method, u, payload, retry)
 	if err != nil {
 		return nil, err
 	}

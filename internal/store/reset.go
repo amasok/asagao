@@ -113,6 +113,7 @@ func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsen
 			"tasks", "sections", "project_members", "status_updates", "projects", "tags", "users",
 			"workspaces", "outbox", "sync_state",
 			"notifications",
+			"goal_supports", "goals", "time_periods", "portfolio_items", "portfolios",
 		} {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 				return err

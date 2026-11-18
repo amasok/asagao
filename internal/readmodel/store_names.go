@@ -45,6 +45,18 @@ const (
 	KeyTeams = "teams:"
 	// KeyTimeEntries + task gid: when the task's time tracking entries were last fetched.
 	KeyTimeEntries = "time_entries:"
+	// KeyCustomID + a task's custom ID ("ENG-123"): the gid Asana gave for it, so that a
+	// commit can name the task while offline once it was found (Issue #36).
+	KeyCustomID = "custom_id:"
+)
+
+// Keys of the sync state for goals and portfolios (#7).
+const (
+	// KeyGoals + workspace gid: when the goals and time periods of the workspace were last
+	// fetched.
+	KeyGoals = "goals:"
+	// KeyPortfolios + workspace gid: when my portfolios of the workspace were last fetched.
+	KeyPortfolios = "portfolios:"
 )
 
 // States of a project's brief in the local cache (project_overviews.brief_state; "" is not
@@ -60,9 +72,21 @@ const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
 	PlanMySection = "my_section" // the sections of My Tasks
-	// PlanTimeTracking is the time tracking entries of tasks (#6). Unlike the three above,
-	// its 402 is recorded per workspace and for a while only (readmodel/plan.go).
+	PlanSearch    = "search"     // the search API (premium only): typeahead is used instead
+	PlanTypeahead = "typeahead"  // typeahead: names and tasks are then looked up in the cache only
+	PlanCustomID  = "custom_id"  // tasks by custom ID: only the gids found before are used
+)
+
+// Features of #6 that a plan may lack (PlanKey).
+const (
+	// PlanTimeTracking is the time tracking entries of tasks (#6).
 	PlanTimeTracking = "time_tracking"
+)
+
+// Features of #7 that a plan may lack (PlanKey).
+const (
+	PlanGoals      = "goals"      // goals and time periods
+	PlanPortfolios = "portfolios" // portfolios
 )
 
 // PlanFeatureOf returns the feature an outbox kind belongs to ("" for none).
@@ -87,6 +111,11 @@ func PlanUnavailableMessage(feature string) string {
 		PlanTags:         "タグの名前・色の変更と削除",
 		PlanMySection:    "マイタスクのセクション",
 		PlanTimeTracking: "タイムトラッキング (作業時間の記録)",
+		PlanSearch:       "タスクの検索",
+		PlanTypeahead:    "名前での検索 (typeahead)",
+		PlanCustomID:     "タスクの ID (custom ID) での取得",
+		PlanGoals:        "ゴール",
+		PlanPortfolios:   "ポートフォリオ",
 	}[feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }

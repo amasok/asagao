@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Tasks is the task use cases.
@@ -11,6 +13,22 @@ type Tasks struct {
 	Store TaskStore
 	Text  RichText
 	Clock Clock
+	// Names looks an assignee the cache does not know up in Asana (nil: the cache only).
+	Names NameFinder
+}
+
+// resolveUser is the store's ResolveUser, and when the cache has no such user, it looks
+// the name up in Asana (Names) and resolves it again with what was found. Not reaching
+// Asana (offline) leaves the cache's answer.
+func (t *Tasks) resolveUser(ctx context.Context, arg string) (string, error) {
+	gid, err := t.Store.ResolveUser(ctx, arg)
+	if !errors.Is(err, readmodel.ErrNotFound) || t.Names == nil {
+		return gid, err
+	}
+	if n, ferr := t.Names.FindUsers(ctx, arg); ferr != nil || n == 0 {
+		return gid, err
+	}
+	return t.Store.ResolveUser(ctx, arg)
 }
 
 // CreateTaskInput is what a user gives to create a task. Project, Section and Assignee
@@ -64,7 +82,7 @@ func (t *Tasks) Create(ctx context.Context, in CreateTaskInput) (string, error) 
 			assignee = "me"
 		}
 	}
-	if nt.AssigneeGID, err = t.Store.ResolveUser(ctx, assignee); err != nil {
+	if nt.AssigneeGID, err = t.resolveUser(ctx, assignee); err != nil {
 		return "", &FieldError{Field: "assignee", Err: err}
 	}
 	tags, err := t.Store.ResolveTagEdit(ctx, in.Tags, nil)

@@ -13,7 +13,7 @@ const agentGuide = `## Asana（asagao）
 このリポジトリの作業は Asana で管理している。Asana の操作には ` + "`asagao`" + ` を使う。
 
 - 作業中のプロジェクト・タスクは ` + "`.asana.json`" + ` にある。最初に ` + "`asagao context --json`" + ` で確かめる。
-- 読む: ` + "`asagao task list --json`" + `（.asana.json のプロジェクトの未完了タスク）、` + "`asagao task show [<gid>] --json`" + `（gid を省くと .asana.json のタスク）、` + "`asagao task search <語> --json`" + `。
+- 読む: ` + "`asagao task list --json`" + `（.asana.json のプロジェクトの未完了タスク）、` + "`asagao task show [<gid>] --json`" + `（gid を省くと .asana.json のタスク）、` + "`asagao search <語> --json`" + `（` + "`--remote`" + ` で Asana も探す）。
 - 書く前に、同じコマンドに ` + "`--dry-run`" + ` を付けて、何が変わるかを確かめる。` + "`--dry-run`" + ` は Asana にも outbox にも何も書かない。
 - 書く: ` + "`asagao comment add <gid> <本文>`" + `（進捗の報告）、` + "`asagao task complete <gid>`" + `、` + "`asagao task create <名前> [--due <日付>]`" + `（.asana.json のプロジェクトに作る）、` + "`asagao task move <gid> --section <セクション>`" + `。
 - 書き込みはオフラインでも受け付け、次の同期で送る。` + "`--json`" + ` の ` + "`sent`" + ` が false なら未送信。勝手に再送したり ` + "`asagao outbox`" + ` を操作したりしない。
