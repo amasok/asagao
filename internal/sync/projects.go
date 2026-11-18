@@ -221,7 +221,11 @@ func (s *Syncer) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, 
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
 		sv, known := current[k]
-		if known && !same(sv, op.Base[k]) && !same(sv, local) {
+		base := op.Base[k]
+		if k == "color" { // no color is "" here and "none" in Asana's answers
+			sv, base, local = noColor(sv), noColor(base), noColor(local)
+		}
+		if known && !same(sv, base) && !same(sv, local) {
 			conflicts[k] = sv
 		}
 	}
@@ -262,6 +266,14 @@ func projectFieldValues(p *model.Project) map[string]any {
 		owner = p.Owner.GID
 	}
 	return map[string]any{"notes": p.Notes, "owner": owner, "start_on": p.StartOn, "due_on": p.DueOn, "color": p.Color}
+}
+
+// noColor reads a project color with "none" (Asana's "no color") as "".
+func noColor(v any) any {
+	if v == "none" {
+		return ""
+	}
+	return v
 }
 
 func nullIfEmpty(s string) any {
