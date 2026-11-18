@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -221,5 +223,45 @@ func TestStoryEditsSafeToResend(t *testing.T) {
 		if err != nil || !safe {
 			t.Errorf("%s: SafeToResend = %v, %v", kind, safe, err)
 		}
+	}
+}
+
+// A copy kept for an upload being sent when its attachment was deleted is removed once the
+// delete is sent.
+func TestPushDeleteRemovesUploadCopy(t *testing.T) {
+	ws, _, s, st := setupPush(t)
+	ws.hook = storyEditHook(nil)
+	ctx := context.Background()
+	src := filepath.Join(t.TempDir(), "メモ.txt")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	local, err := st.UploadAttachmentLocal(ctx, "t1", src, t.TempDir(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops, _ := st.ListOps(ctx)
+	copyPath, _ := ops[0].Payload["path"].(string)
+	if ok, err := st.BeginSend(ctx, ops[0].ID, now); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if err := st.DeleteAttachmentLocal(ctx, local, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReleaseOp(ctx, ops[0].ID); err != nil { // never left: sent by the push below
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 {
+		t.Fatalf("Push = %+v, %v", res, err)
+	}
+	if got := writeCalls(ws, "DELETE /attachments/"); len(got) != 1 {
+		t.Errorf("requests %q", got)
+	}
+	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
+		t.Errorf("the copy is still there after the delete was sent: %v", err)
+	}
+	if p, c, f := pendingCount(t, st); p+c+f != 0 {
+		t.Errorf("left %d/%d/%d", p, c, f)
 	}
 }

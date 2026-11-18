@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 
@@ -180,31 +182,53 @@ func (s *Store) DeleteCommentLocal(ctx context.Context, storyGID string, now tim
 }
 
 // DeleteAttachmentLocal deletes an attachment of a task and queues the delete.
+//
+// The local file of the attachment (downloaded, or the copy of a file not uploaded yet) is
+// removed with it: a file the user deleted must not stay on the computer. Discarding the
+// delete puts the attachment back without it (it is downloaded again when opened). Only
+// the copy that an upload being sent (or checked) may still need stays, until the delete
+// is sent (payload "path", see sync.Push).
 func (s *Store) DeleteAttachmentLocal(ctx context.Context, gid string, now time.Time) error {
-	return s.tx(ctx, func(tx *sql.Tx) error {
+	var remove string
+	err := s.tx(ctx, func(tx *sql.Tx) error {
 		row, err := getAttachmentRow(ctx, tx, gid)
 		if err != nil {
 			return err
 		}
+		path, _ := row["local_path"].(string)
+		payload := map[string]any{"attachment": gid, "name": row["name"]}
 		if IsLocalGID(gid) {
 			create, err := unsentCreate(ctx, tx, OpUploadAttachment, "attachment", gid)
 			if err != nil {
 				return err
 			}
-			if create != nil { // never uploaded: forget it
+			if create != nil { // never uploaded: forget it, and its copy
+				remove, _ = create.Payload["path"].(string)
 				return discardOpTx(ctx, tx, create)
 			}
 			if err := ensureStoryCreateQueued(ctx, tx, OpUploadAttachment, "attachment", gid); err != nil {
 				return err
 			}
+			if path != "" { // the upload may be sent again from it
+				payload["path"] = path
+				path = ""
+			}
+		}
+		if path != "" {
+			remove, row["local_path"] = path, ""
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
 			return err
 		}
-		payload := map[string]any{"attachment": gid, "name": row["name"]}
 		return saveOp(ctx, tx, &Op{Kind: OpDeleteAttachment, TaskGID: row["parent_gid"].(string), Payload: payload, Base: row,
 			State: OpPending, CreatedAt: formatTime(now)})
 	})
+	if err == nil && remove != "" {
+		if rerr := os.Remove(remove); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return fmt.Errorf("添付は削除しましたが、ローカルのファイル %s を消せませんでした: %w", remove, rerr)
+		}
+	}
+	return err
 }
 
 // attachmentColumns are the attachments columns kept in a delete_attachment's base.

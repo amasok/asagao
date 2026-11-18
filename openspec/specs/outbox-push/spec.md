@@ -154,6 +154,14 @@ push は `<db>.push.lock` を取り、アカウントが記録と同じことを
 - **WHEN** オフラインで書いたコメントを、送る前に書き直す
 - **THEN** outbox は `add_comment` の 1 件のままで、payload の本文が新しい本文になる
 
+### Requirement: 消した添付のファイルは残さない
+添付を削除したら、ダウンロード済みのファイルと、まだ送っていない添付のコピーを、送る前でもすぐに消す (MUST, #34)。利用者が選んだ元のファイルには触らない。送信中・確認中の添付のコピーだけは、送り直しに要るので残し、削除を送れたあとに消す。削除を破棄して添付を元に戻したときは、ファイルなしで戻し、開くときにもう一度ダウンロードする。
+根拠: store/comment_edits.go (DeleteAttachmentLocal); sync/push.go (pushDeleteItem); TestDeleteAttachmentLocal, TestDeleteAttachmentBeingUploaded, TestPushDeleteRemovesUploadCopy
+
+#### Scenario: ダウンロードした添付を消す
+- **WHEN** 開いたことのある (ダウンロード済みの) 添付を、オフラインで削除する
+- **THEN** そのファイルはすぐに消え、outbox に `delete_attachment` が積まれる
+
 ### Requirement: コメントと添付の変更の送り方
 編集 (PUT /stories) と削除 (DELETE) は何度送っても同じなので、届いたか分からなければ照合せずに再送する (MUST, #34)。削除の 404 は「もう消えている」ので、済んだものとして消し、捨てた変更としては記録しない。編集の 404 は、ほかの操作と同じく捨てて記録する。
 根拠: sync/push.go (pushUpdateStory, pushDeleteItem); TestPushEditAndDeleteComment, TestPushDeleteGoneIsDone, TestStoryEditsSafeToResend
