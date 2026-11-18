@@ -82,7 +82,8 @@ func (c *Client) Subtasks(ctx context.Context, taskGID string) ([]Task, error) {
 	})
 }
 
-var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at"}
+var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at",
+	"reaction_summary.emoji_base", "reaction_summary.variant", "reaction_summary.count", "reaction_summary.reacted"}
 
 func (c *Client) Task(ctx context.Context, gid string) (*Task, error) {
 	return c.task(ctx, gid, false)
@@ -178,6 +179,31 @@ func (c *Client) AddComment(ctx context.Context, taskGID, text, htmlText string)
 	}
 	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(taskGID)+"/stories", fieldsQuery(storyFields), body, &s)
 	return &s, err
+}
+
+// UpdateStory changes the text of a comment (PUT /stories/{gid}). If htmlText (Asana rich
+// text) is set it is sent instead of text (Asana takes only one of them).
+func (c *Client) UpdateStory(ctx context.Context, gid, text, htmlText string) (*Story, error) {
+	var s Story
+	body := map[string]any{"text": text}
+	if htmlText != "" {
+		body = map[string]any{"html_text": htmlText}
+	}
+	_, err := c.do(ctx, http.MethodPut, "/stories/"+url.PathEscape(gid), fieldsQuery(storyFields), body, &s)
+	return &s, err
+}
+
+// DeleteStory deletes a comment (DELETE /stories/{gid}); Asana lets users delete only the
+// stories they created.
+func (c *Client) DeleteStory(ctx context.Context, gid string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/stories/"+url.PathEscape(gid), nil, nil, nil)
+	return err
+}
+
+// DeleteAttachment deletes an attachment (DELETE /attachments/{gid}).
+func (c *Client) DeleteAttachment(ctx context.Context, gid string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/attachments/"+url.PathEscape(gid), nil, nil, nil)
+	return err
 }
 
 func fieldsQuery(f []string) url.Values { return fields(f) }

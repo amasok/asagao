@@ -301,4 +301,9 @@ CREATE TABLE task_refs (
 ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT '';
 DELETE FROM sync_state WHERE key = 'last_full_sync';
 `,
+	`
+-- The emoji reactions on a comment (#34): JSON [{emoji_base, variant, count, reacted}] as
+-- Asana's reaction_summary; '' until the comments are fetched again.
+ALTER TABLE stories ADD COLUMN reactions TEXT NOT NULL DEFAULT '';
+`,
 }

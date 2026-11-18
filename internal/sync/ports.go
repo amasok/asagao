@@ -34,6 +34,8 @@ type AsanaAPI interface {
 	CreateTag(ctx context.Context, workspaceGID, name string) (*model.Ref, error)
 	CreateTask(ctx context.Context, fields map[string]any) (*model.Task, error)
 	CustomFieldSettings(ctx context.Context, projectGID string) ([]model.CustomFieldSetting, error)
+	DeleteAttachment(ctx context.Context, gid string) error
+	DeleteStory(ctx context.Context, gid string) error
 	DeleteTask(ctx context.Context, taskGID string) error
 	Dependencies(ctx context.Context, taskGID string) ([]model.TaskRef, error)
 	Dependents(ctx context.Context, taskGID string) ([]model.TaskRef, error)
@@ -63,6 +65,7 @@ type AsanaAPI interface {
 	Tasks(ctx context.Context, tq model.TaskQuery) ([]model.Task, error)
 	TasksByGID(ctx context.Context, gids []string) (tasks []model.Task, gone []string, err error)
 	UpdateSection(ctx context.Context, gid, name string) (*model.Section, error)
+	UpdateStory(ctx context.Context, gid, text, htmlText string) (*model.Story, error)
 	UpdateTask(ctx context.Context, gid string, fields map[string]any) (*model.Task, error)
 	UploadAttachment(ctx context.Context, parentGID, fileName string, data []byte) (*model.Attachment, error)
 	Users(ctx context.Context, workspaceGID string) ([]model.User, error)
@@ -73,6 +76,7 @@ type AsanaAPI interface {
 // its types are domain/outbox's, readmodel's and asana/model's.
 type LocalStore interface {
 	ApplySectionName(ctx context.Context, gid, name string) error
+	ApplyStory(ctx context.Context, gid, text, htmlText string) error
 	BeginSend(ctx context.Context, id int64, now time.Time) (bool, error)
 	ClearVerify(ctx context.Context, id int64) error
 	CompleteComment(ctx context.Context, id int64, localGID, taskGID string, st model.Story) error
@@ -93,6 +97,7 @@ type LocalStore interface {
 	GetOp(ctx context.Context, id int64) (*outbox.Op, error)
 	GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error)
 	InboxState(ctx context.Context) (readmodel.InboxState, error)
+	LocalResult(ctx context.Context, prefix, gid string) (real string, waiting bool, err error)
 	MarkOpConflict(ctx context.Context, id int64, server map[string]any) error
 	MarkOpFailed(ctx context.Context, id int64, cause error) error
 	MarkOpVerify(ctx context.Context, id int64, note string) error

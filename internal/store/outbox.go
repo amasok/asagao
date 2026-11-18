@@ -581,6 +581,17 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
 				return err
 			}
+			if err := dropChangesOf(ctx, tx, "story", gid, OpUpdateStory, OpDeleteStory); err != nil {
+				return err
+			}
+		}
+	case OpUpdateStory, OpDeleteStory:
+		if err := undoStoryOp(ctx, tx, op); err != nil {
+			return err
+		}
+	case OpDeleteAttachment:
+		if err := undoAttachmentDelete(ctx, tx, op); err != nil {
+			return err
 		}
 	case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
 		if err := applyRelation(ctx, tx, *op, true); err != nil {
@@ -594,6 +605,9 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 	case OpUploadAttachment:
 		gid, _ := op.Payload["attachment"].(string)
 		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
+			return err
+		}
+		if err := dropChangesOf(ctx, tx, "attachment", gid, OpDeleteAttachment); err != nil {
 			return err
 		}
 	case OpAddTag, OpRemoveTag:
@@ -753,12 +767,16 @@ func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string
 		byGID, byName = st.CreatedBy.GID, st.CreatedBy.Name
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO stories
-		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText); err != nil {
+		(gid, task_gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text, reactions)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		st.GID, taskGID, st.Type, st.ResourceSubtype, st.Text, byGID, byName, formatTime(st.CreatedAt), st.HTMLText,
+		reactionsJSON(st.ReactionSummary)); err != nil {
 		return err
 	}
-	return recordResult(ctx, tx, ResultStory, localGID, st.GID)
+	if err := recordResult(ctx, tx, ResultStory, localGID, st.GID); err != nil {
+		return err
+	}
+	return reapplyStoryOps(ctx, tx, taskGID) // edits or a delete queued while it was being sent
 }
 
 // Prefixes of the sync_state keys that map a local gid to what Asana created for it

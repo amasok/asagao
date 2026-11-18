@@ -372,7 +372,20 @@ func printTaskDetail(w io.Writer, d *readmodel.TaskDetail) {
 			if t, err := time.Parse(time.RFC3339, c.CreatedAt); err == nil {
 				when = t.Local().Format("2006-01-02 15:04")
 			}
-			fmt.Fprintf(w, "  %s  %s\n%s\n", who, when, indent(indent(c.Text)))
+			pending := ""
+			if c.Pending {
+				pending = "  （未送信）"
+			}
+			fmt.Fprintf(w, "  %s  %s  [%s]%s\n%s\n", who, when, c.GID, pending, indent(indent(c.Text)))
+			if r := readmodel.ReactionsLine(c.Reactions); r != "" {
+				fmt.Fprintf(w, "      %s\n", r)
+			}
+		}
+	}
+	if len(d.Attachments) > 0 {
+		fmt.Fprintf(w, "\n添付 (%d)\n", len(d.Attachments))
+		for _, at := range d.Attachments {
+			fmt.Fprintf(w, "  %s  [%s]\n", at.Name, at.GID)
 		}
 	}
 	if d.DetailsFetchedAt == "" {

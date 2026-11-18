@@ -380,9 +380,17 @@ func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 const maxStepsPerEntry = 4
 
 // waitsForCreate reports whether op belongs to a task (or, for a subtask's create or a
-// parent change, a parent) created offline whose create is still queued or failed. It waits instead of
-// failing, and goes out once the create is sent (or is discarded with it).
+// parent change, a parent) created offline whose create is still queued or failed. It
+// waits instead of failing, and goes out once the create is sent (or is discarded with
+// it). An edit or delete of a comment or attachment not created in Asana yet waits for
+// its create too.
 func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
+	if key, prefix := storyTarget(op.Kind); key != "" {
+		g, _ := op.Payload[key].(string)
+		if _, waiting, err := s.Store.LocalResult(ctx, prefix, g); err != nil || waiting {
+			return waiting, err
+		}
+	}
 	gid := op.TaskGID
 	switch op.Kind {
 	case outbox.KindCreateTask:
@@ -442,6 +450,10 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		err = s.pushDuplicate(ctx, op)
 	case outbox.KindUploadAttachment:
 		err = s.pushUpload(ctx, op)
+	case outbox.KindUpdateStory:
+		err = s.pushUpdateStory(ctx, op)
+	case outbox.KindDeleteStory, outbox.KindDeleteAttachment:
+		err = s.pushDeleteItem(ctx, op)
 	case outbox.KindCreateStatus:
 		err = s.pushStatus(ctx, op)
 	case outbox.KindMarkNotification:
@@ -1124,6 +1136,72 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 		return err
 	}
 	return sentNotSaved(s.Store.CompleteUpload(ctx, op.ID, local, att.GID, att.ViewURL))
+}
+
+// storyTarget returns, for an edit or a delete of a comment or attachment, the payload key
+// of its gid and the prefix under which a local one's result is recorded ("" otherwise).
+func storyTarget(kind string) (key, prefix string) {
+	switch kind {
+	case outbox.KindUpdateStory, outbox.KindDeleteStory:
+		return "story", readmodel.ResultStory
+	case outbox.KindDeleteAttachment:
+		return "attachment", readmodel.ResultAttachment
+	}
+	return "", ""
+}
+
+// pushUpdateStory edits a comment; sending it twice is harmless (PUT). A comment deleted
+// in Asana answers 404: the edit is dropped (dropGone).
+func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
+	gid, _ := op.Payload["story"].(string)
+	real, _, err := s.Store.LocalResult(ctx, readmodel.ResultStory, gid)
+	if err != nil {
+		return err
+	}
+	if real == "" {
+		return &model.Error{Status: 404} // its add_comment was dropped
+	}
+	text, _ := op.Payload["text"].(string)
+	htmlText, _ := op.Payload["html_text"].(string)
+	st, err := s.API.UpdateStory(ctx, real, text, htmlText)
+	if err != nil {
+		return err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	_ = s.Store.ApplyStory(ctx, real, st.Text, st.HTMLText) // the next fetch fixes a failure
+	return nil
+}
+
+// pushDeleteItem deletes a comment or an attachment. Sending it twice is harmless: a 404 means
+// it is gone already (deleted elsewhere, or by an earlier request whose answer was lost),
+// which is what was asked.
+func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
+	key, prefix := storyTarget(op.Kind)
+	gid, _ := op.Payload[key].(string)
+	real, _, err := s.Store.LocalResult(ctx, prefix, gid)
+	if err != nil {
+		return err
+	}
+	if real != "" { // "": its create was dropped, so there is nothing in Asana to delete
+		if op.Kind == outbox.KindDeleteStory {
+			err = s.API.DeleteStory(ctx, real)
+		} else {
+			err = s.API.DeleteAttachment(ctx, real)
+		}
+		if err != nil && !isNotFound(err) {
+			return err
+		}
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sentNotSaved(err)
+	}
+	// The copy an upload kept until it was sent (store.DeleteAttachmentLocal): no longer needed.
+	if path, _ := op.Payload["path"].(string); path != "" {
+		_ = os.Remove(path)
+	}
+	return nil
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / assignee.

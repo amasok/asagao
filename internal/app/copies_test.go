@@ -19,6 +19,10 @@ func (f *copyStore) UploadAttachmentLocal(_ context.Context, taskGID, srcPath, c
 	return "local:att", f.write("UploadAttachmentLocal", "%s %s into %s at=%s", taskGID, srcPath, cacheDir, now.Format(time.TimeOnly))
 }
 
+func (f *copyStore) DeleteAttachmentLocal(_ context.Context, gid string, now time.Time) error {
+	return f.write("DeleteAttachmentLocal", "%s at=%s", gid, now.Format(time.TimeOnly))
+}
+
 func TestCopies(t *testing.T) {
 	st := &copyStore{}
 	c := &Copies{Store: st, CacheDir: "/cache/attachments", Clock: ticking()}
@@ -29,7 +33,11 @@ func TestCopies(t *testing.T) {
 	if gid, err := c.Attach(ctx, "t1", "/home/me/図面.png"); gid != "local:att" || err != nil {
 		t.Errorf("Attach = %q, %v", gid, err)
 	}
-	want := []string{`DuplicateTaskLocal t1 "" at=10:00:01`, "UploadAttachmentLocal t1 /home/me/図面.png into /cache/attachments at=10:00:02"}
+	if err := c.Detach(ctx, "a1"); err != nil {
+		t.Errorf("Detach: %v", err)
+	}
+	want := []string{`DuplicateTaskLocal t1 "" at=10:00:01`, "UploadAttachmentLocal t1 /home/me/図面.png into /cache/attachments at=10:00:02",
+		"DeleteAttachmentLocal a1 at=10:00:03"}
 	if !slices.Equal(st.calls, want) {
 		t.Errorf("calls\n%s\nwant\n%s", strings.Join(st.calls, "\n"), strings.Join(want, "\n"))
 	}
@@ -42,5 +50,9 @@ func TestCopies(t *testing.T) {
 	st.failWrite = "UploadAttachmentLocal"
 	if _, err := c.Attach(ctx, "t1", "x"); !errors.Is(err, errWrite) {
 		t.Errorf("Attach: err = %v, want the store's", err)
+	}
+	st.failWrite = "DeleteAttachmentLocal"
+	if err := c.Detach(ctx, "a1"); !errors.Is(err, errWrite) {
+		t.Errorf("Detach: err = %v, want the store's", err)
 	}
 }

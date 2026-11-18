@@ -16,6 +16,7 @@ type (
 	Task               = model.Task
 	TaskQuery          = model.TaskQuery
 	Story              = model.Story
+	Reaction           = model.Reaction
 	Attachment         = model.Attachment
 	StatusUpdate       = model.StatusUpdate
 	EnumOption         = model.EnumOption

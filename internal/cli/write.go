@@ -390,6 +390,15 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			_, err := copies.Attach(cmd.Context(), args[0], args[1])
 			return args[0], "添付しました: " + filepath.Base(args[1]), err
 		})
+	detach := a.writeCommand("detach <添付の gid> --yes", "添付を削除する（取り消せません。gid は task show で表示されます）", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+			if err := a.confirmDelete(cmd, "添付 "+args[0]); err != nil {
+				return "", "", err
+			}
+			copies := &usecase.Copies{Store: st, Clock: time.Now}
+			return "", "添付を削除しました", copies.Detach(cmd.Context(), args[0])
+		})
+	detach.Flags().Bool("yes", false, "確認なしで削除する")
 	field := a.writeCommand("field <gid> <フィールド> [値]", "カスタムフィールドを設定する（値なし / --clear で空に）", cobra.RangeArgs(2, 3),
 		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
 			ctx := cmd.Context()
@@ -482,7 +491,7 @@ func (a *app) taskExtraCmds() []*cobra.Command {
 			}
 			return args[0], "承認の状態を「" + task.ApprovalLabel(*u.Approval) + "」にしました", tasks.UpdateHere(cmd.Context(), args[0], u)
 		})
-	return []*cobra.Command{like, follow, project, duplicate, attach, field, depend, kind, approve}
+	return []*cobra.Command{like, follow, project, duplicate, attach, detach, field, depend, kind, approve}
 }
 
 func (a *app) taskAssignCmd() *cobra.Command {
@@ -622,7 +631,35 @@ func (a *app) commentCmd() *cobra.Command {
 			return a.reportWrite(cmd, st, writeResult{TaskGID: args[0], CommentID: gid}, "コメントしました")
 		},
 	}))
+	comments := func(st Store) usecase.Comments {
+		return usecase.Comments{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+	}
+	edit := a.writeCommand("edit <コメントの gid> <コメント>", "自分のコメントを書き直す（マークダウン可）", cobra.MinimumNArgs(2),
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+			c := comments(st)
+			return "", "コメントを書き直しました", c.Edit(cmd.Context(), args[0], strings.Join(args[1:], " "))
+		})
+	edit.Example = "  asagao comment edit 1209876543210 \"誤字を直しました\"   # gid は task show で表示されます"
+	del := a.writeCommand("delete <コメントの gid> --yes", "自分のコメントを削除する（取り消せません）", cobra.ExactArgs(1),
+		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+			if err := a.confirmDelete(cmd, "コメント "+args[0]); err != nil {
+				return "", "", err
+			}
+			c := comments(st)
+			return "", "コメントを削除しました", c.Delete(cmd.Context(), args[0])
+		})
+	del.Flags().Bool("yes", false, "確認なしで削除する")
+	cmd.AddCommand(edit, del)
 	return cmd
+}
+
+// confirmDelete refuses a delete (what) that cannot be undone unless --yes is given; a
+// dry run, which changes nothing, needs no --yes.
+func (a *app) confirmDelete(cmd *cobra.Command, what string) error {
+	if yes, _ := cmd.Flags().GetBool("yes"); yes || a.dryRun {
+		return nil
+	}
+	return fmt.Errorf("%sを削除します。Asana に送ったあとは取り消せません。削除するには --yes を付けてください（--dry-run で何が変わるか確かめられます）", what)
 }
 
 func (a *app) outboxCmd() *cobra.Command {

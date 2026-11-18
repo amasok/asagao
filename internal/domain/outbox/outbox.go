@@ -56,6 +56,20 @@ const (
 	// holds the notification gid. payload: read bool, workspace, name (what it is about, for
 	// the outbox list); base: read (before the local change).
 	KindMarkNotification = "mark_notification"
+
+	// Comment and attachment edits (#34). task_gid holds the task the comment or the
+	// attachment belongs to.
+	//
+	// KindUpdateStory edits one of the user's comments. payload: story (gid, "local:..."
+	// while its add_comment is being sent or checked), text, html_text; base: text,
+	// html_text (before the local edit).
+	KindUpdateStory = "update_story"
+	// KindDeleteStory deletes one of the user's comments. payload: story, text (for the
+	// outbox list); base: the comment as it was stored (to put it back if discarded).
+	KindDeleteStory = "delete_story"
+	// KindDeleteAttachment deletes an attachment. payload: attachment, name; base: the
+	// attachment as it was stored.
+	KindDeleteAttachment = "delete_attachment"
 )
 
 // States of outbox entries (the outbox state column).

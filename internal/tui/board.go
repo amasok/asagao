@@ -269,6 +269,8 @@ const (
 	pickDepAction   // open / remove a linked task
 	pickDepTarget   // a task to link
 	pickSavedSearch // a saved search to show (searches.go)
+	pickItemAction  // rewrite / delete my comment, open / delete an attachment (comment_edit.go)
+	pickConfirmDel  // confirm a delete that cannot be undone
 	pickDeleteTask  // confirm deleting a task (taskops.go)
 	pickParent      // a task to make the parent
 )
@@ -406,6 +408,9 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if cmd, ok := m.handleTaskOpPicker(p, item); ok {
+			return m, cmd
+		}
+		if cmd, ok := m.handleItemPicker(p, item); ok {
 			return m, cmd
 		}
 		switch p.kind {

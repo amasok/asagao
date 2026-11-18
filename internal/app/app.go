@@ -34,6 +34,8 @@ type TaskStore interface {
 type CommentStore interface {
 	Me(ctx context.Context) (readmodel.UserRef, error)
 	AddRichCommentLocal(ctx context.Context, taskGID, text, htmlText string, author readmodel.UserRef, now time.Time) (string, error)
+	EditCommentLocal(ctx context.Context, storyGID, text, htmlText string, now time.Time) error
+	DeleteCommentLocal(ctx context.Context, storyGID string, now time.Time) error
 }
 
 // StatusStore is the part of the local cache that the status update use cases need.
