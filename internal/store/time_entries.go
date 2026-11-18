@@ -180,7 +180,41 @@ func (s *Store) DeleteTimeEntryLocal(ctx context.Context, gid string, now time.T
 	})
 }
 
-// TimeEntry returns the task an entry belongs to (ErrNotFound if it is not in the cache).
+// TaskWorkspace returns the workspace of a task: its own, else the one of its first
+// project ("" if neither is known).
+func (s *Store) TaskWorkspace(ctx context.Context, taskGID string) (string, error) {
+	var ws string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(t.workspace_gid, ''),
+		(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid
+			WHERE m.task_gid = t.gid ORDER BY m.rowid LIMIT 1), '')
+		FROM tasks t WHERE t.gid = ?`, taskGID).Scan(&ws)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
+	}
+	return ws, err
+}
+
+// WorkspaceGIDs returns the gids of the workspaces in the cache: the ones listed, and the
+// ones its projects and tasks are in.
+func (s *Store) WorkspaceGIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT gid FROM workspaces UNION SELECT workspace_gid FROM projects WHERE workspace_gid <> ''
+		UNION SELECT workspace_gid FROM tasks WHERE workspace_gid <> '' ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var g string
+		if err := rows.Scan(&g); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// TimeEntryTask returns the task an entry belongs to (ErrNotFound if it is not in the cache).
 func (s *Store) TimeEntryTask(ctx context.Context, gid string) (string, error) {
 	var task string
 	err := s.db.QueryRowContext(ctx, "SELECT task_gid FROM time_entries WHERE gid = ?", gid).Scan(&task)

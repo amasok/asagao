@@ -336,7 +336,7 @@ func TestTimeTrackingPaymentRequired(t *testing.T) {
 	if res, _ := s.Push(ctx); res.Failed != 1 {
 		t.Fatalf("Push = %+v", res)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanTimeTracking); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v == "" {
 		t.Fatal("402 not recorded")
 	}
 	before := ts.count("")
@@ -362,7 +362,7 @@ func TestFetchTimeEntriesPaymentRequired(t *testing.T) {
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) || ts.count("GET ") != 1 {
 		t.Errorf("second fetch = %v, calls %v", err, ts.calls)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanTimeTracking); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v == "" {
 		t.Error("402 not recorded")
 	}
 }
@@ -381,4 +381,38 @@ func TestPushTimeEntryDeleteGone(t *testing.T) {
 		t.Fatalf("Push = %+v, %v (%v)", res, err, ts.calls)
 	}
 	assertOutboxEmpty(t, st)
+}
+
+// A 402 in one workspace does not hide time tracking in another; a day later the refused
+// workspace is asked again, and a list read there forgets the 402.
+func TestTimeTrackingPlanPerWorkspaceAndRechecked(t *testing.T) {
+	ts, s, st := setupTimePush(t)
+	ctx := context.Background()
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "B", Workspace: &asana.Ref{GID: "w2"}}}); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Now()
+	s.now = func() time.Time { return clock }
+	ts.unpaid = true
+	var pe *readmodel.PlanUnavailableError
+	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
+		t.Fatalf("w1 = %v", err)
+	}
+	ts.mu.Lock()
+	ts.unpaid = false
+	ts.mu.Unlock()
+	if err := s.FetchTimeEntries(ctx, "t2"); err != nil {
+		t.Errorf("w2 after a 402 in w1: %v", err)
+	}
+	before := ts.count("GET /tasks/t1/")
+	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) || ts.count("GET /tasks/t1/") != before {
+		t.Errorf("w1 asked again within the day: %v", err)
+	}
+	clock = clock.Add(readmodel.PlanRecheckAfter)
+	if err := s.FetchTimeEntries(ctx, "t1"); err != nil || ts.count("GET /tasks/t1/") != before+1 {
+		t.Fatalf("a day later = %v (%v)", err, ts.calls)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v != "" {
+		t.Errorf("402 kept after a list read: %q", v)
+	}
 }

@@ -20,7 +20,18 @@ type timeStore struct {
 func (f *timeStore) Me(context.Context) (readmodel.UserRef, error) {
 	return readmodel.UserRef{GID: "me", Name: "Me"}, nil
 }
-func (f *timeStore) SyncState(_ context.Context, key string) (string, error) { return f.state[key], nil }
+func (f *timeStore) SyncState(_ context.Context, key string) (string, error) {
+	return f.state[key], nil
+}
+func (f *timeStore) TaskWorkspace(_ context.Context, task string) (string, error) {
+	if task == "t9" {
+		return "w2", nil
+	}
+	return "w1", nil
+}
+func (f *timeStore) WorkspaceGIDs(context.Context) ([]string, error) {
+	return []string{"w1", "w2"}, nil
+}
 func (f *timeStore) TimeEntries(_ context.Context, task string) (readmodel.TimeEntries, error) {
 	out := readmodel.TimeEntries{TaskGID: task}
 	for _, e := range f.entries {
@@ -94,16 +105,25 @@ func TestTimeTrackingWrites(t *testing.T) {
 	}
 }
 
-// Once Asana refused time tracking (402), it is not offered and nothing is written.
+// A 402 hides time tracking in its workspace only, and for a day only: the other
+// workspace's tasks can still be written to, and it is offered while one workspace has it.
 func TestTimeTrackingPlanUnavailable(t *testing.T) {
 	ctx := context.Background()
 	tt, st := newTimeTracking()
 	if !tt.Available(ctx) {
 		t.Fatal("not available before a 402")
 	}
-	st.state[readmodel.KeyPlanUnavailable+readmodel.PlanTimeTracking] = "2026-11-13T00:00:00Z"
+	st.state[readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")] = "2026-11-13T00:00:00Z" // 9 hours before the clock
+	if !tt.Available(ctx) {
+		t.Error("hidden although w2 has it")
+	}
+	if _, err := tt.Add(ctx, "t9", "1h", ""); err != nil {
+		t.Errorf("a task of w2: %v", err)
+	}
+	st.wrote = nil
+	st.state[readmodel.PlanKey(readmodel.PlanTimeTracking, "w2")] = "2026-11-13T00:00:00Z"
 	if tt.Available(ctx) {
-		t.Error("available after a 402")
+		t.Error("available after a 402 in every workspace")
 	}
 	_, err1 := tt.Add(ctx, "t1", "1h", "")
 	err2 := tt.Edit(ctx, "e1", "1h", "")
@@ -115,5 +135,32 @@ func TestTimeTrackingPlanUnavailable(t *testing.T) {
 	}
 	if len(st.wrote) != 0 {
 		t.Errorf("wrote %q", st.wrote)
+	}
+	// A day later it is tried again.
+	tt.Clock = func() time.Time { return time.Date(2026, 11, 14, 0, 0, 1, 0, time.UTC) }
+	if !tt.Available(ctx) {
+		t.Error("still hidden a day after the 402")
+	}
+	if _, err := tt.Add(ctx, "t1", "1h", ""); err != nil {
+		t.Errorf("a day later: %v", err)
+	}
+}
+
+// A 402 hides the feature for a day; a value that cannot be read, or one in the future (a
+// clock that was ahead), does not.
+func TestPlanOffFor(t *testing.T) {
+	at := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	v := at.Format(time.RFC3339)
+	for _, tc := range []struct {
+		value string
+		now   time.Time
+		off   bool
+	}{
+		{v, at, true}, {v, at.Add(23 * time.Hour), true}, {v, at.Add(24 * time.Hour), false},
+		{v, at.Add(-time.Minute), false}, {"", at, false}, {"garbage", at, false},
+	} {
+		if got := readmodel.PlanOffFor(tc.value, tc.now); got != tc.off {
+			t.Errorf("PlanOffFor(%q, %v) = %v", tc.value, tc.now, got)
+		}
 	}
 }

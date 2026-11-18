@@ -165,6 +165,7 @@ type LocalStore interface {
 	SetProjectArchivedLocal(ctx context.Context, projectGID string, archived bool) error
 	SetSyncState(ctx context.Context, key, value string) error
 	SyncState(ctx context.Context, key string) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error
 	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error

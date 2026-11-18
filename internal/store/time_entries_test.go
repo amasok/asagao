@@ -235,3 +235,24 @@ func TestTimeEntriesFollowTask(t *testing.T) {
 		t.Errorf("add %+v", ops)
 	}
 }
+
+// A task's workspace is its own, else its project's; the workspaces are the ones listed and
+// the ones of the projects and tasks.
+func TestTaskWorkspace(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	must(t, s.UpsertTasks(ctx, []asana.Task{{GID: "tw", Name: "W", Workspace: &asana.Ref{GID: "w9"}}}))
+	for task, want := range map[string]string{"tw": "w9", "t1": "w1"} {
+		if ws, err := s.TaskWorkspace(ctx, task); err != nil || ws != want {
+			t.Errorf("TaskWorkspace(%s) = %q, %v; want %q", task, ws, err, want)
+		}
+	}
+	if _, err := s.TaskWorkspace(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown task: %v", err)
+	}
+	wss, err := s.WorkspaceGIDs(ctx)
+	must(t, err)
+	if len(wss) != 2 || wss[0] != "w1" || wss[1] != "w9" {
+		t.Errorf("WorkspaceGIDs = %v", wss)
+	}
+}

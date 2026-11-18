@@ -29,8 +29,8 @@ func (a *app) timeCmd() *cobra.Command {
 			}
 			defer st.Close()
 			tt := tracking(st)
-			if !tt.Available(ctx) {
-				return &usecase.ErrPlanUnavailable{Feature: readmodel.PlanTimeTracking}
+			if err := tt.AvailableFor(ctx, args[0]); err != nil {
+				return err
 			}
 			var stale error
 			if !offline {

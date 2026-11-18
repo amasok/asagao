@@ -31,7 +31,7 @@ func (m *Model) loadPlan() tea.Cmd {
 		if !(&app.Tags{Store: st}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
-		if !(&app.TimeTracking{Store: st}).Available(m.ctx) {
+		if !(&app.TimeTracking{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
 			off[readmodel.PlanTimeTracking] = true
 		}
 		return planLoadedMsg{off: off}
