@@ -267,18 +267,42 @@ func (m *Model) startNewProject() tea.Cmd {
 	return m.prompt.Focus()
 }
 
+// createProject creates a project in the only team there is, or asks which team when
+// there are several (pickTeam).
 func (m *Model) createProject(name string) tea.Cmd {
 	syncer, ok := m.online()
 	if !ok {
 		return nil
 	}
+	st := m.deps.Store
 	return func() tea.Msg {
-		p, err := syncer.CreateProject(m.ctx, name)
+		team, err := queryOf(st).TeamForNewProject(m.ctx, "")
+		if errors.Is(err, readmodel.ErrAmbiguous) {
+			teams, err := queryOf(st).ListTeams(m.ctx)
+			return teamChoiceMsg{name: name, teams: teams, err: err}
+		}
 		if err != nil {
 			return projectDoneMsg{err: err}
 		}
-		return projectDoneMsg{status: "プロジェクトを作りました: " + p.Name, selectProject: p.GID}
+		return createIn(m, syncer, name, team)
 	}
+}
+
+// createProjectInTeam creates a project in the team chosen in pickTeam.
+func (m *Model) createProjectInTeam(name, team string) tea.Cmd {
+	syncer, ok := m.online()
+	if !ok || name == "" {
+		return nil
+	}
+	return func() tea.Msg { return createIn(m, syncer, name, team) }
+}
+
+func createIn(m *Model, syncer *sync.Syncer, name, team string) tea.Msg {
+	p, err := syncer.CreateProject(m.ctx, name, team)
+	if err != nil {
+		return projectDoneMsg{err: err}
+	}
+	return projectDoneMsg{status: "プロジェクトを作りました: " + p.Name, selectProject: p.GID}
 }
 
 func (m *Model) confirmArchive() tea.Cmd {

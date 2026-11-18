@@ -111,8 +111,8 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		readOnly bool
 		want     []string
 	}{
-		{false, []string{"add_comment", "create_project", "create_status_update", "create_task", "duplicate_task", "get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_task", "rename_section", "resolve_outbox", "run_saved_search", "search_tasks", "sync", "sync_status", "update_project", "update_task", "upload_attachment"}},
-		{true, []string{"get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "run_saved_search", "search_tasks", "sync", "sync_status"}},
+		{false, []string{"add_comment", "create_project", "create_section", "create_status_update", "create_task", "delete_section", "delete_tag", "duplicate_task", "get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_my_sections", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "mark_notifications", "move_section", "move_task", "rename_section", "resolve_outbox", "run_saved_search", "search_tasks", "sync", "sync_status", "update_project", "update_tag", "update_task", "upload_attachment"}},
+		{true, []string{"get_attachment", "get_context", "get_project", "get_task", "list_inbox", "list_my_sections", "list_projects", "list_saved_searches", "list_tags", "list_tasks", "list_users", "run_saved_search", "search_tasks", "sync", "sync_status"}},
 	} {
 		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
@@ -292,7 +292,7 @@ func TestCreateSubtaskAndAssignByName(t *testing.T) {
 func TestMarkdownTagsAndComments(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	_ = st.UpsertTags(ctx, []asana.Ref{{GID: "g1", Name: "買い物"}})
+	_ = st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "買い物"}})
 	cs := connect(t, &Server{Store: st})
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t1",

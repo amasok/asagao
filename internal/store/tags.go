@@ -19,15 +19,15 @@ const (
 )
 
 // UpsertTags stores the tags of a workspace (so unused tags can be picked too).
-func (s *Store) UpsertTags(ctx context.Context, tags []model.Ref) error {
+func (s *Store) UpsertTags(ctx context.Context, tags []model.Tag) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, t := range tags {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name) VALUES(?, ?)
-				ON CONFLICT(gid) DO UPDATE SET name = excluded.name`, t.GID, t.Name); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, color) VALUES(?, ?, ?)
+				ON CONFLICT(gid) DO UPDATE SET name = excluded.name, color = excluded.color`, t.GID, t.Name, t.Color); err != nil {
 				return err
 			}
 		}
-		return nil
+		return reapplyTagEdits(ctx, tx)
 	})
 }
 

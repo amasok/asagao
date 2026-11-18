@@ -10,7 +10,11 @@ type (
 	User               = model.User
 	Workspace          = model.Workspace
 	Project            = model.Project
+	Team               = model.Team
+	TaskCounts         = model.TaskCounts
+	ProjectBrief       = model.ProjectBrief
 	Section            = model.Section
+	Tag                = model.Tag
 	Membership         = model.Membership
 	Task               = model.Task
 	TaskQuery          = model.TaskQuery

@@ -1127,7 +1127,7 @@ func TestTagEditor(t *testing.T) {
 	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20", NumSubtasks: 2, Workspace: &asana.Ref{GID: "w1"},
 		Assignee: &asana.Ref{GID: "me"}, Tags: []asana.Ref{{GID: "g1", Name: "買い物"}},
 		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
-	_ = st.UpsertTags(ctx, []asana.Ref{{GID: "g2", Name: "急ぎ"}}) // a workspace tag no task uses yet
+	_ = st.UpsertTags(ctx, []asana.Tag{{GID: "g2", Name: "急ぎ"}}) // a workspace tag no task uses yet
 	h := projectHarness(t, st, nil)
 	h.key("space", "t")
 	s := h.screen()

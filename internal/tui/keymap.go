@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Keys are organised in three layers:
@@ -54,10 +55,11 @@ type action struct {
 	group       string
 	label       string
 	ctx         keyCtx
-	needTask    bool // needs a selected (or shown) task
-	needProject bool // needs a project to be open
-	needInbox   bool // only in the inbox (notifications)
-	bulk        bool // also acts on the marked tasks (bulk.go), so usable with them and no selection
+	needTask    bool   // needs a selected (or shown) task
+	needProject bool   // needs a project to be open
+	needInbox   bool   // only in the inbox (notifications)
+	plan        string // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
+	bulk        bool   // also acts on the marked tasks (bulk.go), so usable with them and no selection
 	run         func(m *Model) tea.Cmd
 }
 
@@ -80,6 +82,7 @@ func (m *Model) actions() []action {
 		{id: "due", key: "d", group: groupTask, label: "期日を変更", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkDue, (*Model).openDuePicker)},
 		{id: "assignee", key: "u", shortcut: []string{"@"}, group: groupTask, label: "担当者を変更", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkAssignee, (*Model).openAssigneePicker)},
 		{id: "tags", key: "t", group: groupTask, label: "タグを付ける / 外す", ctx: ctxTask, needTask: true, run: (*Model).openTagEditor},
+		{id: "manage_tags", key: "y", group: groupTask, label: "タグの名前・色を変える / 削除", ctx: ctxAll, plan: readmodel.PlanTags, run: (*Model).openTagManager},
 		{id: "move", key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkMove, func(m *Model) tea.Cmd { m.openSectionPicker(); return nil })},
 		{id: "comment", key: "c", shortcut: []string{"c"}, group: groupTask, label: "コメント（1 行）", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("c") }},
 		{id: "comment_editor", key: "C", shortcut: []string{"C"}, group: groupTask, label: "コメントをエディタで書く", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("C") }},
@@ -109,7 +112,12 @@ func (m *Model) actions() []action {
 		{id: "inbox_read_all", key: "Y", group: groupView, label: "通知をすべて既読にする", ctx: ctxList, needInbox: true, run: (*Model).markAllNotificationsRead},
 		// project
 		{id: "rename_section", key: "E", shortcut: []string{"E"}, group: groupProject, label: "セクション名を変更", ctx: ctxList | ctxBoard | ctxDetail, run: (*Model).startRenameSection},
+		{id: "new_section", key: "n", group: groupProject, label: "セクションを追加（このセクションの後）", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).startNewSection},
+		{id: "section_up", key: "K", group: groupProject, label: "セクションを上（左）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(-1) }},
+		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
+		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
+		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
@@ -150,7 +158,7 @@ func (m *Model) available() []action {
 	var out []action
 	for _, a := range m.withBindings(m.actions()) {
 		if a.ctx&ctx == 0 || (a.needTask && !hasTask && !(a.bulk && hasMarked)) || (a.needProject && m.currentProject() == "") ||
-			(a.needInbox && m.currentScope().kind != scopeInbox) {
+			(a.needInbox && m.currentScope().kind != scopeInbox) || (a.plan != "" && !m.planOK(a.plan)) {
 			continue
 		}
 		out = append(out, a)

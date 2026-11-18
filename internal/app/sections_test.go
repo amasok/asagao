@@ -8,11 +8,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // sectionStore records the calls of the section use cases. Project 新居 (p1) has the
 // sections 家具 (s1) and 完了 (s2); task t1 is in it.
-type sectionStore struct{ relationStore }
+type sectionStore struct {
+	relationStore
+	planOff map[string]bool // features Asana refused with a 402
+}
 
 func (f *sectionStore) ResolveProject(_ context.Context, arg string) (string, error) {
 	f.log("ResolveProject %s", arg)
@@ -103,5 +108,139 @@ func TestSectionsFailWritesNothing(t *testing.T) {
 	st.failWrite = "MoveTaskLocal"
 	if err := (&Sections{Store: st, Clock: ticking()}).Move(ctx, "t1", "", "完了"); !errors.Is(err, errWrite) {
 		t.Errorf("a failed write: err = %v", err)
+	}
+}
+
+func (f *sectionStore) CreateSectionLocal(_ context.Context, projectGID, name, before, after string, now time.Time) (string, error) {
+	return "local:new", f.write("CreateSectionLocal", "%s %q before=%s after=%s at=%s", projectGID, name, before, after, now.Format(time.TimeOnly))
+}
+
+func (f *sectionStore) DeleteSectionLocal(_ context.Context, sectionGID string, now time.Time) error {
+	return f.write("DeleteSectionLocal", "%s at=%s", sectionGID, now.Format(time.TimeOnly))
+}
+
+func (f *sectionStore) MoveSectionLocal(_ context.Context, sectionGID, before, after string, now time.Time) error {
+	return f.write("MoveSectionLocal", "%s before=%s after=%s at=%s", sectionGID, before, after, now.Format(time.TimeOnly))
+}
+
+// SyncState answers the plan_unavailable keys of the features in planOff.
+func (f *sectionStore) SyncState(_ context.Context, key string) (string, error) {
+	for feature := range f.planOff {
+		if key == "plan_unavailable:"+feature {
+			return "2026-01-01T00:00:00Z", nil
+		}
+	}
+	return "", nil
+}
+
+func (f *sectionStore) SectionName(_ context.Context, gid string) (string, error) {
+	if n, ok := map[string]string{"s1": "家具", "s2": "完了"}[gid]; ok {
+		return n, nil
+	}
+	return "", errNotFound
+}
+
+func TestSectionsCreateDeleteReorder(t *testing.T) {
+	st := &sectionStore{}
+	s := &Sections{Store: st, Clock: ticking()}
+	ctx := context.Background()
+	if gid, err := s.Create(ctx, "新居", "保留", SectionPlace{After: "家具"}); err != nil || gid != "local:new" {
+		t.Fatalf("Create = %q, %v", gid, err)
+	}
+	if err := s.Reorder(ctx, "新居", "完了", SectionPlace{Before: "家具"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, "p1", "完了"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`CreateSectionLocal p1 "保留" before= after=s1 at=10:00:01`,
+		"MoveSectionLocal s2 before=s1 after= at=10:00:02",
+		"DeleteSectionLocal s2 at=10:00:03",
+	}
+	if w := st.writes(); !slices.Equal(w, want) {
+		t.Errorf("writes\n%s\nwant\n%s", strings.Join(w, "\n"), strings.Join(want, "\n"))
+	}
+	if _, err := s.Create(ctx, "新居", "x", SectionPlace{Before: "家具", After: "完了"}); err == nil {
+		t.Error("Create with both before and after: no error")
+	}
+	if _, err := s.Create(ctx, "新居", "x", SectionPlace{After: "ない"}); !errors.Is(err, errNotFound) {
+		t.Errorf("Create after a missing section: err = %v", err)
+	}
+	if len(st.writes()) != len(want) {
+		t.Errorf("a failed call wrote: %v", st.writes())
+	}
+}
+
+// After Asana refused the feature with a 402, none of it is offered (nothing is written).
+func TestSectionsPlanUnavailable(t *testing.T) {
+	st := &sectionStore{}
+	st.planOff = map[string]bool{"sections": true}
+	s := &Sections{Store: st, Clock: ticking()}
+	ctx := context.Background()
+	if s.Available(ctx) {
+		t.Error("Available = true")
+	}
+	for name, f := range map[string]func() error{
+		"create":  func() error { _, err := s.Create(ctx, "新居", "x", SectionPlace{}); return err },
+		"here":    func() error { _, err := s.CreateHere(ctx, "p1", "x", "", ""); return err },
+		"delete":  func() error { return s.Delete(ctx, "新居", "完了") },
+		"reorder": func() error { return s.Reorder(ctx, "新居", "完了", SectionPlace{After: "家具"}) },
+	} {
+		if err := f(); !IsPlanUnavailable(err) || !strings.Contains(err.Error(), "402") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// Renaming and moving tasks are not part of it.
+	if err := s.Rename(ctx, "新居", "家具", "大型家具"); err != nil {
+		t.Errorf("rename: %v", err)
+	}
+	if w := st.writes(); len(w) != 1 {
+		t.Errorf("writes = %v", w)
+	}
+	if !(&Sections{Store: &sectionStore{}, Clock: ticking()}).Available(ctx) {
+		t.Error("Available = false without a 402")
+	}
+}
+
+func (f *sectionStore) ListMyTaskSections(_ context.Context, workspaceGID string) ([]readmodel.SectionView, error) {
+	return []readmodel.SectionView{{GID: "m1", Name: "今日やる"}, {GID: "m2", Name: "あとで"}}, nil
+}
+
+func (f *sectionStore) ResolveMySection(_ context.Context, taskGID, arg string) (string, error) {
+	f.log("ResolveMySection %s %s", taskGID, arg)
+	if g, ok := map[string]string{"今日やる": "m1", "あとで": "m2"}[arg]; ok {
+		return g, nil
+	}
+	return "", errNotFound
+}
+
+func (f *sectionStore) MoveMySectionLocal(_ context.Context, gid, sectionGID string, now time.Time) error {
+	return f.write("MoveMySectionLocal", "%s %s at=%s", gid, sectionGID, now.Format(time.TimeOnly))
+}
+
+func TestSectionsMoveMine(t *testing.T) {
+	st := &sectionStore{}
+	s := &Sections{Store: st, Clock: ticking()}
+	ctx := context.Background()
+	if err := s.MoveMine(ctx, "t1", "あとで"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MoveMine(ctx, "t1", "ない"); !errors.Is(err, errNotFound) {
+		t.Errorf("unknown section: err = %v", err)
+	}
+	if w := st.writes(); !slices.Equal(w, []string{"MoveMySectionLocal t1 m2 at=10:00:01"}) {
+		t.Errorf("writes = %v", w)
+	}
+	if secs, _ := s.MySections(ctx, ""); len(secs) != 2 {
+		t.Errorf("MySections = %v", secs)
+	}
+	// Not on this plan: nothing is offered.
+	st.planOff = map[string]bool{"my_section": true}
+	if secs, err := s.MySections(ctx, ""); err != nil || len(secs) != 0 {
+		t.Errorf("MySections after a 402 = %v, %v", secs, err)
+	}
+	if err := s.MoveMine(ctx, "t1", "今日やる"); !IsPlanUnavailable(err) {
+		t.Errorf("MoveMine after a 402: err = %v", err)
 	}
 }

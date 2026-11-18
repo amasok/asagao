@@ -301,4 +301,52 @@ CREATE TABLE task_refs (
 ALTER TABLE tasks ADD COLUMN approval_status TEXT NOT NULL DEFAULT '';
 DELETE FROM sync_state WHERE key = 'last_full_sync';
 `,
+	`
+-- Projects (#38, #39): a project's rich notes, owner and dates; the teams I am in and my
+-- favorite projects (to group the project list); and a project's overview (task counts
+-- and brief), fetched when it is opened. Counts are NULL until fetched; brief_state is ''
+-- (not fetched), 'none' (no brief), 'unavailable' (not on this plan) or 'available'.
+ALTER TABLE projects ADD COLUMN html_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN owner_gid TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN start_on TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN due_on TEXT NOT NULL DEFAULT '';
+CREATE TABLE teams (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	name          TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX teams_workspace ON teams(workspace_gid);
+CREATE TABLE project_favorites (
+	project_gid   TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	position      INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE project_overviews (
+	project_gid              TEXT PRIMARY KEY,
+	num_tasks                INTEGER,
+	num_completed_tasks      INTEGER,
+	num_milestones           INTEGER,
+	num_completed_milestones INTEGER,
+	brief_state              TEXT NOT NULL DEFAULT '',
+	brief_title              TEXT NOT NULL DEFAULT '',
+	brief_text               TEXT NOT NULL DEFAULT '',
+	brief_html               TEXT NOT NULL DEFAULT '',
+	fetched_at               TEXT NOT NULL DEFAULT ''
+);
+`,
+	`
+-- Tag colors (#33), and the sections of each user's My Tasks list (#35): the section a
+-- task is in there, and the sections of the list per workspace. Forget the last full sync
+-- so the next sync fetches them.
+ALTER TABLE tags ADD COLUMN color TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN assignee_section_gid TEXT NOT NULL DEFAULT '';
+CREATE TABLE my_task_sections (
+	gid           TEXT PRIMARY KEY,
+	workspace_gid TEXT NOT NULL,
+	name          TEXT NOT NULL,
+	position      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX my_task_sections_workspace ON my_task_sections(workspace_gid, position);
+DELETE FROM sync_state WHERE key = 'last_full_sync';
+`,
 }

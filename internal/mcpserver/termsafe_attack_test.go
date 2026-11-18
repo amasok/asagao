@@ -79,7 +79,7 @@ func TestToolOutputIsTerminalSafe(t *testing.T) {
 	must(st.ReplaceStatusUpdates(ctx, "p9", []asana.StatusUpdate{{GID: "su1", Title: "状況" + attack, Text: "本文" + attack,
 		StatusType: "on_track", Author: &asana.Ref{GID: "u9", Name: "誰か" + attack}}}))
 	must(st.UpsertUsers(ctx, []asana.User{{GID: "u9", Name: "誰か" + attack}}))
-	must(st.UpsertTags(ctx, []asana.Ref{{GID: "tg9", Name: "タグ" + attack}}))
+	must(st.UpsertTags(ctx, []asana.Tag{{GID: "tg9", Name: "タグ" + attack}}))
 	must(st.UpsertTasks(ctx, []asana.Task{{GID: "e1", Name: "悪い" + attack, Notes: "本文" + attack,
 		Assignee: &asana.Ref{GID: "me", Name: "Me"}, Workspace: &asana.Ref{GID: "w1"},
 		Tags:        []asana.Ref{{GID: "tg9", Name: "タグ" + attack}},

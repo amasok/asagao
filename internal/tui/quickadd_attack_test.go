@@ -67,7 +67,7 @@ func TestQuickAddAttackStatusIsClean(t *testing.T) {
 	if err := st.UpsertUsers(ctx, []asana.User{{GID: "u9", Name: "Evil\x1b]0;pwn\x07", Email: "evil@example.com"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpsertTags(ctx, []asana.Ref{{GID: "g9", Name: "bad\x1b[31m"}}); err != nil {
+	if err := st.UpsertTags(ctx, []asana.Tag{{GID: "g9", Name: "bad\x1b[31m"}}); err != nil {
 		t.Fatal(err)
 	}
 	h := projectHarness(t, st, nil)

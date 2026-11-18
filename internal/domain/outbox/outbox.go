@@ -20,6 +20,21 @@ const (
 	// payload: name; base: name (before the local edit).
 	KindRenameSection = "rename_section"
 
+	// Section operations of a project. The outbox task_gid column holds the section gid
+	// ("local:..." for a section created offline, replaced once Asana created it).
+	//   create_section: payload: project, name, before / after (a section gid, or absent)
+	//   delete_section: payload: project, name (only empty sections can be deleted)
+	//   insert_section: payload: project, name, before / after (exactly one); base: position
+	KindCreateSection = "create_section"
+	KindDeleteSection = "delete_section"
+	KindInsertSection = "insert_section"
+
+	// Tag operations on the tag itself. The outbox task_gid column holds the tag gid.
+	//   update_tag: payload: name and/or color ("" for none), workspace; base: name, color
+	//   delete_tag: payload: name, color, workspace (to restore)
+	KindUpdateTag = "update_tag"
+	KindDeleteTag = "delete_tag"
+
 	// KindCreateStatus posts a project status update. task_gid holds the project gid;
 	// payload: status (local gid), status_type, title, text, html_text.
 	KindCreateStatus = "create_status"
@@ -46,7 +61,20 @@ const (
 	// holds the notification gid. payload: read bool, workspace, name (what it is about, for
 	// the outbox list); base: read (before the local change).
 	KindMarkNotification = "mark_notification"
+
+	// KindMoveMySection moves a task to another section of the user's My Tasks list.
+	// payload: section, section_name, workspace; base: section (before the local move).
+	KindMoveMySection = "move_my_section"
+
+	// KindUpdateProject changes a project's fields (see domain/project). The outbox task_gid
+	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
+	// start_on, due_on, color); base: their values before the local edit.
+	KindUpdateProject = "update_project"
 )
+
+// SectionRefKeys are the payload keys that may hold a section gid, so that a section
+// created offline can be replaced by its Asana gid everywhere.
+var SectionRefKeys = []string{"section", "before", "after"}
 
 // States of outbox entries (the outbox state column).
 const (

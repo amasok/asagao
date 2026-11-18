@@ -37,6 +37,11 @@ type QueryStore interface {
 	ResolveProject(ctx context.Context, arg string) (string, error)
 	ProjectMembers(ctx context.Context, projectGID string) ([]readmodel.UserRef, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]readmodel.StatusUpdateView, error)
+	ProjectOverview(ctx context.Context, gid string) (*readmodel.ProjectOverview, error)
+	ListProjectsInTeam(ctx context.Context, memberOnly bool, team string) ([]readmodel.ProjectView, error)
+	ListTeams(ctx context.Context) ([]readmodel.TeamView, error)
+	ResolveTeam(ctx context.Context, arg string) (string, error)
+	TeamForNewProject(ctx context.Context, team string) (string, error)
 
 	// inbox
 	InboxState(ctx context.Context) (readmodel.InboxState, error)
@@ -144,6 +149,34 @@ func (q Query) ResolveUsers(ctx context.Context, args []string) ([]string, error
 // a member of, if memberOnly).
 func (q Query) ListProjects(ctx context.Context, memberOnly bool) ([]readmodel.ProjectView, error) {
 	return q.Store.ListProjects(ctx, memberOnly)
+}
+
+// ListProjectsInTeam is ListProjects narrowed to one team, given by gid or (partial)
+// name ("" for every team).
+func (q Query) ListProjectsInTeam(ctx context.Context, memberOnly bool, team string) ([]readmodel.ProjectView, error) {
+	return q.Store.ListProjectsInTeam(ctx, memberOnly, team)
+}
+
+// ProjectOverview returns a project's fields, progress, brief and latest status.
+func (q Query) ProjectOverview(ctx context.Context, gid string) (*readmodel.ProjectOverview, error) {
+	return q.Store.ProjectOverview(ctx, gid)
+}
+
+// ListTeams returns the teams a new project can be made in.
+func (q Query) ListTeams(ctx context.Context) ([]readmodel.TeamView, error) {
+	return q.Store.ListTeams(ctx)
+}
+
+// TeamForNewProject picks the team of a new project: team (a gid or name) if given, else
+// the only team there is, else none (a workspace without teams). With several teams and
+// none given it is an error that names them (readmodel.ErrAmbiguous).
+func (q Query) TeamForNewProject(ctx context.Context, team string) (string, error) {
+	return q.Store.TeamForNewProject(ctx, team)
+}
+
+// ResolveTeam finds a team by gid, name, or unique partial name.
+func (q Query) ResolveTeam(ctx context.Context, arg string) (string, error) {
+	return q.Store.ResolveTeam(ctx, arg)
 }
 
 // ResolveProject finds a project by gid, exact name, or unique partial name.
