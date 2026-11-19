@@ -41,6 +41,9 @@ type batchEntry struct {
 	op    outbox.Op // as re-read from the store
 	task  string    // the task it changes (an Asana gid)
 	write model.BatchWrite
+	// project and section are set for KindMoveTask so sendBatch can refresh section order.
+	project string
+	section string
 	// check: compare with the task in Asana before sending (updates, custom fields).
 	check bool
 	// refresh: read the task again after sending (a move: the answer has no task).
@@ -119,6 +122,7 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 			return e, false, nil
 		}
 		e.write = model.BatchWrite{Method: http.MethodPost, Path: "/sections/" + url.PathEscape(section) + "/addTask", Data: map[string]any{"task": task}}
+		e.project, e.section = str("project"), section
 		e.refresh = true
 	case outbox.KindAddTag, outbox.KindRemoveTag:
 		tag, err := s.Store.RealTagGID(ctx, str("tag"))
@@ -302,7 +306,20 @@ func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSen
 		sentIdx = append(sentIdx, i)
 	}
 
+	type movedSection struct{ project, section string }
 	var moved []string
+	var movedSections []movedSection
+	addMovedSection := func(project, section string) {
+		if section == "" {
+			return
+		}
+		for _, ms := range movedSections {
+			if ms.project == project && ms.section == section {
+				return
+			}
+		}
+		movedSections = append(movedSections, movedSection{project, section})
+	}
 	if len(writes) > 0 {
 		answers, err := s.API.Batch(ctx, writes)
 		switch {
@@ -341,6 +358,9 @@ func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSen
 				} else if e.refresh {
 					moved = append(moved, e.task)
 				}
+				if e.section != "" {
+					addMovedSection(e.project, e.section)
+				}
 			case errors.As(a.Err, &apiErr) && apiErr.Status == http.StatusBadRequest:
 				alone[i] = true // sent alone, the answer says what it means (e.g. pushCustomField)
 			default:
@@ -359,6 +379,9 @@ func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSen
 				s.refresh(ctx, t)
 			}
 		}
+	}
+	for _, ms := range movedSections {
+		s.refreshSectionOrderAfterMove(ctx, ms.project, ms.section)
 	}
 	return results
 }

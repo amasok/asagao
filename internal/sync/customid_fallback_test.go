@@ -30,10 +30,13 @@ type customIDFallbackServer struct {
 	refuseCF     bool
 	searchRefs   []model.Ref
 	tasks        map[string]string // gid -> raw JSON of task data
+	customFields map[string]string // cf gid -> raw JSON of custom field definition
+	cfStatus     map[string]int    // cf gid -> HTTP status to return
 
 	customCalls    int
 	searchCalls    int
 	typeaheadCalls int
+	cfCalls        map[string]int
 	searchQueries  []string
 	fetchedTasks   []string
 }
@@ -87,6 +90,28 @@ func (f *customIDFallbackServer) handler() http.Handler {
 		if st != 0 {
 			w.WriteHeader(st)
 			fmt.Fprintf(w, `{"errors":[{"message":"task %d"}]}`, st)
+			return
+		}
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"errors":[{"message":"Not Found"}]}`)
+			return
+		}
+		fmt.Fprintf(w, `{"data":%s}`, raw)
+	})
+	mux.HandleFunc("GET /custom_fields/{gid}", func(w http.ResponseWriter, r *http.Request) {
+		gid := r.PathValue("gid")
+		f.mu.Lock()
+		if f.cfCalls == nil {
+			f.cfCalls = map[string]int{}
+		}
+		f.cfCalls[gid]++
+		st := f.cfStatus[gid]
+		raw, ok := f.customFields[gid]
+		f.mu.Unlock()
+		if st != 0 {
+			w.WriteHeader(st)
+			fmt.Fprintf(w, `{"errors":[{"message":"cf %d"}]}`, st)
 			return
 		}
 		if !ok {
@@ -549,4 +574,64 @@ func (a *partialMixAPI) TasksByGID(_ context.Context, gids []string) ([]model.Ta
 		}
 	}
 	return out, nil, nil
+}
+
+// On real Asana, GET /tasks/{gid} omits representation_type and id_prefix inside
+// task.custom_fields[], returning only resource_subtype: "text" and is_value_read_only:
+// true. Fallback looks up GET /custom_fields/{gid} (memoized per field gid) to tell ID
+// fields apart from plain text custom fields (#65).
+func TestTaskByCustomID500FallbackRealAsanaCustomFieldDef(t *testing.T) {
+	t.Run("adopts task when GET /custom_fields/{gid} confirms custom_id and skips plain text", func(t *testing.T) {
+		f := &customIDFallbackServer{
+			searchRefs: []model.Ref{{GID: "t-plain1"}, {GID: "t-plain2"}, {GID: "t-real"}},
+			tasks: map[string]string{
+				"t-plain1": `{"gid":"t-plain1","name":"テキスト1","custom_fields":[{"gid":"cf-txt","name":"Memo","resource_subtype":"text","type":"text","is_value_read_only":false,"display_value":"RC-1","text_value":"RC-1"}]}`,
+				"t-plain2": `{"gid":"t-plain2","name":"テキスト2","custom_fields":[{"gid":"cf-txt","name":"Memo","resource_subtype":"text","type":"text","is_value_read_only":false,"display_value":"RC-1","text_value":"RC-1"}]}`,
+				"t-real":   `{"gid":"t-real","name":"タスクタイプ","custom_fields":[{"gid":"cf-id","name":"asagao-realcheck-id","resource_subtype":"text","type":"text","is_value_read_only":true,"display_value":"RC-1","text_value":"RC-1"}]}`,
+			},
+			customFields: map[string]string{
+				"cf-txt": `{"gid":"cf-txt","name":"Memo","resource_subtype":"text","type":"text","representation_type":"text"}`,
+				"cf-id":  `{"gid":"cf-id","name":"asagao-realcheck-id","resource_subtype":"text","type":"text","is_value_read_only":true,"id_prefix":"RC","representation_type":"custom_id"}`,
+			},
+		}
+		s, st, _ := setupCustomIDFallback(t, f)
+		ctx := context.Background()
+		gid, err := s.TaskByCustomID(ctx, "RC-1")
+		if err != nil || gid != "t-real" {
+			t.Fatalf("got %q, %v; want t-real, nil", gid, err)
+		}
+		if f.cfCalls["cf-txt"] != 1 || f.cfCalls["cf-id"] != 1 {
+			t.Fatalf("cfCalls = %v; want cf-txt=1 (memoized across tasks), cf-id=1", f.cfCalls)
+		}
+		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "t-real" {
+			t.Fatalf("sync_state = %q, want t-real", v)
+		}
+		if _, err := st.GetTask(ctx, "t-plain1"); !errors.Is(err, readmodel.ErrNotFound) {
+			t.Fatalf("plain text task wrongly cached: %v", err)
+		}
+	})
+
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusPaymentRequired, http.StatusInternalServerError} {
+		t.Run(fmt.Sprintf("custom_fields status %d preserves cache and never falsely returns not_found", status), func(t *testing.T) {
+			f := &customIDFallbackServer{
+				searchRefs: []model.Ref{{GID: "t-cand"}},
+				tasks: map[string]string{
+					"t-cand": `{"gid":"t-cand","name":"候補","custom_fields":[{"gid":"cf-id","name":"ID","resource_subtype":"text","is_value_read_only":true,"display_value":"RC-1","text_value":"RC-1"}]}`,
+				},
+				cfStatus: map[string]int{"cf-id": status},
+			}
+			s, st, _ := setupCustomIDFallback(t, f)
+			ctx := context.Background()
+			if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "known-gid"); err != nil {
+				t.Fatal(err)
+			}
+			gid, err := s.TaskByCustomID(ctx, "RC-1")
+			if err == nil || gid != "" || errors.Is(err, readmodel.ErrNotFound) {
+				t.Fatalf("got gid=%q err=%v; want non-ErrNotFound error", gid, err)
+			}
+			if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "known-gid" {
+				t.Fatalf("cached gid lost: %q", v)
+			}
+		})
+	}
 }

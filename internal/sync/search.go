@@ -245,6 +245,8 @@ func (s *Syncer) taskByCustomIDFromSearch(ctx context.Context, ws, customID stri
 	}
 	gids := uniqueRemoteGIDs(refs)
 	hadPartial := false
+	hadUnverified := false
+	idField := map[string]bool{}
 	for chunk := range slices.Chunk(gids, model.MaxBatchActions) {
 		tasks, _, err := s.API.TasksByGID(ctx, chunk)
 		if err != nil {
@@ -256,12 +258,41 @@ func (s *Syncer) taskByCustomIDFromSearch(ctx context.Context, ws, customID stri
 				hadPartial = true
 				continue
 			}
-			if tasks[i].GID != "" && !localgid.IsLocal(tasks[i].GID) && tasks[i].HasCustomID(customID) {
+			if tasks[i].GID == "" || localgid.IsLocal(tasks[i].GID) {
+				continue
+			}
+			if tasks[i].HasCustomID(customID) {
 				return &tasks[i], nil
+			}
+			// Real Asana omits representation_type and id_prefix inside task.custom_fields[]
+			// (returning resource_subtype: "text"). When a candidate's text custom field holds
+			// customID without an inline representation_type, verify its field definition.
+			for _, cf := range tasks[i].CustomFields {
+				if cf.GID == "" || cf.RepresentationType != "" || (cf.Subtype() != "" && cf.Subtype() != "text") || cf.RawCustomIDValue() != customID {
+					continue
+				}
+				isID, seen := idField[cf.GID]
+				if !seen {
+					def, err := s.API.CustomField(ctx, cf.GID)
+					if err != nil {
+						var apiErr *model.Error
+						if errors.As(err, &apiErr) && (apiErr.Status == http.StatusPaymentRequired || apiErr.Status == http.StatusForbidden || apiErr.Status == http.StatusNotFound) {
+							hadUnverified = true
+							idField[cf.GID] = false
+							continue
+						}
+						return nil, err
+					}
+					isID = def != nil && def.IsCustomID()
+					idField[cf.GID] = isID
+				}
+				if isID {
+					return &tasks[i], nil
+				}
 			}
 		}
 	}
-	if hadPartial || len(refs) >= customIDSearchLimit {
+	if hadPartial || hadUnverified || len(refs) >= customIDSearchLimit {
 		return nil, origErr
 	}
 	return nil, nil

@@ -58,12 +58,10 @@ func (f CustomField) IsCustomID() bool {
 	return f.RepresentationType == "custom_id" || f.IDPrefix != ""
 }
 
-// CustomIDValue returns the task ID value of an ID custom field, or "" when f is not an ID
-// field or has no value.
-func (f CustomField) CustomIDValue() string {
-	if !f.IsCustomID() {
-		return ""
-	}
+// RawCustomIDValue returns the raw string value (DisplayValue, else TextValue) of f,
+// without checking IsCustomID. Callers that verify the field's definition separately
+// (because task payloads omit representation_type and id_prefix on real Asana) use this.
+func (f CustomField) RawCustomIDValue() string {
 	if f.DisplayValue != nil && *f.DisplayValue != "" {
 		return *f.DisplayValue
 	}
@@ -71,4 +69,13 @@ func (f CustomField) CustomIDValue() string {
 		return *f.TextValue
 	}
 	return ""
+}
+
+// CustomIDValue returns the task ID value of an ID custom field, or "" when f is not an ID
+// field or has no value.
+func (f CustomField) CustomIDValue() string {
+	if !f.IsCustomID() {
+		return ""
+	}
+	return f.RawCustomIDValue()
 }
