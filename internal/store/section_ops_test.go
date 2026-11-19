@@ -199,3 +199,26 @@ func TestUpdateTagLocalNewColorName(t *testing.T) {
 		}
 	}
 }
+
+// #52: the cache holds the name a pull got (red); choosing that color by its written name
+// (the TUI marks dark-red as the current color) sends nothing, and coming back to it after
+// another color drops the change.
+func TestUpdateTagLocalSameColorOtherName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ", Color: "red"}}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.UpdateTagLocal(ctx, "g1", map[string]any{"color": "dark-red"}, testNow))
+	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("the same color is queued: %+v", ops)
+	}
+	must(t, s.UpdateTagLocal(ctx, "g1", map[string]any{"color": "blue"}, testNow))
+	must(t, s.UpdateTagLocal(ctx, "g1", map[string]any{"color": "dark-red"}, testNow))
+	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("back to the same color but still queued: %+v", ops)
+	}
+	if g, _ := s.GetTag(ctx, "g1"); g.Color != "red" {
+		t.Errorf("cached color = %q, want red (as Asana has it)", g.Color)
+	}
+}

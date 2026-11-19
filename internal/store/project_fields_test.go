@@ -324,3 +324,15 @@ func TestUpdateProjectLocalNewColorName(t *testing.T) {
 		t.Fatalf("blue is not dark-blue: %+v", ops)
 	}
 }
+
+// #52: a project whose cache holds the name a pull got (blue): choosing it by its written
+// name sends nothing.
+func TestUpdateProjectLocalSameColorOtherName(t *testing.T) {
+	ctx := context.Background()
+	s := projectStore(t)
+	must(t, s.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "A 開発", Color: "blue"}}, "me"))
+	must(t, s.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "light-blue"}, testNow))
+	if ops, _ := s.PendingOps(ctx); len(ops) != 0 {
+		t.Fatalf("the same color is queued: %+v", ops)
+	}
+}

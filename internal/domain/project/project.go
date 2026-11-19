@@ -21,6 +21,10 @@ var Fields = []string{"notes", "html_notes", "owner", "start_on", "due_on", "col
 // the tag colors (tag.Colors).
 var Colors = append(slices.Clone(tag.Colors), "none")
 
+// NewColors are the names Asana's GET answers for the colors (tag.NewColors); they are
+// taken in an edit too.
+func NewColors() []string { return tag.NewColors() }
+
 // NormalizeColor checks a project color the user typed: one of Colors, or a name Asana's
 // GET answers (red, blue, ...: tag.NewColors), in any case. It returns the name to send
 // (a new name becomes its written name, tag.WriteColor). "" is not a color.

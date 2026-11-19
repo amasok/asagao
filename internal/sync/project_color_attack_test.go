@@ -24,7 +24,7 @@ func TestPushUpdateProjectColorAttack(t *testing.T) {
 		{name: "user removes color, asana changed it", base: "dark-blue", local: "none", asana: "light-red", wantConflict: true},
 		{name: "user sets color, asana same", base: "dark-blue", local: "none", asana: "none", wantSent: true},
 		{name: "color fine but due_on conflicts", base: "", local: "dark-green", asana: "none", other: true, wantDueConflict: true},
-		{name: "no color to no color", base: "", local: "none", asana: "none", wantSent: true},
+		{name: "no color to no color", base: "", local: "none", asana: "none"}, // nothing queued (#52)
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()

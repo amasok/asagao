@@ -12,7 +12,6 @@ import (
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/domain/project"
-	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
@@ -228,7 +227,7 @@ func (a *app) projectEditCmd() *cobra.Command {
 	cmd.Flags().StringVar(&owner, "owner", "", `オーナー（"me"・ユーザーの gid か名前。"none" か "" で外す）`)
 	cmd.Flags().StringVar(&start, "start", "", `開始日（YYYY-MM-DD / today / tomorrow / +Nd。"" で外す。期日が必要）`)
 	cmd.Flags().StringVar(&due, "due", "", `期日（YYYY-MM-DD / today / tomorrow / +Nd。"" で外す）`)
-	cmd.Flags().StringVar(&color, "color", "", "色（"+strings.Join(project.Colors, " / ")+"。Asana が表示する新しい名前 "+strings.Join(tag.NewColors(), " / ")+" も使える）")
+	cmd.Flags().StringVar(&color, "color", "", "色（"+strings.Join(project.Colors, " / ")+"。Asana が表示する新しい名前 "+strings.Join(project.NewColors(), " / ")+" も使える）")
 	return a.addDryRunFlag(cmd)
 }
 
