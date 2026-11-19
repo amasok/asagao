@@ -135,6 +135,19 @@ type Task struct {
 	NoCustomType bool `json:"-"`
 }
 
+// HasCustomID reports whether t has an ID custom field whose value equals id (exact match).
+func (t Task) HasCustomID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, cf := range t.CustomFields {
+		if cf.CustomIDValue() == id {
+			return true
+		}
+	}
+	return false
+}
+
 // TaskQuery selects tasks for GET /tasks. Exactly one of Project or (Assignee + Workspace) must be set.
 type TaskQuery struct {
 	Project   string

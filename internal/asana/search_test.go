@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 )
 
@@ -145,5 +146,19 @@ func TestTaskByCustomID500IsNotRetried(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("calls %d", calls)
+	}
+}
+
+// TaskFields requests custom ID metadata (representation_type, id_prefix) inside
+// custom_fields so that fallback lookups can tell ID fields apart from plain text fields,
+// and both are treated as optional task fields for plans that refuse custom_fields (#65).
+func TestTaskFieldsIncludeCustomIDMetadata(t *testing.T) {
+	for _, f := range []string{"custom_fields.representation_type", "custom_fields.id_prefix", "custom_fields.display_value", "custom_fields.text_value"} {
+		if !slices.Contains(TaskFields, f) {
+			t.Errorf("TaskFields lack %s", f)
+		}
+		if !isOptionalTaskField(f) {
+			t.Errorf("%s is not an optional task field", f)
+		}
 	}
 }

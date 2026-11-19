@@ -12,7 +12,8 @@ import (
 // Fields of custom field values on tasks. Enum options are requested only for single
 // tasks (taskDetailFields): projects' options come from their settings.
 var customFieldValueFields = []string{
-	"custom_fields.name", "custom_fields.resource_subtype", "custom_fields.precision", "custom_fields.enabled",
+	"custom_fields.name", "custom_fields.resource_subtype", "custom_fields.representation_type", "custom_fields.id_prefix",
+	"custom_fields.precision", "custom_fields.enabled",
 	"custom_fields.is_formula_field", "custom_fields.is_value_read_only", "custom_fields.display_value",
 	"custom_fields.enum_value.name", "custom_fields.enum_value.color",
 	"custom_fields.multi_enum_values.name", "custom_fields.multi_enum_values.color",
