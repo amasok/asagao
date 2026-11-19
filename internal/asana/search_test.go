@@ -173,6 +173,8 @@ func TestTaskByCustomID500IsNotRetried(t *testing.T) {
 // TaskFields requests custom ID metadata (representation_type, id_prefix) inside
 // custom_fields so that fallback lookups can tell ID fields apart from plain text fields,
 // and both are treated as optional task fields for plans that refuse custom_fields (#65).
+// customFieldFields and customFieldSettingFields also request them because real Asana omits
+// them on task objects and returns them on field definitions.
 func TestTaskFieldsIncludeCustomIDMetadata(t *testing.T) {
 	for _, f := range []string{"custom_fields.representation_type", "custom_fields.id_prefix", "custom_fields.display_value", "custom_fields.text_value"} {
 		if !slices.Contains(TaskFields, f) {
@@ -180,6 +182,14 @@ func TestTaskFieldsIncludeCustomIDMetadata(t *testing.T) {
 		}
 		if !isOptionalTaskField(f) {
 			t.Errorf("%s is not an optional task field", f)
+		}
+	}
+	for _, f := range []string{"representation_type", "id_prefix"} {
+		if !slices.Contains(customFieldFields, f) {
+			t.Errorf("customFieldFields lack %s", f)
+		}
+		if !slices.Contains(customFieldSettingFields, "custom_field."+f) {
+			t.Errorf("customFieldSettingFields lack custom_field.%s", f)
 		}
 	}
 }

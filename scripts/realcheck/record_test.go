@@ -120,7 +120,7 @@ func TestGuardHostProject(t *testing.T) {
 
 func TestGuardBody(t *testing.T) {
 	pre := "asagao-realcheck-1"
-	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Tasks: []string{"2000002"}, Tags: []string{"3000003"},
+	c := &Created{Prefix: pre, Projects: []string{"1000001"}, Sections: []string{"4100001"}, Tasks: []string{"2000002", "2000003"}, Tags: []string{"3000003"},
 		CustomFields: []string{"5000005"}, TimeEntries: []string{"6000006"}, Allocations: []string{"7000007"},
 		ProjectTemplates: []string{"8000008"}, Goals: []string{"9100001"}, Portfolios: []string{"9200002"}, Briefs: []string{"9300003"}}
 	named := func(n string, kv ...any) M {
@@ -160,6 +160,9 @@ func TestGuardBody(t *testing.T) {
 		{"PUT", "/project_briefs/9300003", M{"data": M{"html_text": "<body>x</body>"}}},
 		{"PUT", "/tags/3000003", M{"data": M{"color": "dark-red"}}},
 		{"PUT", "/projects/1000001", M{"data": M{"color": "none"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000002"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000003", "insert_before": "2000002"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000002", "insert_after": "2000003"}}},
 	}
 	for _, a := range allowed {
 		if err := c.guardBody(a.m, a.p, a.b); err != nil {
@@ -205,6 +208,13 @@ func TestGuardBody(t *testing.T) {
 		{"POST", "/portfolios/9999999/addItem", M{"data": M{"item": "1000001"}}},
 		{"POST", "/goals/9100001/addSupportingRelationship", M{"data": M{"supporting_resource": "9999999"}}}, // someone's goal
 		{"POST", "/goals/9999999/addSupportingRelationship", M{"data": M{"supporting_resource": "9100001"}}},
+		{"POST", "/sections/9999999/addTask", M{"data": M{"task": "2000002"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "9999999"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000002", "insert_before": "9999999"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000002", "insert_after": "9999999"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000002", "insert_before": 123}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{"task": "2000002", "extra": "x"}}},
+		{"POST", "/sections/4100001/addTask", M{"data": M{}}},
 	}
 	for _, r := range refused {
 		if err := c.guardBody(r.m, r.p, r.b); err == nil {

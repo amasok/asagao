@@ -115,6 +115,23 @@ func (f *sectionServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		f.taskSec[str("task")] = parts[1]
 		fmt.Fprint(rw, `{"data":{}}`)
+	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "sections" && parts[2] == "tasks":
+		if index(parts[1]) < 0 {
+			notFound()
+			return
+		}
+		var gids []string
+		for gid, sec := range f.taskSec {
+			if sec == parts[1] {
+				gids = append(gids, gid)
+			}
+		}
+		slices.Sort(gids)
+		var items []string
+		for _, gid := range gids {
+			items = append(items, fmt.Sprintf(`{"gid":%q}`, gid))
+		}
+		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(items, ","))
 	case len(parts) == 2 && parts[0] == "tasks":
 		fmt.Fprintf(rw, `{"data":{"gid":%q,"name":"A","memberships":[{"project":{"gid":"p1"},"section":{"gid":%q}}]}}`, parts[1], f.taskSec[parts[1]])
 	case len(parts) == 2 && parts[0] == "tags":
