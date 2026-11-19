@@ -219,6 +219,9 @@ func (s *Syncer) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, erro
 	if updated.GID == "" {
 		updated.GID = gid
 	}
+	if updated.Workspace == nil || updated.Workspace.GID == "" {
+		updated.Workspace = server.Workspace
+	}
 	_ = s.Store.ApplyTag(ctx, *updated) // the next sync fixes a failure
 	return sent, nil
 }

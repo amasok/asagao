@@ -286,9 +286,22 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ?", t.GID); err != nil {
 		return err
 	}
+	tagWS := workspace
+	if tagWS == "" {
+		for _, m := range t.Memberships {
+			if m.Project == nil {
+				continue
+			}
+			if err := tx.QueryRowContext(ctx, "SELECT workspace_gid FROM projects WHERE gid = ?", m.Project.GID).Scan(&tagWS); err == nil && tagWS != "" {
+				break
+			}
+		}
+	}
 	for _, tag := range t.Tags {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name) VALUES(?, ?)
-			ON CONFLICT(gid) DO UPDATE SET name = excluded.name`, tag.GID, tag.Name); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, workspace_gid) VALUES(?, ?, ?)
+			ON CONFLICT(gid) DO UPDATE SET name = excluded.name,
+				workspace_gid = CASE WHEN excluded.workspace_gid <> '' THEN excluded.workspace_gid ELSE tags.workspace_gid END`,
+			tag.GID, tag.Name, tagWS); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)", t.GID, tag.GID); err != nil {

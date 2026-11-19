@@ -65,7 +65,16 @@ func (c *Client) TypeaheadUsers(ctx context.Context, workspaceGID, query string,
 
 // TypeaheadTags returns tags whose name starts like query.
 func (c *Client) TypeaheadTags(ctx context.Context, workspaceGID, query string, count int) ([]Tag, error) {
-	return typeahead[Tag](ctx, c, workspaceGID, "tag", query, count, []string{"name", "color"})
+	tags, err := typeahead[Tag](ctx, c, workspaceGID, "tag", query, count, tagFields)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tags {
+		if (tags[i].Workspace == nil || tags[i].Workspace.GID == "") && workspaceGID != "" {
+			tags[i].Workspace = &Ref{GID: workspaceGID}
+		}
+	}
+	return tags, nil
 }
 
 // errBadCustomID is returned for a custom ID that cannot be a path segment.

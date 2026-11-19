@@ -18,12 +18,21 @@ const (
 	OpRemoveTag = outbox.KindRemoveTag
 )
 
+func tagWorkspaceGID(t model.Tag) string {
+	if t.Workspace != nil {
+		return t.Workspace.GID
+	}
+	return ""
+}
+
 // UpsertTags stores the tags of a workspace (so unused tags can be picked too).
 func (s *Store) UpsertTags(ctx context.Context, tags []model.Tag) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, t := range tags {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, color) VALUES(?, ?, ?)
-				ON CONFLICT(gid) DO UPDATE SET name = excluded.name, color = excluded.color`, t.GID, t.Name, t.Color); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, color, workspace_gid) VALUES(?, ?, ?, ?)
+				ON CONFLICT(gid) DO UPDATE SET name = excluded.name, color = excluded.color,
+					workspace_gid = CASE WHEN excluded.workspace_gid <> '' THEN excluded.workspace_gid ELSE tags.workspace_gid END`,
+				t.GID, t.Name, t.Color, tagWorkspaceGID(t)); err != nil {
 				return err
 			}
 		}
@@ -55,7 +64,10 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 	tagName = strings.TrimSpace(tagName)
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var workspace string
-		if err := tx.QueryRowContext(ctx, "SELECT workspace_gid FROM tasks WHERE gid = ?", taskGID).Scan(&workspace); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(workspace_gid, ''),
+			(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid
+				WHERE m.task_gid = tasks.gid ORDER BY m.rowid LIMIT 1), '')
+			FROM tasks WHERE gid = ?`, taskGID).Scan(&workspace); err != nil {
 			return notFound(err, "task "+taskGID)
 		}
 		if tagGID == "" {
@@ -66,7 +78,7 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 			err := tx.QueryRowContext(ctx, "SELECT gid FROM tags WHERE name = ?", tagName).Scan(&tagGID)
 			if errors.Is(err, sql.ErrNoRows) {
 				tagGID = newLocalGID()
-				if _, err := tx.ExecContext(ctx, "INSERT INTO tags(gid, name) VALUES(?, ?)", tagGID, tagName); err != nil {
+				if _, err := tx.ExecContext(ctx, "INSERT INTO tags(gid, name, workspace_gid) VALUES(?, ?, ?)", tagGID, tagName, workspace); err != nil {
 					return err
 				}
 			} else if err != nil {
@@ -74,6 +86,11 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 			}
 		} else if err := tx.QueryRowContext(ctx, "SELECT name FROM tags WHERE gid = ?", tagGID).Scan(&tagName); err != nil {
 			return notFound(err, "tag "+tagGID)
+		}
+		if workspace != "" {
+			if _, err := tx.ExecContext(ctx, "UPDATE tags SET workspace_gid = ? WHERE gid = ? AND workspace_gid = ''", workspace, tagGID); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)", taskGID, tagGID); err != nil {
 			return err
@@ -130,6 +147,7 @@ func (s *Store) RealTagGID(ctx context.Context, gid string) (string, error) {
 func (s *Store) ReplaceLocalTagGID(ctx context.Context, local, real string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, q := range []string{
+			"UPDATE tags SET workspace_gid = COALESCE((SELECT NULLIF(workspace_gid, '') FROM tags WHERE gid = ?2), workspace_gid) WHERE gid = ?1 AND workspace_gid = ''",
 			"DELETE FROM tags WHERE gid = ?2 AND EXISTS (SELECT 1 FROM tags WHERE gid = ?1)",
 			"UPDATE tags SET gid = ?2 WHERE gid = ?1",
 			"UPDATE OR IGNORE task_tags SET tag_gid = ?2 WHERE tag_gid = ?1",
@@ -184,8 +202,9 @@ func (s *Store) AddTags(ctx context.Context, tags []model.Tag) (int, error) {
 			if t.GID == "" {
 				continue
 			}
-			res, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, color) VALUES(?, ?, ?)
-				ON CONFLICT(gid) DO NOTHING`, t.GID, t.Name, t.Color)
+			ws := tagWorkspaceGID(t)
+			res, err := tx.ExecContext(ctx, `INSERT INTO tags(gid, name, color, workspace_gid) VALUES(?, ?, ?, ?)
+				ON CONFLICT(gid) DO NOTHING`, t.GID, t.Name, t.Color, ws)
 			if err != nil {
 				return err
 			}
@@ -193,6 +212,10 @@ func (s *Store) AddTags(ctx context.Context, tags []model.Tag) (int, error) {
 				return err
 			} else if n > 0 {
 				gids = append(gids, t.GID)
+			} else if ws != "" {
+				if _, err := tx.ExecContext(ctx, "UPDATE tags SET workspace_gid = ? WHERE gid = ? AND workspace_gid = ''", ws, t.GID); err != nil {
+					return err
+				}
 			}
 		}
 		if len(gids) == 0 {

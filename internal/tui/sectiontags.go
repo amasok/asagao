@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,49 +17,111 @@ import (
 // Creating, deleting and reordering sections, and renaming, recoloring and deleting tags
 // (#33). They are done on the section the cursor is on (a board column, a list group).
 // Deleting cannot be undone in Asana, so it asks first. A feature Asana refused with a 402
-// (the workspace's plan lacks it) is not offered (planOff, refreshed with the outbox).
+// (the workspace's plan lacks it) is not offered while its mark holds (planOff, refreshed
+// with the outbox and when opening the menu, and checked against Now so marks expire after
+// readmodel.PlanRecheckAfter even without any write, #68).
 
-// planLoadedMsg says which features the workspace's plan lacks.
-type planLoadedMsg struct{ off map[string]bool }
+// planWindow is the time interval [from, until) during which a 402 hides a feature
+// (readmodel.PlanOffFor: age >= 0 && age < PlanRecheckAfter). When several workspaces
+// have 402s, the feature is hidden only while every workspace's 402 holds: from the latest
+// refusal until the earliest one expires.
+type planWindow struct {
+	from, until time.Time
+}
+
+func (w planWindow) off(now time.Time) bool {
+	return !w.until.IsZero() && !now.Before(w.from) && now.Before(w.until)
+}
+
+// planOffIn returns the window during which a recent 402 hides feature in workspaceGID at
+// now (false when the feature is offered).
+func planOffIn(ctx context.Context, st Store, feature, workspaceGID string, now time.Time) (planWindow, bool) {
+	v, err := st.SyncState(ctx, readmodel.PlanKey(feature, workspaceGID))
+	if err != nil || !readmodel.PlanOffFor(v, now) {
+		return planWindow{}, false
+	}
+	at, _ := time.Parse(time.RFC3339, v)
+	return planWindow{from: at, until: at.Add(readmodel.PlanRecheckAfter)}, true
+}
+
+// planOffEverywhere returns the window during which a recent 402 hides feature in every
+// workspace at now (false when at least one workspace offers it, or none are known).
+func planOffEverywhere(ctx context.Context, st Store, feature string, now time.Time) (planWindow, bool) {
+	wss, err := st.WorkspaceGIDs(ctx)
+	if err != nil || len(wss) == 0 {
+		return planWindow{}, false
+	}
+	var win planWindow
+	for i, ws := range wss {
+		w, off := planOffIn(ctx, st, feature, ws, now)
+		if !off {
+			return planWindow{}, false
+		}
+		if i == 0 {
+			win = w
+			continue
+		}
+		if w.from.After(win.from) {
+			win.from = w.from
+		}
+		if w.until.Before(win.until) {
+			win.until = w.until
+		}
+	}
+	return win, win.off(now)
+}
+
+// planLoadedMsg says which features the workspace's plan lacks (and until when).
+type planLoadedMsg struct {
+	seq uint64
+	off map[string]planWindow
+}
 
 func (m *Model) loadPlan() tea.Cmd {
 	st := m.deps.Store
+	if st == nil {
+		return nil
+	}
+	m.planSeq++
+	seq, ctx, now := m.planSeq, m.ctx, m.now()
 	return func() tea.Msg {
-		off := map[string]bool{}
-		// Sections and tags: unless a recent 402 hides them in every workspace (each change
-		// checks its own workspace).
-		if !(&app.Sections{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
-			off[readmodel.PlanSections] = true
+		off := map[string]planWindow{}
+		// Sections, tags and time tracking: unless a recent 402 hides them in every
+		// workspace (each change checks its own workspace).
+		for _, f := range []string{readmodel.PlanSections, readmodel.PlanTags, readmodel.PlanTimeTracking} {
+			if w, hidden := planOffEverywhere(ctx, st, f, now); hidden {
+				off[f] = w
+			}
 		}
-		if !(&app.Tags{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
-			off[readmodel.PlanTags] = true
+		// Goals, portfolios, project templates and custom fields: the default workspace's.
+		// (Task templates are hidden per project: templates.go.)
+		ws, wsErr := st.DefaultWorkspace(ctx)
+		for _, f := range []string{readmodel.PlanGoals, readmodel.PlanPortfolios, readmodel.PlanProjectTemplates} {
+			if w, hidden := planOffIn(ctx, st, f, ws, now); hidden {
+				off[f] = w
+			}
 		}
-		if !(&app.TimeTracking{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
-			off[readmodel.PlanTimeTracking] = true
+		if wsErr == nil {
+			if w, hidden := planOffIn(ctx, st, readmodel.PlanCustomFields, ws, now); hidden {
+				off[readmodel.PlanCustomFields] = w
+			}
 		}
-		goals := &app.Goals{Store: st, Clock: m.deps.Now}
-		if !goals.Available(m.ctx) {
-			off[readmodel.PlanGoals] = true
-		}
-		if !goals.PortfoliosAvailable(m.ctx) {
-			off[readmodel.PlanPortfolios] = true
-		}
-		// Project templates are listed and made in the default workspace. (Task templates
-		// are hidden per project: templates.go.)
-		ws, _ := st.DefaultWorkspace(m.ctx)
-		if !app.TemplatesOffered(m.ctx, st, readmodel.PlanProjectTemplates, ws, m.deps.Now()) {
-			off[readmodel.PlanProjectTemplates] = true
-		}
-		// Per workspace (24 hours): the default workspace's, like the other menus.
-		if ws, err := st.DefaultWorkspace(m.ctx); err == nil && !(&app.ProjectFields{Store: st, Clock: m.deps.Now}).Available(m.ctx, ws) {
-			off[readmodel.PlanCustomFields] = true
-		}
-		return planLoadedMsg{off: off}
+		return planLoadedMsg{seq: seq, off: off}
 	}
 }
 
-// planOK reports whether feature is offered (see planLoadedMsg).
-func (m *Model) planOK(feature string) bool { return !m.planOff[feature] }
+func (m *Model) now() time.Time {
+	if m.deps.Now == nil {
+		return time.Now()
+	}
+	return m.deps.Now()
+}
+
+// planOK reports whether feature is offered now (see planLoadedMsg).
+func (m *Model) planOK(feature string) bool {
+	w, ok := m.planOff[feature]
+	return !ok || !w.off(m.now())
+}
 
 func (m *Model) tagUseCases(now time.Time) *app.Tags {
 	return &app.Tags{Store: m.deps.Store, Clock: func() time.Time { return now }}
@@ -68,6 +131,9 @@ func (m *Model) tagUseCases(now time.Time) *app.Tags {
 func (m *Model) updateSectionTags(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case planLoadedMsg:
+		if msg.seq != m.planSeq {
+			return nil, true
+		}
 		m.planOff = msg.off
 		return nil, true
 	case tagsManageMsg:

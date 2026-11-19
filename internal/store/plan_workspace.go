@@ -21,12 +21,31 @@ func (s *Store) SectionWorkspace(ctx context.Context, sectionGID string) (string
 	return ws, err
 }
 
-// TagWorkspace returns the workspace of a tag as the cache knows it: the one of a task
-// that carries it ("" when no such task's workspace is known). The tags table does not
-// keep it.
+// TagWorkspace returns the workspace of a tag as the cache knows it: tags.workspace_gid,
+// falling back to a task that carries it ("" when neither is known). A local gid whose
+// creation already reached Asana is resolved to its real gid first.
 func (s *Store) TagWorkspace(ctx context.Context, tagGID string) (string, error) {
+	if IsLocalGID(tagGID) {
+		real, err := s.RealTagGID(ctx, tagGID)
+		if err != nil {
+			return "", err
+		}
+		tagGID = real
+	}
 	var ws string
-	err := s.db.QueryRowContext(ctx, `SELECT ws FROM (
+	err := s.db.QueryRowContext(ctx, "SELECT workspace_gid FROM tags WHERE gid = ?", tagGID).Scan(&ws)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if ws != "" {
+		return ws, nil
+	}
+	return tagWorkspaceFromTasks(ctx, s.db, tagGID)
+}
+
+func tagWorkspaceFromTasks(ctx context.Context, q dbQuerier, tagGID string) (string, error) {
+	var ws string
+	err := q.QueryRowContext(ctx, `SELECT ws FROM (
 		SELECT COALESCE(NULLIF(t.workspace_gid, ''),
 			(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid
 				WHERE m.task_gid = t.gid ORDER BY m.rowid LIMIT 1), '') AS ws

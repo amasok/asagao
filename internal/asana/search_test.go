@@ -78,6 +78,9 @@ func TestTypeahead(t *testing.T) {
 			}
 			fmt.Fprint(w, `{"data":[{"gid":"u1","name":"Hanako","email":"h@example.com"}]}`)
 		case "tag":
+			if q.Get("opt_fields") != "name,color,workspace" {
+				t.Errorf("tag fields %v", q)
+			}
 			fmt.Fprint(w, `{"data":[{"gid":"g1","name":"買い物","color":"dark-red"}]}`)
 		default:
 			t.Errorf("resource_type %v", q)
@@ -93,8 +96,26 @@ func TestTypeahead(t *testing.T) {
 		t.Fatalf("users %+v %v", us, err)
 	}
 	tags, err := c.TypeaheadTags(ctx, "w1", "買", 5)
-	if err != nil || len(tags) != 1 || tags[0].Color != "dark-red" {
+	if err != nil || len(tags) != 1 || tags[0].Color != "dark-red" || tags[0].Workspace == nil || tags[0].Workspace.GID != "w1" {
 		t.Fatalf("tags %+v %v", tags, err)
+	}
+}
+
+func TestTagsIncludeWorkspace(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tags" || r.URL.Query().Get("workspace") != "w2" || r.URL.Query().Get("opt_fields") != "name,color,workspace" {
+			t.Errorf("unexpected %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		fmt.Fprint(w, `{"data":[{"gid":"g1","name":"あり","workspace":{"gid":"w2"}},{"gid":"g2","name":"省略"}]}`)
+	})
+	tags, err := c.Tags(context.Background(), "w2")
+	if err != nil || len(tags) != 2 {
+		t.Fatalf("tags = %+v, %v", tags, err)
+	}
+	for _, g := range tags {
+		if g.Workspace == nil || g.Workspace.GID != "w2" {
+			t.Errorf("tag %s workspace = %+v, want w2", g.GID, g.Workspace)
+		}
 	}
 }
 

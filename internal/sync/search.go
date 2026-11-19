@@ -123,17 +123,26 @@ func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *boo
 // caches the ones the cache does not have. It returns how many it added: 0 also when the
 // plan lacks typeahead (then nothing is asked).
 func (s *Syncer) FindUsers(ctx context.Context, query string) (int, error) {
-	return findNames(ctx, s, query, s.API.TypeaheadUsers, s.Store.AddUsers)
+	return findNames(ctx, s, query, s.API.TypeaheadUsers, func(ctx context.Context, _ string, found []model.User) (int, error) {
+		return s.Store.AddUsers(ctx, found)
+	})
 }
 
 // FindTags is FindUsers for tags.
 func (s *Syncer) FindTags(ctx context.Context, query string) (int, error) {
-	return findNames(ctx, s, query, s.API.TypeaheadTags, s.Store.AddTags)
+	return findNames(ctx, s, query, s.API.TypeaheadTags, func(ctx context.Context, ws string, found []model.Tag) (int, error) {
+		for i := range found {
+			if found[i].Workspace == nil || found[i].Workspace.GID == "" {
+				found[i].Workspace = &model.Ref{GID: ws}
+			}
+		}
+		return s.Store.AddTags(ctx, found)
+	})
 }
 
 func findNames[T any](ctx context.Context, s *Syncer, query string,
 	find func(ctx context.Context, ws, query string, count int) ([]T, error),
-	add func(ctx context.Context, found []T) (int, error)) (int, error) {
+	add func(ctx context.Context, ws string, found []T) (int, error)) (int, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return 0, nil
@@ -152,7 +161,7 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 	if err != nil {
 		return 0, err
 	}
-	return add(ctx, found)
+	return add(ctx, ws, found)
 }
 
 // ErrCustomIDUnavailable is returned by TaskByCustomID when the workspace's plan does not

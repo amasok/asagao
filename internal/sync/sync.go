@@ -253,6 +253,11 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 				}
 			}
 			if tags, err := s.API.Tags(ctx, w.GID); err == nil { // all tags, for the tag picker
+				for i := range tags {
+					if tags[i].Workspace == nil || tags[i].Workspace.GID == "" {
+						tags[i].Workspace = &model.Ref{GID: w.GID}
+					}
+				}
 				if err := s.Store.UpsertTags(ctx, tags); err != nil {
 					return res, err
 				}
