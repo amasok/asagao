@@ -10,7 +10,7 @@ description: >-
 
 ## 取り込み (merge)
 
-前提: 対象ブランチが `asagao-reviewer` の承認を得ており、`asagao-tester` の確認および `go test -race` も通過していること。
+前提: 対象ブランチが `asagao-reviewer` の承認を得ており、`asagao-tester` の確認および関連パッケージの `go test -race` も通過していること（全パッケージの `-race` は `scripts/land.sh merge` がまとめて実行する）。
 
 ```sh
 scripts/land.sh merge <branch> [<branch>...]
