@@ -72,9 +72,9 @@ func (c *Client) TypeaheadTags(ctx context.Context, workspaceGID, query string, 
 var errBadCustomID = errors.New("asana: invalid custom ID")
 
 // TaskByCustomID reads the task with the custom ID (e.g. "ENG-123") in the workspace.
-// Asana answers 404 when there is none, and also 500 for some IDs it does not know (an
-// uppercase prefix no project has, seen on a real workspace): a 5xx is therefore not
-// retried here, only a 429.
+// Asana answers 404 when there is none, and 500 for some unknown or even existing IDs on
+// real workspaces (Issue #65): a 5xx is therefore not retried here, only a 429, and the
+// caller falls back to the search API on 500.
 func (c *Client) TaskByCustomID(ctx context.Context, workspaceGID, customID string) (*Task, error) {
 	if customID == "" || customID == "." || customID == ".." {
 		return nil, errBadCustomID

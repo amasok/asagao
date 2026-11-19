@@ -64,6 +64,22 @@ Asana の検索 API が 402 を返したら、探したワークスペースに�
 - **WHEN** オンラインで、メッセージが `fixes asana#ENG-1 and see asana#ENG-404` のコミットを `git scan` する (ENG-1 は gitA、ENG-404 はない)
 - **THEN** gitA を完了にしてコメントし、ENG-404 は「見つかりません」と出る。あとでオフラインのときに `asana#ENG-1` を読んでも、覚えた gid で gitA にコメントを積む
 
+### Requirement: custom ID の API が 500 を返したら検索 API に切り替える
+ID で引く API が 500 を返したときは、検索 API (`text=<ID>`) で候補を探して全欄取得し、ID カスタムフィールドの値が完全一致するタスクだけを採用してキャッシュする (MUST)。検索 API が 402 のときは `plan_unavailable:search` だけを記録して元の 500 を返し、検索や取得の失敗では前に覚えた gid を消さない。
+根拠: sync/search.go (TaskByCustomID, taskByCustomIDFromSearch); asana/model (HasCustomID); TestTaskByCustomID500FallsBackToSearch, TestTaskByCustomID500FallbackSearchPlan402
+
+#### Scenario: 500 のときに検索 API から ID 一致のタスクだけを採用する
+- **WHEN** `GET /workspaces/{gid}/tasks/custom_id/RC-1` が 500 を返し、検索 API (`text=RC-1`) が本文一致のタスク t1 と ID カスタムフィールド `RC-1` を持つタスク t4 を返す
+- **THEN** t4 だけを完全な欄でキャッシュに入れて `custom_id:RC-1` に t4 を覚え、t1 はキャッシュに入れない
+
+#### Scenario: 検索 API が 402 のときは元の 500 を返す
+- **WHEN** `GET /workspaces/{gid}/tasks/custom_id/RC-1` が 500 を返し、切り替え先の検索 API が 402 を返す
+- **THEN** `plan_unavailable:search:<ワークスペースの gid>` を記録し、`plan_unavailable:custom_id:<ワークスペースの gid>` は記録せず、元の 500 エラーを返して既存の `custom_id:RC-1` は残す
+
+#### Scenario: 検索結果が上限 100 件で切り捨てられて一致しないときは不在と断定しない
+- **WHEN** `GET /workspaces/{gid}/tasks/custom_id/RC-1` が 500 を返し、切り替え先の検索 API が上限 100 件を返してその中に `RC-1` の一致がない
+- **THEN** 「見つかりません」にせず元の 500 エラーを返し、既存の `custom_id:RC-1` は残す
+
 ### Requirement: タスクの ID がないプラン
 custom ID でのタスクの取得に Asana が 402 を返したら、そのワークスペースについて `plan_unavailable:custom_id:<ワークスペースの gid>` に覚え、それから 24 時間は Asana に聞かずに前に覚えた gid だけを使う (MUST)。そのあと試し直し、答え (見つからない 404 も含む) が来たら記録を消す。
 根拠: sync/search.go (TaskByCustomID); TestTaskByCustomID, TestTaskByCustomID402Remembered, TestSearchPlanPerWorkspaceAndRecheck
