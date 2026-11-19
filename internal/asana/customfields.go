@@ -12,7 +12,8 @@ import (
 // Fields of custom field values on tasks. Enum options are requested only for single
 // tasks (taskDetailFields): projects' options come from their settings.
 var customFieldValueFields = []string{
-	"custom_fields.name", "custom_fields.resource_subtype", "custom_fields.precision", "custom_fields.enabled",
+	"custom_fields.name", "custom_fields.resource_subtype", "custom_fields.representation_type", "custom_fields.id_prefix",
+	"custom_fields.precision", "custom_fields.enabled",
 	"custom_fields.is_formula_field", "custom_fields.is_value_read_only", "custom_fields.display_value",
 	"custom_fields.enum_value.name", "custom_fields.enum_value.color",
 	"custom_fields.multi_enum_values.name", "custom_fields.multi_enum_values.color",
@@ -26,7 +27,8 @@ var enumOptionFields = []string{"custom_fields.enum_options.name", "custom_field
 var taskDetailFields = slices.Concat(TaskFields, enumOptionFields)
 
 var customFieldSettingFields = []string{
-	"is_important", "custom_field.name", "custom_field.resource_subtype", "custom_field.precision",
+	"is_important", "custom_field.name", "custom_field.resource_subtype",
+	"custom_field.representation_type", "custom_field.id_prefix", "custom_field.precision",
 	"custom_field.is_formula_field", "custom_field.is_value_read_only",
 	"custom_field.enum_options.name", "custom_field.enum_options.color", "custom_field.enum_options.enabled",
 }
@@ -134,7 +136,8 @@ func readTasks(c *Client, detail bool, read func(fields []string) ([]Task, error
 // customFieldFields are the fields of a custom field definition (GET /custom_fields/{gid},
 // a workspace's list), with its enum options.
 var customFieldFields = []string{
-	"name", "resource_subtype", "precision", "is_formula_field", "is_value_read_only",
+	"name", "resource_subtype", "representation_type", "id_prefix", "precision",
+	"is_formula_field", "is_value_read_only",
 	"enum_options.name", "enum_options.color", "enum_options.enabled",
 }
 

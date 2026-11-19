@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
@@ -1158,7 +1159,36 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 	if t, err := s.API.Task(ctx, op.TaskGID); err == nil { // else the next sync refreshes it
 		s.refresh(ctx, *t)
 	}
+	project, _ := op.Payload["project"].(string)
+	s.refreshSectionOrderAfterMove(ctx, project, section)
 	return nil
+}
+
+// refreshSectionOrderAfterMove fetches Asana's order for section right after pushing a
+// move into it (#69: Asana emits no Events on intra-section reorders, so an external
+// reorder before our push would otherwise leave the cache out of order). Transient
+// failures queue section in KeyTaskOrder so the next sync retries it.
+func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, section string) {
+	if section == "" || localgid.IsLocal(section) {
+		return
+	}
+	completedSince := s.newMode(s.serverNow()).window
+	gids, err := s.API.SectionTaskOrder(ctx, section, completedSince)
+	if err == nil {
+		if gids != nil {
+			_ = s.Store.SetSectionTaskOrder(ctx, section, gids)
+		}
+		return
+	}
+	if isNotFound(err) || isForbidden(err) || project == "" || localgid.IsLocal(project) {
+		return
+	}
+	key := readmodel.KeyTaskOrder + project
+	pending, perr := s.Store.SyncState(ctx, key)
+	if perr != nil {
+		return
+	}
+	_ = s.setPending(ctx, key, pending, addNew(strings.Fields(pending), section))
 }
 
 // position is where op puts its task (insert_before / insert_after), with the real gid of

@@ -65,16 +65,25 @@ func (c *Client) TypeaheadUsers(ctx context.Context, workspaceGID, query string,
 
 // TypeaheadTags returns tags whose name starts like query.
 func (c *Client) TypeaheadTags(ctx context.Context, workspaceGID, query string, count int) ([]Tag, error) {
-	return typeahead[Tag](ctx, c, workspaceGID, "tag", query, count, []string{"name", "color"})
+	tags, err := typeahead[Tag](ctx, c, workspaceGID, "tag", query, count, tagFields)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tags {
+		if (tags[i].Workspace == nil || tags[i].Workspace.GID == "") && workspaceGID != "" {
+			tags[i].Workspace = &Ref{GID: workspaceGID}
+		}
+	}
+	return tags, nil
 }
 
 // errBadCustomID is returned for a custom ID that cannot be a path segment.
 var errBadCustomID = errors.New("asana: invalid custom ID")
 
 // TaskByCustomID reads the task with the custom ID (e.g. "ENG-123") in the workspace.
-// Asana answers 404 when there is none, and also 500 for some IDs it does not know (an
-// uppercase prefix no project has, seen on a real workspace): a 5xx is therefore not
-// retried here, only a 429.
+// Asana answers 404 when there is none, and 500 for some unknown or even existing IDs on
+// real workspaces (Issue #65): a 5xx is therefore not retried here, only a 429, and the
+// caller falls back to the search API on 500.
 func (c *Client) TaskByCustomID(ctx context.Context, workspaceGID, customID string) (*Task, error) {
 	if customID == "" || customID == "." || customID == ".." {
 		return nil, errBadCustomID

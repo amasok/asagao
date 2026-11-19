@@ -16,6 +16,7 @@ import (
 type Created struct {
 	Prefix       string // every name starts with it: asagao-realcheck-<time>
 	Projects     []string
+	Sections     []string
 	Tasks        []string
 	Tags         []string
 	Statuses     []string
@@ -406,6 +407,19 @@ func (c *Created) guardBody(method, path string, body M) error {
 		ok = ours(c.Goals, 1) && (slices.Contains(c.Goals, res) || slices.Contains(c.Projects, res))
 	case method == "POST" && len(parts) == 3 && parts[0] == "project_templates" && parts[2] == "instantiateProject":
 		ok = ours(c.ProjectTemplates, 1) && prefixed && data["public"] != true
+	case method == "POST" && len(parts) == 3 && parts[0] == "sections" && parts[2] == "addTask":
+		task, _ := data["task"].(string)
+		ok = ours(c.Sections, 1) && len(data) > 0 && task != "" && slices.Contains(c.Tasks, task)
+		for k, v := range data {
+			switch k {
+			case "task":
+			case "insert_before", "insert_after":
+				s, isStr := v.(string)
+				ok = ok && isStr && slices.Contains(c.Tasks, s)
+			default:
+				ok = false
+			}
+		}
 	}
 	if !ok {
 		return fmt.Errorf("refusing %s %s: not something this run created", method, path)

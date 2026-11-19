@@ -332,6 +332,19 @@ func (w *writeServer) handle(rw http.ResponseWriter, r *http.Request, b []byte, 
 		gid, _ := body.Data["task"].(string)
 		w.tasks[gid].Section = parts[1]
 		fmt.Fprint(rw, `{"data":{}}`)
+	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "sections" && parts[2] == "tasks":
+		var gids []string
+		for gid, st := range w.tasks {
+			if st.Section == parts[1] {
+				gids = append(gids, gid)
+			}
+		}
+		slices.Sort(gids)
+		var items []string
+		for _, gid := range gids {
+			items = append(items, fmt.Sprintf(`{"gid":%q}`, gid))
+		}
+		fmt.Fprintf(rw, `{"data":[%s]}`, strings.Join(items, ","))
 	case len(parts) == 3 && parts[0] == "tasks" && parts[2] == "stories":
 		if _, ok := w.tasks[parts[1]]; !ok {
 			rw.WriteHeader(http.StatusNotFound)

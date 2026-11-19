@@ -327,13 +327,22 @@ func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map
 
 // --- tags ---
 
-var tagFields = []string{"name", "color"}
+var tagFields = []string{"name", "color", "workspace"}
 
 // Tags lists the tags of a workspace.
 func (c *Client) Tags(ctx context.Context, workspaceGID string) ([]Tag, error) {
 	q := fields(tagFields)
 	q.Set("workspace", workspaceGID)
-	return list[Tag](ctx, c, "/tags", q)
+	tags, err := list[Tag](ctx, c, "/tags", q)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tags {
+		if (tags[i].Workspace == nil || tags[i].Workspace.GID == "") && workspaceGID != "" {
+			tags[i].Workspace = &Ref{GID: workspaceGID}
+		}
+	}
+	return tags, nil
 }
 
 // Tag returns one tag (GET /tags/{gid}).

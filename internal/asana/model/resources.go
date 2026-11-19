@@ -77,9 +77,10 @@ type Section struct {
 
 // Tag is a tag with its color (a color name such as "dark-green", or "" for none).
 type Tag struct {
-	GID   string `json:"gid"`
-	Name  string `json:"name"`
-	Color string `json:"color"`
+	GID       string `json:"gid"`
+	Name      string `json:"name"`
+	Color     string `json:"color"`
+	Workspace *Ref   `json:"workspace,omitempty"`
 }
 
 type Membership struct {
@@ -133,6 +134,19 @@ type Task struct {
 	// NoCustomType is set when the task was fetched without its custom type and status
 	// (Asana refused those fields, #59; or Partial): they are unknown, not empty.
 	NoCustomType bool `json:"-"`
+}
+
+// HasCustomID reports whether t has an ID custom field whose value equals id (exact match).
+func (t Task) HasCustomID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, cf := range t.CustomFields {
+		if cf.CustomIDValue() == id {
+			return true
+		}
+	}
+	return false
 }
 
 // TaskQuery selects tasks for GET /tasks. Exactly one of Project or (Assignee + Workspace) must be set.

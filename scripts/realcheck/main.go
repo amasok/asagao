@@ -37,6 +37,7 @@ func realMain() int {
 	syncBench := flag.String("syncbench", "", "compare the first sync of builds (#54): main=<bin>,lazy=<bin>")
 	webF := flag.String("web", "", "check custom types, task templates and custom IDs (#59, #2, #36) in the user's project: <project gid>,<typed task gid>")
 	briefF := flag.Bool("brief", false, "check project briefs (#60) instead of the outbox kinds")
+	orderF := flag.Bool("order", false, "check same-section reorder events (#69) and custom ID fallback (#65)")
 	dates := flag.Bool("dates", false, "check the start date of tasks (#57) instead of the outbox kinds")
 	features := flag.Bool("features", false, "check the features of #2, #6, #7, #36 and #37 instead of the outbox kinds")
 	colors := flag.Bool("colors", false, "only probe the color names (a tag and a project of the run)")
@@ -68,7 +69,7 @@ func realMain() int {
 		}
 		prefix = *cleanupPrefix
 	}
-	c := &Check{R: r, Rep: rep, CleanupOnly: *cleanupPrefix != "", Made: &Created{Prefix: prefix}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF, Web: *webF, SyncBench: *syncBench}
+	c := &Check{R: r, Rep: rep, CleanupOnly: *cleanupPrefix != "", Made: &Created{Prefix: prefix}, Shapes: *shapesF, Templates: *templates, ColorsOnly: *colors, Features: *features, Dates: *dates, Brief: *briefF, Order: *orderF, Web: *webF, SyncBench: *syncBench}
 	go func() {
 		// The first Ctrl-C stops the steps and cleanup runs; a second one leaves at once
 		// and says what is left in Asana.
@@ -154,6 +155,8 @@ func run(ctx context.Context, c *Check, probeOnly bool) (code int) {
 		c.dates()
 	case c.Brief:
 		c.brief()
+	case c.Order:
+		c.order()
 	case c.Web != "":
 		p, t, _ := strings.Cut(c.Web, ",")
 		if !gidRE.MatchString(p) || !gidRE.MatchString(t) {
@@ -191,7 +194,7 @@ type Check struct {
 	tag      string
 	cf       map[string]string // custom fields made for the run, by type
 
-	Shapes, Templates, ColorsOnly, Features, Dates, Brief bool   // -shapes, -templates, -colors, -features, -dates, -brief
+	Shapes, Templates, ColorsOnly, Features, Dates, Brief, Order bool   // -shapes, -templates, -colors, -features, -dates, -brief, -order
 	SyncBench                                             string // -syncbench
 	Web                                                   string // -web
 	CleanupOnly                                           bool   // -cleanup

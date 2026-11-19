@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 )
 
@@ -77,6 +78,9 @@ func TestTypeahead(t *testing.T) {
 			}
 			fmt.Fprint(w, `{"data":[{"gid":"u1","name":"Hanako","email":"h@example.com"}]}`)
 		case "tag":
+			if q.Get("opt_fields") != "name,color,workspace" {
+				t.Errorf("tag fields %v", q)
+			}
 			fmt.Fprint(w, `{"data":[{"gid":"g1","name":"買い物","color":"dark-red"}]}`)
 		default:
 			t.Errorf("resource_type %v", q)
@@ -92,8 +96,26 @@ func TestTypeahead(t *testing.T) {
 		t.Fatalf("users %+v %v", us, err)
 	}
 	tags, err := c.TypeaheadTags(ctx, "w1", "買", 5)
-	if err != nil || len(tags) != 1 || tags[0].Color != "dark-red" {
+	if err != nil || len(tags) != 1 || tags[0].Color != "dark-red" || tags[0].Workspace == nil || tags[0].Workspace.GID != "w1" {
 		t.Fatalf("tags %+v %v", tags, err)
+	}
+}
+
+func TestTagsIncludeWorkspace(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tags" || r.URL.Query().Get("workspace") != "w2" || r.URL.Query().Get("opt_fields") != "name,color,workspace" {
+			t.Errorf("unexpected %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		fmt.Fprint(w, `{"data":[{"gid":"g1","name":"あり","workspace":{"gid":"w2"}},{"gid":"g2","name":"省略"}]}`)
+	})
+	tags, err := c.Tags(context.Background(), "w2")
+	if err != nil || len(tags) != 2 {
+		t.Fatalf("tags = %+v, %v", tags, err)
+	}
+	for _, g := range tags {
+		if g.Workspace == nil || g.Workspace.GID != "w2" {
+			t.Errorf("tag %s workspace = %+v, want w2", g.GID, g.Workspace)
+		}
 	}
 }
 
@@ -145,5 +167,29 @@ func TestTaskByCustomID500IsNotRetried(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("calls %d", calls)
+	}
+}
+
+// TaskFields requests custom ID metadata (representation_type, id_prefix) inside
+// custom_fields so that fallback lookups can tell ID fields apart from plain text fields,
+// and both are treated as optional task fields for plans that refuse custom_fields (#65).
+// customFieldFields and customFieldSettingFields also request them because real Asana omits
+// them on task objects and returns them on field definitions.
+func TestTaskFieldsIncludeCustomIDMetadata(t *testing.T) {
+	for _, f := range []string{"custom_fields.representation_type", "custom_fields.id_prefix", "custom_fields.display_value", "custom_fields.text_value"} {
+		if !slices.Contains(TaskFields, f) {
+			t.Errorf("TaskFields lack %s", f)
+		}
+		if !isOptionalTaskField(f) {
+			t.Errorf("%s is not an optional task field", f)
+		}
+	}
+	for _, f := range []string{"representation_type", "id_prefix"} {
+		if !slices.Contains(customFieldFields, f) {
+			t.Errorf("customFieldFields lack %s", f)
+		}
+		if !slices.Contains(customFieldSettingFields, "custom_field."+f) {
+			t.Errorf("customFieldSettingFields lack custom_field.%s", f)
+		}
 	}
 }

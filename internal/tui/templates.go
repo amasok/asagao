@@ -303,6 +303,10 @@ func (m *Model) updateTemplates(msg tea.Msg) (tea.Cmd, bool) {
 		delete(m.tmpl.fetching, "project")
 		if m.templateError(msg.err, readmodel.PlanProjectTemplates, msg.open) {
 			m.tmpl.project.at = m.deps.Now() // not looked for again before templateTTL
+			var pe *sync.TemplatePlanError
+			if errors.As(msg.err, &pe) {
+				return m.loadPlan(), true
+			}
 			return nil, true
 		}
 		m.tmpl.project = projectTemplates{list: msg.list, at: m.deps.Now()}
@@ -329,9 +333,10 @@ func (m *Model) templateError(err error, feature string, open bool) bool {
 	// Task templates are hidden per project (no list), project templates by planOff.
 	if errors.As(err, &pe) && feature == readmodel.PlanProjectTemplates {
 		if m.planOff == nil {
-			m.planOff = map[string]bool{}
+			m.planOff = map[string]planWindow{}
 		}
-		m.planOff[feature] = true
+		at := m.now().Truncate(time.Second)
+		m.planOff[feature] = planWindow{from: at, until: at.Add(readmodel.PlanRecheckAfter)}
 	}
 	if open {
 		m.status = err.Error()
