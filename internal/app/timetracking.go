@@ -35,16 +35,7 @@ type TimeTracking struct {
 // Available reports whether time tracking can be offered: it is unless Asana refused it
 // (recently) in every workspace.
 func (t *TimeTracking) Available(ctx context.Context) bool {
-	wss, err := t.Store.WorkspaceGIDs(ctx)
-	if err != nil || len(wss) == 0 {
-		return true // not known yet: try
-	}
-	for _, ws := range wss {
-		if t.off(ctx, ws) == nil {
-			return true
-		}
-	}
-	return false
+	return planAnywhere(ctx, t.Store, readmodel.PlanTimeTracking, t.Clock())
 }
 
 // AvailableFor returns an *ErrPlanUnavailable while Asana's 402 for time tracking in the

@@ -36,7 +36,7 @@ func TestSearchOnlyA402IsRemembered(t *testing.T) {
 				t.Fatal("typeahead failure swallowed")
 			}
 			for _, feat := range []string{readmodel.PlanSearch + "", readmodel.PlanTypeahead} {
-				v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+feat)
+				v, _ := st.SyncState(ctx, readmodel.PlanKey(feat, "w1"))
 				if feat == readmodel.PlanSearch && v == "" {
 					t.Error("search 402 not remembered")
 				}
@@ -222,7 +222,7 @@ func TestTaskByCustomID402Remembered(t *testing.T) {
 			t.Fatalf("%d: %v", i, err)
 		}
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomID); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomID, "w1")); v == "" {
 		t.Fatal("402 not remembered")
 	}
 	f.customStatus = 0
@@ -240,7 +240,7 @@ func TestTaskByCustomID402Remembered(t *testing.T) {
 		if _, err := s2.TaskByCustomID(ctx, "ENG-123"); err == nil || errors.Is(err, ErrCustomIDUnavailable) {
 			t.Fatalf("%d: %v", status, err)
 		}
-		if v, _ := st2.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomID); v != "" {
+		if v, _ := st2.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomID, "w1")); v != "" {
 			t.Fatalf("%d remembered as a plan limit", status)
 		}
 	}

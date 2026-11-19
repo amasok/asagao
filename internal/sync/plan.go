@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -38,4 +39,38 @@ func (s *Syncer) clearPlanRefusal(ctx context.Context, feature, workspaceGID str
 		return err
 	}
 	return s.Store.SetSyncState(ctx, key, "")
+}
+
+// planWorkspace returns the workspace a 402 to entry op is recorded for, as the app reads
+// it before queuing one (app.planIn): the one of the project of a section, of the task of
+// a move in My Tasks, or of a task carrying a tag; the default workspace when that is not
+// known.
+func (s *Syncer) planWorkspace(ctx context.Context, op outbox.Op) string {
+	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
+	var ws string
+	switch op.Kind {
+	case outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection:
+		ws, _ = s.Store.ProjectWorkspace(ctx, str("project"))
+	case outbox.KindMoveMySection:
+		if ws = str("workspace"); ws == "" {
+			ws, _ = s.Store.TaskWorkspace(ctx, op.TaskGID)
+		}
+	case outbox.KindUpdateTag:
+		ws, _ = s.Store.TagWorkspace(ctx, op.TaskGID)
+	case outbox.KindDeleteTag:
+		// The tag is gone from the cache's tasks: the ones it was on are in the entry, in
+		// the order TagWorkspace reads them.
+		tasks, _ := op.Payload["tasks"].([]any)
+		for _, t := range tasks {
+			if g, _ := t.(string); g != "" {
+				if ws, _ = s.Store.TaskWorkspace(ctx, g); ws != "" {
+					break
+				}
+			}
+		}
+	}
+	if ws == "" {
+		ws, _ = s.Store.DefaultWorkspace(ctx)
+	}
+	return ws
 }

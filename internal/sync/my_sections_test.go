@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	stdsync "sync"
 	"testing"
 	"time"
 
@@ -20,8 +21,12 @@ import (
 type myTasksAsana struct {
 	fakeAsana
 	listStatus  int
-	section     string // t1's assignee_section
-	omitSection bool   // the tasks response leaves assignee_section out
+	listIn      map[string]int // per workspace: answer the list request with that status (#50)
+	moveStatus  int            // answer addTask with that status
+	mu          stdsync.Mutex
+	lists       map[string]int // list requests per workspace
+	section     string         // t1's assignee_section
+	omitSection bool           // the tasks response leaves assignee_section out
 	moved       []string
 }
 
@@ -30,8 +35,19 @@ func (f *myTasksAsana) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/users/me/user_task_list":
-			if f.listStatus != 0 {
-				w.WriteHeader(f.listStatus)
+			ws := r.URL.Query().Get("workspace")
+			f.mu.Lock()
+			if f.lists == nil {
+				f.lists = map[string]int{}
+			}
+			f.lists[ws]++
+			status := f.listIn[ws]
+			f.mu.Unlock()
+			if status == 0 {
+				status = f.listStatus
+			}
+			if status != 0 {
+				w.WriteHeader(status)
 				fmt.Fprint(w, `{"errors":[{"message":"no"}]}`)
 				return
 			}
@@ -39,6 +55,11 @@ func (f *myTasksAsana) handler() http.Handler {
 		case r.URL.Path == "/projects/utl1/sections":
 			fmt.Fprint(w, `{"data":[{"gid":"m1","name":"今日やる"},{"gid":"m2","name":"あとで"}]}`)
 		case r.URL.Path == "/sections/m1/addTask" || r.URL.Path == "/sections/m2/addTask":
+			if f.moveStatus != 0 {
+				w.WriteHeader(f.moveStatus)
+				fmt.Fprint(w, `{"errors":[{"message":"no"}]}`)
+				return
+			}
 			f.moved = append(f.moved, r.URL.Path)
 			fmt.Fprint(w, `{"data":{}}`)
 		case r.URL.Path == "/tasks" && r.URL.Query().Get("assignee") == "me":
@@ -147,14 +168,14 @@ func TestMySectionsPaymentRequired(t *testing.T) {
 	if _, err := s.Run(ctx, false); err != nil {
 		t.Fatalf("a 404 for the list fails the sync: %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanMySection); v != "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w1")); v != "" {
 		t.Fatal("a 404 hid the feature")
 	}
 	f.listStatus = http.StatusPaymentRequired
 	if err := s.syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
-	sections := &app.Sections{Store: st, Clock: time.Now}
+	sections := &app.Sections{Store: st, Clock: s.now}
 	if secs, _ := sections.MySections(ctx, ""); len(secs) != 0 {
 		t.Errorf("my sections after a 402 = %v", secs)
 	}
