@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"time"
+
+	"github.com/amasok/asagao/internal/domain/project"
 )
 
 // ProjectStore is the part of the local cache that editing a project needs. *store.Store
@@ -24,7 +26,7 @@ type Projects struct {
 // UpdateProjectInput is what a user gives to change a project. A nil field is left as it
 // is. Notes is Markdown that replaces the description; Owner is "me", a user's gid or name
 // ("" or "none" removes the owner); StartOn and DueOn are read by ParseDue ("" clears);
-// Color is one of project.Colors.
+// Color is one of project.Colors or a name Asana now answers (project.NormalizeColor).
 type UpdateProjectInput struct {
 	Notes, Owner, StartOn, DueOn, Color *string
 }
@@ -47,9 +49,10 @@ func (u ProjectUpdate) Count() int {
 }
 
 // ResolveUpdate reads and checks the input without writing anything. An invalid value is
-// a *FieldError ("start_on", "due_on", "owner"), the first one found in that order.
+// a *FieldError ("start_on", "due_on", "owner", "color"), the first one found in that
+// order. A color is resolved to the name sent (project.NormalizeColor: red is dark-red).
 func (p *Projects) ResolveUpdate(ctx context.Context, in UpdateProjectInput) (ProjectUpdate, error) {
-	u := ProjectUpdate{Notes: in.Notes, Color: in.Color}
+	u := ProjectUpdate{Notes: in.Notes}
 	now := p.Clock()
 	for _, f := range []struct {
 		field string
@@ -71,6 +74,13 @@ func (p *Projects) ResolveUpdate(ctx context.Context, in UpdateProjectInput) (Pr
 			return ProjectUpdate{}, &FieldError{Field: "owner", Err: err}
 		}
 		u.Owner = &v
+	}
+	if in.Color != nil {
+		v, err := project.NormalizeColor(*in.Color)
+		if err != nil {
+			return ProjectUpdate{}, &FieldError{Field: "color", Err: err}
+		}
+		u.Color = &v
 	}
 	return u, nil
 }

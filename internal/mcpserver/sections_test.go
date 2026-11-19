@@ -63,7 +63,14 @@ func TestSectionAndTagTools(t *testing.T) {
 	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "light-green"}, &w); res.IsError {
 		t.Fatal(toolError(res))
 	}
-	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "green"}, &w); !res.IsError {
+	// #52: a name Asana's GET answers is sent as its written name.
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "red"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if g, _ := st.GetTag(context.Background(), "g1"); g.Color != "dark-red" {
+		t.Errorf("update_tag red: color %q, want dark-red", g.Color)
+	}
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "chartreuse"}, &w); !res.IsError {
 		t.Error("update_tag with an unknown color: no error")
 	}
 	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ"}, &w); !res.IsError {

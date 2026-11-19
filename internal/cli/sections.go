@@ -144,8 +144,11 @@ func (a *app) tagColorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "color <タグ> <色>",
 		Short: "タグの色を変える（none で色なし）",
-		Long:  "タグの色を変えます。使える色: none, " + strings.Join(tag.Colors, ", "),
+		Long: "タグの色を変えます。使える色: none, " + strings.Join(tag.Colors, ", ") +
+			"\nAsana が表示する新しい名前 (" + strings.Join(tag.NewColors(), ", ") + ") も使えます。" +
+			"同じ色の古い名前にして送ります（blue・cool-gray・yellow のように 2 色が同じ名前のものは、上の一覧で先の方）。",
 		Example: `  asagao tag color 急ぎ dark-red
+  asagao tag color 急ぎ red
   asagao tag color 急ぎ none`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

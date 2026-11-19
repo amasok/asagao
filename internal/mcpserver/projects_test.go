@@ -93,8 +93,14 @@ func TestProjectFieldsOffline(t *testing.T) {
 			t.Errorf("%v accepted", args)
 		}
 	}
-	if ops, _ := st.ListOps(context.Background()); len(ops) != 1 || ops[0].Payload["color"] != "none" {
+	// none is the color p1 had (""): nothing to send for it (#52), and nothing refused is queued.
+	if ops, _ := st.ListOps(context.Background()); len(ops) != 1 || ops[0].Payload["color"] != nil {
 		t.Fatalf("ops after refused updates = %+v", ops)
+	}
+	// #52: a name Asana's GET answers is sent as its written name.
+	call(t, cs, "update_project", map[string]any{"project": "新居", "color": "Cool-Gray"}, &w)
+	if ops, _ := st.ListOps(context.Background()); len(ops) != 1 || ops[0].Payload["color"] != "dark-warm-gray" {
+		t.Fatalf("ops after color cool-gray = %+v", ops)
 	}
 }
 

@@ -175,7 +175,7 @@ func TestWriteCommandsRefuseUnknown(t *testing.T) {
 		{"section", "move", "完了", "--project", "新居", "--before", "完了"},
 		{"section", "rm", "完了", "--project", "新居"}, // --yes is required
 		{"tag", "rm", "急ぎ"}, // --yes is required
-		{"tag", "color", "急ぎ", "green"},
+		{"tag", "color", "急ぎ", "chartreuse"},
 		{"tag", "rename", "ないタグ", "x"},
 		{"task", "tag", "t1", "--remove", "ないタグ"},
 		{"task", "create", "x", "--due", "そのうち"},

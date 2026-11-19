@@ -96,6 +96,7 @@ func (s *Store) UpdateTagLocal(ctx context.Context, tagGID string, changes map[s
 			op = &Op{Kind: OpUpdateTag, TaskGID: tagGID, Payload: map[string]any{}, Base: map[string]any{},
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
+		keepSameColor(clean, op.Base, current)
 		changed := false
 		for k, v := range clean {
 			if current[k] == v {

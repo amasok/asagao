@@ -118,7 +118,7 @@ func TestProjectEditRefuses(t *testing.T) {
 		want string
 	}{
 		{[]string{"project", "edit", "新居"}, "--notes"},
-		{[]string{"project", "edit", "新居", "--color", "rainbow"}, "色は"},
+		{[]string{"project", "edit", "新居", "--color", "rainbow"}, "--color: 色は"},
 		{[]string{"project", "edit", "新居", "--start", "2027-01-31"}, "開始日"},
 		{[]string{"project", "edit", "仕事", "--start", "today"}, "期日も必要"},
 		{[]string{"project", "edit", "新居", "--due", "そのうち"}, "--due"},

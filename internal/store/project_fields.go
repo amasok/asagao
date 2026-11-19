@@ -11,6 +11,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/project"
+	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -31,8 +32,10 @@ var projectColumns = map[string]string{"notes": "notes", "html_notes": "html_not
 // UpdateProjectLocal applies field changes to a project and queues them for Asana (see
 // project.Fields). Consecutive edits of the same project are one outbox entry
 // (outbox.Fold); an edit that reverts every field to its original value removes it.
+// A color Asana's GET answers (red) is kept and sent as its written name (dark-red).
 func (s *Store) UpdateProjectLocal(ctx context.Context, gid string, changes map[string]any, now time.Time) error {
-	if err := project.ValidateFields(changes); err != nil {
+	changes, err := project.NormalizeFields(changes)
+	if err != nil {
 		return err
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
@@ -58,6 +61,7 @@ func (s *Store) UpdateProjectLocal(ctx context.Context, gid string, changes map[
 			op = &Op{Kind: OpUpdateProject, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
+		keepSameColor(changes, op.Base, cur)
 		folded, deleteOp := outbox.Fold(*op, cur, changes)
 		if err := applyProjectFields(ctx, tx, gid, changes); err != nil {
 			return err
@@ -380,4 +384,21 @@ func (s *Store) ProjectOverview(ctx context.Context, gid string) (*ProjectOvervi
 		o.Status = &updates[0]
 	}
 	return &o, nil
+}
+
+// keepSameColor spells a color change as the original value (base, else cur) when it is
+// the same color by another name (a pull caches red, the write names it dark-red; #52):
+// choosing the original color again is then no change, and nothing is sent for it.
+func keepSameColor(changes, base, cur map[string]any) {
+	c, ok := changes["color"].(string)
+	if !ok {
+		return
+	}
+	orig, ok := base["color"].(string)
+	if _, inBase := base["color"]; !inBase {
+		orig, ok = cur["color"].(string)
+	}
+	if ok && tag.CanonicalColor(orig) == tag.CanonicalColor(c) {
+		changes["color"] = orig
+	}
 }

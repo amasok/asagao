@@ -56,7 +56,8 @@ func (t *Tags) Rename(ctx context.Context, arg, name string) error {
 	return t.update(ctx, arg, map[string]any{"name": name})
 }
 
-// SetColor sets the color of the tag named (or with the gid) arg: one of tag.Colors, or
+// SetColor sets the color of the tag named (or with the gid) arg: one of tag.Colors or a
+// name Asana now answers (sent as its written name, tag.NormalizeColor), or
 // "" / "none" for none.
 func (t *Tags) SetColor(ctx context.Context, arg, color string) error {
 	c, err := tag.NormalizeColor(color)

@@ -5,10 +5,12 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/tag"
 )
 
 // A tag colored with another name of the same new color is no conflict (dark-blue and
-// light-blue are both blue); Asana's real change to another color still is.
+// light-blue are both blue); Asana's real change to another color still is. Choosing the
+// cached color again by another name queues nothing at all (#52).
 func TestAttackTagColorSameNewName(t *testing.T) {
 	for _, c := range []struct {
 		name, stored, asana, want string
@@ -23,8 +25,8 @@ func TestAttackTagColorSameNewName(t *testing.T) {
 		{"asana changed to none", "red", "none", "dark-blue", 1},
 		{"asana changed to other, want none", "red", "blue", "", 1},
 		{"stored old name equals asana new", "dark-red", "red", "light-teal", 0},
-		{"asana unknown color name", "blue", "yellow-green", "dark-blue", 1},
-		{"case of asana's answer", "red", "RED", "dark-red", 0},
+		{"asana unknown color name", "red", "yellow-green", "dark-blue", 1},
+		{"case of asana's answer", "blue", "RED", "dark-red", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f, s, st := setupSections(t)
@@ -37,11 +39,20 @@ func TestAttackTagColorSameNewName(t *testing.T) {
 				t.Fatal(err)
 			}
 			res, err := s.Push(ctx)
-			if err != nil || res.Conflicts != c.conflicts || res.Sent+res.Conflicts != 1 {
+			if err != nil || res.Conflicts != c.conflicts || res.Sent+res.Conflicts != queued(c.stored, c.want) {
 				t.Fatalf("push = %+v, %v", res, err)
 			}
 		})
 	}
+}
+
+// queued is the number of entries a color change from stored to want queues: none when it
+// is the same color by another name (#52).
+func queued(stored, want string) int {
+	if tag.CanonicalColor(stored) == tag.CanonicalColor(want) {
+		return 0
+	}
+	return 1
 }
 
 // A project, the same.
@@ -72,7 +83,7 @@ func TestAttackProjectColorSameNewName(t *testing.T) {
 				t.Fatal(err)
 			}
 			res, err := s.Push(ctx)
-			if err != nil || res.Conflicts != c.conflicts || res.Sent+res.Conflicts != 1 {
+			if err != nil || res.Conflicts != c.conflicts || res.Sent+res.Conflicts != queued(c.stored, c.want) {
 				t.Fatalf("push = %+v, %v", res, err)
 			}
 		})
@@ -109,7 +120,7 @@ func TestAttackTagNameAndColorTogether(t *testing.T) {
 			f.mu.Lock()
 			f.tags["g1"].Name, f.tags["g1"].Color = c.asanaName, c.asanaColor
 			f.mu.Unlock()
-			if err := st.UpdateTagLocal(ctx, "g1", map[string]any{"name": "新", "color": "light-blue"}, now); err != nil {
+			if err := st.UpdateTagLocal(ctx, "g1", map[string]any{"name": "新", "color": "light-red"}, now); err != nil {
 				t.Fatal(err)
 			}
 			res, err := s.Push(ctx)

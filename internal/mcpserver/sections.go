@@ -38,7 +38,7 @@ type MoveSectionInput struct {
 type UpdateTagInput struct {
 	Tag   string  `json:"tag" jsonschema:"tag gid or exact name"`
 	Name  string  `json:"name,omitempty" jsonschema:"new name (omit to keep it)"`
-	Color *string `json:"color,omitempty" jsonschema:"new color: none, or one of dark-pink dark-green dark-blue dark-red dark-teal dark-brown dark-orange dark-purple dark-warm-gray light-pink light-green light-blue light-red light-teal light-yellow light-orange light-purple light-warm-gray (omit to keep it)"`
+	Color *string `json:"color,omitempty" jsonschema:"new color: none, or one of dark-pink dark-green dark-blue dark-red dark-teal dark-brown dark-orange dark-purple dark-warm-gray light-pink light-green light-blue light-red light-teal light-yellow light-orange light-purple light-warm-gray; the names Asana now answers (red, blue, ...) are taken too and sent as the first of these with that name (omit to keep it)"`
 }
 
 type DeleteTagInput struct {

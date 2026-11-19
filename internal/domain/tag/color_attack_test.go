@@ -45,12 +45,12 @@ func TestCanonicalColorEdges(t *testing.T) {
 			t.Errorf("CanonicalColor(%q) = %q, want %q", in, got, want)
 		}
 	}
-	for _, bad := range []string{"light-brown", "LIGHT-BROWN", "red", "yellow", "none-ish"} {
+	for _, bad := range []string{"light-brown", "LIGHT-BROWN", "chartreuse", "none-ish"} {
 		if got, err := NormalizeColor(bad); err == nil && got != "" {
 			t.Errorf("NormalizeColor(%q) = %q: not a color Asana takes in a write", bad, got)
 		}
 	}
-	for _, ok := range []string{" Light-Yellow ", "DARK-RED", "none", ""} {
+	for _, ok := range []string{" Light-Yellow ", "DARK-RED", "none", "", "red", "Yellow"} {
 		if _, err := NormalizeColor(ok); err != nil {
 			t.Errorf("NormalizeColor(%q): %v", ok, err)
 		}

@@ -97,7 +97,7 @@ func TestTagEditFoldsAndResolves(t *testing.T) {
 	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
 		t.Fatalf("ops = %+v", ops)
 	}
-	for _, bad := range []map[string]any{{"name": "  "}, {"color": "green"}, {"owner": "x"}} {
+	for _, bad := range []map[string]any{{"name": "  "}, {"color": "chartreuse"}, {"owner": "x"}} {
 		if err := s.UpdateTagLocal(ctx, "g1", bad, testNow); err == nil {
 			t.Errorf("UpdateTagLocal(%v): no error", bad)
 		}
@@ -176,5 +176,49 @@ func TestFailedSectionCreateSurvivesPull(t *testing.T) {
 	}
 	if name, err := s.SectionName(ctx, gid); err != nil || name != "保留" {
 		t.Errorf("section after a pull: %q, %v", name, err)
+	}
+}
+
+// #52: a tag color by the name Asana's GET answers is kept and sent as its written name;
+// a name two colors share is the first of them.
+func TestUpdateTagLocalNewColorName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]string{"RED": "dark-red", "cool-gray": "dark-warm-gray", "yellow": "dark-brown"} {
+		if err := s.UpdateTagLocal(ctx, "g1", map[string]any{"color": in}, testNow); err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		if g, _ := s.GetTag(ctx, "g1"); g.Color != want {
+			t.Errorf("%s: cached %q, want %q", in, g.Color, want)
+		}
+		if op := firstOp(t, s, OpUpdateTag); op.Payload["color"] != want {
+			t.Errorf("%s: payload %v, want %q", in, op.Payload, want)
+		}
+	}
+}
+
+// #52: the cache holds the name a pull got (red); choosing that color by its written name
+// (the TUI marks dark-red as the current color) sends nothing, and coming back to it after
+// another color drops the change.
+func TestUpdateTagLocalSameColorOtherName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ", Color: "red"}}); err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.UpdateTagLocal(ctx, "g1", map[string]any{"color": "dark-red"}, testNow))
+	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("the same color is queued: %+v", ops)
+	}
+	must(t, s.UpdateTagLocal(ctx, "g1", map[string]any{"color": "blue"}, testNow))
+	must(t, s.UpdateTagLocal(ctx, "g1", map[string]any{"color": "dark-red"}, testNow))
+	if ops, _ := s.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("back to the same color but still queued: %+v", ops)
+	}
+	if g, _ := s.GetTag(ctx, "g1"); g.Color != "red" {
+		t.Errorf("cached color = %q, want red (as Asana has it)", g.Color)
 	}
 }

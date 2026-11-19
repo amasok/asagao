@@ -105,7 +105,7 @@ func TestAttackProjectDateCombinations(t *testing.T) {
 	bad(map[string]any{"due_on": "2026/12/31"})                          // format
 	bad(map[string]any{"due_on": "2026-02-30"})                          // not a date
 	bad(map[string]any{"due_on": 20261231})                              // not a string
-	bad(map[string]any{"color": "red"})                                  // not an Asana color
+	bad(map[string]any{"color": "light-brown"})                          // not an Asana color
 	ok(map[string]any{"start_on": "2026-01-01", "due_on": "2026-02-01"}) // both together
 }
 
@@ -122,5 +122,23 @@ func TestAttackResolveTeamPartial(t *testing.T) {
 	}
 	if _, err := s.ResolveTeam(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("nope: %v", err)
+	}
+}
+
+// #52 attack: the cache holds the new name a pull got (blue); choosing blue again sends
+// nothing new, and a new name is queued as the written one.
+func TestAttackProjectNewColorName(t *testing.T) {
+	ctx := context.Background()
+	s := projectStore(t)
+	must(t, s.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "A 開発", Color: "blue"}}, "me"))
+	must(t, s.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "RED"}, testNow))
+	ops, _ := s.PendingOps(ctx)
+	if len(ops) != 1 || ops[0].Payload["color"] != "dark-red" {
+		t.Fatalf("ops = %+v", ops)
+	}
+	// Back to the original color, spelled as the cache holds it: nothing to send.
+	must(t, s.UpdateProjectLocal(ctx, "p1", map[string]any{"color": "blue"}, testNow))
+	if ops, _ := s.PendingOps(ctx); len(ops) != 0 {
+		t.Fatalf("reverted to the same color but still queued: %+v", ops)
 	}
 }

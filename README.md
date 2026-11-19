@@ -241,7 +241,7 @@ due = ["D", "ctrl+t"]
 | `search <キーワード>... [--remote]` | タスク名・説明・コメントを全文検索（`--remote` で Asana も。[キャッシュにないタスクを探す](#キャッシュにないタスクを探す)） |
 | `project list [--all] [--team チーム]` | プロジェクトとセクションの一覧（お気に入り → チームの順） |
 | `project show <プロジェクト> [--offline]` | プロジェクトの概要（説明・オーナー・期間・進み具合・最新のステータス・ブリーフ） |
-| `project edit <プロジェクト> [--notes] [--owner] [--start] [--due] [--color]` | 説明（マークダウン）・オーナー・開始日・期日・色を変える（オフラインでも積む） |
+| `project edit <プロジェクト> [--notes] [--owner] [--start] [--due] [--color]` | 説明（マークダウン）・オーナー・開始日・期日・色を変える（オフラインでも積む。色は下の `tag color` と同じ名前） |
 | `project brief <プロジェクト> [--title] [--file ファイル\|-] [--edit] [--offline]` | プロジェクトブリーフを表示（マークダウン。タイトルは標準エラーに出す）。`--title`・`--file`・`--edit` で書き換える（無ければ作る。オフラインでも積む） |
 | `project brief rm <プロジェクト>` | プロジェクトブリーフを削除（オフラインでも積む） |
 | `project teams` | プロジェクトを作れるチーム |
@@ -273,6 +273,7 @@ due = ["D", "ctrl+t"]
 | `section move <セクション> --project <プロジェクト> --before\|--after <セクション>` | セクションの並びを変える |
 | `section rm <セクション> --project <プロジェクト> --yes` | セクションを削除 |
 | `tag list` | タグと、そのタグが付いたタスクの数 |
+| `tag color <タグ> <色>` | タグの色を変える（`none` で色なし）。色は `dark-red` などの名前のほか、Asana が表示する新しい名前（`red`・`blue` など）でもよく、同じ色の古い名前にして送る（`blue`・`cool-gray`・`yellow` のように 2 色が同じ名前のものは先に並ぶ方: `dark-blue`・`dark-warm-gray`・`dark-brown`）。TUI の色の一覧は、それぞれに新しい名前を添えて出す |
 | `comment add <gid> <コメント>` | コメントする |
 | `time list <gid> [--offline]` | タスクに記録した作業時間と合計（[タイムトラッキング](#タイムトラッキング)） |
 | `time add <gid> <時間> [--date 日]` / `time edit <記録の gid> [--duration] [--date]` / `time delete <記録の gid> --yes` | 作業時間を記録する / 直す / 削除する |
