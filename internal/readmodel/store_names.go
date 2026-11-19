@@ -71,6 +71,12 @@ const (
 	// KeyMyTasks + workspace gid: how far My Tasks of the workspace is fetched (TasksOpen
 	// or TasksAll; "" after a sync before #54 means all).
 	KeyMyTasks = "my_tasks:"
+	// KeyTaskOrder + project gid: the project's sections whose order (#51) Asana could not
+	// give, space-separated: listed again by the next sync.
+	KeyTaskOrder = "task_order:"
+	// KeySubtaskOrder: the tasks whose subtasks' order (#51) Asana could not give,
+	// space-separated: listed again by the next sync.
+	KeySubtaskOrder = "subtask_order"
 )
 
 // States of KeyProjectTasks and KeyMyTasks. Stored, so they must not change.

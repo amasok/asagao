@@ -253,7 +253,7 @@ due = ["D", "ctrl+t"]
 | `task create <名前> [--project] [--section] [--due] [--start] [--assignee] [--notes]` | タスクを作成（プロジェクト未指定なら `.asana.json` のプロジェクト、それもなければ自分に割り当て。`--start` は開始日で、`--due` が要る） |
 | `task create --quick <名前 @担当 期日 #タグ>` | 名前の末尾の担当・期日・タグを読んで作成（[クイック追加](#クイック追加)） |
 | `task move <gid> --section <セクション> [--project]` | 別のセクションへ移動 |
-| `task move <gid> [--section <セクション>] --before\|--after <gid>` | セクションの中で、指定したタスクの前 / 後に置く（並び順は Asana にだけ反映） |
+| `task move <gid> [--section <セクション>] --before\|--after <gid>` | セクションの中で、指定したタスクの前 / 後に置く（キャッシュの並びもすぐ変わる） |
 | `task parent <gid> <親の gid> [--before\|--after <gid>]` / `task parent <gid> --none` | 親タスクを付け替える / 親から外す |
 | `task rm <gid> --yes` | タスクをサブタスクごと削除（`--yes` がないと内容を出して止まる。送るまでは `outbox discard` で取り消せる） |
 | `task assign <gid> <me\|none\|名前>` | 担当者を変更 |

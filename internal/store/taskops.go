@@ -10,6 +10,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/termsafe"
 )
 
 // Position is where a task goes among its siblings (model.Position).
@@ -273,17 +274,34 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 			return err
 		}
 		if op == nil {
-			op = &Op{Kind: OpSetParent, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{"parent": current},
+			var position sql.NullInt64
+			if err := tx.QueryRowContext(ctx, "SELECT subtask_position FROM tasks WHERE gid = ?", gid).Scan(&position); err != nil {
+				return err
+			}
+			base := map[string]any{"parent": current}
+			if current != "" { // a top-level task has no place among subtasks
+				if err := recordPlace(ctx, tx, base, subtaskList(current), gid, position); err != nil {
+					return err
+				}
+			}
+			op = &Op{Kind: OpSetParent, TaskGID: gid, Payload: map[string]any{}, Base: base,
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
 		if err := setParent(ctx, tx, gid, parent); err != nil {
 			return err
 		}
 		if op.Base["parent"] == parent && pos.IsZero() { // back where it started
+			if err := restoreSubtaskPosition(ctx, tx, gid, op.Base); err != nil {
+				return err
+			}
 			if op.ID == 0 {
 				return nil
 			}
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
+			return err
+		}
+		// Without a place, Asana puts it last, as the cache does with a place not known.
+		if err := placeSubtask(ctx, tx, gid, parent, pos); err != nil {
 			return err
 		}
 		if !pos.IsZero() && op.ID != 0 {
@@ -304,7 +322,8 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 }
 
 // setParent moves a task under parent ("" none) locally, keeping the parents' subtask
-// counts right.
+// counts right. Its place among the new parent's subtasks is not known until placed
+// (placeSubtask).
 func setParent(ctx context.Context, tx *sql.Tx, gid, parent string) error {
 	var current string
 	if err := tx.QueryRowContext(ctx, "SELECT parent_gid FROM tasks WHERE gid = ?", gid).Scan(&current); err != nil {
@@ -330,15 +349,26 @@ func setParent(ctx context.Context, tx *sql.Tx, gid, parent string) error {
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, "UPDATE tasks SET parent_gid = ? WHERE gid = ?", parent, gid)
+	_, err := tx.ExecContext(ctx, "UPDATE tasks SET parent_gid = ?, subtask_position = NULL WHERE gid = ?", parent, gid)
 	return err
+}
+
+// restoreSubtaskPosition gives a task back its place among its parent's subtasks that
+// base (of a parent change it no longer makes) recorded, when it recorded one.
+func restoreSubtaskPosition(ctx context.Context, tx *sql.Tx, gid string, base map[string]any) error {
+	parent, _ := base["parent"].(string)
+	return restorePlace(ctx, tx, base, subtaskList(parent), gid, func(p sql.NullInt64) error {
+		_, err := tx.ExecContext(ctx, "UPDATE tasks SET subtask_position = ? WHERE gid = ?", p, gid)
+		return err
+	})
 }
 
 // reapplySetParent keeps an unsent parent change of a task after a pull.
 func reapplySetParent(ctx context.Context, tx *sql.Tx, gid string) error {
 	var parent sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT json_extract(payload, '$.parent') FROM outbox
-		WHERE kind = ? AND task_gid = ? AND state <> 'failed' ORDER BY id DESC LIMIT 1`, OpSetParent, gid).Scan(&parent)
+	var payload string
+	err := tx.QueryRowContext(ctx, `SELECT json_extract(payload, '$.parent'), payload FROM outbox
+		WHERE kind = ? AND task_gid = ? AND state <> 'failed' ORDER BY id DESC LIMIT 1`, OpSetParent, gid).Scan(&parent, &payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -346,9 +376,18 @@ func reapplySetParent(ctx context.Context, tx *sql.Tx, gid string) error {
 		return err
 	}
 	// Only the parent: the parents' subtask counts are the local ones (SetParentLocal
-	// counted the change) until a pull of the parent itself brings Asana's.
-	_, err = tx.ExecContext(ctx, "UPDATE tasks SET parent_gid = ? WHERE gid = ?", parent.String, gid)
-	return err
+	// counted the change) until a pull of the parent itself brings Asana's. Its place
+	// stays if the pull had it under that parent already, else it goes where the change
+	// puts it.
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET parent_gid = ?1,
+		subtask_position = CASE WHEN parent_gid = ?1 THEN subtask_position END WHERE gid = ?2`, parent.String, gid); err != nil {
+		return err
+	}
+	var p map[string]any
+	if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
+		return err
+	}
+	return placeSubtask(ctx, tx, gid, parent.String, payloadPosition(p))
 }
 
 // refuseDeleted refuses to use tasks whose delete is queued (or that go with one): Asana
