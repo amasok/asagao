@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
@@ -30,6 +31,7 @@ type pull struct {
 	keep         map[string]bool   // tasks fetched (a full sync removes the others)
 	withSubtasks []string          // fetched tasks whose subtasks are to be fetched
 	subsFetched  map[string]bool   // tasks whose subtasks were fetched
+	parents      []string          // parents of changed subtasks: their order may have changed (#51)
 	tokens       map[string]string // project gid -> events token, saved once everything is stored
 	states       map[string]string // sync_state key -> tasks state, saved with the tokens
 	res          *Result
@@ -95,7 +97,7 @@ func (s *Syncer) fetchSubtasks(ctx context.Context, pl *pull) error {
 		if err != nil {
 			return fmt.Errorf("サブタスクの取得 (%s): %w", gid, err)
 		}
-		if err := s.upsert(ctx, pl, subs); err != nil {
+		if err := s.storeSubtasks(ctx, pl, gid, subs); err != nil {
 			return err
 		}
 	}
@@ -103,10 +105,143 @@ func (s *Syncer) fetchSubtasks(ctx context.Context, pl *pull) error {
 	return nil
 }
 
+// storeSubtasks stores the subtasks of parent, all of them as Asana lists them, and
+// their order (#51).
+func (s *Syncer) storeSubtasks(ctx context.Context, pl *pull, parent string, subs []model.Task) error {
+	if err := s.upsert(ctx, pl, subs); err != nil {
+		return err
+	}
+	return s.Store.SetSubtaskOrder(ctx, parent, taskGIDs(subs))
+}
+
+// refreshParents lists the subtasks of the parents of subtasks the events named, and of
+// those a previous sync could not list: their order may have changed, which only the
+// parent's list shows (#51). The subtasks themselves were fetched already.
+func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
+	pending, err := s.Store.SyncState(ctx, readmodel.KeySubtaskOrder)
+	if err != nil {
+		return err
+	}
+	parents := addNew(slices.Clone(pl.parents), strings.Fields(pending)...)
+	pl.parents = pl.parents[:0]
+	var left []string
+	for _, gid := range parents {
+		if pl.subsFetched[gid] || slices.Contains(pl.withSubtasks, gid) || localgid.IsLocal(gid) {
+			continue // listed in full by this sync
+		}
+		gids, err := s.API.SubtaskOrder(ctx, gid)
+		if ok, err := s.orderFailed(err, "サブタスクの並びの取得 ("+gid+")"); err != nil {
+			return err
+		} else if !ok {
+			left = append(left, gid)
+			continue
+		}
+		if gids != nil {
+			if err := s.Store.SetSubtaskOrder(ctx, gid, gids); err != nil {
+				return err
+			}
+		}
+	}
+	pl.res.OrderPending += len(left)
+	return s.setPending(ctx, readmodel.KeySubtaskOrder, pending, left)
+}
+
+// refreshSections lists the order of the sections of project (#51) whose tasks changed
+// without a listing of the whole project (listed: there was one): a task moved, added or
+// reordered there. Sections a previous sync could not list are listed too.
+func (s *Syncer) refreshSections(ctx context.Context, pl *pull, project string, sections []string,
+	completedSince time.Time, listed bool) error {
+	key := readmodel.KeyTaskOrder + project
+	pending, err := s.Store.SyncState(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !listed {
+		sections = addNew(sections, strings.Fields(pending)...)
+	}
+	var left []string
+	for _, gid := range sections {
+		if localgid.IsLocal(gid) {
+			continue
+		}
+		gids, err := s.API.SectionTaskOrder(ctx, gid, completedSince)
+		if ok, err := s.orderFailed(err, "セクションの並びの取得 ("+gid+")"); err != nil {
+			return err
+		} else if !ok {
+			left = append(left, gid)
+			continue
+		}
+		if gids != nil {
+			if err := s.Store.SetSectionTaskOrder(ctx, gid, gids); err != nil {
+				return err
+			}
+		}
+	}
+	pl.res.OrderPending += len(left)
+	return s.setPending(ctx, key, pending, left)
+}
+
+// orderFailed sorts out the error of a listing of the order. ok: done, or nothing to do
+// (404, 403: the section or parent is gone, or not ours to see; the order known stays).
+// Offline, or without a valid token, the sync fails as any other fetch. Otherwise (a 5xx
+// or 429 that outlasted the retries, a 400, ...) the order is only how tasks are shown:
+// the sync goes on, and the next one lists it again.
+func (s *Syncer) orderFailed(err error, what string) (ok bool, _ error) {
+	switch {
+	case err == nil, isNotFound(err), isForbidden(err):
+		return true, nil
+	case isNetworkError(err), model.IsUnauthorized(err):
+		return false, fmt.Errorf("%s: %w", what, err)
+	}
+	return false, nil
+}
+
+// setPending saves what is still to list under key, if it changed.
+func (s *Syncer) setPending(ctx context.Context, key, before string, left []string) error {
+	if v := strings.Join(left, " "); v != before {
+		return s.Store.SetSyncState(ctx, key, v)
+	}
+	return nil
+}
+
+// addNew adds to list the gids not in it yet.
+func addNew(list []string, gids ...string) []string {
+	for _, g := range gids {
+		if g != "" && !slices.Contains(list, g) {
+			list = append(list, g)
+		}
+	}
+	return list
+}
+
+// sectionsOf adds to sections those of project that tasks are in.
+func sectionsOf(sections []string, project string, tasks []model.Task) []string {
+	for _, t := range tasks {
+		for _, m := range t.Memberships {
+			if m.Project != nil && m.Project.GID == project && m.Section != nil && m.Section.GID != "" &&
+				!slices.Contains(sections, m.Section.GID) {
+				sections = append(sections, m.Section.GID)
+			}
+		}
+	}
+	return sections
+}
+
+func taskGIDs(tasks []model.Task) []string {
+	gids := make([]string, len(tasks))
+	for i, t := range tasks {
+		gids[i] = t.GID
+	}
+	return gids
+}
+
 // finishPull fetches the subtasks still queued, then saves the events tokens and the tasks
 // states: only now, after the subtasks of the tasks the events reported, so that if
 // anything failed, the next sync reads the same events again.
 func (s *Syncer) finishPull(ctx context.Context, pl *pull) error {
+	if err := s.refreshParents(ctx, pl); err != nil {
+		return err
+	}
 	if err := s.fetchSubtasks(ctx, pl); err != nil {
 		return err
 	}
@@ -179,6 +314,10 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 		}
 		return nil
 	}
+	// touched: the sections whose order may have changed, and was not listed (#51);
+	// listed: the whole project was.
+	var touched []string
+	var listed bool
 	fetchProject := func(since time.Time) error {
 		if err := sections(); err != nil {
 			return err
@@ -192,7 +331,15 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 		if err != nil {
 			return fmt.Errorf("%s のタスクの取得: %w", p.name, err)
 		}
-		return s.upsert(ctx, pl, tasks)
+		if err := s.upsert(ctx, pl, tasks); err != nil {
+			return err
+		}
+		if since.IsZero() { // every task kept, in the project's order
+			listed = true
+			return s.Store.SetProjectTaskOrder(ctx, p.gid, taskGIDs(tasks))
+		}
+		touched = sectionsOf(touched, p.gid, tasks)
+		return nil
 	}
 	if fetch {
 		if err := fetchProject(since); err != nil {
@@ -216,7 +363,15 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 	if err := s.syncCustomTypes(ctx, p.gid, p.workspace, mode.full || ev.fields); err != nil {
 		return err
 	}
-	upsert := func(tasks []model.Task) error { return s.upsert(ctx, pl, tasks) }
+	upsert := func(tasks []model.Task) error {
+		touched = sectionsOf(touched, p.gid, tasks)
+		for _, t := range tasks {
+			if t.Parent != nil {
+				pl.parents = addNew(pl.parents, t.Parent.GID)
+			}
+		}
+		return s.upsert(ctx, pl, tasks)
+	}
 	if err := s.applyEvents(ctx, ev, pl.keep, upsert, &pl.withSubtasks); err != nil {
 		var fe *eventFetchError
 		if !errors.As(err, &fe) || isNetworkError(err) || model.IsUnauthorized(err) {
@@ -231,6 +386,9 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 				return err
 			}
 		}
+	}
+	if err := s.refreshSections(ctx, pl, p.gid, touched, completedSince, listed); err != nil {
+		return err
 	}
 	if ev.token != "" {
 		pl.tokens[p.gid] = ev.token
@@ -320,6 +478,12 @@ func (s *Syncer) pullCompleted(ctx context.Context, pl *pull, mode pullMode, onl
 		before := len(pl.withSubtasks)
 		if err := s.upsert(ctx, pl, tasks); err != nil {
 			return err
+		}
+		// The completed tasks have their place among the others (#51).
+		if sc.q.Project != "" {
+			if err := s.refreshSections(ctx, pl, sc.q.Project, sectionsOf(nil, sc.q.Project, tasks), since, false); err != nil {
+				return err
+			}
 		}
 		// The incomplete tasks' subtasks came with them: only the completed ones' are new.
 		completed := map[string]bool{}

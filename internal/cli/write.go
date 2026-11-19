@@ -575,7 +575,7 @@ func (a *app) taskMoveCmd() *cobra.Command {
 		Use:   "move <gid> (--section <セクション> | --before <gid> | --after <gid>) [--my-tasks]",
 		Short: "タスクを別のセクションに移動する・セクションの中で並べ替える（--my-tasks でマイタスクのセクション）",
 		Long: "--before / --after は、セクションの中でそのタスクの前 / 後に置きます。\n" +
-			"--section がなければ、そのタスクのセクションに移します。並び順は Asana にだけ反映されます。",
+			"--section がなければ、そのタスクのセクションに移します。キャッシュの並びもすぐ変わります (位置なしで別のセクションへ移すと、その先頭)。",
 		Example: `  asagao task move 1203455468597469 --section Done
   asagao task move 1203455468597469 --after 1203455468591111
   asagao task move 1203455468597469 --section 今日やる --my-tasks`,

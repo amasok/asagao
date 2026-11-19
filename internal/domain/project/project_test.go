@@ -7,7 +7,7 @@ func TestValidateFields(t *testing.T) {
 		{"notes": "x", "html_notes": "<body>x</body>"},
 		{"owner": ""}, {"owner": "123"},
 		{"start_on": "2026-12-01"}, {"due_on": ""},
-		{"color": "dark-warm-gray"}, {"color": "none"},
+		{"color": "dark-warm-gray"}, {"color": "none"}, {"color": "blue"}, {"color": " Red "},
 	} {
 		if err := ValidateFields(ok); err != nil {
 			t.Errorf("%v: %v", ok, err)
@@ -15,7 +15,7 @@ func TestValidateFields(t *testing.T) {
 	}
 	for _, bad := range []map[string]any{
 		{}, {"name": "x"}, {"archived": true}, {"owner": nil}, {"due_on": 20261201},
-		{"color": "blue"}, {"color": ""}, {"start_on": "2026/12/01"}, {"due_on": "明日"},
+		{"color": "chartreuse"}, {"color": ""}, {"color": "light-brown"}, {"start_on": "2026/12/01"}, {"due_on": "明日"},
 	} {
 		if err := ValidateFields(bad); err == nil {
 			t.Errorf("%v accepted", bad)
@@ -45,5 +45,23 @@ func TestFieldLabel(t *testing.T) {
 	}
 	if FieldLabel("name") != "" {
 		t.Error("label for an unknown field")
+	}
+}
+
+// The names Asana's GET answers are sent as a written name; the input is not changed (#52).
+func TestNormalizeFieldsColor(t *testing.T) {
+	for in, want := range map[string]string{"red": "dark-red", " Blue ": "dark-blue", "cool-gray": "dark-warm-gray",
+		"yellow": "dark-brown", "light-yellow": "light-yellow", "NONE": "none", "dark-teal": "dark-teal"} {
+		changes := map[string]any{"color": in, "notes": "x"}
+		got, err := NormalizeFields(changes)
+		if err != nil || got["color"] != want || got["notes"] != "x" {
+			t.Errorf("NormalizeFields(%q) = %v, %v; want %q", in, got, err, want)
+		}
+		if changes["color"] != in {
+			t.Errorf("the input changed: %v", changes)
+		}
+	}
+	if _, err := NormalizeFields(map[string]any{"color": "chartreuse"}); err == nil {
+		t.Error("chartreuse accepted")
 	}
 }

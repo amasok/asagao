@@ -27,6 +27,12 @@ type SectionStore interface {
 	ListMyTaskSections(ctx context.Context, workspaceGID string) ([]readmodel.SectionView, error)
 	ResolveMySection(ctx context.Context, taskGID, arg string) (string, error)
 	MoveMySectionLocal(ctx context.Context, gid, sectionGID string, now time.Time) error
+	// The workspaces a 402 is recorded for (readmodel.PlanKey).
+	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
+	SectionWorkspace(ctx context.Context, sectionGID string) (string, error)
+	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
+	DefaultWorkspace(ctx context.Context) (string, error)
+	WorkspaceGIDs(ctx context.Context) ([]string, error)
 }
 
 // Sections is the use cases on sections: moving a task to another section, and renaming
@@ -80,7 +86,7 @@ func (s *Sections) RenameHere(ctx context.Context, sectionGID, name string) erro
 }
 
 // ErrPlanUnavailable is returned for a feature that Asana refused because the workspace's
-// plan lacks it (see readmodel.KeyPlanUnavailable). The message says which.
+// plan lacks it (see readmodel.PlanKey). The message says which.
 type ErrPlanUnavailable = readmodel.PlanUnavailableError
 
 // IsPlanUnavailable reports whether err is an ErrPlanUnavailable.
@@ -89,24 +95,24 @@ func IsPlanUnavailable(err error) bool {
 	return errors.As(err, &e)
 }
 
-// planAvailable reports whether the workspace's plan offers feature (it does unless Asana
-// refused it with a 402).
-func planAvailable(ctx context.Context, st interface {
-	SyncState(ctx context.Context, key string) (string, error)
-}, feature string) error {
-	v, err := st.SyncState(ctx, readmodel.KeyPlanUnavailable+feature)
-	if err != nil {
-		return err
-	}
-	if v != "" {
-		return &ErrPlanUnavailable{Feature: feature}
-	}
-	return nil
+// Available reports whether creating, deleting and reordering sections can be offered:
+// unless a recent 402 hides them in every workspace. Each change checks its project's
+// workspace (inProject).
+func (s *Sections) Available(ctx context.Context) bool {
+	return planAnywhere(ctx, s.Store, readmodel.PlanSections, planNow(s.Clock))
 }
 
-// Available reports whether creating, deleting and reordering sections can be offered.
-func (s *Sections) Available(ctx context.Context) bool {
-	return planAvailable(ctx, s.Store, readmodel.PlanSections) == nil
+// inProject returns ErrPlanUnavailable while a recent 402 hides creating, deleting and
+// reordering sections in the workspace of project projectGID.
+func (s *Sections) inProject(ctx context.Context, projectGID string) error {
+	ws, err := s.Store.ProjectWorkspace(ctx, projectGID)
+	return planIn(ctx, s.Store, readmodel.PlanSections, ws, err, planNow(s.Clock))
+}
+
+// ofSection is inProject for the project of section sectionGID.
+func (s *Sections) ofSection(ctx context.Context, sectionGID string) error {
+	ws, err := s.Store.SectionWorkspace(ctx, sectionGID)
+	return planIn(ctx, s.Store, readmodel.PlanSections, ws, err, planNow(s.Clock))
 }
 
 // SectionPlace says where a new or moved section goes: just before or just after another
@@ -133,9 +139,6 @@ func (s *Sections) resolvePlace(ctx context.Context, projectGID string, at Secti
 // at. It returns the new section's gid (temporary until it is sent; tasks can be moved
 // to it right away).
 func (s *Sections) Create(ctx context.Context, project, name string, at SectionPlace) (string, error) {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanSections); err != nil {
-		return "", err
-	}
 	projectGID, err := s.Store.ResolveProject(ctx, project)
 	if err != nil {
 		return "", err
@@ -150,7 +153,7 @@ func (s *Sections) Create(ctx context.Context, project, name string, at SectionP
 // CreateHere creates a section in projectGID next to the section gids before / after (at
 // most one), as the TUI does on the section the user is on.
 func (s *Sections) CreateHere(ctx context.Context, projectGID, name, before, after string) (string, error) {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanSections); err != nil {
+	if err := s.inProject(ctx, projectGID); err != nil {
 		return "", err
 	}
 	return s.Store.CreateSectionLocal(ctx, projectGID, name, before, after, s.Clock())
@@ -168,9 +171,6 @@ func (s *Sections) ResolveIn(ctx context.Context, project, section string) (proj
 
 // Delete deletes the (empty) section named (or with the gid) section of project.
 func (s *Sections) Delete(ctx context.Context, project, section string) error {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanSections); err != nil {
-		return err
-	}
 	_, gid, err := s.ResolveIn(ctx, project, section)
 	if err != nil {
 		return err
@@ -180,7 +180,7 @@ func (s *Sections) Delete(ctx context.Context, project, section string) error {
 
 // DeleteHere deletes the (empty) section sectionGID.
 func (s *Sections) DeleteHere(ctx context.Context, sectionGID string) error {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanSections); err != nil {
+	if err := s.ofSection(ctx, sectionGID); err != nil {
 		return err
 	}
 	return s.Store.DeleteSectionLocal(ctx, sectionGID, s.Clock())
@@ -189,9 +189,6 @@ func (s *Sections) DeleteHere(ctx context.Context, sectionGID string) error {
 // Reorder moves the section named (or with the gid) section of project just before or
 // just after another section (exactly one of at.Before / at.After).
 func (s *Sections) Reorder(ctx context.Context, project, section string, at SectionPlace) error {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanSections); err != nil {
-		return err
-	}
 	projectGID, gid, err := s.ResolveIn(ctx, project, section)
 	if err != nil {
 		return err
@@ -205,16 +202,17 @@ func (s *Sections) Reorder(ctx context.Context, project, section string, at Sect
 
 // ReorderHere moves the section sectionGID just before or just after another section gid.
 func (s *Sections) ReorderHere(ctx context.Context, sectionGID, before, after string) error {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanSections); err != nil {
+	if err := s.ofSection(ctx, sectionGID); err != nil {
 		return err
 	}
 	return s.Store.MoveSectionLocal(ctx, sectionGID, before, after, s.Clock())
 }
 
 // MySections returns the sections of my My Tasks list in a workspace ("" for the default
-// one), in order: none when they are not known (not synced yet, or not on this plan).
+// one), in order: none when they are not known (not synced yet, or a recent 402 says the
+// workspace's plan lacks them).
 func (s *Sections) MySections(ctx context.Context, workspaceGID string) ([]readmodel.SectionView, error) {
-	if planAvailable(ctx, s.Store, readmodel.PlanMySection) != nil {
+	if planIn(ctx, s.Store, readmodel.PlanMySection, workspaceGID, nil, planNow(s.Clock)) != nil {
 		return []readmodel.SectionView{}, nil
 	}
 	return s.Store.ListMyTaskSections(ctx, workspaceGID)
@@ -223,7 +221,7 @@ func (s *Sections) MySections(ctx context.Context, workspaceGID string) ([]readm
 // MoveMine moves task taskGID (assigned to me) to the section of My Tasks named (or with
 // the gid) section.
 func (s *Sections) MoveMine(ctx context.Context, taskGID, section string) error {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanMySection); err != nil {
+	if err := s.myIn(ctx, taskGID); err != nil { // before the name: none may be cached then
 		return err
 	}
 	gid, err := s.Store.ResolveMySection(ctx, taskGID, section)
@@ -235,8 +233,15 @@ func (s *Sections) MoveMine(ctx context.Context, taskGID, section string) error 
 
 // MoveMineHere moves task taskGID to the My Tasks section sectionGID the user chose.
 func (s *Sections) MoveMineHere(ctx context.Context, taskGID, sectionGID string) error {
-	if err := planAvailable(ctx, s.Store, readmodel.PlanMySection); err != nil {
+	if err := s.myIn(ctx, taskGID); err != nil {
 		return err
 	}
 	return s.Store.MoveMySectionLocal(ctx, taskGID, sectionGID, s.Clock())
+}
+
+// myIn returns ErrPlanUnavailable while a recent 402 hides the sections of My Tasks in the
+// workspace of task taskGID.
+func (s *Sections) myIn(ctx context.Context, taskGID string) error {
+	ws, err := s.Store.TaskWorkspace(ctx, taskGID)
+	return planIn(ctx, s.Store, readmodel.PlanMySection, ws, err, planNow(s.Clock))
 }

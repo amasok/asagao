@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -62,7 +63,14 @@ func TestSectionAndTagTools(t *testing.T) {
 	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "light-green"}, &w); res.IsError {
 		t.Fatal(toolError(res))
 	}
-	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "green"}, &w); !res.IsError {
+	// #52: a name Asana's GET answers is sent as its written name.
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "red"}, &w); res.IsError {
+		t.Fatal(toolError(res))
+	}
+	if g, _ := st.GetTag(context.Background(), "g1"); g.Color != "dark-red" {
+		t.Errorf("update_tag red: color %q, want dark-red", g.Color)
+	}
+	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ", "color": "chartreuse"}, &w); !res.IsError {
 		t.Error("update_tag with an unknown color: no error")
 	}
 	if res := call(t, cs, "update_tag", map[string]any{"tag": "急ぎ"}, &w); !res.IsError {
@@ -92,8 +100,15 @@ func TestSectionAndTagTools(t *testing.T) {
 func TestSectionToolsHiddenAfterPaymentRequired(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSections, "2026-11-18T00:00:00Z"); err != nil {
-		t.Fatal(err)
+	wss, err := st.WorkspaceGIDs(ctx)
+	if err != nil || len(wss) == 0 {
+		t.Fatalf("workspaces = %v, %v", wss, err)
+	}
+	at := testNow.Add(-time.Hour).UTC().Format(time.RFC3339)
+	for _, ws := range wss { // refused in every workspace
+		if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, ws), at); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cs := connect(t, &Server{Store: st})
 	res, err := cs.ListTools(ctx, nil)

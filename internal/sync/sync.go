@@ -100,10 +100,13 @@ type Result struct {
 	// fetch (Syncer.DeferCompleted): call FetchCompleted.
 	CompletedPending bool `json:"completed_pending,omitempty"`
 	// Requests is how many HTTP requests were sent to Asana (if the client counts them).
-	Requests int64         `json:"requests"`
-	Tasks    int           `json:"tasks"`
-	Pruned   int64         `json:"pruned"`
-	Duration time.Duration `json:"duration_ns"`
+	Requests int64 `json:"requests"`
+	Tasks    int   `json:"tasks"`
+	Pruned   int64 `json:"pruned"`
+	// OrderPending: sections and parents whose order (#51) Asana could not give: the
+	// next sync lists them again.
+	OrderPending int           `json:"order_pending,omitempty"`
+	Duration     time.Duration `json:"duration_ns"`
 }
 
 func (s *Syncer) clock() time.Time {
@@ -496,6 +499,9 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	// attachments:read scope), still store everything else and report the problem.
 	atts, attErr := s.API.Attachments(ctx, taskGID)
 	if err := s.Store.UpsertTasks(ctx, append([]model.Task{*t}, subs...)); err != nil {
+		return err
+	}
+	if err := s.Store.SetSubtaskOrder(ctx, taskGID, taskGIDs(subs)); err != nil {
 		return err
 	}
 	if attErr == nil {

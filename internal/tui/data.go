@@ -123,7 +123,7 @@ func queryRows(ctx context.Context, st Store, sc scope, query string, filter fil
 			return group(tasks, []string{"完了済み"}, func(readmodel.TaskSummary) int { return 0 }), nil
 		}
 		// By the sections of My Tasks when they are known (as in Asana), else by due date.
-		if secs, err := (&app.Sections{Store: st}).MySections(ctx, ""); err == nil && len(secs) > 0 {
+		if secs, err := (&app.Sections{Store: st, Clock: func() time.Time { return now }}).MySections(ctx, ""); err == nil && len(secs) > 0 {
 			return groupByMySection(tasks, secs), nil
 		}
 		week := now.AddDate(0, 0, 7).Format(time.DateOnly)

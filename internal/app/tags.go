@@ -16,6 +16,10 @@ type TagStore interface {
 	UpdateTagLocal(ctx context.Context, tagGID string, changes map[string]any, now time.Time) error
 	DeleteTagLocal(ctx context.Context, tagGID string, now time.Time) error
 	SyncState(ctx context.Context, key string) (string, error)
+	// The workspaces a 402 is recorded for (readmodel.PlanKey).
+	TagWorkspace(ctx context.Context, tagGID string) (string, error)
+	DefaultWorkspace(ctx context.Context) (string, error)
+	WorkspaceGIDs(ctx context.Context) ([]string, error)
 }
 
 // Tags is the use cases on tags themselves: renaming, recoloring and deleting one. Each
@@ -25,9 +29,17 @@ type Tags struct {
 	Clock Clock
 }
 
-// Available reports whether renaming, recoloring and deleting tags can be offered.
+// Available reports whether renaming, recoloring and deleting tags can be offered: unless
+// a recent 402 hides them in every workspace. Each change checks its tag's workspace (in).
 func (t *Tags) Available(ctx context.Context) bool {
-	return planAvailable(ctx, t.Store, readmodel.PlanTags) == nil
+	return planAnywhere(ctx, t.Store, readmodel.PlanTags, planNow(t.Clock))
+}
+
+// in returns ErrPlanUnavailable while a recent 402 hides changing tags in the workspace of
+// tag tagGID.
+func (t *Tags) in(ctx context.Context, tagGID string) error {
+	ws, err := t.Store.TagWorkspace(ctx, tagGID)
+	return planIn(ctx, t.Store, readmodel.PlanTags, ws, err, planNow(t.Clock))
 }
 
 // Resolve finds the tag named (or with the gid) arg, with how many tasks carry it.
@@ -44,7 +56,8 @@ func (t *Tags) Rename(ctx context.Context, arg, name string) error {
 	return t.update(ctx, arg, map[string]any{"name": name})
 }
 
-// SetColor sets the color of the tag named (or with the gid) arg: one of tag.Colors, or
+// SetColor sets the color of the tag named (or with the gid) arg: one of tag.Colors or a
+// name Asana now answers (sent as its written name, tag.NormalizeColor), or
 // "" / "none" for none.
 func (t *Tags) SetColor(ctx context.Context, arg, color string) error {
 	c, err := tag.NormalizeColor(color)
@@ -55,9 +68,6 @@ func (t *Tags) SetColor(ctx context.Context, arg, color string) error {
 }
 
 func (t *Tags) update(ctx context.Context, arg string, changes map[string]any) error {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTags); err != nil {
-		return err
-	}
 	gid, err := t.Store.ResolveTag(ctx, arg)
 	if err != nil {
 		return err
@@ -67,7 +77,7 @@ func (t *Tags) update(ctx context.Context, arg string, changes map[string]any) e
 
 // UpdateHere changes the tag tagGID ("name" and/or "color").
 func (t *Tags) UpdateHere(ctx context.Context, tagGID string, changes map[string]any) error {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTags); err != nil {
+	if err := t.in(ctx, tagGID); err != nil {
 		return err
 	}
 	if c, ok := changes["color"].(string); ok {
@@ -82,9 +92,6 @@ func (t *Tags) UpdateHere(ctx context.Context, tagGID string, changes map[string
 
 // Delete deletes the tag named (or with the gid) arg (from every task).
 func (t *Tags) Delete(ctx context.Context, arg string) error {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTags); err != nil {
-		return err
-	}
 	gid, err := t.Store.ResolveTag(ctx, arg)
 	if err != nil {
 		return err
@@ -94,7 +101,7 @@ func (t *Tags) Delete(ctx context.Context, arg string) error {
 
 // DeleteHere deletes the tag tagGID (from every task).
 func (t *Tags) DeleteHere(ctx context.Context, tagGID string) error {
-	if err := planAvailable(ctx, t.Store, readmodel.PlanTags); err != nil {
+	if err := t.in(ctx, tagGID); err != nil {
 		return err
 	}
 	return t.Store.DeleteTagLocal(ctx, tagGID, t.Clock())

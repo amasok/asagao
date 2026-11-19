@@ -445,7 +445,8 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 }
 
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
-// workspace's plan lacks the feature (402) also hides that feature from now on.
+// workspace's plan lacks the feature (402) also hides that feature in the workspace for
+// readmodel.PlanRecheckAfter (readmodel.PlanKey).
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
 	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)
@@ -481,15 +482,23 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		// the more likely cause: the start date is tried again with the rest.
 		return out, s.startOnOutcome(ctx, startWS, op, out, err)
 	}
-	if model.IsPaymentRequired(err) {
-		if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanTimeTracking {
+	switch feature := readmodel.PlanFeatureOf(op.Kind); feature {
+	case readmodel.PlanTimeTracking:
+		if model.IsPaymentRequired(err) {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
 				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
 			}
-		} else if feature != "" && feature != readmodel.PlanProjectBrief { // the brief's is per workspace (brief.go)
-			_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
+		}
+	case readmodel.PlanSections, readmodel.PlanTags, readmodel.PlanMySection: // per workspace, for a while (#50)
+		switch {
+		case err == nil && out != conflicted:
+			// Asana took it: a failure to forget the 402 only hides the feature until it expires.
+			_ = s.clearPlanRefusal(ctx, feature, s.planWorkspace(ctx, op))
+		case model.IsPaymentRequired(err):
+			_, _ = s.recordPlanRefusal(ctx, feature, s.planWorkspace(ctx, op), err)
 		}
 	}
+	// (the brief's 402 is recorded per workspace by brief.go)
 	return out, err
 }
 

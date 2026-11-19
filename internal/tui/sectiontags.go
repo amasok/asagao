@@ -25,10 +25,12 @@ func (m *Model) loadPlan() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		off := map[string]bool{}
-		if !(&app.Sections{Store: st}).Available(m.ctx) {
+		// Sections and tags: unless a recent 402 hides them in every workspace (each change
+		// checks its own workspace).
+		if !(&app.Sections{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
 			off[readmodel.PlanSections] = true
 		}
-		if !(&app.Tags{Store: st}).Available(m.ctx) {
+		if !(&app.Tags{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
 		if !(&app.TimeTracking{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
@@ -226,16 +228,29 @@ func (m *Model) openTagActions(t readmodel.TagCount) {
 	}}
 }
 
+// openTagColors offers the colors Asana takes in a write (tag.Colors), each labelled with
+// the name Asana now shows for it. The current color is marked: the same name if the cache
+// holds a written one, else the first color Asana shows by that name (tag.WriteColor; the
+// cache holds what a pull got, red, blue, ...).
 func (m *Model) openTagColors(t readmodel.TagCount) {
+	current := "none"
+	if tag.CanonicalColor(t.Color) != "" {
+		current, _ = tag.WriteColor(tag.CanonicalColor(t.Color))
+		if w, ok := tag.WriteColor(t.Color); ok {
+			current = w
+		}
+	}
 	items := []pickerItem{{label: "色なし", value: "none"}}
 	for _, c := range tag.Colors {
-		item := pickerItem{label: c, value: c}
-		if c == t.Color {
-			item.hint = "いまの色"
-		}
-		items = append(items, item)
+		items = append(items, pickerItem{label: c + "（" + tag.CanonicalColor(c) + "）", value: c})
 	}
-	m.picker = &picker{kind: pickTagColor, title: "#" + t.Name + " の色", items: items}
+	cursor := 0
+	for i := range items {
+		if items[i].value == current {
+			items[i].hint, cursor = "いまの色", i
+		}
+	}
+	m.picker = &picker{kind: pickTagColor, title: "#" + t.Name + " の色", items: items, cursor: cursor}
 }
 
 func (m *Model) updateTag(t readmodel.TagCount, changes map[string]any, done string) tea.Cmd {

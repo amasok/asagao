@@ -48,6 +48,15 @@ func TestProjectUpdateResolvesEachField(t *testing.T) {
 	}
 }
 
+// #52: a name Asana's GET answers is resolved to the name sent, so a dry run shows it too.
+func TestProjectUpdateResolvesNewColorName(t *testing.T) {
+	st, projects := newProjects()
+	_, u, err := projects.Update(context.Background(), "新居", UpdateProjectInput{Color: ptr("Yellow")})
+	if err != nil || u.Color == nil || *u.Color != "dark-brown" || st.changes[0]["color"] != "dark-brown" {
+		t.Fatalf("Update = %+v %v, changes %v", u, err, st.changes)
+	}
+}
+
 func TestProjectUpdateClears(t *testing.T) {
 	st, projects := newProjects()
 	if _, _, err := projects.Update(context.Background(), "p1x", UpdateProjectInput{Owner: ptr("")}); err == nil {
@@ -67,6 +76,7 @@ func TestProjectUpdateInvalidWritesNothing(t *testing.T) {
 		"start_on": {StartOn: ptr("いつか"), Owner: ptr("誰か")},
 		"due_on":   {DueOn: ptr("12/31")},
 		"owner":    {Owner: ptr("誰か"), DueOn: ptr("today")},
+		"color":    {Color: ptr("light-brown")},
 	} {
 		st, projects := newProjects()
 		_, _, err := projects.Update(context.Background(), "新居", in)

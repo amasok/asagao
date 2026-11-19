@@ -15,11 +15,12 @@ import (
 // tags by name, a task by its custom ID. What is found is cached (a task stays until a full
 // sync prunes it, like any task outside the synced projects).
 //
-// The search API needs a premium plan. When Asana answers 402, that is remembered
-// (readmodel.KeyPlanUnavailable + PlanSearch) and typeahead, which matches task names
-// only, is used from then on. If typeahead too answers 402, it is remembered the same way:
-// remote search then fails with ErrRemoteSearchUnavailable, and names are looked up in the
-// cache only.
+// The search API needs a premium plan. When Asana answers 402, that is remembered for the
+// workspace for readmodel.PlanRecheckAfter (readmodel.PlanKey with PlanSearch) and
+// typeahead, which matches task names only, is used meanwhile. If typeahead too answers
+// 402, it is remembered the same way: remote search then fails with
+// ErrRemoteSearchUnavailable, and names are looked up in the cache only. After that time
+// Asana is asked again, and an answer forgets the 402.
 
 // ErrRemoteSearchUnavailable is returned by SearchTasks when the workspace's plan offers
 // neither the search API nor typeahead.
@@ -31,14 +32,16 @@ type SearchResult = readmodel.RemoteSearchResult
 // typeaheadNames is how many users or tags one name lookup asks for.
 const typeaheadNames = 10
 
-// planUnavailable reports whether Asana refused feature with a 402 before.
-func (s *Syncer) planUnavailable(ctx context.Context, feature string) (bool, error) {
-	v, err := s.Store.SyncState(ctx, readmodel.KeyPlanUnavailable+feature)
-	return v != "", err
-}
-
-func (s *Syncer) markPlanUnavailable(ctx context.Context, feature string) {
-	_ = s.Store.SetSyncState(ctx, readmodel.KeyPlanUnavailable+feature, s.clock().UTC().Format("2006-01-02T15:04:05Z07:00"))
+// planAnswer records what Asana answered to feature in workspace ws (err): a 402 hides it
+// there for a while, an answer forgets an earlier one. It reports whether err is a 402. A
+// failure to record it is not returned: the feature is then only asked again.
+func (s *Syncer) planAnswer(ctx context.Context, feature, ws string, err error) bool {
+	if err == nil {
+		_ = s.clearPlanRefusal(ctx, feature, ws)
+		return false
+	}
+	refused, _ := s.recordPlanRefusal(ctx, feature, ws, err)
+	return refused || model.IsPaymentRequired(err)
 }
 
 // SearchTasks searches Asana for tasks by text and caches what it finds. completed nil
@@ -98,23 +101,21 @@ func (s *Syncer) SearchTasks(ctx context.Context, text string, completed *bool, 
 
 // searchRefs asks the search API, or typeahead when the plan lacks it (byName).
 func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *bool, limit int) (refs []model.Ref, byName bool, err error) {
-	if no, err := s.planUnavailable(ctx, readmodel.PlanSearch); err != nil {
+	if no, err := s.planHidden(ctx, readmodel.PlanSearch, ws); err != nil {
 		return nil, false, err
 	} else if !no {
 		refs, err := s.API.SearchTasks(ctx, ws, text, completed, limit)
-		if !model.IsPaymentRequired(err) {
+		if !s.planAnswer(ctx, readmodel.PlanSearch, ws, err) {
 			return refs, false, err
 		}
-		s.markPlanUnavailable(ctx, readmodel.PlanSearch)
 	}
-	if no, err := s.planUnavailable(ctx, readmodel.PlanTypeahead); err != nil {
+	if no, err := s.planHidden(ctx, readmodel.PlanTypeahead, ws); err != nil {
 		return nil, true, err
 	} else if no {
 		return nil, true, ErrRemoteSearchUnavailable
 	}
 	refs, err = s.API.TypeaheadTasks(ctx, ws, text, limit)
-	if model.IsPaymentRequired(err) {
-		s.markPlanUnavailable(ctx, readmodel.PlanTypeahead)
+	if s.planAnswer(ctx, readmodel.PlanTypeahead, ws, err) {
 		return nil, true, ErrRemoteSearchUnavailable
 	}
 	return refs, true, err
@@ -139,16 +140,15 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 	if query == "" {
 		return 0, nil
 	}
-	if no, err := s.planUnavailable(ctx, readmodel.PlanTypeahead); err != nil || no {
-		return 0, err
-	}
 	ws, err := s.Store.DefaultWorkspace(ctx)
 	if err != nil {
 		return 0, err
 	}
+	if no, err := s.planHidden(ctx, readmodel.PlanTypeahead, ws); err != nil || no {
+		return 0, err
+	}
 	found, err := find(ctx, ws, query, typeaheadNames)
-	if model.IsPaymentRequired(err) {
-		s.markPlanUnavailable(ctx, readmodel.PlanTypeahead)
+	if s.planAnswer(ctx, readmodel.PlanTypeahead, ws, err) {
 		return 0, nil
 	}
 	if err != nil {
@@ -163,25 +163,24 @@ var ErrCustomIDUnavailable = errors.New(readmodel.PlanUnavailableMessage(readmod
 
 // TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it,
 // remembers its gid (readmodel.KeyCustomID) and returns it. A custom ID Asana does not know
-// is readmodel.ErrNotFound (and forgotten). A 402 is remembered (PlanCustomID): Asana is
-// then not asked again.
+// is readmodel.ErrNotFound (and forgotten). A 402 is remembered for the workspace
+// (PlanCustomID): Asana is not asked again there for readmodel.PlanRecheckAfter.
 func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, error) {
-	if no, err := s.planUnavailable(ctx, readmodel.PlanCustomID); err != nil {
-		return "", err
-	} else if no {
-		return "", ErrCustomIDUnavailable
-	}
 	ws, err := s.Store.DefaultWorkspace(ctx)
 	if err != nil {
 		return "", err
 	}
-	key := readmodel.KeyCustomID + customID
-	t, err := s.API.TaskByCustomID(ctx, ws, customID)
-	if model.IsPaymentRequired(err) {
-		s.markPlanUnavailable(ctx, readmodel.PlanCustomID)
+	if no, err := s.planHidden(ctx, readmodel.PlanCustomID, ws); err != nil {
+		return "", err
+	} else if no {
 		return "", ErrCustomIDUnavailable
 	}
+	key := readmodel.KeyCustomID + customID
+	t, err := s.API.TaskByCustomID(ctx, ws, customID)
 	var apiErr *model.Error
+	if s.planAnswer(ctx, readmodel.PlanCustomID, ws, notFoundIsAnswer(err)) {
+		return "", ErrCustomIDUnavailable
+	}
 	if (errors.As(err, &apiErr) && apiErr.Status == 404) || (err == nil && t.GID == "") {
 		_ = s.Store.SetSyncState(ctx, key, "")
 		return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
@@ -196,4 +195,14 @@ func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, e
 		return "", err
 	}
 	return t.GID, nil
+}
+
+// notFoundIsAnswer treats a 404 as an answer for the plan (Asana offers the feature; it
+// only does not know the thing asked for).
+func notFoundIsAnswer(err error) error {
+	var apiErr *model.Error
+	if errors.As(err, &apiErr) && apiErr.Status == 404 {
+		return nil
+	}
+	return err
 }

@@ -38,8 +38,11 @@ const (
 	KeyCustomTypes = "custom_types:"
 	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
 	KeyEvents = "events:"
-	// KeyPlanUnavailable + a PlanFeature: when Asana refused that feature because the
-	// workspace's plan lacks it (402). The feature is not offered while it is set.
+	// KeyPlanUnavailable + a PlanFeature + ":" + workspace gid (PlanKey): when Asana
+	// refused that feature in the workspace because its plan lacks it (402). The feature
+	// is not offered there for PlanRecheckAfter. (Before #50 sections, tags, my_section,
+	// search, typeahead and custom_id were recorded without the workspace, for good:
+	// such a record is not read any more.)
 	KeyPlanUnavailable = "plan_unavailable:"
 	// KeyUserTaskList + workspace gid: the gid of my My Tasks list there.
 	KeyUserTaskList = "user_task_list:"
@@ -68,6 +71,12 @@ const (
 	// KeyMyTasks + workspace gid: how far My Tasks of the workspace is fetched (TasksOpen
 	// or TasksAll; "" after a sync before #54 means all).
 	KeyMyTasks = "my_tasks:"
+	// KeyTaskOrder + project gid: the project's sections whose order (#51) Asana could not
+	// give, space-separated: listed again by the next sync.
+	KeyTaskOrder = "task_order:"
+	// KeySubtaskOrder: the tasks whose subtasks' order (#51) Asana could not give,
+	// space-separated: listed again by the next sync.
+	KeySubtaskOrder = "subtask_order"
 )
 
 // States of KeyProjectTasks and KeyMyTasks. Stored, so they must not change.
@@ -100,7 +109,7 @@ const (
 	BriefAvailable   = "available"
 )
 
-// Features that a plan may lack (KeyPlanUnavailable).
+// Features that a plan may lack (PlanKey).
 const (
 	PlanSections  = "sections"   // creating, deleting and reordering sections
 	PlanTags      = "tags"       // renaming, recoloring and deleting tags
@@ -187,10 +196,8 @@ func PlanUnavailableMessage(feature string) string {
 		PlanStartOn:      "タスクの開始日",
 		PlanCustomTypes:  "カスタムタイプ (タスクの種類とステータス)",
 	}[feature]
-	if feature == PlanProjectBrief { // tried again after PlanRecheckAfter
-		return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"
-	}
-	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
+	// Every feature is tried again after PlanRecheckAfter (PlanKey).
+	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"
 }
 
 // Prefixes of the sync_state keys that map a local gid to what Asana created for it (a

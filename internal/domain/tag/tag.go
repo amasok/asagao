@@ -46,15 +46,46 @@ func CanonicalColor(c string) string {
 // NoColor are the words that mean "no color".
 var NoColor = []string{"", "none"}
 
-// NormalizeColor checks a color the user typed: one of Colors (any case), or "" / "none"
-// for no color (returned as ""). It returns an error listing the colors otherwise.
+// WriteColor is the name to send for the color c: c itself when it is one of Colors, or
+// the first of Colors that Asana's GET answers as c (red is dark-red; blue, cool-gray and
+// yellow, which two colors share, are the one listed first). c is matched in any case.
+// It is false for anything else, no color included.
+func WriteColor(c string) (string, bool) {
+	c = strings.ToLower(strings.TrimSpace(c))
+	if slices.Contains(Colors, c) {
+		return c, true
+	}
+	for _, w := range Colors {
+		if renamed[w] == c {
+			return w, true
+		}
+	}
+	return "", false
+}
+
+// NewColors are the names Asana's GET answers (CanonicalColor of Colors), in the order of
+// Colors, each once.
+func NewColors() []string {
+	var out []string
+	for _, c := range Colors {
+		if n := renamed[c]; !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// NormalizeColor checks a color the user typed: one of Colors or NewColors (any case;
+// a new name becomes the written name WriteColor gives), or "" / "none" for no color
+// (returned as ""). It returns an error listing the colors otherwise.
 func NormalizeColor(c string) (string, error) {
 	c = strings.ToLower(strings.TrimSpace(c))
 	if slices.Contains(NoColor, c) {
 		return "", nil
 	}
-	if slices.Contains(Colors, c) {
-		return c, nil
+	if w, ok := WriteColor(c); ok {
+		return w, nil
 	}
-	return "", fmt.Errorf("タグの色 %q は使えません。次のどれかを指定してください: none, %s", c, strings.Join(Colors, ", "))
+	return "", fmt.Errorf("タグの色 %q は使えません。次のどれかを指定してください: none, %s（Asana の新しい名前 %s も使えます）",
+		c, strings.Join(Colors, ", "), strings.Join(NewColors(), ", "))
 }
