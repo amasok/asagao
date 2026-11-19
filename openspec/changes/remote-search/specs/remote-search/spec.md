@@ -17,12 +17,16 @@ Asana でも検索するとき、Asana に届かなければエラーにせず�
 - **THEN** キャッシュの一致を出し、標準エラーに「Asana では探せませんでした」と理由が出る。終了コードは 0
 
 ### Requirement: 検索 API がないプランでは typeahead を使う
-Asana の検索 API が 402 を返したら `plan_unavailable:search` に覚え、それからは検索 API を呼ばずに typeahead (タスク名の先頭) で探し、そう探したことを結果に添える (MUST)。typeahead も 402 なら `plan_unavailable:typeahead` に覚え、Asana での検索はプランで使えないエラーにし、名前は Asana に聞かない。402 以外のエラーは覚えず、切り替えない。
-根拠: sync/search.go (searchRefs, findNames); TestSearchTasks402SwitchesToTypeaheadAndRemembers, TestSearchTasksOtherErrorsDoNotSwitch, TestSearchTasksWithoutTypeahead, TestSearchRemoteWithoutTheSearchAPI
+Asana の検索 API が 402 を返したら、探したワークスペースについて `plan_unavailable:search:<ワークスペースの gid>` に覚え、24 時間は検索 API を呼ばずに typeahead (タスク名の先頭) で探し、そう探したことを結果に添える (MUST)。typeahead も 402 なら `plan_unavailable:typeahead:<ワークスペースの gid>` に覚え、24 時間は Asana での検索をプランで使えないエラーにし、名前は Asana に聞かない。402 以外のエラーは覚えず、切り替えない。
+根拠: sync/search.go (searchRefs, findNames); TestSearchTasks402SwitchesToTypeaheadAndRemembers, TestSearchTasksWithoutTypeahead, TestSearchPlanPerWorkspaceAndRecheck
 
 #### Scenario: 無料のワークスペース
 - **WHEN** 検索 API が 402 を返すワークスペースで、Asana でも検索を 2 回する
 - **THEN** 検索 API は 1 回だけ呼ばれ、2 回とも typeahead で探し、「タスク名の先頭で探しました」と出る
+
+#### Scenario: 24 時間たったら試し直す
+- **WHEN** 検索 API の 402 から 24 時間たって検索し、検索 API が答える
+- **THEN** 検索 API で探し、記録は消える。ほかのワークスペースの記録と、#50 より前のワークスペースのない記録 (`plan_unavailable:search`) は読まない
 
 ### Requirement: キャッシュにない名前は Asana に聞く
 クイック追加の `@担当`・`#タグ` と、CLI・MCP のタスクの作成と更新の担当は、キャッシュに一致するものがないときだけ Asana に typeahead で聞き、見つかったものをキャッシュに入れて読み直す (MUST)。1 つのトークンについて聞くのは 1 回。複数に一致するときや 2 つ目の担当は聞かない。Asana に届かないとき・見つからないときは、キャッシュだけで読んだ結果のまま。
@@ -61,8 +65,8 @@ Asana の検索 API が 402 を返したら `plan_unavailable:search` に覚え�
 - **THEN** gitA を完了にしてコメントし、ENG-404 は「見つかりません」と出る。あとでオフラインのときに `asana#ENG-1` を読んでも、覚えた gid で gitA にコメントを積む
 
 ### Requirement: タスクの ID がないプラン
-custom ID でのタスクの取得に Asana が 402 を返したら `plan_unavailable:custom_id` に覚え、それからは Asana に聞かずに前に覚えた gid だけを使う (MUST)。
-根拠: sync/search.go (TaskByCustomID); TestTaskByCustomID
+custom ID でのタスクの取得に Asana が 402 を返したら、そのワークスペースについて `plan_unavailable:custom_id:<ワークスペースの gid>` に覚え、それから 24 時間は Asana に聞かずに前に覚えた gid だけを使う (MUST)。そのあと試し直し、答え (見つからない 404 も含む) が来たら記録を消す。
+根拠: sync/search.go (TaskByCustomID); TestTaskByCustomID, TestTaskByCustomID402Remembered, TestSearchPlanPerWorkspaceAndRecheck
 
 #### Scenario: 402 のあと
 - **WHEN** custom ID の取得が 402 になったあと、もう一度 `asana#ENG-1` を読む

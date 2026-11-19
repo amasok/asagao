@@ -51,12 +51,24 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 - **THEN** 削除は完了として outbox から消える
 
 ### Requirement: プランにない機能
-操作を送って Asana が 402 を返したら、その機能 (セクションの作成・削除・並べ替え、タグの変更・削除) を `sync_state` の `plan_unavailable:<機能>` に記録する (MUST)。記録のある機能は、TUI のメニューと MCP のツールに出さず、CLI と app はプランで使えない旨のエラーにする。ほかの機能には影響しない。
-根拠: sync/push.go (send); app/sections.go (planAvailable); TestPushPaymentRequiredHidesFeature, TestSectionToolsHiddenAfterPaymentRequired, TestTUIHidesUnavailableFeatures
+操作を送って Asana が 402 を返したら、その機能 (セクションの作成・削除・並べ替え、タグの変更・削除) を、操作のワークスペース (セクションはプロジェクトの、タグは付いているタスクの、分からなければ既定のもの) について `plan_unavailable:<機能>:<ワークスペースの gid>` に時刻で記録する (MUST)。24 時間は、そのワークスペースでの操作をプランで使えない旨のエラーにする。すべてのワークスペースに記録があるあいだは、TUI のメニューと MCP のツールにも出さない。
+根拠: sync/push.go (send); app/plan.go; TestPushSectionsAndTags402PerWorkspace, TestSectionsOldGlobalPlanRecordIgnored, TestTUIHidesUnavailableFeatures
 
 #### Scenario: 並べ替えに 402 が返る
 - **WHEN** セクションの並べ替えを送ると Asana が 402 を返す
-- **THEN** その操作は失敗になり、以後セクションの作成・削除・並べ替えは出さない。タグの変更は出したまま
+- **THEN** その操作は失敗になり、そのワークスペースでは 24 時間セクションの作成・削除・並べ替えを受け付けない。タグの変更は出したまま
+
+#### Scenario: 24 時間たったら試し直す
+- **WHEN** 402 の記録から 24 時間たって、同じワークスペースでタグを変え、Asana が受け付ける
+- **THEN** 変更は積まれて送られ、記録は消える
+
+#### Scenario: #50 より前の記録
+- **WHEN** ワークスペースのない古い記録 `plan_unavailable:sections` だけがある
+- **THEN** 読まずに、セクションの作成・削除・並べ替えを出す
+
+#### Scenario: 無料のワークスペースで 402 が返る
+- **WHEN** 無料のワークスペースでセクションの並べ替えに 402 が返り、有料の組織のプロジェクトでセクションを作る
+- **THEN** 有料の組織では作れる。メニューにも出したまま
 
 ### Requirement: マイタスクのセクションへの移動
 自分が担当のタスクは、マイタスクのセクションの間を `move_my_section` で移せる (MUST)。payload は `section`・`section_name`・`workspace`、base は元のセクション。続けて移すと 1 つにまとめ、元に戻すと消す。送るときは `POST /sections/{gid}/addTask` を使う (繰り返しても害がない)。同期で Asana の `assignee_section` を入れても、未送信の移動を保つ。取り消すと元のセクションに戻す。ほかの人が担当のタスクは移せない。

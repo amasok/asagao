@@ -475,9 +475,11 @@ func TestDiscardDeleteTagRestores(t *testing.T) {
 	}
 }
 
-// A 402 (the plan lacks the feature) fails the change and hides the feature from then on.
+// A 402 (the plan lacks the feature) fails the change and hides the feature in the
+// project's workspace for a day (#50).
 func TestPushPaymentRequiredHidesFeature(t *testing.T) {
 	f, s, st := setupSections(t)
+	s.now = func() time.Time { return now }
 	ctx := context.Background()
 	f.hook = func(rw http.ResponseWriter, r *http.Request, _ map[string]any) bool {
 		if strings.HasPrefix(r.URL.Path, "/projects/p1/sections") && r.Method == http.MethodPost {
@@ -503,8 +505,11 @@ func TestPushPaymentRequiredHidesFeature(t *testing.T) {
 	if _, err := sections.CreateHere(ctx, "p1", "x", "", ""); !app.IsPlanUnavailable(err) {
 		t.Fatalf("create after a 402: err = %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSections); v == "" {
-		t.Error("not recorded")
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1")); v != now.Format(time.RFC3339) {
+		t.Errorf("recorded for w1 = %q", v)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSections); v != "" {
+		t.Errorf("recorded for every workspace (before #50) = %q", v)
 	}
 	// Tags are another feature: still offered.
 	if !(&app.Tags{Store: st}).Available(ctx) {

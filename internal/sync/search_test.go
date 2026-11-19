@@ -141,7 +141,7 @@ func TestSearchTasks402SwitchesToTypeaheadAndRemembers(t *testing.T) {
 	if !slices.Equal(res.GIDs, []string{"t3"}) || !res.ByName {
 		t.Fatalf("res %+v", res)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSearch); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w1")); v == "" {
 		t.Fatal("402 not remembered")
 	}
 	if _, err := st.GetTask(ctx, "t1"); !errors.Is(err, readmodel.ErrNotFound) {
@@ -163,7 +163,7 @@ func TestSearchTasksOtherErrorsDoNotSwitch(t *testing.T) {
 	if _, err := s.SearchTasks(ctx, "x", nil, 20); err == nil {
 		t.Fatal("403 not reported")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSearch); v != "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w1")); v != "" {
 		t.Fatal("403 remembered as a plan limit")
 	}
 	if f.typeCalls["task"] != 0 {
@@ -178,7 +178,7 @@ func TestSearchTasksWithoutTypeahead(t *testing.T) {
 	if _, err := s.SearchTasks(ctx, "x", nil, 20); !errors.Is(err, ErrRemoteSearchUnavailable) {
 		t.Fatalf("err %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanTypeahead); v == "" {
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTypeahead, "w1")); v == "" {
 		t.Fatal("typeahead 402 not remembered")
 	}
 	if _, err := s.SearchTasks(ctx, "x", nil, 20); !errors.Is(err, ErrRemoteSearchUnavailable) {

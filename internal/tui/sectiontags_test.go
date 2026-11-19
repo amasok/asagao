@@ -148,8 +148,24 @@ func TestTUIHidesUnavailableFeatures(t *testing.T) {
 	if !strings.Contains(labels(), "セクションを追加") {
 		t.Fatalf("menu without セクションを追加:\n%s", labels())
 	}
-	if err := st.SetSyncState(context.Background(), readmodel.KeyPlanUnavailable+readmodel.PlanSections, "x"); err != nil {
+	ctx := context.Background()
+	// A record before #50 (for every workspace, for good) is not read any more.
+	if err := st.SetSyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSections, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
+	}
+	h.run(h.m.loadOutbox())
+	if !strings.Contains(labels(), "セクションを追加") {
+		t.Fatalf("an old record hid セクションを追加:\n%s", labels())
+	}
+	// A recent 402 in every workspace hides it.
+	wss, err := st.WorkspaceGIDs(ctx)
+	if err != nil || len(wss) == 0 {
+		t.Fatalf("workspaces = %v, %v", wss, err)
+	}
+	for _, ws := range wss {
+		if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, ws), h.m.deps.Now().UTC().Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	h.run(h.m.loadOutbox())
 	s := labels()

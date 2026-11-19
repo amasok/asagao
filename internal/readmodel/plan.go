@@ -5,8 +5,9 @@ import "time"
 // A feature the workspace's plan lacks (Asana answered 402) is recorded per workspace, so
 // a 402 in a free workspace does not hide the feature in a paid organization, and only
 // for PlanRecheckAfter: it is then offered and tried again, so a workspace whose plan was
-// upgraded (or whose trial started) gets it back without anyone clearing anything. (The
-// older records of sections, tags and my_section are KeyPlanUnavailable + feature: #50.)
+// upgraded (or whose trial started) gets it back without anyone clearing anything. Every
+// feature is recorded so (#50); the records before #50 (KeyPlanUnavailable + feature, with
+// no workspace) are not read any more.
 
 // PlanRecheckAfter is how long a 402 hides a feature.
 const PlanRecheckAfter = 24 * time.Hour

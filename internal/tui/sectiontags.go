@@ -25,10 +25,12 @@ func (m *Model) loadPlan() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		off := map[string]bool{}
-		if !(&app.Sections{Store: st}).Available(m.ctx) {
+		// Sections and tags: unless a recent 402 hides them in every workspace (each change
+		// checks its own workspace).
+		if !(&app.Sections{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
 			off[readmodel.PlanSections] = true
 		}
-		if !(&app.Tags{Store: st}).Available(m.ctx) {
+		if !(&app.Tags{Store: st, Clock: m.deps.Now}).Available(m.ctx) {
 			off[readmodel.PlanTags] = true
 		}
 		if !(&app.TimeTracking{Store: st, Clock: m.deps.Now}).Available(m.ctx) {

@@ -222,6 +222,8 @@ type LocalStore interface {
 	CountUnfetchedProjects(ctx context.Context, memberOnly bool) (int, error)
 	ProjectRef(ctx context.Context, gid string) (readmodel.ProjectRef, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
+	// TagWorkspace is the workspace of a task carrying the tag ("" if none is known).
+	TagWorkspace(ctx context.Context, tagGID string) (string, error)
 	TryLockPush() (unlock func(), err error)
 	UpsertAttachment(ctx context.Context, taskGID string, a model.Attachment) error
 	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error

@@ -9,8 +9,8 @@
 - **THEN** キャッシュに 今日やる・あとで がこの順で入り、タスクのマイタスクのセクションは あとで になる
 
 ### Requirement: マイタスクのセクションが取れないとき
-マイタスクのリストやセクションが取れないとき (402 以外) は同期を失敗にせず、今のキャッシュとタスクから分かったセクションを使い、次の取り直しでまた試す (MUST)。402 なら `plan_unavailable:my_section` を記録し、この機能を出さない。
-根拠: sync/my_sections.go; TestMySectionsPaymentRequired
+マイタスクのリストやセクションが取れないとき (402 以外) は同期を失敗にせず、今のキャッシュとタスクから分かったセクションを使い、次の取り直しでまた試す (MUST)。402 なら、そのワークスペースについて `plan_unavailable:my_section:<ワークスペースの gid>` を記録し、24 時間はそのワークスペースのマイタスクのセクションを取らず、出さない。そのあと試し直し、取れたら記録を消す。ほかのワークスペースは隠さない。
+根拠: sync/my_sections.go; TestMySectionsPaymentRequired, TestMySectionsPlanPerWorkspace, TestMySectionsOldGlobalRecordIgnored, TestPushMoveMySection402PerWorkspace
 
 #### Scenario: リストが取れない
 - **WHEN** マイタスクのリストの取得に 404 が返る
