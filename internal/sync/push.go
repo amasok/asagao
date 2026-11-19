@@ -445,7 +445,8 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 }
 
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
-// workspace's plan lacks the feature (402) also hides that feature from now on.
+// workspace's plan lacks the feature (402) also hides that feature in the workspace for
+// readmodel.PlanRecheckAfter (readmodel.PlanKey).
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
 	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)

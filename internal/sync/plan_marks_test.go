@@ -269,3 +269,58 @@ func TestSearchPlanPerWorkspaceAndRecheck(t *testing.T) {
 		t.Fatalf("402 not forgotten after an answer: %q", v)
 	}
 }
+
+// A 402 to a section create (and delete) is recorded for its project's workspace, and one
+// to a tag delete for the workspace of the tasks it was on (the tag is gone from them).
+func TestPushCreateSectionAndDeleteTag402PerWorkspace(t *testing.T) {
+	f, s, st := setupSections(t)
+	at := now
+	s.now = func() time.Time { return at }
+	ctx := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The default workspace is w0: a record there would hide the wrong one.
+	must(st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w0", Name: "A"}, {GID: "w1", Name: "B"}}))
+	f.hook = func(rw http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+		if (r.URL.Path == "/projects/p1/sections" && r.Method == http.MethodPost) ||
+			(r.URL.Path == "/tags/g1" && r.Method == http.MethodDelete) || (r.URL.Path == "/sections/s2" && r.Method == http.MethodDelete) {
+			rw.WriteHeader(http.StatusPaymentRequired)
+			fmt.Fprint(rw, `{"errors":[{"message":"premium only"}]}`)
+			return true
+		}
+		return false
+	}
+	sections := &app.Sections{Store: st, Clock: func() time.Time { return at }}
+	tags := &app.Tags{Store: st, Clock: func() time.Time { return at }}
+	if _, err := sections.CreateHere(ctx, "p1", "新しい", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	must(tags.DeleteHere(ctx, "g1"))
+	if res, err := s.Push(ctx); err != nil || res.Failed != 2 {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	for _, feature := range []string{readmodel.PlanSections, readmodel.PlanTags} {
+		if v, _ := st.SyncState(ctx, readmodel.PlanKey(feature, "w1")); v != at.Format(time.RFC3339) {
+			t.Errorf("%s: recorded for w1 = %q", feature, v)
+		}
+		if v, _ := st.SyncState(ctx, readmodel.PlanKey(feature, "w0")); v != "" {
+			t.Errorf("%s: recorded for the default workspace = %q", feature, v)
+		}
+	}
+	must(discardQueued(ctx, st))
+
+	// A delete of a section: its project's workspace too.
+	at = at.Add(readmodel.PlanRecheckAfter)
+	must(st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1"), ""))
+	must(sections.DeleteHere(ctx, "s2"))
+	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
+		t.Fatalf("push of the delete = %+v, %v", res, err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1")); v != at.Format(time.RFC3339) {
+		t.Errorf("delete: recorded for w1 = %q", v)
+	}
+}
