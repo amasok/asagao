@@ -206,8 +206,9 @@ type Model struct {
 	collapsed map[string]bool // keys of collapsed groups in the current scope
 	renameGID string          // section being renamed (promptRenameSection)
 	// sections and tags (sectiontags.go)
-	planOff         map[string]bool      // features the workspace's plan lacks (402)
-	newSectionAfter string               // promptNewSection: the section to add it after
+	planOff         map[string]planWindow // features the workspace's plan lacks (402), and until when
+	planSeq         uint64                // latest loadPlan in flight
+	newSectionAfter string                // promptNewSection: the section to add it after
 	tagList         []readmodel.TagCount // the tags the tag manager shows
 	tagTarget       readmodel.TagCount   // the tag being changed
 	// time tracking (timetracking.go): the task whose entries are shown, the entry edited
@@ -777,7 +778,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "space":
 		m.leader = true
 		m.menuPage = 0
-		return m, m.prefetchTemplates() // the menu offers templates only when there are some
+		return m, tea.Batch(m.loadPlan(), m.prefetchTemplates()) // recheck 402 marks (#68) and templates when opening the menu
 	case "?":
 		m.showHelp = true
 		return m, nil

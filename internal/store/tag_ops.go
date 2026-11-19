@@ -136,13 +136,18 @@ func (s *Store) UpdateTagLocal(ctx context.Context, tagGID string, changes map[s
 // for it.
 func (s *Store) DeleteTagLocal(ctx context.Context, tagGID string, now time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		var name, color string
-		err := tx.QueryRowContext(ctx, "SELECT name, color FROM tags WHERE gid = ?", tagGID).Scan(&name, &color)
+		var name, color, workspace string
+		err := tx.QueryRowContext(ctx, "SELECT name, color, workspace_gid FROM tags WHERE gid = ?", tagGID).Scan(&name, &color, &workspace)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("tag %s: %w", tagGID, ErrNotFound)
 		}
 		if err != nil {
 			return err
+		}
+		if workspace == "" {
+			if workspace, err = tagWorkspaceFromTasks(ctx, tx, tagGID); err != nil {
+				return err
+			}
 		}
 		tasks, err := taggedTasks(ctx, tx, tagGID)
 		if err != nil {
@@ -174,7 +179,7 @@ func (s *Store) DeleteTagLocal(ctx context.Context, tagGID string, now time.Time
 			tagGID = real
 		}
 		return saveOp(ctx, tx, &Op{Kind: OpDeleteTag, TaskGID: tagGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"name": name, "color": color, "tasks": tasks}})
+			Payload: map[string]any{"name": name, "color": color, "workspace": workspace, "tasks": tasks}})
 	})
 }
 
@@ -195,9 +200,12 @@ func taggedTasks(ctx context.Context, tx *sql.Tx, tagGID string) ([]string, erro
 	return tasks, rows.Err()
 }
 
-// ApplyTag records the server's name and color for a tag (after a push).
+// ApplyTag records the server's name, color and workspace for a tag (after a push).
 func (s *Store) ApplyTag(ctx context.Context, t model.Tag) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE tags SET name = ?, color = ? WHERE gid = ?", t.Name, t.Color, t.GID)
+	ws := tagWorkspaceGID(t)
+	_, err := s.db.ExecContext(ctx, `UPDATE tags SET name = ?, color = ?,
+		workspace_gid = CASE WHEN ? <> '' THEN ? ELSE workspace_gid END WHERE gid = ?`,
+		t.Name, t.Color, ws, ws, t.GID)
 	return err
 }
 
@@ -273,7 +281,8 @@ func undoTagOp(ctx context.Context, tx *sql.Tx, op *Op) error {
 	case OpDeleteTag:
 		name, _ := op.Payload["name"].(string)
 		color, _ := op.Payload["color"].(string)
-		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO tags(gid, name, color) VALUES(?, ?, ?)", op.TaskGID, name, color); err != nil {
+		workspace, _ := op.Payload["workspace"].(string)
+		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO tags(gid, name, color, workspace_gid) VALUES(?, ?, ?, ?)", op.TaskGID, name, color, workspace); err != nil {
 			return err
 		}
 		tasks, _ := op.Payload["tasks"].([]any)

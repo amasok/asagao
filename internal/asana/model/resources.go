@@ -77,9 +77,10 @@ type Section struct {
 
 // Tag is a tag with its color (a color name such as "dark-green", or "" for none).
 type Tag struct {
-	GID   string `json:"gid"`
-	Name  string `json:"name"`
-	Color string `json:"color"`
+	GID       string `json:"gid"`
+	Name      string `json:"name"`
+	Color     string `json:"color"`
+	Workspace *Ref   `json:"workspace,omitempty"`
 }
 
 type Membership struct {

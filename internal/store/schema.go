@@ -501,4 +501,21 @@ DELETE FROM sync_state WHERE key = 'last_full_sync'
 ALTER TABLE task_memberships ADD COLUMN position INTEGER;
 ALTER TABLE tasks ADD COLUMN subtask_position INTEGER;
 `,
+	`
+-- The workspace each tag belongs to (#68), so a 402 on a tag no task carries is recorded
+-- (and checked) for its own workspace rather than the default one. Fill existing rows
+-- from the tasks that carry them; unused tags get theirs on the next poll.
+ALTER TABLE tags ADD COLUMN workspace_gid TEXT NOT NULL DEFAULT '';
+UPDATE tags SET workspace_gid = COALESCE((
+	SELECT COALESCE(NULLIF(t.workspace_gid, ''),
+		(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid
+			WHERE m.task_gid = t.gid ORDER BY m.rowid LIMIT 1), '')
+	FROM task_tags tt JOIN tasks t ON t.gid = tt.task_gid
+	WHERE tt.tag_gid = tags.gid
+		AND COALESCE(NULLIF(t.workspace_gid, ''),
+			(SELECT p.workspace_gid FROM task_memberships m JOIN projects p ON p.gid = m.project_gid
+				WHERE m.task_gid = t.gid ORDER BY m.rowid LIMIT 1), '') <> ''
+	ORDER BY tt.task_gid LIMIT 1
+), '') WHERE workspace_gid = '';
+`,
 }

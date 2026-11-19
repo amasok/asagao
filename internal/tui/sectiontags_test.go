@@ -180,3 +180,129 @@ func TestTUIHidesUnavailableFeatures(t *testing.T) {
 		t.Errorf("n still works: ops %v, prompt %v", got, h.m.promptMode)
 	}
 }
+
+// #68: without any write, sync or restart, plan-gated menu items reappear once
+// readmodel.PlanRecheckAfter (24h) has passed when opening the menu.
+func TestTUIPlanMenuReappearsAfterRecheckWithoutWrites(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "W1"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := testNow
+	wss, err := st.WorkspaceGIDs(ctx)
+	if err != nil || len(wss) == 0 {
+		t.Fatalf("workspaces = %v, %v", wss, err)
+	}
+	ws, err := st.DefaultWorkspace(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := now.UTC().Format(time.RFC3339)
+	for _, w := range wss {
+		for _, f := range []string{readmodel.PlanSections, readmodel.PlanTags, readmodel.PlanTimeTracking} {
+			if err := st.SetSyncState(ctx, readmodel.PlanKey(f, w), at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, f := range []string{readmodel.PlanGoals, readmodel.PlanPortfolios, readmodel.PlanCustomFields} {
+		if err := st.SetSyncState(ctx, readmodel.PlanKey(f, ws), at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+	h.key("h", "j", "j", "l") // open p1 on t1
+	if h.m.currentProject() != "p1" || h.selected() != "t1" {
+		t.Fatalf("not on t1 in p1: project %q, selected %q", h.m.currentProject(), h.selected())
+	}
+
+	labels := func() string {
+		s := strings.Join(menuScreens(t, h), "\n")
+		h.key("esc")
+		return s
+	}
+	wantLabels := []string{
+		"セクションを追加",
+		"空のセクションを削除",
+		"タグの名前・色",
+		"作業時間を見る",
+		"ゴール（期間・進み具合）",
+		"ポートフォリオ（自分がオーナーのもの）",
+		"カスタムフィールドを追加",
+	}
+
+	// Just before 24h: all 6 features are still hidden.
+	now = testNow.Add(readmodel.PlanRecheckAfter - time.Second)
+	before := labels()
+	for _, want := range wantLabels {
+		if strings.Contains(before, want) {
+			t.Errorf("before 24h: %q still in menu:\n%s", want, before)
+		}
+	}
+	h.key("space", "n")
+	if h.m.promptMode != promptNone {
+		t.Fatalf("before 24h: space n opened prompt %v", h.m.promptMode)
+	}
+
+	// At 24h, without any write or manual loadPlan/loadOutbox: opening the menu re-offers all of them.
+	now = testNow.Add(readmodel.PlanRecheckAfter)
+	after := labels()
+	for _, want := range wantLabels {
+		if !strings.Contains(after, want) {
+			t.Errorf("after 24h: %q still hidden in menu:\n%s", want, after)
+		}
+	}
+	// And the menu action itself works again.
+	h.key("space", "n")
+	if h.m.promptMode != promptNewSection {
+		t.Fatalf("after 24h: space n did not open promptNewSection (got %v, status %q)", h.m.promptMode, h.m.status)
+	}
+}
+
+// #68: across multiple workspaces, a feature reappears as soon as the earliest workspace's
+// 402 expires (even if another workspace's 402 is newer), and a stale planLoadedMsg does
+// not overwrite newer state.
+func TestTUIPlanMultiWorkspaceRecheckAndStaleMsg(t *testing.T) {
+	st := fixtureStore(t)
+	ctx := context.Background()
+	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "W1"}, {GID: "w2", Name: "W2"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := testNow.Add(2 * time.Hour)
+	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), testNow.UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w2"), now.UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	h := &harness{t: t, m: m}
+	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
+	h.run(m.Init())
+
+	if h.m.planOK(readmodel.PlanTags) {
+		t.Fatal("PlanTags offered while both workspaces have active 402s")
+	}
+	// 23h59m after w1's 402: still hidden.
+	now = testNow.Add(readmodel.PlanRecheckAfter - time.Minute)
+	if h.m.planOK(readmodel.PlanTags) {
+		t.Fatal("PlanTags offered before earliest 402 expired")
+	}
+	// 24h after w1's 402 (still only 22h after w2's): w1 can be tried again -> offered!
+	now = testNow.Add(readmodel.PlanRecheckAfter)
+	if !h.m.planOK(readmodel.PlanTags) {
+		t.Fatal("PlanTags not offered once w1's 402 expired")
+	}
+	// Stale planLoadedMsg with older seq must not re-hide it.
+	h.send(planLoadedMsg{seq: h.m.planSeq - 1, off: map[string]planWindow{
+		readmodel.PlanTags: {from: now, until: now.Add(readmodel.PlanRecheckAfter)},
+	}})
+	if !h.m.planOK(readmodel.PlanTags) {
+		t.Fatal("stale planLoadedMsg overwrote current planOff")
+	}
+}

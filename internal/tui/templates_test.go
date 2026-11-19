@@ -209,10 +209,10 @@ func TestTemplatesHiddenWithoutTemplates(t *testing.T) {
 			if h.m.planOK(readmodel.PlanProjectTemplates) {
 				t.Error("project templates offered after their 402")
 			}
-			// ...and is asked a day later, offering them once Asana has some.
+			// ...and is asked a day later when opening the menu (without any write or
+			// restart, #68), offering them once Asana has some.
 			f.status402 = false
 			*now = now.Add(25 * time.Hour)
-			h.run(h.m.loadPlan())
 			h.key("space")
 			if f.gets["GET /task_templates"] != gets+1 || !strings.Contains(h.screen(), "テンプレートからタスクを作る") ||
 				!strings.Contains(h.screen(), "テンプレートからプロジェクトを作る") {

@@ -324,3 +324,178 @@ func TestPushCreateSectionAndDeleteTag402PerWorkspace(t *testing.T) {
 		t.Errorf("delete: recorded for w1 = %q", v)
 	}
 }
+
+// #68: a tag that no task carries still remembers its workspace (from the poll's
+// GET /tags?workspace= and from FindTags typeahead), so a 402 to renaming or deleting it
+// is recorded for its own workspace rather than the default one.
+func TestUnusedTagWorkspaceAnd402PerWorkspace(t *testing.T) {
+	ctx := context.Background()
+	f, s, st := setupSections(t)
+	at := now
+	s.now = func() time.Time { return at }
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two workspaces: w0 is the default, w1 is the second.
+	// Sync poll fetches unused tags g0 (in w0) and g_unused (in w1) without any tasks carrying them.
+	f.tags["g0"] = &asana.Tag{GID: "g0", Name: "既定タグ"}
+	f.tags["g_unused"] = &asana.Tag{GID: "g_unused", Name: "未使用タグ"}
+	refuse := false
+	f.hook = func(rw http.ResponseWriter, r *http.Request, _ map[string]any) bool {
+		switch {
+		case r.URL.Path == "/workspaces":
+			fmt.Fprint(rw, `{"data":[{"gid":"w0","name":"A"},{"gid":"w1","name":"B"}]}`)
+			return true
+		case r.URL.Path == "/tags" && r.Method == http.MethodGet:
+			if r.URL.Query().Get("workspace") == "w1" {
+				// Even if the response omits workspace, sync records w1.
+				fmt.Fprint(rw, `{"data":[{"gid":"g_unused","name":"未使用タグ"}]}`)
+			} else {
+				fmt.Fprint(rw, `{"data":[{"gid":"g0","name":"既定タグ","workspace":{"gid":"w0"}}]}`)
+			}
+			return true
+		case r.URL.Path == "/users" || r.URL.Path == "/projects" || r.URL.Path == "/tasks" ||
+			r.URL.Path == "/users/me/favorites" || r.URL.Path == "/users/me/teams" ||
+			r.URL.Path == "/users/me/notifications" ||
+			strings.HasSuffix(r.URL.Path, "/custom_fields") || strings.HasSuffix(r.URL.Path, "/sections"):
+			fmt.Fprint(rw, `{"data":[]}`)
+			return true
+		case r.URL.Path == "/users/me/user_task_list":
+			fmt.Fprint(rw, `{"data":{"gid":"utl"}}`)
+			return true
+		case refuse && r.URL.Path == "/tags/g_unused" && (r.Method == http.MethodPut || r.Method == http.MethodDelete):
+			rw.WriteHeader(http.StatusPaymentRequired)
+			fmt.Fprint(rw, `{"errors":[{"message":"premium only"}]}`)
+			return true
+		}
+		return false
+	}
+	if _, err := s.Run(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	for gid, want := range map[string]string{"g0": "w0", "g_unused": "w1"} {
+		if got, err := st.TagWorkspace(ctx, gid); err != nil || got != want {
+			t.Fatalf("after sync: TagWorkspace(%s) = %q, %v; want %q", gid, got, err, want)
+		}
+	}
+
+	// Updating an unused tag in w1 gets a 402 -> recorded for w1 only, not default w0.
+	refuse = true
+	tags := &app.Tags{Store: st, Clock: func() time.Time { return at }}
+	must(tags.UpdateHere(ctx, "g_unused", map[string]any{"name": "新名前"}))
+	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
+		t.Fatalf("push update unused tag = %+v, %v", res, err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != at.Format(time.RFC3339) {
+		t.Errorf("update unused tag: w1 = %q, want %q", v, at.Format(time.RFC3339))
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w0")); v != "" {
+		t.Errorf("update unused tag: default w0 wrongly marked = %q", v)
+	}
+	// g_unused (w1) is refused; g0 (w0) is still allowed.
+	if err := tags.UpdateHere(ctx, "g_unused", map[string]any{"name": "別名"}); !app.IsPlanUnavailable(err) {
+		t.Errorf("g_unused in w1 after 402: err = %v", err)
+	}
+	if err := tags.UpdateHere(ctx, "g0", map[string]any{"name": "既定改名"}); err != nil {
+		t.Errorf("g0 in w0 after 402 in w1: err = %v", err)
+	}
+	must(discardQueued(ctx, st))
+
+	// Deleting an unused tag in w1 gets a 402 -> still recorded for w1 only, not default w0.
+	must(st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), ""))
+	must(tags.DeleteHere(ctx, "g_unused"))
+	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
+		t.Fatalf("push delete unused tag = %+v, %v", res, err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != at.Format(time.RFC3339) {
+		t.Errorf("delete unused tag: w1 = %q, want %q", v, at.Format(time.RFC3339))
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w0")); v != "" {
+		t.Errorf("delete unused tag: default w0 wrongly marked = %q", v)
+	}
+}
+
+// #68: FindTags (typeahead) stores the searched workspace on found tags.
+func TestFindTagsStoresWorkspace(t *testing.T) {
+	ctx := context.Background()
+	f := &searchServer{}
+	s, st := setupSearch(t, f)
+	if n, err := s.FindTags(ctx, "買"); err != nil || n != 1 {
+		t.Fatalf("FindTags = %d, %v", n, err)
+	}
+	if ws, err := st.TagWorkspace(ctx, "g7"); err != nil || ws != "w1" {
+		t.Fatalf("TagWorkspace(g7) = %q, %v; want w1", ws, err)
+	}
+}
+
+// #68: creating a tag offline in a non-default workspace (w2) and editing it before push
+// leaves OpUpdateTag.TaskGID as the local gid even after OpAddTag replaces it with the
+// real gid; a 402 (and a later success) on PUT /tags/{real} still marks/clears w2 only,
+// never the default workspace w1.
+func TestOfflineTagUpdate402AndClearPerWorkspace(t *testing.T) {
+	ctx := context.Background()
+	f, s, st := setupSections(t)
+	at := now
+	s.now = func() time.Time { return at }
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// w1 is default; w2 is non-default with task t2.
+	must(st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "Default"}, {GID: "w2", Name: "Paid"}}))
+	must(st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "B", Workspace: &asana.Ref{GID: "w2"}}}))
+
+	localGID, err := st.AddTagLocal(ctx, "t2", "", "仮タグ", at)
+	must(err)
+	tags := &app.Tags{Store: st, Clock: func() time.Time { return at }}
+	must(tags.UpdateHere(ctx, localGID, map[string]any{"name": "本タグ"}))
+
+	refusePut := true
+	f.hook = func(rw http.ResponseWriter, r *http.Request, body map[string]any) bool {
+		switch {
+		case r.URL.Path == "/tags" && r.Method == http.MethodPost:
+			f.tags["g999"] = &asana.Tag{GID: "g999", Name: "仮タグ", Workspace: &asana.Ref{GID: "w2"}}
+			fmt.Fprint(rw, `{"data":{"gid":"g999","name":"仮タグ"}}`)
+			return true
+		case r.URL.Path == "/tasks/t2/addTag" && r.Method == http.MethodPost:
+			fmt.Fprint(rw, `{"data":{}}`)
+			return true
+		case refusePut && r.URL.Path == "/tags/g999" && r.Method == http.MethodPut:
+			rw.WriteHeader(http.StatusPaymentRequired)
+			fmt.Fprint(rw, `{"errors":[{"message":"premium only"}]}`)
+			return true
+		}
+		return false
+	}
+
+	// Push sends add_tag (replaces localGID -> g999) and then update_tag (TaskGID is still
+	// localGID), which gets 402 -> recorded for w2 only, NOT default w1.
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 1 {
+		t.Fatalf("push with 402 = %+v, %v", res, err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w2")); v != at.Format(time.RFC3339) {
+		t.Errorf("402 recorded for w2 = %q, want %q", v, at.Format(time.RFC3339))
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != "" {
+		t.Errorf("402 wrongly recorded for default w1 = %q", v)
+	}
+
+	// When the failed update_tag (still carrying localGID) is retried and succeeds,
+	// w2's 402 mark is cleared (and w1 stays untouched).
+	refusePut = false
+	must(st.RetryOp(ctx, opByKind(t, st, outbox.KindUpdateTag).ID))
+	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
+		t.Fatalf("retry push = %+v, %v", res, err)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w2")); v != "" {
+		t.Errorf("402 for w2 not cleared after success: %q", v)
+	}
+	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != "" {
+		t.Errorf("default w1 unexpectedly marked: %q", v)
+	}
+}

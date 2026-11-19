@@ -58,13 +58,15 @@ func (s *Syncer) planWorkspace(ctx context.Context, op outbox.Op) string {
 	case outbox.KindUpdateTag:
 		ws, _ = s.Store.TagWorkspace(ctx, op.TaskGID)
 	case outbox.KindDeleteTag:
-		// The tag is gone from the cache's tasks: the ones it was on are in the entry, in
-		// the order TagWorkspace reads them.
-		tasks, _ := op.Payload["tasks"].([]any)
-		for _, t := range tasks {
-			if g, _ := t.(string); g != "" {
-				if ws, _ = s.Store.TaskWorkspace(ctx, g); ws != "" {
-					break
+		// The tag is gone from the cache: its workspace is kept in the entry (or, for an
+		// entry queued before #68, the tasks it was on, in the order TagWorkspace reads them).
+		if ws = str("workspace"); ws == "" {
+			tasks, _ := op.Payload["tasks"].([]any)
+			for _, t := range tasks {
+				if g, _ := t.(string); g != "" {
+					if ws, _ = s.Store.TaskWorkspace(ctx, g); ws != "" {
+						break
+					}
 				}
 			}
 		}
