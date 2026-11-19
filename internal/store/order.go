@@ -95,27 +95,29 @@ func (s *Store) SetSubtaskOrder(ctx context.Context, parentGID string, gids []st
 // when it came from another one (POST /sections/{gid}/addTask inserts at the top).
 // Otherwise its place stays.
 func placeInSection(ctx context.Context, tx *sql.Tx, gid, project, section string, pos Position, fromOther bool) error {
+	var err error
 	switch {
 	case pos.Before != "":
-		return reorder(ctx, tx, sectionList(project, section), gid, pos.Before, false)
+		_, err = reorder(ctx, tx, sectionList(project, section), gid, pos.Before, false)
 	case pos.After != "":
-		return reorder(ctx, tx, sectionList(project, section), gid, pos.After, true)
+		_, err = reorder(ctx, tx, sectionList(project, section), gid, pos.After, true)
 	case fromOther:
-		return reorder(ctx, tx, sectionList(project, section), gid, "", false)
+		_, err = reorder(ctx, tx, sectionList(project, section), gid, "", false)
 	}
-	return nil
+	return err
 }
 
 // placeSubtask puts a subtask next to pos.Before / pos.After among its parent's subtasks,
 // as POST /tasks/{gid}/setParent does. Without a position its place stays.
 func placeSubtask(ctx context.Context, tx *sql.Tx, gid, parent string, pos Position) error {
+	var err error
 	switch {
 	case pos.Before != "":
-		return reorder(ctx, tx, subtaskList(parent), gid, pos.Before, false)
+		_, err = reorder(ctx, tx, subtaskList(parent), gid, pos.Before, false)
 	case pos.After != "":
-		return reorder(ctx, tx, subtaskList(parent), gid, pos.After, true)
+		_, err = reorder(ctx, tx, subtaskList(parent), gid, pos.After, true)
 	}
-	return nil
+	return err
 }
 
 // orderedList is a group of tasks that has an order: how to read it in order, and how to
@@ -145,25 +147,22 @@ func subtaskList(parent string) orderedList {
 }
 
 // reorder moves gid in l just before (or after) anchor, or to the top when anchor is "",
-// and numbers the list again. If gid or anchor is not in the list, nothing changes.
-func reorder(ctx context.Context, tx *sql.Tx, l orderedList, gid, anchor string, after bool) error {
-	rows, err := tx.QueryContext(ctx, l.query, l.args...)
+// and numbers the list again. If gid or anchor is not in the list, nothing changes (moved
+// is false).
+func reorder(ctx context.Context, tx *sql.Tx, l orderedList, gid, anchor string, after bool) (moved bool, _ error) {
+	list, err := l.read(ctx, tx)
 	if err != nil {
-		return err
-	}
-	list, err := scanStrings(rows)
-	if err != nil {
-		return err
+		return false, err
 	}
 	i := slices.Index(list, gid)
 	if i < 0 || anchor == gid {
-		return nil
+		return false, nil
 	}
 	list = slices.Delete(list, i, i+1)
 	at := 0
 	if anchor != "" {
 		if at = slices.Index(list, anchor); at < 0 {
-			return nil
+			return false, nil
 		}
 		if after {
 			at++
@@ -172,10 +171,59 @@ func reorder(ctx context.Context, tx *sql.Tx, l orderedList, gid, anchor string,
 	list = slices.Insert(list, at, gid)
 	for i, g := range list {
 		if _, err := tx.ExecContext(ctx, l.update, append([]any{i, g}, l.args...)...); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (l orderedList) read(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, l.query, l.args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanStrings(rows)
+}
+
+// recordPlace adds to an outbox base where gid is in l, to give it back (restorePlace):
+// "position" (nil if not known) and, when known, "after": the task just before it ("" if
+// it is first).
+func recordPlace(ctx context.Context, tx *sql.Tx, base map[string]any, l orderedList, gid string, position sql.NullInt64) error {
+	base["position"] = positionValue(position)
+	if !position.Valid {
+		return nil
+	}
+	list, err := l.read(ctx, tx)
+	if err != nil {
+		return err
+	}
+	switch i := slices.Index(list, gid); {
+	case i == 0:
+		base["after"] = ""
+	case i > 0:
+		base["after"] = list[i-1]
+	}
+	return nil
+}
+
+// restorePlace gives gid back the place in l that base recorded (recordPlace): after the
+// same task as then, or, if it is gone from l, the number it had. setNumber writes a
+// number (or NULL). A base without a place leaves it as it is.
+func restorePlace(ctx context.Context, tx *sql.Tx, base map[string]any, l orderedList, gid string,
+	setNumber func(sql.NullInt64) error) error {
+	p, ok := basePosition(base)
+	if !ok {
+		return nil
+	}
+	if !p.Valid {
+		return setNumber(p)
+	}
+	if after, ok := base["after"].(string); ok {
+		if moved, err := reorder(ctx, tx, l, gid, after, after != ""); err != nil || moved {
 			return err
 		}
 	}
-	return nil
+	return setNumber(p)
 }
 
 // payloadPosition is the place an outbox payload asks for (insert_before / insert_after).

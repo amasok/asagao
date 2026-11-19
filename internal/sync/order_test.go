@@ -19,7 +19,8 @@ type orderFake struct {
 	changed  []string       // the same with modified_since
 	section  []string       // GET /sections/s1/tasks, in this order
 	subtasks []string       // GET /tasks/t1/subtasks, in this order
-	status   int            // if set, GET /sections/s1/tasks answers it
+	status   int            // if set, GET /sections/s1/tasks answers it (-1: drops the connection)
+	subFail  int            // if set, GET /tasks/t1/subtasks answers it
 	since    []string       // completed_since of each GET /sections/s1/tasks
 	hits     map[string]int // GET path -> count
 }
@@ -59,6 +60,11 @@ func setupOrder(t *testing.T) (*eventsEnv, *orderFake) {
 			}
 		case r.URL.Path == "/sections/s1/tasks":
 			of.since = append(of.since, r.URL.Query().Get("completed_since"))
+			if of.status < 0 {
+				conn, _, _ := w.(http.Hijacker).Hijack()
+				conn.Close()
+				return true
+			}
 			if of.status != 0 {
 				w.WriteHeader(of.status)
 				fmt.Fprint(w, `{"errors":[{"message":"no"}]}`)
@@ -66,6 +72,11 @@ func setupOrder(t *testing.T) (*eventsEnv, *orderFake) {
 			}
 			list(w, of.section)
 		case r.URL.Path == "/tasks/t1/subtasks":
+			if of.subFail != 0 {
+				w.WriteHeader(of.subFail)
+				fmt.Fprint(w, `{"errors":[{"message":"no"}]}`)
+				return true
+			}
 			list(w, of.subtasks)
 		default:
 			return false
@@ -150,37 +161,96 @@ func TestPullKeepsAsanaOrder(t *testing.T) {
 	}
 }
 
-// A section Asana no longer gives (deleted meanwhile, or not ours to see) keeps the order
-// known; the sync goes on. Another failure fails the sync, like any other fetch.
-func TestPullSectionOrderUnavailable(t *testing.T) {
+// A section or parent Asana no longer gives (deleted meanwhile, or not ours to see) keeps
+// the order known; the sync goes on.
+func TestPullOrderGone(t *testing.T) {
 	e, of := setupOrder(t)
 	e.run(t, 0)
 	token := "T0"
 	e.fake.events = func(got string) (int, string) {
 		if got == token {
-			return http.StatusOK, eventsJSON([]string{taskEvent("t2", "changed")}, token+"x", false)
+			return http.StatusOK, eventsJSON([]string{taskEvent("t2", "changed"), taskEvent("c1", "changed")}, token+"x", false)
 		}
 		return http.StatusOK, eventsJSON(nil, got, false)
 	}
-	of.section = []string{"t1", "t2", "t3"}
+	of.section, of.subtasks = []string{"t1", "t2", "t3"}, []string{"c1", "c2"}
 	for _, status := range []int{http.StatusNotFound, http.StatusForbidden} {
-		of.status = status
-		e.run(t, 5*60e9)
-		e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t3", "t2", "t1")
+		e.fake.mu.Lock()
+		of.status, of.subFail = status, status
+		e.fake.mu.Unlock()
+		if res := e.run(t, 5*60e9); res.OrderPending != 0 {
+			t.Fatalf("%d: pending %d", status, res.OrderPending)
+		}
 		token += "x"
+		if e.token(t) != token {
+			t.Fatalf("%d: token %q", status, e.token(t))
+		}
+		e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t3", "t2", "t1")
+		e.wantSubtasks(t, "t1", "c2", "c1")
 	}
+}
 
-	of.status = http.StatusBadRequest
+// Any other failure to list the order (a 5xx or 429 that outlasted the retries, a 400)
+// does not stop the sync: the order is how tasks are shown, and the next sync lists the
+// section or parent again. Offline, the sync fails as with any other fetch.
+func TestPullOrderFailsLater(t *testing.T) {
+	e, of := setupOrder(t)
+	e.run(t, 0)
+	e.fake.events = func(got string) (int, string) {
+		if got == "T0" {
+			return http.StatusOK, eventsJSON([]string{taskEvent("t2", "changed"), taskEvent("c1", "changed")}, "T1", false)
+		}
+		return http.StatusOK, eventsJSON(nil, got, false)
+	}
+	e.fake.setTask("t2", "b2", `,"memberships":[{"project":{"gid":"p1"},"section":{"gid":"s1"}}]`)
+	e.fake.mu.Lock()
+	of.section, of.subtasks = []string{"t1", "t2", "t3"}, []string{"c1", "c2"}
+	of.status = -1 // offline
+	e.fake.mu.Unlock()
 	e.now = e.now.Add(5 * 60e9)
 	if _, err := e.s.Run(context.Background(), false); err == nil {
-		t.Fatal("a failed listing of the order was not reported")
+		t.Fatal("offline listing of the order not reported")
 	}
-	if e.token(t) != token { // the events are read again next time
-		t.Fatalf("token saved after a failure: %q", e.token(t))
+	if e.token(t) != "T0" { // the events are read again next time
+		t.Fatalf("token saved after going offline: %q", e.token(t))
 	}
-	of.status = 0
-	e.run(t, 5*60e9)
+
+	e.fake.mu.Lock()
+	of.status, of.subFail = http.StatusInternalServerError, http.StatusBadRequest
+	e.fake.mu.Unlock()
+	if res := e.run(t, 5*60e9); res.OrderPending != 2 {
+		t.Fatalf("pending = %d", res.OrderPending)
+	}
+	if e.token(t) != "T1" || e.taskName(t, "t2") != "b2" {
+		t.Fatalf("the rest of the sync was not kept: token %q, t2 %q", e.token(t), e.taskName(t, "t2"))
+	}
+	e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t3", "t2", "t1")
+	e.wantSubtasks(t, "t1", "c2", "c1")
+	for _, k := range []string{store.KeyTaskOrder + "p1", store.KeySubtaskOrder} {
+		if v, _ := e.st.SyncState(context.Background(), k); v == "" {
+			t.Fatalf("%s not kept for the next sync", k)
+		}
+	}
+
+	// The next sync lists them again, with no events.
+	e.fake.mu.Lock()
+	of.status, of.subFail = 0, 0
+	e.fake.mu.Unlock()
+	if res := e.run(t, 5*60e9); res.OrderPending != 0 {
+		t.Fatalf("still pending: %d", res.OrderPending)
+	}
 	e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t1", "t2", "t3")
+	e.wantSubtasks(t, "t1", "c1", "c2")
+	for _, k := range []string{store.KeyTaskOrder + "p1", store.KeySubtaskOrder} {
+		if v, _ := e.st.SyncState(context.Background(), k); v != "" {
+			t.Fatalf("%s = %q after listing it", k, v)
+		}
+	}
+	of.take(e)
+	e.run(t, 5*60e9)
+	if sec, subs, _ := of.take(e); sec != 0 || subs != 0 {
+		t.Fatalf("listed again with nothing pending: section %d, subtasks %d", sec, subs)
+	}
 }
 
 // The completed tasks, fetched after the incomplete ones (#54), take their place among

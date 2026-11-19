@@ -9,15 +9,19 @@
 - **THEN** そのセクションの並びを取り直し、`list_tasks` と TUI がその順で並べる
 
 ### Requirement: 並びを取れないとき
-セクションや親の並びが 404・403 なら、今の並びのまま同期を進める (MUST)。ほかの失敗は同期の失敗とし、Events の token を進めない。
-根拠: sync/lazy.go (refreshSections, refreshParents); TestPullSectionOrderUnavailable
+セクションや親の並びが 404・403 なら、今の並びのまま同期を進める (MUST)。オフラインと 401 は、ほかの取得と同じく同期の失敗とし、Events の token を進めない。それ以外の失敗 (再試行しても続く 5xx・429、400 など) は同期を止めず、そのセクションや親を覚えておき、次の同期で取り直す。
+根拠: sync/lazy.go (refreshSections, refreshParents, orderFailed); TestPullOrderGone, TestPullOrderFailsLater
 
 #### Scenario: セクションが消えていた
 - **WHEN** 並びを取り直すセクションが 404 を返す
 - **THEN** 同期は成功し、そのセクションの並びは前のまま
 
+#### Scenario: Asana が一時的に答えない
+- **WHEN** 並びを取り直すセクションが 500 を返し続ける
+- **THEN** 同期は成功して token が進み、次の同期でそのセクションを取り直す
+
 ### Requirement: 並びの分からないタスク
-並びの分からないタスクは、分かるタスクのあとに、今までの順 (一覧は完了・期日・名前、サブタスクは作った順) で並べる (MUST)。一覧は、セクション・プロジェクトで絞ったときはセクションの順、その中は位置の順。
+並びの分からないタスクは、分かるタスクのあとに、今までの順 (一覧は完了・期日・名前、サブタスクは作った順) で並べる (MUST)。一覧は、セクションで絞ったときは位置の順。プロジェクトで絞ったときは、位置の分かるタスクが 1 つでもあればセクションの順にまとめ、その中は位置の順。
 根拠: store/read.go (ListTasks, GetTask); TestOrderUnknownKeepsOldOrder, TestOrderFromListings
 
 #### Scenario: 並びが分からない

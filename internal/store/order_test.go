@@ -95,7 +95,8 @@ func TestOrderFromListings(t *testing.T) {
 	// elsewhere (d) is left alone; one not listed (a) comes after.
 	must(t, st.SetSectionTaskOrder(ctx, "s1", []string{"b", "d", "c"}))
 	wantOrder(t, st, TaskFilter{SectionGID: "s1"}, "b", "c", "a")
-	wantOrder(t, st, TaskFilter{ProjectGID: "p1"}, "b", "c", "d", "a")
+	// A task without a place stays in its section, after those with one.
+	wantOrder(t, st, TaskFilter{ProjectGID: "p1"}, "b", "c", "a", "d")
 	// An unknown section is ignored.
 	must(t, st.SetSectionTaskOrder(ctx, "nope", []string{"a"}))
 
@@ -178,28 +179,27 @@ func TestOrderOfMoveToOtherSection(t *testing.T) {
 	wantOrder(t, st, TaskFilter{SectionGID: "s1"}, "a", "b", "c")
 }
 
-// A parent change with a place puts the subtask there, and keeps it there through a
-// listing of Asana's old order and a pull of the subtask; one back gives the old place.
-func TestOrderOfUnsentSetParent(t *testing.T) {
+// Giving a task its place back puts it after the task it followed, not at the number it
+// had: the section was numbered again meanwhile, and that number may be another task's.
+func TestOrderDiscardAfterRenumbering(t *testing.T) {
 	st, ctx := orderStore(t)
-	must(t, st.SetSubtaskOrder(ctx, "parent", []string{"x", "y", "z"}))
-	must(t, st.SetParentLocal(ctx, "z", "parent", Position{Before: "x"}, testNow))
-	wantSubtasks(t, st, "parent", "z", "x", "y")
+	// Asana's order is the reverse of the one without places (a, b, c and x, y, z).
+	must(t, st.SetSectionTaskOrder(ctx, "s1", []string{"c", "b", "a"}))
+	// b, a, c: numbered 0, 1, 2; c had 0, the number b has now.
+	must(t, st.MoveTaskAtLocal(ctx, "c", "p1", "s1", Position{After: "a"}, testNow))
+	wantOrder(t, st, TaskFilter{SectionGID: "s1"}, "b", "a", "c")
+	must(t, st.DiscardOp(ctx, onlyOp(t, st).ID))
+	wantOrder(t, st, TaskFilter{SectionGID: "s1"}, "c", "b", "a")
 
-	must(t, st.SetSubtaskOrder(ctx, "parent", []string{"x", "y", "z"}))
-	wantSubtasks(t, st, "parent", "z", "x", "y")
-	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "z", Name: "z", Parent: &asana.Ref{GID: "parent"}}}))
-	wantSubtasks(t, st, "parent", "z", "x", "y")
-
-	// Under another parent and back: the old place.
-	must(t, st.SetParentLocal(ctx, "a", "parent", Position{After: "x"}, testNow))
-	wantSubtasks(t, st, "parent", "z", "x", "a", "y")
-	// a's parent change, pulled before it is sent (Asana still has a at the top level).
-	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "a", Name: "a"}}))
-	wantSubtasks(t, st, "parent", "z", "x", "a", "y")
-
+	// The same for a parent change.
+	must(t, st.SetSubtaskOrder(ctx, "parent", []string{"z", "y", "x"}))
+	must(t, st.SetParentLocal(ctx, "z", "parent", Position{After: "x"}, testNow))
+	wantSubtasks(t, st, "parent", "y", "x", "z")
+	must(t, st.DiscardOp(ctx, onlyOp(t, st).ID))
+	wantSubtasks(t, st, "parent", "z", "y", "x")
+	// Under another parent, discarded: back after the same subtask.
 	must(t, st.SetParentLocal(ctx, "y", "a", Position{}, testNow))
-	wantSubtasks(t, st, "parent", "z", "x", "a")
-	must(t, st.SetParentLocal(ctx, "y", "parent", Position{}, testNow))
-	wantSubtasks(t, st, "parent", "z", "x", "a", "y")
+	wantSubtasks(t, st, "parent", "z", "x")
+	must(t, st.DiscardOp(ctx, onlyOp(t, st).ID))
+	wantSubtasks(t, st, "parent", "z", "y", "x")
 }

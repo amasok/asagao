@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
@@ -113,50 +114,104 @@ func (s *Syncer) storeSubtasks(ctx context.Context, pl *pull, parent string, sub
 	return s.Store.SetSubtaskOrder(ctx, parent, taskGIDs(subs))
 }
 
-// refreshParents fetches the subtasks of the parents of subtasks the events named: they
-// may have been put in another order, which only the parent's list shows (#51). A parent
-// Asana does not give (gone, or not ours to see) is left as it is.
+// refreshParents lists the subtasks of the parents of subtasks the events named, and of
+// those a previous sync could not list: their order may have changed, which only the
+// parent's list shows (#51). The subtasks themselves were fetched already.
 func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
-	for _, gid := range pl.parents {
-		if pl.subsFetched[gid] || localgid.IsLocal(gid) {
-			continue
+	pending, err := s.Store.SyncState(ctx, readmodel.KeySubtaskOrder)
+	if err != nil {
+		return err
+	}
+	parents := addNew(slices.Clone(pl.parents), strings.Fields(pending)...)
+	pl.parents = pl.parents[:0]
+	var left []string
+	for _, gid := range parents {
+		if pl.subsFetched[gid] || slices.Contains(pl.withSubtasks, gid) || localgid.IsLocal(gid) {
+			continue // listed in full by this sync
 		}
-		subs, err := s.API.Subtasks(ctx, gid)
-		if isNotFound(err) || isForbidden(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("サブタスクの取得 (%s): %w", gid, err)
-		}
-		pl.subsFetched[gid] = true
-		if err := s.storeSubtasks(ctx, pl, gid, subs); err != nil {
+		gids, err := s.API.SubtaskOrder(ctx, gid)
+		if ok, err := s.orderFailed(err, "サブタスクの並びの取得 ("+gid+")"); err != nil {
 			return err
+		} else if !ok {
+			left = append(left, gid)
+			continue
+		}
+		if gids != nil {
+			if err := s.Store.SetSubtaskOrder(ctx, gid, gids); err != nil {
+				return err
+			}
 		}
 	}
-	pl.parents = pl.parents[:0]
-	return nil
+	pl.res.OrderPending += len(left)
+	return s.setPending(ctx, readmodel.KeySubtaskOrder, pending, left)
 }
 
-// refreshSections fetches the order of the sections (#51) whose tasks changed without a
-// listing of the whole project: a task moved, added or reordered there. A section Asana
-// does not give (deleted meanwhile, or not ours to see) is left as it is.
-func (s *Syncer) refreshSections(ctx context.Context, sections []string, completedSince time.Time) error {
+// refreshSections lists the order of the sections of project (#51) whose tasks changed
+// without a listing of the whole project (listed: there was one): a task moved, added or
+// reordered there. Sections a previous sync could not list are listed too.
+func (s *Syncer) refreshSections(ctx context.Context, pl *pull, project string, sections []string,
+	completedSince time.Time, listed bool) error {
+	key := readmodel.KeyTaskOrder + project
+	pending, err := s.Store.SyncState(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !listed {
+		sections = addNew(sections, strings.Fields(pending)...)
+	}
+	var left []string
 	for _, gid := range sections {
 		if localgid.IsLocal(gid) {
 			continue
 		}
 		gids, err := s.API.SectionTaskOrder(ctx, gid, completedSince)
-		if isNotFound(err) || isForbidden(err) {
+		if ok, err := s.orderFailed(err, "セクションの並びの取得 ("+gid+")"); err != nil {
+			return err
+		} else if !ok {
+			left = append(left, gid)
 			continue
 		}
-		if err != nil {
-			return fmt.Errorf("セクションの並びの取得 (%s): %w", gid, err)
-		}
-		if err := s.Store.SetSectionTaskOrder(ctx, gid, gids); err != nil {
-			return err
+		if gids != nil {
+			if err := s.Store.SetSectionTaskOrder(ctx, gid, gids); err != nil {
+				return err
+			}
 		}
 	}
+	pl.res.OrderPending += len(left)
+	return s.setPending(ctx, key, pending, left)
+}
+
+// orderFailed sorts out the error of a listing of the order. ok: done, or nothing to do
+// (404, 403: the section or parent is gone, or not ours to see; the order known stays).
+// Offline, or without a valid token, the sync fails as any other fetch. Otherwise (a 5xx
+// or 429 that outlasted the retries, a 400, ...) the order is only how tasks are shown:
+// the sync goes on, and the next one lists it again.
+func (s *Syncer) orderFailed(err error, what string) (ok bool, _ error) {
+	switch {
+	case err == nil, isNotFound(err), isForbidden(err):
+		return true, nil
+	case isNetworkError(err), model.IsUnauthorized(err):
+		return false, fmt.Errorf("%s: %w", what, err)
+	}
+	return false, nil
+}
+
+// setPending saves what is still to list under key, if it changed.
+func (s *Syncer) setPending(ctx context.Context, key, before string, left []string) error {
+	if v := strings.Join(left, " "); v != before {
+		return s.Store.SetSyncState(ctx, key, v)
+	}
 	return nil
+}
+
+// addNew adds to list the gids not in it yet.
+func addNew(list []string, gids ...string) []string {
+	for _, g := range gids {
+		if g != "" && !slices.Contains(list, g) {
+			list = append(list, g)
+		}
+	}
+	return list
 }
 
 // sectionsOf adds to sections those of project that tasks are in.
@@ -259,8 +314,10 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 		}
 		return nil
 	}
-	// touched: the sections whose order may have changed, and was not listed (#51).
+	// touched: the sections whose order may have changed, and was not listed (#51);
+	// listed: the whole project was.
 	var touched []string
+	var listed bool
 	fetchProject := func(since time.Time) error {
 		if err := sections(); err != nil {
 			return err
@@ -278,6 +335,7 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 			return err
 		}
 		if since.IsZero() { // every task kept, in the project's order
+			listed = true
 			return s.Store.SetProjectTaskOrder(ctx, p.gid, taskGIDs(tasks))
 		}
 		touched = sectionsOf(touched, p.gid, tasks)
@@ -308,8 +366,8 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 	upsert := func(tasks []model.Task) error {
 		touched = sectionsOf(touched, p.gid, tasks)
 		for _, t := range tasks {
-			if t.Parent != nil && t.Parent.GID != "" && !slices.Contains(pl.parents, t.Parent.GID) {
-				pl.parents = append(pl.parents, t.Parent.GID)
+			if t.Parent != nil {
+				pl.parents = addNew(pl.parents, t.Parent.GID)
 			}
 		}
 		return s.upsert(ctx, pl, tasks)
@@ -329,7 +387,7 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 			}
 		}
 	}
-	if err := s.refreshSections(ctx, touched, completedSince); err != nil {
+	if err := s.refreshSections(ctx, pl, p.gid, touched, completedSince, listed); err != nil {
 		return err
 	}
 	if ev.token != "" {
@@ -423,7 +481,7 @@ func (s *Syncer) pullCompleted(ctx context.Context, pl *pull, mode pullMode, onl
 		}
 		// The completed tasks have their place among the others (#51).
 		if sc.q.Project != "" {
-			if err := s.refreshSections(ctx, sectionsOf(nil, sc.q.Project, tasks), since); err != nil {
+			if err := s.refreshSections(ctx, pl, sc.q.Project, sectionsOf(nil, sc.q.Project, tasks), since, false); err != nil {
 				return err
 			}
 		}

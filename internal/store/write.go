@@ -485,6 +485,7 @@ var projectKeys = []struct{ prefix, isProject string }{
 	{KeyCustomFields, "1"},
 	{KeyEvents, "1"},
 	{KeyProjectTasks, "1"},
+	{KeyTaskOrder, "1"},
 	{KeyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
 }
 

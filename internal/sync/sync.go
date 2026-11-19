@@ -100,10 +100,13 @@ type Result struct {
 	// fetch (Syncer.DeferCompleted): call FetchCompleted.
 	CompletedPending bool `json:"completed_pending,omitempty"`
 	// Requests is how many HTTP requests were sent to Asana (if the client counts them).
-	Requests int64         `json:"requests"`
-	Tasks    int           `json:"tasks"`
-	Pruned   int64         `json:"pruned"`
-	Duration time.Duration `json:"duration_ns"`
+	Requests int64 `json:"requests"`
+	Tasks    int   `json:"tasks"`
+	Pruned   int64 `json:"pruned"`
+	// OrderPending: sections and parents whose order (#51) Asana could not give: the
+	// next sync lists them again.
+	OrderPending int           `json:"order_pending,omitempty"`
+	Duration     time.Duration `json:"duration_ns"`
 }
 
 func (s *Syncer) clock() time.Time {

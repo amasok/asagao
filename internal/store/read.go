@@ -132,6 +132,7 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 	// The tasks of a section, a project or a parent are in Asana's order (#51); those
 	// whose place is not known come after, as before.
 	var place, group string
+	var orderArgs []any
 	if !f.SortByModified {
 		switch {
 		case f.SectionGID != "":
@@ -142,7 +143,11 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 			q += " LEFT JOIN task_memberships om ON om.task_gid = t.gid AND om.project_gid = ?" +
 				" LEFT JOIN sections os ON os.gid = om.section_gid"
 			args = append([]any{f.ProjectGID}, args...)
-			place, group = "om.position", "CASE WHEN om.position IS NOT NULL THEN os.position END, "
+			// by section first, as soon as the project has a known place (a place counts
+			// within its section only); otherwise all as before
+			place, group = "om.position", `CASE WHEN EXISTS (SELECT 1 FROM task_memberships km
+				WHERE km.project_gid = ? AND km.position IS NOT NULL) THEN os.position END, `
+			orderArgs = []any{f.ProjectGID}
 		case f.ParentGID != "":
 			place = "t.subtask_position"
 		}
@@ -152,8 +157,8 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 	case f.SortByModified:
 		q += " ORDER BY t.modified_at DESC, t.name"
 	case place != "":
-		// by section first: a place counts within its section only
-		q += " ORDER BY " + place + " IS NULL, " + group + place + ", " + listOrder
+		q += " ORDER BY " + group + place + " IS NULL, " + place + ", " + listOrder
+		args = append(args, orderArgs...)
 	default:
 		q += " ORDER BY " + listOrder
 	}

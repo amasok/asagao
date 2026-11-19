@@ -104,6 +104,20 @@ func (c *Client) SectionTaskOrder(ctx context.Context, sectionGID string, comple
 	return gids, nil
 }
 
+// SubtaskOrder lists the gids of a task's subtasks in Asana's order (GET
+// /tasks/{gid}/subtasks), asking for nothing else.
+func (c *Client) SubtaskOrder(ctx context.Context, taskGID string) ([]string, error) {
+	refs, err := list[Ref](ctx, c, "/tasks/"+url.PathEscape(taskGID)+"/subtasks", fields([]string{"completed"}))
+	if err != nil {
+		return nil, err
+	}
+	gids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		gids = append(gids, r.GID)
+	}
+	return gids, nil
+}
+
 var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at",
 	"reaction_summary.emoji_base", "reaction_summary.variant", "reaction_summary.count", "reaction_summary.reacted"}
 

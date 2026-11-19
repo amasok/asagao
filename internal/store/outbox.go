@@ -192,6 +192,10 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 		if err != nil {
 			return err
 		}
+		place := map[string]any{} // where it was, to give back
+		if err := recordPlace(ctx, tx, place, sectionList(projectGID, current), gid, position); err != nil {
+			return err
+		}
 		if err := setSection(ctx, tx, gid, projectGID, sectionGID); err != nil {
 			return err
 		}
@@ -218,7 +222,8 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 		}
 		if op == nil {
 			op = &Op{Kind: OpMoveTask, TaskGID: gid, Payload: map[string]any{"project": projectGID},
-				Base: map[string]any{"section": current, "position": positionValue(position)}, State: OpPending, CreatedAt: formatTime(now)}
+				Base: place, State: OpPending, CreatedAt: formatTime(now)}
+			op.Base["section"] = current
 		}
 		if op.Base["section"] == sectionGID && pos.IsZero() { // moved back where it started
 			if err := restorePosition(ctx, tx, gid, projectGID, op.Base); err != nil {
@@ -291,12 +296,18 @@ func setSection(ctx context.Context, tx *sql.Tx, gid, projectGID, sectionGID str
 // restorePosition gives a task back its place in its section of project that base (of a
 // move it no longer makes) recorded, when it recorded one.
 func restorePosition(ctx context.Context, tx *sql.Tx, gid, projectGID string, base map[string]any) error {
-	p, ok := basePosition(base)
-	if !ok {
+	var section string
+	err := tx.QueryRowContext(ctx, "SELECT section_gid FROM task_memberships WHERE task_gid = ? AND project_gid = ?", gid, projectGID).Scan(&section)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, "UPDATE task_memberships SET position = ? WHERE task_gid = ? AND project_gid = ?", p, gid, projectGID)
-	return err
+	if err != nil {
+		return err
+	}
+	return restorePlace(ctx, tx, base, sectionList(projectGID, section), gid, func(p sql.NullInt64) error {
+		_, err := tx.ExecContext(ctx, "UPDATE task_memberships SET position = ? WHERE task_gid = ? AND project_gid = ?", p, gid, projectGID)
+		return err
+	})
 }
 
 // CreateTaskLocal inserts a task with a temporary "local:" gid and queues its creation.

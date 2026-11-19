@@ -18,6 +18,10 @@ const (
 	KeyProjectTasks = readmodel.KeyProjectTasks
 	// KeyMyTasks + workspace gid: how far My Tasks of the workspace is fetched.
 	KeyMyTasks = readmodel.KeyMyTasks
+	// KeyTaskOrder + project gid, KeySubtaskOrder: the sections and parents whose order
+	// (#51) the next sync lists again.
+	KeyTaskOrder    = readmodel.KeyTaskOrder
+	KeySubtaskOrder = readmodel.KeySubtaskOrder
 )
 
 // fetchedSQL is true for a row of projects whose tasks are cached: their incomplete tasks

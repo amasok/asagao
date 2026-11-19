@@ -278,8 +278,13 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 			if err := tx.QueryRowContext(ctx, "SELECT subtask_position FROM tasks WHERE gid = ?", gid).Scan(&position); err != nil {
 				return err
 			}
-			op = &Op{Kind: OpSetParent, TaskGID: gid, Payload: map[string]any{},
-				Base:  map[string]any{"parent": current, "position": positionValue(position)},
+			base := map[string]any{"parent": current}
+			if current != "" { // a top-level task has no place among subtasks
+				if err := recordPlace(ctx, tx, base, subtaskList(current), gid, position); err != nil {
+					return err
+				}
+			}
+			op = &Op{Kind: OpSetParent, TaskGID: gid, Payload: map[string]any{}, Base: base,
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
 		if err := setParent(ctx, tx, gid, parent); err != nil {
@@ -351,12 +356,11 @@ func setParent(ctx context.Context, tx *sql.Tx, gid, parent string) error {
 // restoreSubtaskPosition gives a task back its place among its parent's subtasks that
 // base (of a parent change it no longer makes) recorded, when it recorded one.
 func restoreSubtaskPosition(ctx context.Context, tx *sql.Tx, gid string, base map[string]any) error {
-	p, ok := basePosition(base)
-	if !ok {
-		return nil
-	}
-	_, err := tx.ExecContext(ctx, "UPDATE tasks SET subtask_position = ? WHERE gid = ?", p, gid)
-	return err
+	parent, _ := base["parent"].(string)
+	return restorePlace(ctx, tx, base, subtaskList(parent), gid, func(p sql.NullInt64) error {
+		_, err := tx.ExecContext(ctx, "UPDATE tasks SET subtask_position = ? WHERE gid = ?", p, gid)
+		return err
+	})
 }
 
 // reapplySetParent keeps an unsent parent change of a task after a pull.

@@ -82,6 +82,7 @@ type AsanaAPI interface {
 	Section(ctx context.Context, gid string) (*model.Section, error)
 	Sections(ctx context.Context, projectGID string) ([]model.Section, error)
 	SectionTaskOrder(ctx context.Context, sectionGID string, completedSince time.Time) ([]string, error)
+	SubtaskOrder(ctx context.Context, taskGID string) ([]string, error)
 	SetParent(ctx context.Context, taskGID, parentGID string, pos model.Position) error
 	SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*model.Project, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
