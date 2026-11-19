@@ -85,6 +85,25 @@ func (c *Client) Subtasks(ctx context.Context, taskGID string) ([]Task, error) {
 	})
 }
 
+// SectionTaskOrder lists the gids of a section's tasks in Asana's order (GET
+// /sections/{gid}/tasks): the incomplete ones, and those completed since completedSince
+// (zero: every task). Only the order is asked for, so a page is small.
+func (c *Client) SectionTaskOrder(ctx context.Context, sectionGID string, completedSince time.Time) ([]string, error) {
+	q := fields([]string{"completed"})
+	if !completedSince.IsZero() {
+		q.Set("completed_since", completedSince.UTC().Format(time.RFC3339))
+	}
+	refs, err := list[Ref](ctx, c, "/sections/"+url.PathEscape(sectionGID)+"/tasks", q)
+	if err != nil {
+		return nil, err
+	}
+	gids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		gids = append(gids, r.GID)
+	}
+	return gids, nil
+}
+
 var storyFields = []string{"type", "resource_subtype", "text", "html_text", "created_by.name", "created_at",
 	"reaction_summary.emoji_base", "reaction_summary.variant", "reaction_summary.count", "reaction_summary.reacted"}
 

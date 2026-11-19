@@ -265,7 +265,7 @@ func forgetLocalSection(ctx context.Context, tx *sql.Tx, gid string) error {
 	}
 	for _, q := range []string{
 		"DELETE FROM outbox WHERE task_gid = ?",
-		"UPDATE task_memberships SET section_gid = '' WHERE section_gid = ?",
+		"UPDATE task_memberships SET section_gid = '', position = NULL WHERE section_gid = ?",
 		"DELETE FROM sections WHERE gid = ?",
 	} {
 		if _, err := tx.ExecContext(ctx, q, gid); err != nil {

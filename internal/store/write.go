@@ -209,6 +209,7 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 			resource_subtype = excluded.resource_subtype, completed = excluded.completed,
 			completed_at = excluded.completed_at, assignee_gid = excluded.assignee_gid,
 			due_on = excluded.due_on, due_at = excluded.due_at, start_on = excluded.start_on,
+			subtask_position = CASE WHEN tasks.parent_gid = excluded.parent_gid THEN tasks.subtask_position END,
 			parent_gid = excluded.parent_gid, num_subtasks = excluded.num_subtasks,
 			permalink_url = excluded.permalink_url, created_at = excluded.created_at,
 			modified_at = excluded.modified_at`,
@@ -218,6 +219,12 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 		return err
 	}
 
+	// A task keeps its place in a section it stays in (#51); the listings of the order
+	// (SetSectionTaskOrder, ...) bring Asana's.
+	places, err := memberPlaces(ctx, tx, t.GID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM task_memberships WHERE task_gid = ?", t.GID); err != nil {
 		return err
 	}
@@ -229,8 +236,12 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 		if m.Section != nil {
 			section = m.Section.GID
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO task_memberships(task_gid, project_gid, section_gid) VALUES(?, ?, ?)",
-			t.GID, m.Project.GID, section); err != nil {
+		var position sql.NullInt64
+		if p, ok := places[m.Project.GID]; ok && p.section == section {
+			position = p.position
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO task_memberships(task_gid, project_gid, section_gid, position) VALUES(?, ?, ?, ?)",
+			t.GID, m.Project.GID, section, position); err != nil {
 			return err
 		}
 	}
@@ -292,6 +303,31 @@ func upsertTask(ctx context.Context, tx *sql.Tx, t model.Task) error {
 		return reapplyTagEdits(ctx, tx, gids...)
 	}
 	return nil
+}
+
+// memberPlace is a task's section of a project, and its place there.
+type memberPlace struct {
+	section  string
+	position sql.NullInt64
+}
+
+// memberPlaces maps the projects of a task to its section and place there.
+func memberPlaces(ctx context.Context, tx *sql.Tx, gid string) (map[string]memberPlace, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT project_gid, section_gid, position FROM task_memberships WHERE task_gid = ?", gid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]memberPlace{}
+	for rows.Next() {
+		var project string
+		var p memberPlace
+		if err := rows.Scan(&project, &p.section, &p.position); err != nil {
+			return nil, err
+		}
+		out[project] = p
+	}
+	return out, rows.Err()
 }
 
 func formatTime(t time.Time) string {

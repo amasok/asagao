@@ -145,9 +145,9 @@ func (s *Store) MoveTaskLocal(ctx context.Context, gid, projectGID, sectionGID s
 }
 
 // MoveTaskAtLocal moves a task as MoveTaskLocal, to pos in the section: just before or
-// after another task of it (pos.Before / pos.After). The store does not keep the order of
-// a section, so only Asana sees where; with a position, a move within the task's own
-// section is queued too.
+// after another task of it (pos.Before / pos.After); with a position, a move within the
+// task's own section is queued too. The cache puts the task where Asana will (#51): there,
+// else at the top of a section it comes from another one to.
 func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID string, pos Position, now time.Time) error {
 	if pos.Before != "" && pos.After != "" {
 		return errors.New("前と後は、どちらか一方だけ指定してください")
@@ -188,6 +188,10 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 		if current == sectionGID && pos.IsZero() {
 			return nil
 		}
+		position, err := sectionPosition(ctx, tx, gid, projectGID)
+		if err != nil {
+			return err
+		}
 		if err := setSection(ctx, tx, gid, projectGID, sectionGID); err != nil {
 			return err
 		}
@@ -198,6 +202,7 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 				return err
 			}
 			if op != nil && pos.IsZero() {
+				// created there: Asana's place for it is not known until it is fetched
 				op.Payload["section"] = sectionGID
 				return saveOp(ctx, tx, op)
 			}
@@ -213,13 +218,19 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 		}
 		if op == nil {
 			op = &Op{Kind: OpMoveTask, TaskGID: gid, Payload: map[string]any{"project": projectGID},
-				Base: map[string]any{"section": current}, State: OpPending, CreatedAt: formatTime(now)}
+				Base: map[string]any{"section": current, "position": positionValue(position)}, State: OpPending, CreatedAt: formatTime(now)}
 		}
 		if op.Base["section"] == sectionGID && pos.IsZero() { // moved back where it started
+			if err := restorePosition(ctx, tx, gid, projectGID, op.Base); err != nil {
+				return err
+			}
 			if op.ID == 0 {
 				return nil
 			}
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
+			return err
+		}
+		if err := placeInSection(ctx, tx, gid, projectGID, sectionGID, pos, current != sectionGID); err != nil {
 			return err
 		}
 		if !pos.IsZero() && op.ID != 0 {
@@ -269,8 +280,22 @@ func findMoveOp(ctx context.Context, tx *sql.Tx, gid, projectGID string) (*Op, e
 	return nil, rows.Err()
 }
 
+// setSection moves a task to another section of a project locally. Its place in the old
+// section means nothing in the new one: it is not known until placed (placeInSection).
 func setSection(ctx context.Context, tx *sql.Tx, gid, projectGID, sectionGID string) error {
-	_, err := tx.ExecContext(ctx, "UPDATE task_memberships SET section_gid = ? WHERE task_gid = ? AND project_gid = ?", sectionGID, gid, projectGID)
+	_, err := tx.ExecContext(ctx, `UPDATE task_memberships SET section_gid = ?1,
+		position = CASE WHEN section_gid = ?1 THEN position END WHERE task_gid = ?2 AND project_gid = ?3`, sectionGID, gid, projectGID)
+	return err
+}
+
+// restorePosition gives a task back its place in its section of project that base (of a
+// move it no longer makes) recorded, when it recorded one.
+func restorePosition(ctx context.Context, tx *sql.Tx, gid, projectGID string, base map[string]any) error {
+	p, ok := basePosition(base)
+	if !ok {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE task_memberships SET position = ? WHERE task_gid = ? AND project_gid = ?", p, gid, projectGID)
 	return err
 }
 
@@ -728,6 +753,9 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
 			return err
 		}
+		if err := restorePosition(ctx, tx, op.TaskGID, project, op.Base); err != nil {
+			return err
+		}
 	case OpSetCustomField:
 		if err := applyCustomFieldOp(ctx, tx, *op, true); err != nil {
 			return err
@@ -739,6 +767,9 @@ func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
 	case OpSetParent:
 		if parent, ok := op.Base["parent"].(string); ok {
 			if err := setParent(ctx, tx, op.TaskGID, parent); err != nil {
+				return err
+			}
+			if err := restoreSubtaskPosition(ctx, tx, op.TaskGID, op.Base); err != nil {
 				return err
 			}
 		}
@@ -1005,26 +1036,32 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 
 // reapplyUpdates re-applies unsent update_task payloads for a task (after a pull overwrote it).
 func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT kind, payload FROM outbox
+	rows, err := tx.QueryContext(ctx, `SELECT kind, payload, base FROM outbox
 		WHERE task_gid = ? AND kind IN (?, ?) AND state <> 'failed' ORDER BY id`, gid, OpUpdateTask, OpMoveTask)
 	if err != nil {
 		return err
 	}
 	type entry struct {
-		kind    string
-		payload map[string]any
+		kind          string
+		payload, base map[string]any
 	}
 	var entries []entry
 	for rows.Next() {
 		var e entry
-		var p string
-		if err := rows.Scan(&e.kind, &p); err != nil {
+		var p, b string
+		if err := rows.Scan(&e.kind, &p, &b); err != nil {
 			rows.Close()
 			return err
 		}
 		if err := termsafe.Unmarshal([]byte(p), &e.payload); err != nil {
 			rows.Close()
 			return err
+		}
+		if e.kind == OpMoveTask && b != "" {
+			if err := termsafe.Unmarshal([]byte(b), &e.base); err != nil {
+				rows.Close()
+				return err
+			}
 		}
 		entries = append(entries, e)
 	}
@@ -1035,9 +1072,7 @@ func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
 	for _, e := range entries {
 		var err error
 		if e.kind == OpMoveTask {
-			project, _ := e.payload["project"].(string)
-			section, _ := e.payload["section"].(string)
-			err = setSection(ctx, tx, gid, project, section)
+			err = reapplyMove(ctx, tx, gid, e.payload, e.base)
 		} else {
 			err = applyFields(ctx, tx, gid, e.payload, time.Time{})
 		}

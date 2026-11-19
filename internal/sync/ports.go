@@ -81,6 +81,7 @@ type AsanaAPI interface {
 	RemoveTag(ctx context.Context, taskGID, tagGID string) error
 	Section(ctx context.Context, gid string) (*model.Section, error)
 	Sections(ctx context.Context, projectGID string) ([]model.Section, error)
+	SectionTaskOrder(ctx context.Context, sectionGID string, completedSince time.Time) ([]string, error)
 	SetParent(ctx context.Context, taskGID, parentGID string, pos model.Position) error
 	SetProjectArchived(ctx context.Context, projectGID string, archived bool) (*model.Project, error)
 	StatusUpdates(ctx context.Context, projectGID string) ([]model.StatusUpdate, error)
@@ -199,6 +200,9 @@ type LocalStore interface {
 	EnumOptionCreateQueued(ctx context.Context, gid string) (bool, error)
 	FieldSettingQueued(ctx context.Context, taskGID, fieldGID string) (bool, error)
 	ReplaceSections(ctx context.Context, projectGID string, secs []model.Section) error
+	SetProjectTaskOrder(ctx context.Context, projectGID string, gids []string) error
+	SetSectionTaskOrder(ctx context.Context, sectionGID string, gids []string) error
+	SetSubtaskOrder(ctx context.Context, parentGID string, gids []string) error
 	ReplaceStatusUpdates(ctx context.Context, projectGID string, updates []model.StatusUpdate) error
 	ReplaceStories(ctx context.Context, taskGID string, stories []model.Story, fetchedAt time.Time) error
 	ReplaceTimeEntries(ctx context.Context, taskGID string, entries []model.TimeEntry, fetchedAt time.Time) error

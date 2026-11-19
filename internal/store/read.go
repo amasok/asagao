@@ -129,11 +129,33 @@ func (s *Store) ListTasks(ctx context.Context, f TaskFilter) ([]TaskSummary, err
 	add("t.gid NOT IN " + deletedTasks) // their delete is queued
 
 	q := "SELECT " + taskColumns + " FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid" + customStatusJoin
+	// The tasks of a section, a project or a parent are in Asana's order (#51); those
+	// whose place is not known come after, as before.
+	var place, group string
+	if !f.SortByModified {
+		switch {
+		case f.SectionGID != "":
+			q += " LEFT JOIN task_memberships om ON om.task_gid = t.gid AND om.section_gid = ?"
+			args = append([]any{f.SectionGID}, args...)
+			place = "om.position"
+		case f.ProjectGID != "":
+			q += " LEFT JOIN task_memberships om ON om.task_gid = t.gid AND om.project_gid = ?" +
+				" LEFT JOIN sections os ON os.gid = om.section_gid"
+			args = append([]any{f.ProjectGID}, args...)
+			place, group = "om.position", "CASE WHEN om.position IS NOT NULL THEN os.position END, "
+		case f.ParentGID != "":
+			place = "t.subtask_position"
+		}
+	}
 	q += " WHERE " + strings.Join(where, " AND ")
-	if f.SortByModified {
+	switch {
+	case f.SortByModified:
 		q += " ORDER BY t.modified_at DESC, t.name"
-	} else {
-		q += " ORDER BY t.completed, t.due_on = '', t.due_on, t.due_at IS NULL, t.due_at, t.name"
+	case place != "":
+		// by section first: a place counts within its section only
+		q += " ORDER BY " + place + " IS NULL, " + group + place + ", " + listOrder
+	default:
+		q += " ORDER BY " + listOrder
 	}
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
@@ -316,7 +338,7 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 	}
 	if d.Subtasks, err = s.queryTasks(ctx, "SELECT "+taskColumns+
 		" FROM tasks t LEFT JOIN users u ON u.gid = t.assignee_gid"+customStatusJoin+" WHERE t.parent_gid = ? AND t.gid NOT IN "+deletedTasks+
-		" ORDER BY t.created_at", gid); err != nil {
+		" ORDER BY t.subtask_position IS NULL, t.subtask_position, "+subtaskOrder, gid); err != nil {
 		return nil, err
 	}
 

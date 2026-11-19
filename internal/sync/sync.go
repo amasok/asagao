@@ -498,6 +498,9 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 	if err := s.Store.UpsertTasks(ctx, append([]model.Task{*t}, subs...)); err != nil {
 		return err
 	}
+	if err := s.Store.SetSubtaskOrder(ctx, taskGID, taskGIDs(subs)); err != nil {
+		return err
+	}
 	if attErr == nil {
 		if err := s.Store.ReplaceAttachments(ctx, taskGID, atts); err != nil {
 			return err

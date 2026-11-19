@@ -84,6 +84,7 @@ func (s *Server) New() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_tasks", Annotations: readOnly,
 		Description: "List tasks from the local cache. Defaults to my incomplete tasks, ordered by due date. " +
 			"Filter by project/section, assignee, due date range, overdue, tag or completion. " +
+			"A project's or section's tasks are in Asana's order (by section), as are get_task's subtasks. " +
 			"A project whose tasks are not cached yet (unfetched in list_projects) is fetched from Asana first when online."}, s.listTasks)
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_tasks", Annotations: readOnly,
 		Description: "Full-text search over task names, descriptions and comments in every synced project. " +

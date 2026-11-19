@@ -493,4 +493,12 @@ CREATE TABLE project_custom_types (
 DELETE FROM sync_state WHERE key = 'last_full_sync'
 	AND EXISTS (SELECT 1 FROM tasks WHERE resource_subtype = 'custom' AND custom_type_gid = '');
 `,
+	`
+-- The order of tasks as Asana has it (#51): task_memberships.position is a task's place in
+-- its section, tasks.subtask_position its place among its parent's subtasks. NULL: not
+-- known (stored before #51, or not in a listing yet); such tasks come after the known ones,
+-- in the order used before, until the daily full sync fetches the listings that give it.
+ALTER TABLE task_memberships ADD COLUMN position INTEGER;
+ALTER TABLE tasks ADD COLUMN subtask_position INTEGER;
+`,
 }
