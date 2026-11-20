@@ -188,7 +188,7 @@ CLI の書き込み系コマンドは `--dry-run` を受け付ける (MUST)。�
 
 ### Requirement: 送ったか分からない作成は照合し、作り直さない
 テンプレートからの作成や複製の POST が 5xx や接続切れで失敗したときは、Asana の一覧で、同じ名前で送った後に作られたものを探す (MUST)。見つかればそれを使い、見つからなければ作り直さずに、次の同期の後に確かめるよう伝える。4xx は作られていないので探さない。
-根拠: internal/sync/templates.go (recoverInstantiateTask, makeProject); TestInstantiateTaskRecovered, TestInstantiateTaskNotFoundAfter5xx, TestInstantiateProjectRecovered, TestInstantiateTaskRefused
+根拠: internal/sync/templates.go (foundTask, findMadeTask, makeProject); TestInstantiateTaskRecovered, TestInstantiateTaskNotFoundAfter5xx, TestInstantiateProjectRecovered, TestInstantiateTaskRefused
 
 #### Scenario: 作られた後に接続が切れた
 - **WHEN** instantiateTask が 502 を返したが、Asana にはタスクができている

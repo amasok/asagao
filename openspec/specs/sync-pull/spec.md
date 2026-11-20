@@ -200,8 +200,8 @@ Asana クライアントは、429 をどのメソッドでも、5xx を POST 以
 - **THEN** ゴールはキャッシュに入り、期間は前のものが残り、エラーが返る
 
 ### Requirement: プランにない機能は 1 日隠して、また試す
-`GET /goals` などが 402 を返したら、`plan_unavailable:<機能>:<ワークスペースの gid>` (readmodel.PlanKey) に時刻を記録し、そのワークスペースでその機能を 1 日 (PlanRecheckAfter) 隠して問い合わせない (MUST)。1 日たったら再び出して試し、答えが返れば記録を消す。402 はエラーにせず、読む側が「プランで使えない」と伝える。
-根拠: internal/sync/plan.go; internal/readmodel/plan.go; TestGoals402HidesThemForADay, TestGoals402IsPerWorkspace, TestPlanOffFor
+`GET /goals` などが 402 を返したら、`plan_unavailable:<機能>:<ワークスペースの gid>` (store の `planKey`) に時刻を記録し、そのワークスペースでその機能を 1 日 (`plan.RecheckAfter`) 隠して問い合わせない (MUST)。1 日たったら再び出して試し、答えが返れば記録を消す。402 はエラーにせず、読む側が「プランで使えない」と伝える。
+根拠: internal/sync/plan.go; internal/domain/plan/plan.go; internal/store/sync_state.go (planKey); TestGoals402HidesThemForADay, TestGoals402IsPerWorkspace, TestPlanOffFor
 
 #### Scenario: お試しを始めたワークスペース
 - **WHEN** ゴールが 402 で隠れてから 1 日たち、Asana がゴールを返すようになっている
@@ -233,7 +233,7 @@ Asana クライアントは、429 をどのメソッドでも、5xx を POST 以
 
 ### Requirement: タスクの種類を読む
 タスクの `custom_type`・`custom_type_status_option` は省ける欄として読む (MUST)。断られたら、まずこの 2 つだけを外して読み直し、それでも断られたら省ける欄を全部外す。種類を読まなかったタスクでは、キャッシュの種類を保ち、競合の比べにも使わない。
-根拠: asana/customfields.go (readTasks, fieldTier); store/write.go; readmodel/fieldvalues.go; TestCustomTypeFieldsRefusedAlone, TestCustomTypeNotFetchedIsKept, TestCustomTypePartialAndCleared
+根拠: asana/customfields.go (readTasks, fieldTier); store/write.go; asana/model/fieldvalues.go; TestCustomTypeFieldsRefusedAlone, TestCustomTypeNotFetchedIsKept, TestCustomTypePartialAndCleared
 
 #### Scenario: 種類の欄だけを断るプラン
 - **WHEN** タスクの読み取りが、opt_fields に `custom_type` があるときだけ 402 になる

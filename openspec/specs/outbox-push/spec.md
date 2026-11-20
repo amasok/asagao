@@ -2,7 +2,7 @@
 
 ## Purpose
 
-ローカルの変更を outbox (送信待ちの操作) に積み、Asana に送り (push)、送れたか分からないときに Asana を見て照合する振る舞いの基準。操作の種類、ローカル gid、畳み込みの規則、送る順番、結果ごとの扱い、再送してよいかの判断、照合、利用者による解決を書く。コンテキストは「送信待ち」と「同期」(docs/design/context-map.md)。今の実装は `internal/store` (outbox.go、outbox_send.go、tags.go、relations.go、customfields.go、dependencies.go、sections.go、projects.go、notifications.go、results.go、discard*.go) と `internal/sync` (push.go、batch.go、reconcile.go、resolve.go)。
+ローカルの変更を outbox (送信待ちの操作) に積み、Asana に送り (push)、送れたか分からないときに Asana を見て照合する振る舞いの基準。操作の種類、ローカル gid、畳み込みの規則、送る順番、結果ごとの扱い、再送してよいかの判断、照合、利用者による解決を書く。コンテキストは「送信待ち」と「同期」(docs/design/context-map.md)。今の実装は `internal/store` (outbox.go、outbox_send.go、tags.go、relations.go、customfields.go、dependencies.go、sections.go、projects.go、notifications.go、results.go、discard*.go) と `internal/sync` (push.go、batch.go、reconcile.go)、`internal/app/outbox.go` (利用者による解決)。
 
 ## Requirements
 
@@ -227,8 +227,8 @@ Asana にもうあるタスクだけを変える操作 (更新・カスタムフ
 - **THEN** 同じとみなさない
 
 ### Requirement: 利用者による解決
-TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と `keep_remote` は `conflict` だけ、`retry` は `failed` だけ、`discard` はどの状態でもできる。`sending` の操作は断る。`retry` は試した回数を 0 に戻し、Asana を確かめずに `pending` にする。捨てた操作はローカルで元に戻し (作成ならローカルのタスクとサブタスクを消す)、取り直す対象のタスクを返す。
-根拠: internal/sync/resolve.go:72-120; store/outbox.go:435-595; TestResolveStateRules, TestResolveRefusesSending, TestRetryResetsAttempts, TestDiscardOpByKind
+TUI・CLI・MCP の解決は `app.Outbox.Resolve` を通す (MUST)。`keep_local` と `keep_remote` は `conflict` だけ、`retry` は `failed` だけ、`discard` はどの状態でもできる。`sending` の操作は断る。`retry` は試した回数を 0 に戻し、Asana を確かめずに `pending` にする。捨てた操作はローカルで元に戻し (作成ならローカルのタスクとサブタスクを消す)、取り直す対象のタスクを返す。
+根拠: internal/app/outbox.go ((*Outbox).Resolve); store/outbox.go:435-595; TestResolveStateRules, TestResolveRefusesSending, TestRetryResetsAttempts, TestDiscardOpByKind
 
 #### Scenario: 送信中の操作を捨てようとする
 - **WHEN** `sending` の操作に `discard` を指示する
@@ -440,7 +440,7 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 
 ### Requirement: タイムトラッキングがプランにないとき
 記録の送信や一覧の取得に Asana が 402 を返したら、タスクのワークスペースごとに `plan_unavailable:time_tracking:<ワークスペース>` に時刻を記録する (MUST)。24 時間はそのワークスペースの一覧を問い合わせず、書き込みはエラーにする。全ワークスペースに記録があれば TUI のメニューと MCP のツールに出さない。24 時間たてば試し直し、読めたら記録を消す。
-根拠: sync/plan.go; readmodel/plan.go; app/timetracking.go; TestTimeTrackingPlanPerWorkspaceAndRechecked, TestTimeTrackingPlanUnavailable, TestTimeEntriesPaymentRequiredInTUI
+根拠: sync/plan.go; domain/plan/plan.go; app/timetracking.go; TestTimeTrackingPlanPerWorkspaceAndRechecked, TestTimeTrackingPlanUnavailable, TestTimeEntriesPaymentRequiredInTUI
 
 #### Scenario: 記録の作成に 402 が返る
 - **WHEN** 記録を作って送ると Asana が 402 を返す
@@ -500,7 +500,7 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 
 ### Requirement: カスタムフィールドの変更をプランで断られたとき
 選択肢の作成やフィールドの付け外しに Asana が 402 を返したら、そのワークスペースについて `plan_unavailable:custom_fields:<workspace>` に時刻を記録し、24 時間はどちらの機能もそのワークスペースで TUI・CLI・MCP に出さない (MUST)。24 時間たてば試し直し、書き込みが通れば印を消す。ほかのワークスペースでは隠さない。操作は理由付きで失敗にする。
-根拠: sync/plan.go (recordPlanRefusal, clearPlanRefusal); sync/push.go (send); readmodel/plan.go (PlanKey, PlanOffFor); app/plan.go (planOffered); TestPushNewOptionPaymentRequired, TestNewOptionNotOfferedWhenRefused
+根拠: sync/plan.go (recordPlanRefusal, clearPlanRefusal); sync/push.go (send); store/sync_state.go (planKey); domain/plan/plan.go (OffFor); app/plan.go (planOffered); TestPushNewOptionPaymentRequired, TestNewOptionNotOfferedWhenRefused
 
 #### Scenario: 無料のワークスペースで 402
 - **WHEN** あるワークスペースで選択肢の作成に Asana が 402 を返す
@@ -516,7 +516,7 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 
 ### Requirement: カスタムフィールドの値の書き込み形式
 `set_custom_field` の値は、Asana が受け付ける形で送る (MUST): date は `{"date": "YYYY-MM-DD"}` (文字列は "date_value: DayAndDateTime is not a JSON object" で断られる)、people と multi_enum は gid の配列で、空にするときは `[]` (null は "people_value: Not an array"・"multi_enum_values: Not an array" で断られる)、number は数値、そのほかを空にするときは null。本物の Asana で確かめた (Issue #1)。
-根拠: readmodel/fieldvalues.go (CustomFieldAPIValue); TestMovedValuesMatchOldStore, TestPushClearMultiEnumSendsEmptyList
+根拠: asana/model/fieldvalues.go (CustomFieldAPIValue); TestMovedValuesMatchOldStore, TestPushClearMultiEnumSendsEmptyList
 
 #### Scenario: 担当者のフィールドを空にする
 - **WHEN** people のフィールドを空にして同期する
@@ -580,7 +580,7 @@ Asana が断ったとき (402・400・403・422)、または 200 でも答えに
 
 ### Requirement: 並べ替えはキャッシュにもすぐ出す
 `move_task` と `set_parent` を積んだら、Asana が置く場所にキャッシュでも置く (MUST)。`insert_before` / `insert_after` があればその隣、位置なしで別のセクションへ移したらその先頭、位置なしで親を変えたら末尾。送るまでは、並びの取り直しやタスクの取り込みのあとも、積んだ場所に戻す。
-根拠: store/outbox.go (MoveTaskAtLocal, reapplyUpdates); store/taskops.go (SetParentLocal, reapplySetParent); store/order.go (placeInSection, placeSubtask, reapplyMoves, reapplyParentMoves); TestOrderOfUnsentMove, TestOrderOfMoveToOtherSection, TestOrderOfUnsentSetParent
+根拠: store/outbox.go (MoveTaskAtLocal, reapplyUpdates); store/taskops.go (SetParentLocal, reapplySetParent); store/order.go (placeInSection, placeSubtask, reapplyMoves, reapplyParentMoves); TestOrderOfUnsentMove, TestOrderOfMoveToOtherSection, TestAttackReparentRoundTrip, TestSetParentLocal
 
 #### Scenario: 前に置いて同期する
 - **WHEN** `task move C --before A` を積み、送る前に Asana の古い並びを取り込む
