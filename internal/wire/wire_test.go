@@ -141,3 +141,33 @@ func TestOpenStoreDescribesDroppedChanges(t *testing.T) {
 		t.Fatalf("discards = %+v, %v", ds, err)
 	}
 }
+
+// A store from OpenStore records the display's description of a dropped change, so the
+// JSON output of the front ends carries a non-empty summary.
+func TestOpenStoreRecordsDiscardSummary(t *testing.T) {
+	ctx := context.Background()
+	st, err := OpenStore(ctx, filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gid, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "x", WorkspaceGID: "w1"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddCommentLocal(ctx, gid, "メモ", store.UserRef{GID: "u1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Reset(ctx, true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := st.PendingDiscards(ctx)
+	if err != nil || len(ds) != 2 {
+		t.Fatalf("discards = %+v, %v", ds, err)
+	}
+	for _, d := range ds {
+		if d.Summary == "" || !d.IsReset() {
+			t.Errorf("discard = %+v, want a summary and the reset code", d)
+		}
+	}
+}
