@@ -39,18 +39,18 @@ func TestInlineImageFromSignedURL(t *testing.T) {
 	_ = st.SetAttachmentPath(ctx, "1220507679870013", path)
 
 	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
-	m.cellW, m.cellH = 10, 20
+	m.cache.cellW, m.cache.cellH = 10, 20
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
 	h.run(m.Init())
 	h.key("h", "j", "j", "l")
 	out := h.m.render()
 	if !strings.Contains(out, "\U0010EEEE") {
-		t.Fatalf("detail should contain kitty placeholders: inline=%+v status=%q\n%s", h.m.inline["1220507679870013"], h.m.status, ansi.Strip(out))
+		t.Fatalf("detail should contain kitty placeholders: inline=%+v status=%q\n%s", h.m.cache.inline["1220507679870013"], h.m.status, ansi.Strip(out))
 	}
 	h.key("h", "enter")
 	if out := h.m.render(); !strings.Contains(out, "\U0010EEEE") {
-		t.Fatalf("full-screen detail should contain kitty placeholders: inline=%+v\n%s", h.m.inline["1220507679870013"], ansi.Strip(out))
+		t.Fatalf("full-screen detail should contain kitty placeholders: inline=%+v\n%s", h.m.cache.inline["1220507679870013"], ansi.Strip(out))
 	}
 }
 
@@ -88,7 +88,7 @@ func TestInlineImageFailureReason(t *testing.T) {
 	_ = os.WriteFile(path, pngBytes(t, 40, 20), 0o600)
 	h.send(detailLoadedMsg{gid: "t1", d: h.m.detail.task})
 	if !strings.Contains(h.m.render(), "\U0010EEEE") {
-		t.Fatalf("image should load on retry: %+v\n%s", h.m.inline["1220507679870013"], h.screen())
+		t.Fatalf("image should load on retry: %+v\n%s", h.m.cache.inline["1220507679870013"], h.screen())
 	}
 }
 

@@ -203,7 +203,7 @@ func (m *Model) renderTimeline(w, h int) string {
 	}
 	if len(m.list.rows) == 0 {
 		msg := "該当するタスクはありません"
-		if m.syncing && m.lastSync.IsZero() {
+		if m.syncState.running && m.syncState.last.IsZero() {
 			msg = "同期しています…"
 		}
 		return m.pane(title, append(lines, m.st.dim.Render(msg)), w, h, focused)

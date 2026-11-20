@@ -155,13 +155,9 @@ type Model struct {
 
 	search searchState
 
-	syncer      *sync.Syncer
-	syncing     bool
-	syncErr     error
-	syncBusy    bool // the last sync found another process syncing; retrying soon
-	busyRetries int  // busy syncs in a row (the retry waits longer each time)
-	lastSync    time.Time
-	opening     string // project whose tasks are being fetched (lazy.go)
+	syncer    *sync.Syncer
+	syncState syncState
+	opening   string // project whose tasks are being fetched (lazy.go)
 
 	status string // transient message for the footer
 
@@ -171,7 +167,6 @@ type Model struct {
 
 	// writes (write.go)
 	prompt      promptState // the text input in the footer and what it changes (write.go)
-	syncAgain   bool        // a write happened during a sync; sync again when it finishes
 	outbox      outboxCounts
 	outboxView  outboxScreen
 	inbox       readmodel.InboxState // whether the notifications can be shown (inbox.go)
@@ -191,13 +186,8 @@ type Model struct {
 	// time tracking (timetracking.go): the task whose entries are shown
 	timeTask readmodel.TaskSummary
 
-	// detail rendering (markdown.go)
-	dark         bool // terminal background
-	mdCache      map[mdKey]string
-	inline       map[string]*inlineImage // by attachment gid
-	inlineDirty  bool
-	nextImageID  int
-	cellW, cellH int // terminal cell size in pixels (0 if unknown)
+	dark  bool        // terminal background
+	cache renderCache // detail rendering (markdown.go)
 
 	// layout (layout.go)
 	detailRatio int // detail pane width in % of the area right of the sidebar
@@ -226,6 +216,16 @@ type Model struct {
 	tmpl           templateState // templates.go
 }
 
+// syncState is how the background sync is doing.
+type syncState struct {
+	running     bool
+	err         error
+	busy        bool // the last sync found another process syncing; retrying soon
+	busyRetries int  // busy syncs in a row (the retry waits longer each time)
+	last        time.Time
+	again       bool // a write happened during a sync; sync again when it finishes
+}
+
 func New(ctx context.Context, deps Deps) *Model {
 	if deps.Now == nil {
 		deps.Now = time.Now
@@ -246,7 +246,7 @@ func New(ctx context.Context, deps Deps) *Model {
 		detailRatio: defaultDetailRatio,
 	}
 	if deps.InlineImages {
-		m.cellW, m.cellH = imageview.CellSize()
+		m.cache.cellW, m.cache.cellH = imageview.CellSize()
 	}
 	if deps.Theme == "light" {
 		m.dark = false
@@ -377,10 +377,10 @@ func (m *Model) loadDetail(gid string) tea.Cmd {
 }
 
 func (m *Model) startSync() tea.Cmd {
-	if m.syncing || m.deps.NewSyncer == nil {
+	if m.syncState.running || m.deps.NewSyncer == nil {
 		return nil
 	}
-	m.syncing = true
+	m.syncState.running = true
 	syncer, newSyncer, now := m.syncer, m.deps.NewSyncer, m.deps.Now
 	return func() tea.Msg {
 		if syncer == nil {
@@ -595,7 +595,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case syncDoneMsg:
-		m.syncing = false
+		m.syncState.running = false
 		if msg.syncer != nil {
 			m.syncer = msg.syncer
 		}
@@ -606,19 +606,19 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncer = nil
 		}
 		if errors.Is(msg.err, auth.ErrLoginReplaced) {
-			m.syncAgain = true // check the new login's account now, not in 5 minutes
+			m.syncState.again = true // check the new login's account now, not in 5 minutes
 		}
 		// Another asagao (CLI, MCP server, another TUI) is syncing or sending: not an
 		// error and not offline. Keep the last state and quietly try again soon.
-		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
-		if m.syncBusy {
-			m.syncAgain = false // the retry covers a sync requested meanwhile
-			delay := busyRetryDelay(m.busyRetries)
-			m.busyRetries++
+		m.syncState.busy = errors.Is(msg.err, sync.ErrPushBusy)
+		if m.syncState.busy {
+			m.syncState.again = false // the retry covers a sync requested meanwhile
+			delay := busyRetryDelay(m.syncState.busyRetries)
+			m.syncState.busyRetries++
 			return m, tea.Batch(m.retrySyncAfter(delay), m.loadOutbox())
 		}
-		m.busyRetries = 0
-		m.syncErr = msg.err
+		m.syncState.busyRetries = 0
+		m.syncState.err = msg.err
 		if errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.status = m.accountChangedStatus()
 		} else if loginHelp != "" {
@@ -627,12 +627,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
 		if msg.err == nil && msg.res.CompletedPending {
 			cmds = append(cmds, m.fetchCompleted()) // syncs again (syncAgain) after it
-		} else if m.syncAgain {
-			m.syncAgain = false
+		} else if m.syncState.again {
+			m.syncState.again = false
 			cmds = append(cmds, m.startSync())
 		}
 		if msg.err == nil {
-			m.lastSync = msg.at
+			m.syncState.last = msg.at
 			cmds = append(cmds, m.loadScopes(), m.loadTasks(), m.prefetchTemplates())
 			if gid := m.detailGID(); gid != "" {
 				cmds = append(cmds, m.loadDetail(gid), m.debounceDetail(gid))
@@ -1077,26 +1077,26 @@ func clamp(v, lo, hi int) int {
 // syncStatus is shown in the header.
 func (m *Model) syncStatus() (string, bool) {
 	switch {
-	case m.syncing:
+	case m.syncState.running:
 		return "⟳ 同期中", true
-	case m.syncBusy:
+	case m.syncState.busy:
 		return "⟳ 別の asagao が同期中（少し後にもう一度同期します）", true
-	case errors.Is(m.syncErr, sync.ErrAccountChanged):
+	case errors.Is(m.syncState.err, sync.ErrAccountChanged):
 		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:
 		return "○ オフライン", false
-	case errors.Is(m.syncErr, auth.ErrNotLoggedIn):
+	case errors.Is(m.syncState.err, auth.ErrNotLoggedIn):
 		return "○ 未ログイン（asagao auth login --pat）", false
-	case auth.LoginHelp(m.syncErr) != "":
+	case auth.LoginHelp(m.syncState.err) != "":
 		return "○ ログインし直してください（案内は下の行）", false
-	case m.syncErr != nil:
-		if errors.Is(m.syncErr, context.Canceled) {
+	case m.syncState.err != nil:
+		if errors.Is(m.syncState.err, context.Canceled) {
 			return "", true
 		}
 
-		return "○ オフライン（" + shortErr(m.syncErr) + "）", false
-	case !m.lastSync.IsZero():
-		return "● 同期済み " + m.lastSync.Format("15:04"), true
+		return "○ オフライン（" + shortErr(m.syncState.err) + "）", false
+	case !m.syncState.last.IsZero():
+		return "● 同期済み " + m.syncState.last.Format("15:04"), true
 	}
 	return "", true
 }

@@ -726,7 +726,7 @@ func TestInlineImagePlaceholders(t *testing.T) {
 	_ = st.SetAttachmentPath(ctx, "9", path)
 
 	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
-	m.cellW, m.cellH = 10, 20
+	m.cache.cellW, m.cache.cellH = 10, 20
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -740,7 +740,7 @@ func TestInlineImagePlaceholders(t *testing.T) {
 	if strings.Index(plain, "上") > strings.Index(plain, "\U0010EEEE") || strings.Index(plain, "\U0010EEEE") > strings.Index(plain, "下") {
 		t.Fatal("image should be drawn between 上 and 下")
 	}
-	got := h.m.inline["9"]
+	got := h.m.cache.inline["9"]
 	if got == nil || got.sentCols != 20 || got.sentRows != 5 { // 200x100 px with 10x20 cells
 		t.Fatalf("placement = %+v", got)
 	}

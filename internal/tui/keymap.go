@@ -217,7 +217,7 @@ func (m *Model) openInBrowser() tea.Cmd {
 }
 
 func (m *Model) syncNow() tea.Cmd {
-	if m.syncing {
+	if m.syncState.running {
 		m.status = "同期中です"
 		return nil
 	}

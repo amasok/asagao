@@ -23,6 +23,15 @@ import (
 
 // --- markdown ---
 
+// renderCache keeps what the detail pane rendered: Markdown by key and the inline images.
+type renderCache struct {
+	md           map[mdKey]string
+	inline       map[string]*inlineImage // by attachment gid
+	inlineDirty  bool
+	nextImageID  int
+	cellW, cellH int // terminal cell size in pixels (0 if unknown)
+}
+
 // textMarkdown returns Markdown for a description or comment, preferring the rich text.
 func textMarkdown(htmlText, plain string) string {
 	if htmlText != "" {
@@ -46,7 +55,7 @@ func (m *Model) markdown(md string, width int) string {
 		return ""
 	}
 	key := mdKey{md, width, m.dark}
-	if s, ok := m.mdCache[key]; ok {
+	if s, ok := m.cache.md[key]; ok {
 		return s
 	}
 	cfg := glamourstyles.DarkStyleConfig
@@ -62,10 +71,10 @@ func (m *Model) markdown(md string, width int) string {
 			out = strings.Trim(s, "\n")
 		}
 	}
-	if m.mdCache == nil || len(m.mdCache) > 300 {
-		m.mdCache = map[mdKey]string{}
+	if m.cache.md == nil || len(m.cache.md) > 300 {
+		m.cache.md = map[mdKey]string{}
 	}
-	m.mdCache[key] = out
+	m.cache.md[key] = out
 	return out
 }
 
@@ -115,7 +124,7 @@ type inlineLoadedMsg struct {
 // imageBlock returns the lines that show image gid (number n) at most width cells wide.
 func (m *Model) imageBlock(gid string, width, n int) []string {
 	label := m.st.tag.Render(fmt.Sprintf("[画像%d]", n))
-	img := m.inline[gid]
+	img := m.cache.inline[gid]
 	if !m.deps.InlineImages || img == nil || img.png == nil {
 		hint := "（i で表示）"
 		switch {
@@ -127,11 +136,11 @@ func (m *Model) imageBlock(gid string, width, n int) []string {
 		return []string{ansi.Truncate(label+m.st.dim.Render(hint), max(1, width), "…")}
 	}
 	maxRows := min(imageview.MaxPlaceholderCells, max(4, m.listHeight()-2))
-	cw, ch := m.cellW, m.cellH
+	cw, ch := m.cache.cellW, m.cache.cellH
 	cols, rows := imageview.Fit(img.pxW, img.pxH, imageview.Box{Cols: min(width, imageview.MaxPlaceholderCells), Rows: maxRows, CellW: cw, CellH: ch})
 	img.wantCols, img.wantRows = cols, rows
 	if img.sentCols != cols || img.sentRows != rows {
-		m.inlineDirty = true
+		m.cache.inlineDirty = true
 		return []string{label + m.st.dim.Render("（表示準備中…）")}
 	}
 	return imageview.PlaceholderLines(img.id, cols, rows)
@@ -149,13 +158,13 @@ func (m *Model) prepareInline() tea.Cmd {
 	}
 	var cmds []tea.Cmd
 	for _, gid := range taskImages(d) {
-		if img := m.inline[gid]; img != nil && (img.loading || img.png != nil) {
+		if img := m.cache.inline[gid]; img != nil && (img.loading || img.png != nil) {
 			continue // loading or loaded; failed images are tried again
 		}
-		if m.inline == nil {
-			m.inline = map[string]*inlineImage{}
+		if m.cache.inline == nil {
+			m.cache.inline = map[string]*inlineImage{}
 		}
-		m.inline[gid] = &inlineImage{loading: true}
+		m.cache.inline[gid] = &inlineImage{loading: true}
 		gid, taskGID := gid, d.GID
 		cmds = append(cmds, func() tea.Msg {
 			path, err := syncer.DownloadAttachment(m.ctx, taskGID, gid)
@@ -177,10 +186,10 @@ func (m *Model) prepareInline() tea.Cmd {
 }
 
 func (m *Model) onInlineLoaded(msg inlineLoadedMsg) {
-	img := m.inline[msg.gid]
+	img := m.cache.inline[msg.gid]
 	if img == nil {
 		img = &inlineImage{}
-		m.inline[msg.gid] = img
+		m.cache.inline[msg.gid] = img
 	}
 	img.loading, img.err = false, msg.err
 	if msg.err != nil {
@@ -196,8 +205,8 @@ func (m *Model) onInlineLoaded(msg inlineLoadedMsg) {
 		m.refreshDetailView()
 		return
 	}
-	m.nextImageID = m.nextImageID%255 + 1
-	img.id, img.png, img.pxW, img.pxH = m.nextImageID, msg.png, msg.pxW, msg.pxH
+	m.cache.nextImageID = m.cache.nextImageID%255 + 1
+	img.id, img.png, img.pxW, img.pxH = m.cache.nextImageID, msg.png, msg.pxW, msg.pxH
 	m.refreshDetailView()
 }
 
@@ -210,12 +219,12 @@ func shortError(err error, width int) string {
 // flushInline sends images whose placement size changed, then re-renders the detail so the
 // placeholders appear. It is called after every update.
 func (m *Model) flushInline() tea.Cmd {
-	if !m.inlineDirty {
+	if !m.cache.inlineDirty {
 		return nil
 	}
-	m.inlineDirty = false
+	m.cache.inlineDirty = false
 	var seq strings.Builder
-	for _, img := range m.inline {
+	for _, img := range m.cache.inline {
 		if img.png == nil || img.wantCols == 0 || (img.sentCols == img.wantCols && img.sentRows == img.wantRows) {
 			continue
 		}

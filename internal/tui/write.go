@@ -134,8 +134,8 @@ func (m *Model) loadOutboxOnly() tea.Cmd {
 
 // requestSync sends queued writes as soon as possible.
 func (m *Model) requestSync() tea.Cmd {
-	if m.syncing {
-		m.syncAgain = true
+	if m.syncState.running {
+		m.syncState.again = true
 		return nil
 	}
 	return m.startSync()
