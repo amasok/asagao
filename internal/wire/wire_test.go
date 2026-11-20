@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,8 +13,10 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/config"
+	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -111,5 +114,60 @@ func TestCheckPAT(t *testing.T) {
 	}
 	if calls.Load() != 2 || len(retried) != 1 || retried[0] != http.StatusServiceUnavailable {
 		t.Fatalf("calls %d, retried %v", calls.Load(), retried)
+	}
+}
+
+// The store OpenStore gives records a dropped change with the display's description of it
+// (the store does not import ui/format itself, Issue #82).
+func TestOpenStoreDescribesDroppedChanges(t *testing.T) {
+	ctx := context.Background()
+	st, err := OpenStore(ctx, filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "牛乳を買う"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddCommentLocal(ctx, "t1", "了解", store.UserRef{GID: "me"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Reset(ctx, true, now); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := st.PendingDiscards(ctx)
+	if err != nil || len(ds) != 1 || ds[0].Summary != "コメント「了解」" || !ds[0].IsReset() {
+		t.Fatalf("discards = %+v, %v", ds, err)
+	}
+}
+
+// A store from OpenStore records the display's description of a dropped change, so the
+// JSON output of the front ends carries a non-empty summary.
+func TestOpenStoreRecordsDiscardSummary(t *testing.T) {
+	ctx := context.Background()
+	st, err := OpenStore(ctx, filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gid, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "x", WorkspaceGID: "w1"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddCommentLocal(ctx, gid, "メモ", store.UserRef{GID: "u1"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Reset(ctx, true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := st.PendingDiscards(ctx)
+	if err != nil || len(ds) != 2 {
+		t.Fatalf("discards = %+v, %v", ds, err)
+	}
+	for _, d := range ds {
+		if d.Summary == "" || !d.IsReset() {
+			t.Errorf("discard = %+v, want a summary and the reset code", d)
+		}
 	}
 }

@@ -20,9 +20,6 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
-// ResetReason is the reason recorded for unsent changes deleted by Reset.
-const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"
-
 // StatusTypes are the status values of a project status update, with Japanese labels.
 var StatusTypes = []struct{ Value, Label string }{
 	{"on_track", "順調"}, {"at_risk", "要注意"}, {"off_track", "遅れ"}, {"on_hold", "保留"}, {"complete", "完了"},
@@ -40,10 +37,6 @@ func StatusLabel(t string) string {
 
 // VerifyNote tells the user that an entry being checked against Asana needs nothing from them.
 const VerifyNote = "操作は不要です。次の同期で自動的に確認します"
-
-// AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
-// has several candidates for what it created.
-const AmbiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
 
 // BriefForbiddenMessage says that Asana does not let us read or change one project's
 // brief (it answered 403; BriefUnavailable).
@@ -98,21 +91,21 @@ func OpNote(op outbox.Op) (heading, text string) {
 const DiscardNotice = "Asana で削除されたものへの変更を破棄しました"
 
 // DiscardLine describes one dropped change: 「task」: what it changed (and, for an unsent
-// change deleted by a reset, that it was).
+// change deleted by a reset, that it was). A change recorded without a summary (a store
+// opened without Store.DescribeChange) is described from its kind and payload.
 func DiscardLine(d readmodel.Discard) string {
 	s := d.Summary
+	if s == "" {
+		s = describeChange(outbox.Op{Kind: d.Kind, TaskGID: d.TaskGID, Payload: d.Payload})
+	}
 	if d.TaskName != "" {
 		s = "「" + d.TaskName + "」: " + s
 	}
-	if IsResetDiscard(d) {
+	if d.IsReset() {
 		s += "（初期化で破棄）"
 	}
 	return termsafe.String(s)
 }
-
-// IsResetDiscard reports whether d was an unsent change deleted by Reset (which the user
-// confirmed), rather than a change to something deleted in Asana.
-func IsResetDiscard(d readmodel.Discard) bool { return d.Reason == ResetReason }
 
 // DiscardDetail is a piece of a dropped change worth keeping in full, e.g. a comment.
 type DiscardDetail struct {
@@ -231,7 +224,8 @@ func DescribeOp(op outbox.Op) string {
 
 // DescribeChange says in a few words what an outbox entry changes, without naming the
 // task (e.g. 「名前を「…」に変更」「コメント「…」」). It is the one vocabulary for outbox
-// entries: DescribeOp adds the task, and dropped changes are recorded with it (Discard.Summary).
+// entries: DescribeOp adds the task, and dropped changes are recorded with it (Discard.Summary;
+// the wiring gives it to the store as Store.DescribeChange).
 func DescribeChange(op outbox.Op) string {
 	return termsafe.String(describeChange(op))
 }

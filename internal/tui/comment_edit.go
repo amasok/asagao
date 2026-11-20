@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 )
@@ -148,5 +149,5 @@ func notesImages(d *readmodel.TaskDetail) []string {
 	if d.HTMLNotes != "" {
 		return richtext.Images(d.HTMLNotes)
 	}
-	return readmodel.InlineAssets(d.Notes)
+	return rich.InlineAssets(d.Notes)
 }

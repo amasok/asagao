@@ -342,7 +342,7 @@ func TestTimeTrackingPaymentRequired(t *testing.T) {
 	}
 	before := ts.count("")
 	err := s.FetchTimeEntries(ctx, "t1")
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if !errors.As(err, &pe) || pe.Feature != plan.TimeTracking {
 		t.Errorf("FetchTimeEntries = %v", err)
 	}
@@ -356,7 +356,7 @@ func TestFetchTimeEntriesPaymentRequired(t *testing.T) {
 	ts, s, st := setupTimePush(t)
 	ctx := context.Background()
 	ts.unpaid = true
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatalf("FetchTimeEntries = %v", err)
 	}
@@ -395,7 +395,7 @@ func TestTimeTrackingPlanPerWorkspaceAndRechecked(t *testing.T) {
 	clock := time.Now()
 	s.now = func() time.Time { return clock }
 	ts.unpaid = true
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatalf("w1 = %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/plan"
 	domaintask "github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Setting a custom task type (#59). Whether Asana's PUT /tasks takes custom_type and
@@ -69,7 +70,7 @@ func (s *Syncer) customTypeRefused(ctx context.Context, op outbox.Op, err error)
 		if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
 			_, _ = s.recordPlanRefusal(ctx, plan.CustomTypes, ws, err) // per workspace, for a while (plan.go)
 		}
-		return &customTypeWithdrawn{reason: plan.UnavailableMessage(plan.CustomTypes), err: err}
+		return &customTypeWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.CustomTypes), err: err}
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
 		return &customTypeWithdrawn{reason: errCustomTypeUnsupported, err: err}
 	}

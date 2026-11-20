@@ -3,8 +3,6 @@ package store
 import (
 	"reflect"
 	"testing"
-
-	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // The names moved keep their old values through the store's aliases / internal keys.
@@ -14,7 +12,6 @@ func TestE1AliasesKeepValues(t *testing.T) {
 		resultPrefixTask: "gid:", resultPrefixStory: "story:", resultPrefixAttachment: "att:", resultPrefixStatus: "status:", resultPrefixTag: "tag:",
 		OpUpdateTask: "update_task", OpCreateTask: "create_task", OpAddComment: "add_comment", OpMoveTask: "move_task",
 		OpPending: "pending", OpConflict: "conflict", OpFailed: "failed", OpSending: "sending",
-		AmbiguousMessage: format.AmbiguousMessage,
 	} {
 		if got != want {
 			t.Errorf("%q, want %q", got, want)

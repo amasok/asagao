@@ -197,7 +197,7 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 			_, err := tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending' WHERE id = ? AND state = 'sending'", id)
 			return err
 		}
-		if d, err = recordDiscard(ctx, tx, &withdrawn, reason, now); err != nil {
+		if d, err = s.recordDiscard(ctx, tx, &withdrawn, reason, now); err != nil {
 			return err
 		}
 		// Back to the base: the kind of task, its custom type and status, and completed

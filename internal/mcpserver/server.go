@@ -22,6 +22,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
@@ -550,7 +551,7 @@ func editableMarkdown(htmlText, plain string) string {
 	if htmlText != "" {
 		return richtext.ToEditableMarkdown(htmlText)
 	}
-	md := richtext.FromPlainEditable(readmodel.ReplaceInlineAssets(plain, func(gid string) string {
+	md := richtext.FromPlainEditable(rich.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	}))
 	return richtext.ImageTokenRe.ReplaceAllString(md, "![画像](asana:$1)")
@@ -904,7 +905,7 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 		// not recorded: its task in Asana is not in the cache (e.g. an image copied from
 		// another task); the cached file is named "<gid>-name"
 		out.Name = strings.TrimPrefix(filepath.Base(path), in.GID+"-")
-		out.IsImage = readmodel.IsImageName(out.Name)
+		out.IsImage = rich.IsImageName(out.Name)
 	} else {
 		return nil, AttachmentOutput{}, err
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // serverTask is the fake server's state for one task.
@@ -1562,7 +1563,7 @@ func TestPushCreateAmbiguousAsksUser(t *testing.T) {
 	if err != nil || res.Failed != 1 || ws.countCalls("POST /tasks ") != 0 {
 		t.Fatalf("push = %+v %v", res, err)
 	}
-	if op := opByKind(t, st, store.OpCreateTask); op == nil || op.State != store.OpFailed || op.LastError != store.AmbiguousMessage {
+	if op := opByKind(t, st, store.OpCreateTask); op == nil || op.State != store.OpFailed || op.LastError != ambiguousMessage {
 		t.Fatalf("two candidates: the user decides: %+v", op)
 	}
 }
@@ -2165,7 +2166,7 @@ func TestPushVerifyWithoutSentAtAsksUser(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 || ws.countCalls("POST /tasks ") != 0 {
 		t.Fatalf("push = %+v %v", res, err)
 	}
-	if op := opByKind(t, st, store.OpCreateTask); op.State != store.OpFailed || op.LastError != store.AmbiguousMessage {
+	if op := opByKind(t, st, store.OpCreateTask); op.State != store.OpFailed || op.LastError != ambiguousMessage {
 		t.Fatalf("entry = %+v", op)
 	}
 }
@@ -2353,6 +2354,7 @@ func TestRetryResetsAttempts(t *testing.T) {
 
 func TestPushDropsChangesToDeletedTask(t *testing.T) {
 	ws, _, s, st := setupPush(t)
+	st.SetDescribeChange(format.DescribeChange) // as wire.OpenStore does
 	ctx := context.Background()
 	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "消されたタスク", Workspace: &asana.Ref{GID: "w1"}}})
 	_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"completed": true}, now)
@@ -2487,6 +2489,7 @@ func TestPushKeepsChangeWhenDeletionCannotBeChecked(t *testing.T) {
 // A status update on a project deleted in Asana is dropped.
 func TestPushDropsStatusOfDeletedProject(t *testing.T) {
 	ws, _, s, st := setupPush(t)
+	st.SetDescribeChange(format.DescribeChange) // as wire.OpenStore does
 	ctx := context.Background()
 	if _, err := st.CreateStatusLocal(ctx, "p1", "on_track", "順調", "本文", "", store.UserRef{Name: "Me"}, now); err != nil {
 		t.Fatal(err)
@@ -2788,5 +2791,14 @@ func TestPushWithControlCharactersOnServer(t *testing.T) {
 	}
 	if ws.tasks["t1"].Name != "D (local)" {
 		t.Fatalf("server name = %q", ws.tasks["t1"].Name)
+	}
+}
+
+// The message of an entry Push cannot match is what the front ends show under it (it moved
+// here from ui/format in Issue #82 without changing).
+func TestAmbiguousMessageText(t *testing.T) {
+	const want = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+	if ambiguousMessage != want {
+		t.Errorf("%q", ambiguousMessage)
 	}
 }

@@ -1,6 +1,10 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/amasok/asagao/internal/readmodel"
+)
 
 // The sync_state keys and values of the inbox state are in users' databases: they must not
 // change with where the constants are declared.
@@ -13,9 +17,9 @@ func TestInboxStoredKeysAndValuesUnchanged(t *testing.T) {
 			t.Errorf("%q, want %q", got, want)
 		}
 	}
-	// ResetReason is stored with each reset discard, and IsResetDiscard reads it back.
-	if ResetReason != "ローカルのデータを初期化したため、送らずに破棄しました" || !IsResetDiscard(Discard{Reason: "ローカルのデータを初期化したため、送らずに破棄しました"}) {
-		t.Errorf("ResetReason = %q", ResetReason)
+	// The reason recorded for a reset discard is stored, and IsReset reads it back.
+	if readmodel.DiscardReasonReset != "reset" || !(Discard{Reason: "reset"}).IsReset() {
+		t.Errorf("DiscardReasonReset = %q", readmodel.DiscardReasonReset)
 	}
 	if MaxModifiedWithinDays != 36500 {
 		t.Errorf("MaxModifiedWithinDays = %d", MaxModifiedWithinDays)

@@ -177,7 +177,7 @@ func TestPlanOffAtAndOffForExtended(t *testing.T) {
 	}
 }
 
-func TestPlanFeatureOfAndUnavailableMessage(t *testing.T) {
+func TestPlanFeatureOfNonGated(t *testing.T) {
 	// FeatureOf edge cases: all plan-gated kinds and non-gated/empty/unknown kinds.
 	nonGated := []string{
 		"", "unknown", outbox.KindCreateTask, outbox.KindUpdateTask, outbox.KindDeleteTask,
@@ -191,21 +191,4 @@ func TestPlanFeatureOfAndUnavailableMessage(t *testing.T) {
 		}
 	}
 
-	// Every exported feature constant must produce a non-broken UnavailableMessage
-	// (never leaving "では、を API で使えません" with an empty feature name).
-	allFeatures := []string{
-		Sections, Tags, MySection, Search, Typeahead, CustomID, TimeTracking,
-		Goals, Portfolios, CustomFields, ProjectBrief, StartOn, CustomTypes,
-		TaskTemplates, ProjectTemplates,
-	}
-	for _, f := range allFeatures {
-		msg := UnavailableMessage(f)
-		if strings.Contains(msg, "では、を API") {
-			t.Errorf("UnavailableMessage(%q) produced empty feature description: %q", f, msg)
-		}
-		errMsg := (&UnavailableError{Feature: f}).Error()
-		if errMsg != msg {
-			t.Errorf("UnavailableError(%q).Error() = %q, want %q", f, errMsg, msg)
-		}
-	}
 }

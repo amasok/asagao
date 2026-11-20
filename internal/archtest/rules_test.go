@@ -85,6 +85,11 @@ var adapterExceptions = map[string][]string{
 	"internal/auth/tokenstore": {"internal/config"},
 }
 
+// displayOnly are the shared packages that hold only how the front ends word things. The
+// adapters do not import them (Issue #82): the store keeps values (readmodel's, domain's),
+// not display text, so rewording the display does not change what it reads back.
+var displayOnly = []string{"internal/ui/format"}
+
 // entryAdapters are the adapters that entry points may import (rule 4). store, asana,
 // config and tokenstore are left to the wiring.
 var entryAdapters = []string{"internal/auth", "internal/richtext", "internal/imageview", "internal/browser"}

@@ -20,8 +20,12 @@ import (
 	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
-	"github.com/amasok/asagao/internal/ui/format"
 )
+
+// ambiguousMessage is the last_error of an entry that may have reached Asana, when Asana
+// has several candidates for what it created. Like the other messages Push records, it is
+// text for the user, kept in the outbox as it was written (an older store shows the same).
+const ambiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
 
 type PushResult struct {
 	Sent      int `json:"sent"`
@@ -307,7 +311,7 @@ func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 				}
 				sendIt = false
 			case m == ambiguous:
-				if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(format.AmbiguousMessage)); err != nil {
+				if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(ambiguousMessage)); err != nil {
 					return err
 				}
 				res.Failed++
@@ -476,7 +480,7 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		if refused, rerr := s.recordPlanRefusal(ctx, feature, ws, err); rerr != nil {
 			return out, rerr
 		} else if refused {
-			err = fmt.Errorf("%s: %w", plan.UnavailableMessage(feature), err)
+			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
 		}
 		return out, err
 	}
@@ -520,7 +524,7 @@ func (s *Syncer) startOnOutcome(ctx context.Context, ws string, op outbox.Op, ou
 	if refused, rerr := s.recordPlanRefusal(ctx, plan.StartOn, ws, err); rerr != nil {
 		return errors.Join(err, rerr)
 	} else if refused {
-		return &startOnWithdrawn{reason: plan.UnavailableMessage(plan.StartOn), err: err}
+		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.StartOn), err: err}
 	}
 	return err
 }

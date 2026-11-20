@@ -8,6 +8,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Payloads an attacker can put into any Asana text: every kind of escape sequence the
@@ -105,7 +106,7 @@ func TestStoreCustomFieldTextValueIsTerminalSafe(t *testing.T) {
 				assertSafe(t, "outbox payload "+k, str)
 			}
 		}
-		assertSafe(t, "outbox summary", DescribeChange(op))
+		assertSafe(t, "outbox summary", format.DescribeChange(op))
 	}
 }
 

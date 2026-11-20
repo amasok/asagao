@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 func strp(s string) *string { return &s }
@@ -89,7 +90,7 @@ func TestSetCustomFieldQueuesMergesAndReverts(t *testing.T) {
 	if op.Kind != OpSetCustomField || op.Payload["value"] != "o2" || op.Base["value"] != "o1" {
 		t.Fatalf("op = %+v", op)
 	}
-	if got := DescribeChange(op); got != "「優先度」を「中」に変更" {
+	if got := format.DescribeChange(op); got != "「優先度」を「中」に変更" {
 		t.Fatalf("describe = %q", got)
 	}
 	// a pull keeps the unsent value

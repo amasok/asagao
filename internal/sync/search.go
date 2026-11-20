@@ -27,7 +27,7 @@ import (
 
 // ErrRemoteSearchUnavailable is returned by SearchTasks when the workspace's plan offers
 // neither the search API nor typeahead.
-var ErrRemoteSearchUnavailable = errors.New(plan.UnavailableMessage(plan.Typeahead))
+var ErrRemoteSearchUnavailable = errors.New(readmodel.PlanUnavailableMessage(plan.Typeahead))
 
 // SearchResult is what SearchTasks found.
 type SearchResult = readmodel.RemoteSearchResult
@@ -167,7 +167,7 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 
 // ErrCustomIDUnavailable is returned by TaskByCustomID when the workspace's plan does not
 // give tasks by custom ID (Asana answered 402, now or before).
-var ErrCustomIDUnavailable = errors.New(plan.UnavailableMessage(plan.CustomID))
+var ErrCustomIDUnavailable = errors.New(readmodel.PlanUnavailableMessage(plan.CustomID))
 
 // TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it,
 // remembers its gid and returns it. A custom ID Asana does not know

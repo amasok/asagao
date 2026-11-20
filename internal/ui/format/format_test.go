@@ -2,10 +2,12 @@ package format
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -78,15 +80,21 @@ func TestDiscardLine(t *testing.T) {
 		{"with task", readmodel.Discard{TaskName: "牛乳", Summary: "コメント「x」"}, "「牛乳」: コメント「x」", false},
 		{"without task", readmodel.Discard{Summary: "通知を既読にする"}, "通知を既読にする", false},
 		{"deleted in Asana", readmodel.Discard{TaskName: "t", Summary: "s", Reason: "404"}, "「t」: s", false},
-		{"reset", readmodel.Discard{TaskName: "t", Summary: "s", Reason: ResetReason}, "「t」: s（初期化で破棄）", true},
-		{"reset without task", readmodel.Discard{Summary: "s", Reason: ResetReason}, "s（初期化で破棄）", true},
+		{"reset", readmodel.Discard{TaskName: "t", Summary: "s", Reason: readmodel.DiscardReasonReset}, "「t」: s（初期化で破棄）", true},
+		{"reset without task", readmodel.Discard{Summary: "s", Reason: readmodel.DiscardReasonReset}, "s（初期化で破棄）", true},
+		// The display text recorded before Issue #82 is turned into the code by the store's
+		// migration; the reason itself is not compared with any wording.
+		{"reason that only reads like a reset", readmodel.Discard{Summary: "s", Reason: "初期化"}, "s", false},
+		// Recorded by a store without a describer: described from the kind and payload.
+		{"no summary", readmodel.Discard{TaskName: "t", Kind: outbox.KindAddComment, Payload: map[string]any{"text": "了解"}}, "「t」: コメント「了解」", false},
+		{"no summary, reset", readmodel.Discard{Kind: outbox.KindDeleteTask, Reason: readmodel.DiscardReasonReset}, "タスクの削除（初期化で破棄）", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := DiscardLine(tc.d); got != tc.want {
 				t.Errorf("DiscardLine = %q, want %q", got, tc.want)
 			}
-			if got := IsResetDiscard(tc.d); got != tc.reset {
-				t.Errorf("IsResetDiscard = %v, want %v", got, tc.reset)
+			if got := tc.d.IsReset(); got != tc.reset {
+				t.Errorf("IsReset = %v, want %v", got, tc.reset)
 			}
 		})
 	}
@@ -301,13 +309,6 @@ func TestDescribeCustomTypeChange(t *testing.T) {
 	}
 }
 
-func TestAmbiguousMessageText(t *testing.T) {
-	const want = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
-	if AmbiguousMessage != want {
-		t.Errorf("%q", AmbiguousMessage)
-	}
-}
-
 func TestReactionsLine(t *testing.T) {
 	rs := []readmodel.Reaction{
 		{EmojiBase: "👍", Count: 2},
@@ -319,5 +320,17 @@ func TestReactionsLine(t *testing.T) {
 	}
 	if got := ReactionsLine(nil); got != "" {
 		t.Errorf("ReactionsLine(nil) = %q, want empty", got)
+	}
+}
+
+// The labelled status types are exactly the values the store accepts (project.StatusTypes),
+// in the same order.
+func TestStatusTypesMatchTheDomain(t *testing.T) {
+	var got []string
+	for _, s := range StatusTypes {
+		got = append(got, s.Value)
+	}
+	if !slices.Equal(got, project.StatusTypes) {
+		t.Errorf("StatusTypes = %v, want %v", got, project.StatusTypes)
 	}
 }

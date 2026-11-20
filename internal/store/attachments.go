@@ -7,14 +7,12 @@ import (
 	"fmt"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // AttachmentView is readmodel.AttachmentView.
 type AttachmentView = readmodel.AttachmentView
-
-// IsImageName reports whether a file name looks like an image (readmodel.IsImageName).
-func IsImageName(name string) bool { return readmodel.IsImageName(name) }
 
 // ReplaceAttachments stores a task's attachments, keeping local paths of files already
 // downloaded and files attached offline ("local:" gids) that are not uploaded yet. Those
@@ -88,7 +86,7 @@ func (s *Store) queryAttachments(ctx context.Context, where string, args ...any)
 		if err := rows.Scan(&a.GID, &a.Name, &a.Host, &a.ViewURL, &a.Size, &a.CreatedAt, &a.LocalPath); err != nil {
 			return nil, err
 		}
-		a.IsImage = IsImageName(a.Name)
+		a.IsImage = rich.IsImageName(a.Name)
 		atts = append(atts, a)
 	}
 	return atts, rows.Err()
@@ -107,14 +105,4 @@ func (s *Store) UpsertAttachment(ctx context.Context, taskGID string, a model.At
 		}
 		return reapplyAttachmentDeletes(ctx, tx, taskGID)
 	})
-}
-
-// InlineAssets returns the attachment gids of images embedded in text, in order
-// (readmodel.InlineAssets).
-func InlineAssets(text string) []string { return readmodel.InlineAssets(text) }
-
-// ReplaceInlineAssets replaces each embedded image link with repl(gid)
-// (readmodel.ReplaceInlineAssets).
-func ReplaceInlineAssets(text string, repl func(gid string) string) string {
-	return readmodel.ReplaceInlineAssets(text, repl)
 }

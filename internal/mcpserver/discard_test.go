@@ -9,11 +9,13 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // A write to a task deleted in Asana is dropped, and the tool says so.
 func TestWriteToDeletedTaskReportsDiscard(t *testing.T) {
 	st := seed(t)
+	st.SetDescribeChange(format.DescribeChange) // as wire.OpenStore does
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/users/me" {
 			fmt.Fprint(w, `{"data":{"gid":"me","name":"Me"}}`)
