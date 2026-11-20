@@ -48,8 +48,8 @@ func (m *Model) loadCalendar() tea.Cmd {
 	}
 	month := monthStart(m.cal.day)
 	start, end := calendarRange(month)
-	f := readmodel.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter, Field: m.fieldFilter.field, FieldValue: m.fieldFilter.value}
-	switch m.filter {
+	f := readmodel.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.list.tagFilter, Field: m.list.fieldFilter.field, FieldValue: m.list.fieldFilter.value}
+	switch m.list.filter {
 	case filterCompleted:
 		f.Completed = boolPtr(true)
 	case filterAll:

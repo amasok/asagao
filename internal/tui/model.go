@@ -150,15 +150,10 @@ type Model struct {
 	scopes      []scope
 	scopeCursor int
 
-	rows       []row
-	listCursor int // index into rows; always on a task row when any exist
-	listOffset int
-	taskSeq    int // drops stale task loads
-
-	detail detailState // the detail pane (detail.go, detailnav.go)
+	list   listState   // the task list (list.go)
+	detail detailState // the detail pane (detailnav.go)
 
 	search searchState
-	filter filterMode
 
 	syncer      *sync.Syncer
 	syncing     bool
@@ -176,7 +171,6 @@ type Model struct {
 
 	// writes (write.go)
 	prompt      promptState // the text input in the footer and what it changes (write.go)
-	selectAfter string      // gid to select after the next list load (e.g. a created task)
 	syncAgain   bool        // a write happened during a sync; sync again when it finishes
 	outbox      outboxCounts
 	outboxView  outboxScreen
@@ -184,16 +178,11 @@ type Model struct {
 	inboxUnread int
 
 	// views (board.go)
-	zoom      bool     // detail pane fills the screen
-	mode      viewMode // how the tasks are shown: a list, a board, a timeline or a calendar
-	board     boardState
-	tagFilter string
-	picker    *picker
-	saved     *readmodel.SavedSearch // the saved search shown (searches.go)
+	zoom   bool     // detail pane fills the screen
+	mode   viewMode // how the tasks are shown: a list, a board, a timeline or a calendar
+	board  boardState
+	picker *picker
 
-	// collapsible groups (collapse.go)
-	allRows   []row           // every row; rows is allRows minus collapsed groups
-	collapsed map[string]bool // keys of collapsed groups in the current scope
 	// sections and tags (sectiontags.go)
 	planOff   map[string]planWindow // features the workspace's plan lacks (402), and until when
 	planSeq   uint64                // latest loadPlan in flight
@@ -201,10 +190,6 @@ type Model struct {
 	tagTarget readmodel.TagCount    // the tag being changed
 	// time tracking (timetracking.go): the task whose entries are shown
 	timeTask readmodel.TaskSummary
-	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
-	collapsedScope string
-	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).
-	rowsScope string
 
 	// detail rendering (markdown.go)
 	dark         bool // terminal background
@@ -230,14 +215,9 @@ type Model struct {
 	// goals and portfolios (goals.go)
 	goals goalScreen
 
-	// subtasks (subtasks.go)
-	expanded map[string]bool // tasks whose subtasks are shown under them
-
 	// keys (keymap.go) and choosers (pickers.go)
-	marked  map[string]bool // gids of the tasks marked in the list (bulk.go)
-	bulkAsk *bulkPlan       // a change to the marked tasks waiting for y/n
+	bulkAsk *bulkPlan // a change to the marked tasks waiting for y/n
 	// custom fields (fields.go)
-	fieldFilter fieldFilter
 	fieldSaving map[string]bool         // fieldKey: a multi_enum toggle of it is being saved
 	fieldQueued map[string]*queuedField // fieldKey: its latest toggle made meanwhile
 	// dependencies (deps.go)
@@ -350,13 +330,13 @@ func (m *Model) loadTasks() tea.Cmd {
 }
 
 func (m *Model) loadList() tea.Cmd {
-	m.taskSeq++
-	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.search.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
+	m.list.seq++
+	seq, sc, query, filter, tag, field, saved := m.list.seq, m.currentScope(), m.search.query, m.list.filter, m.list.tagFilter, m.list.fieldFilter, m.list.saved
 	found := m.search.remote.foundFor(query)
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
-	needCollapsed := scopeKey != m.collapsedScope
-	expanded := make(map[string]bool, len(m.expanded))
-	for k, v := range m.expanded {
+	needCollapsed := scopeKey != m.list.collapsedScope
+	expanded := make(map[string]bool, len(m.list.expanded))
+	for k, v := range m.list.expanded {
 		expanded[k] = v
 	}
 	var subCompleted *bool
@@ -548,17 +528,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tasksLoadedMsg:
-		if msg.seq != m.taskSeq {
+		if msg.seq != m.list.seq {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.rows, m.allRows = nil, nil
+			m.list.rows, m.list.all = nil, nil
 			m.pruneMarks()
 			m.status = msg.err.Error()
 			return m, nil
 		}
 		if msg.collapsed != nil && msg.scope == m.scopeKey() {
-			m.collapsed, m.collapsedScope = msg.collapsed, msg.scope
+			m.list.collapsed, m.list.collapsedScope = msg.collapsed, msg.scope
 		}
 		return m, m.setRows(msg.rows)
 
@@ -606,7 +586,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmds []tea.Cmd
-		if m.expanded[msg.gid] {
+		if m.list.expanded[msg.gid] {
 			cmds = append(cmds, m.loadTasks()) // its subtasks may have just arrived
 		}
 		if msg.gid == m.detailGID() {
@@ -800,16 +780,16 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+u", "pgup":
 			return m, m.moveList(-half)
 		case "g", "home":
-			return m, m.moveList(-len(m.rows))
+			return m, m.moveList(-len(m.list.rows))
 		case "G", "end":
-			return m, m.moveList(len(m.rows))
+			return m, m.moveList(len(m.list.rows))
 		case "enter":
 			if m.selectedNotification() != nil {
 				return m, m.openNotification()
 			}
 			if m.selectedTask() != nil {
 				return m, m.openDetail()
-			} else if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
+			} else if m.list.cursor >= 0 && m.list.cursor < len(m.list.rows) && m.list.rows[m.list.cursor].collapsed {
 				return m, m.toggleGroup() // expand
 			}
 		case "l", "right":
@@ -937,8 +917,8 @@ func (m *Model) moveScope(delta int) tea.Cmd {
 		return nil
 	}
 	m.scopeCursor = next
-	m.saved = nil // the sidebar leaves a saved search
-	m.listCursor, m.listOffset = 0, 0
+	m.list.saved = nil // the sidebar leaves a saved search
+	m.list.cursor, m.list.offset = 0, 0
 	m.board.col, m.board.row, m.board.colOffset = 0, 0, 0
 	return tea.Batch(m.loadTasks(), m.openProjectLater())
 }
@@ -950,24 +930,24 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		prev = t.GID
 	}
 	prevRow := prev
-	if !m.boardActive() && m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].notif != nil {
-		prevRow = m.rows[m.listCursor].id()
+	if !m.boardActive() && m.list.cursor >= 0 && m.list.cursor < len(m.list.rows) && m.list.rows[m.list.cursor].notif != nil {
+		prevRow = m.list.rows[m.list.cursor].id()
 	}
 	// When a reload of the same scope drops the selected task (completed, moved away), keep
 	// the cursor where it was instead of going back to the top.
 	near := 0
-	if key := m.scopeKey(); m.rowsScope == key {
-		near = m.listCursor
+	if key := m.scopeKey(); m.list.scope == key {
+		near = m.list.cursor
 	} else {
-		m.rowsScope = key
+		m.list.scope = key
 	}
-	m.allRows = rows
+	m.list.all = rows
 	m.showRows()
 	target := prevRow
-	if m.selectAfter != "" && m.listed(m.selectAfter) {
-		target = m.selectAfter
+	if m.list.selectAfter != "" && m.listed(m.list.selectAfter) {
+		target = m.list.selectAfter
 	}
-	m.selectAfter = ""
+	m.list.selectAfter = ""
 	m.selectInListNear(target, near)
 	if m.boardActive() {
 		m.selectInBoard(target)
@@ -989,7 +969,7 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 
 // listed reports whether gid is in the task list (or on the board).
 func (m *Model) listed(gid string) bool {
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.task != nil && r.task.GID == gid {
 			return true
 		}
@@ -1003,44 +983,44 @@ func (m *Model) selectInList(gid string) { m.selectInListNear(gid, 0) }
 // selectInListNear puts the list cursor on gid, or, if gid is not listed, on the first task
 // at or after row near (the last task before it when there is none after).
 func (m *Model) selectInListNear(gid string, near int) {
-	m.listCursor = -1
-	for i, r := range m.rows {
+	m.list.cursor = -1
+	for i, r := range m.list.rows {
 		if gid != "" && r.id() == gid {
-			m.listCursor = i
+			m.list.cursor = i
 			break
 		}
 	}
-	for i, r := range m.rows {
-		if m.listCursor < 0 && r.task != nil && r.task.GID == gid {
-			m.listCursor = i
+	for i, r := range m.list.rows {
+		if m.list.cursor < 0 && r.task != nil && r.task.GID == gid {
+			m.list.cursor = i
 		}
 	}
-	if m.listCursor < 0 && len(m.rows) > 0 {
-		near = clamp(near, 0, len(m.rows)-1)
-		if m.listCursor = m.nextTaskRow(near, 1); m.listCursor < 0 {
-			m.listCursor = m.nextTaskRow(near, -1)
+	if m.list.cursor < 0 && len(m.list.rows) > 0 {
+		near = clamp(near, 0, len(m.list.rows)-1)
+		if m.list.cursor = m.nextTaskRow(near, 1); m.list.cursor < 0 {
+			m.list.cursor = m.nextTaskRow(near, -1)
 		}
 	}
 	m.ensureListVisible()
 }
 
 func (m *Model) moveList(delta int) tea.Cmd {
-	if len(m.rows) == 0 {
+	if len(m.list.rows) == 0 {
 		return nil
 	}
 	dir := 1
 	if delta < 0 {
 		dir = -1
 	}
-	target := clamp(m.listCursor+delta, 0, len(m.rows)-1)
+	target := clamp(m.list.cursor+delta, 0, len(m.list.rows)-1)
 	next := m.nextTaskRow(target, dir)
 	if next < 0 {
 		next = m.nextTaskRow(target, -dir)
 	}
-	if next < 0 || next == m.listCursor {
+	if next < 0 || next == m.list.cursor {
 		return nil
 	}
-	m.listCursor = next
+	m.list.cursor = next
 	m.ensureListVisible()
 	m.resetDetailNav()
 	t := m.selectedTask()
@@ -1052,8 +1032,8 @@ func (m *Model) moveList(delta int) tea.Cmd {
 
 // nextTaskRow returns the first task row at or after i in direction dir, or -1.
 func (m *Model) nextTaskRow(i, dir int) int {
-	for ; i >= 0 && i < len(m.rows); i += dir {
-		if m.rows[i].selectable() {
+	for ; i >= 0 && i < len(m.list.rows); i += dir {
+		if m.list.rows[i].selectable() {
 			return i
 		}
 	}
@@ -1064,10 +1044,10 @@ func (m *Model) selectedTask() *readmodel.TaskSummary {
 	if m.boardActive() {
 		return m.boardSelected()
 	}
-	if m.listCursor < 0 || m.listCursor >= len(m.rows) {
+	if m.list.cursor < 0 || m.list.cursor >= len(m.list.rows) {
 		return nil
 	}
-	return m.rows[m.listCursor].task
+	return m.list.rows[m.list.cursor].task
 }
 
 func (m *Model) debounceDetail(gid string) tea.Cmd {

@@ -37,8 +37,8 @@ func loadCollapsed(ctx context.Context, st Store, scope string) map[string]bool 
 }
 
 func (m *Model) saveCollapsed() tea.Cmd {
-	keys := make([]string, 0, len(m.collapsed))
-	for k := range m.collapsed {
+	keys := make([]string, 0, len(m.list.collapsed))
+	for k := range m.list.collapsed {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
@@ -52,19 +52,19 @@ func (m *Model) saveCollapsed() tea.Cmd {
 
 // visibleRows drops the tasks of collapsed groups (search results are never collapsed).
 func (m *Model) visibleRows() []row {
-	if m.search.query != "" || len(m.collapsed) == 0 {
-		out := make([]row, len(m.allRows))
-		copy(out, m.allRows)
+	if m.search.query != "" || len(m.list.collapsed) == 0 {
+		out := make([]row, len(m.list.all))
+		copy(out, m.list.all)
 		for i := range out {
 			out[i].collapsed = false
 		}
 		return out
 	}
-	out := make([]row, 0, len(m.allRows))
+	out := make([]row, 0, len(m.list.all))
 	hiding := false
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.isHeader() {
-			r.collapsed = m.collapsed[r.key] && !r.note
+			r.collapsed = m.list.collapsed[r.key] && !r.note
 			hiding = r.collapsed
 			out = append(out, r)
 			continue
@@ -79,7 +79,7 @@ func (m *Model) visibleRows() []row {
 // groupAt returns the index of the group header for the row at i.
 func (m *Model) groupAt(i int) int {
 	for ; i >= 0; i-- {
-		if i < len(m.rows) && m.rows[i].isHeader() && !m.rows[i].note {
+		if i < len(m.list.rows) && m.list.rows[i].isHeader() && !m.list.rows[i].note {
 			return i
 		}
 	}
@@ -88,25 +88,25 @@ func (m *Model) groupAt(i int) int {
 
 // toggleGroup collapses the group under the cursor, or expands it if it is collapsed.
 func (m *Model) toggleGroup() tea.Cmd {
-	h := m.groupAt(m.listCursor)
+	h := m.groupAt(m.list.cursor)
 	if h < 0 || m.search.query != "" {
 		return nil
 	}
-	key := m.rows[h].key
-	if m.collapsed == nil {
-		m.collapsed = map[string]bool{}
+	key := m.list.rows[h].key
+	if m.list.collapsed == nil {
+		m.list.collapsed = map[string]bool{}
 	}
-	if m.collapsed[key] {
-		delete(m.collapsed, key)
+	if m.list.collapsed[key] {
+		delete(m.list.collapsed, key)
 		m.showRows()
-		m.listCursor = m.nextTaskRow(h+1, 1)
-		if m.listCursor < 0 || m.groupAt(m.listCursor) != h {
-			m.listCursor = h
+		m.list.cursor = m.nextTaskRow(h+1, 1)
+		if m.list.cursor < 0 || m.groupAt(m.list.cursor) != h {
+			m.list.cursor = h
 		}
 	} else {
-		m.collapsed[key] = true
+		m.list.collapsed[key] = true
 		m.showRows()
-		m.listCursor = h
+		m.list.cursor = h
 	}
 	m.ensureListVisible()
 	cmds := []tea.Cmd{m.saveCollapsed()}
@@ -122,14 +122,14 @@ func (m *Model) setAllGroups(collapse bool) tea.Cmd {
 		return nil
 	}
 	var prev string
-	if m.listCursor >= 0 && m.listCursor < len(m.rows) {
-		prev = m.rows[m.listCursor].id()
+	if m.list.cursor >= 0 && m.list.cursor < len(m.list.rows) {
+		prev = m.list.rows[m.list.cursor].id()
 	}
-	m.collapsed = map[string]bool{}
+	m.list.collapsed = map[string]bool{}
 	if collapse {
-		for _, r := range m.allRows {
+		for _, r := range m.list.all {
 			if r.isHeader() && !r.note {
-				m.collapsed[r.key] = true
+				m.list.collapsed[r.key] = true
 			}
 		}
 	}
@@ -152,8 +152,8 @@ func (m *Model) sectionUnderCursor() (gid, name string) {
 		return "", ""
 	}
 	if sc.kind == scopeProject && m.search.query == "" {
-		if h := m.groupAt(m.listCursor); h >= 0 && m.rows[h].key != "other" {
-			return m.rows[h].key, m.rows[h].header
+		if h := m.groupAt(m.list.cursor); h >= 0 && m.list.rows[h].key != "other" {
+			return m.list.rows[h].key, m.list.rows[h].header
 		}
 		return "", ""
 	}

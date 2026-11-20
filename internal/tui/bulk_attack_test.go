@@ -10,7 +10,7 @@ import (
 func (h *harness) dropFromList(gid string) {
 	h.t.Helper()
 	var rows []row
-	for _, r := range h.m.allRows {
+	for _, r := range h.m.list.all {
 		if r.task != nil && r.task.GID == gid {
 			continue
 		}

@@ -239,7 +239,7 @@ func (m *Model) openFieldFilterPicker() tea.Cmd {
 }
 
 func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
-	if len(opts) == 0 && m.fieldFilter.field == "" {
+	if len(opts) == 0 && m.list.fieldFilter.field == "" {
 		m.status = "絞り込みに使える選択式のカスタムフィールドがありません"
 		return
 	}
@@ -247,7 +247,7 @@ func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
 	for _, o := range opts {
 		p.items = append(p.items, pickerItem{label: o.FieldName + ": " + o.Option, value: o.FieldGID + "\x00" + o.FieldName + "\x00" + o.Option,
 			hint: fmt.Sprintf("未完了 %d", o.Tasks)})
-		if o.FieldGID == m.fieldFilter.field && o.Option == m.fieldFilter.value {
+		if o.FieldGID == m.list.fieldFilter.field && o.Option == m.list.fieldFilter.value {
 			p.cursor = len(p.items) - 1
 		}
 	}
@@ -255,11 +255,11 @@ func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
 }
 
 func (m *Model) applyFieldFilter(value string) tea.Cmd {
-	m.fieldFilter = fieldFilter{}
+	m.list.fieldFilter = fieldFilter{}
 	if parts := strings.Split(value, "\x00"); len(parts) == 3 {
-		m.fieldFilter = fieldFilter{field: parts[0], fieldName: parts[1], value: parts[2]}
+		m.list.fieldFilter = fieldFilter{field: parts[0], fieldName: parts[1], value: parts[2]}
 	}
-	m.listCursor, m.listOffset = 0, 0
+	m.list.cursor, m.list.offset = 0, 0
 	return m.loadTasks()
 }
 

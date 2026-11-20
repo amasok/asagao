@@ -52,19 +52,19 @@ func withSubtasks(ctx context.Context, st Store, rows []row, expanded map[string
 func (m *Model) expandOrOpen() tea.Cmd {
 	t := m.selectedTask()
 	if t == nil {
-		if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
+		if m.list.cursor >= 0 && m.list.cursor < len(m.list.rows) && m.list.rows[m.list.cursor].collapsed {
 			return m.toggleGroup()
 		}
 		return nil
 	}
-	if t.NumSubtasks == 0 || m.expanded[t.GID] {
+	if t.NumSubtasks == 0 || m.list.expanded[t.GID] {
 		m.focus = paneDetail
 		return nil
 	}
-	if m.expanded == nil {
-		m.expanded = map[string]bool{}
+	if m.list.expanded == nil {
+		m.list.expanded = map[string]bool{}
 	}
-	m.expanded[t.GID] = true
+	m.list.expanded[t.GID] = true
 	cmds := []tea.Cmd{m.loadTasks()}
 	// Subtasks may not be in the store yet (e.g. a task only seen in My Tasks).
 	if m.syncer != nil {
@@ -77,16 +77,16 @@ func (m *Model) expandOrOpen() tea.Cmd {
 func (m *Model) collapseOrUp() tea.Cmd {
 	t := m.selectedTask()
 	switch {
-	case t != nil && m.expanded[t.GID]:
-		delete(m.expanded, t.GID)
+	case t != nil && m.list.expanded[t.GID]:
+		delete(m.list.expanded, t.GID)
 		return m.loadTasks()
-	case t != nil && m.listCursor < len(m.rows) && m.rows[m.listCursor].depth > 0:
-		depth := m.rows[m.listCursor].depth
-		for i := m.listCursor - 1; i >= 0; i-- {
-			if m.rows[i].task != nil && m.rows[i].depth < depth {
-				m.listCursor = i
+	case t != nil && m.list.cursor < len(m.list.rows) && m.list.rows[m.list.cursor].depth > 0:
+		depth := m.list.rows[m.list.cursor].depth
+		for i := m.list.cursor - 1; i >= 0; i-- {
+			if m.list.rows[i].task != nil && m.list.rows[i].depth < depth {
+				m.list.cursor = i
 				m.ensureListVisible()
-				return tea.Batch(m.loadDetail(m.rows[i].task.GID), m.debounceDetail(m.rows[i].task.GID))
+				return tea.Batch(m.loadDetail(m.list.rows[i].task.GID), m.debounceDetail(m.list.rows[i].task.GID))
 			}
 		}
 		return nil
@@ -114,11 +114,11 @@ func (m *Model) startSubtask() tea.Cmd {
 }
 
 func (m *Model) createSubtask(parent, input string) tea.Cmd {
-	if m.expanded == nil {
-		m.expanded = map[string]bool{}
+	if m.list.expanded == nil {
+		m.list.expanded = map[string]bool{}
 	}
-	m.expanded[parent] = true // show the new subtask under its parent
-	keep := m.inDetail()      // in the detail view, stay on the parent
+	m.list.expanded[parent] = true // show the new subtask under its parent
+	keep := m.inDetail()           // in the detail view, stay on the parent
 	return m.quickCreate(input, m.deps.Now(), app.CreateHereInput{Parent: parent}, "", "サブタスクを追加しました: ", keep)
 }
 

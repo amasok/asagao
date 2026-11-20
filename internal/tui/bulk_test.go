@@ -64,8 +64,8 @@ func TestBulkCompleteAsksThenQueuesEachTask(t *testing.T) {
 	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t1"); d.Completed {
 		t.Error("an unmarked task must not change")
 	}
-	if len(h.m.marked) != 0 {
-		t.Fatalf("marks should be cleared after running: %v", h.m.marked)
+	if len(h.m.list.marked) != 0 {
+		t.Fatalf("marks should be cleared after running: %v", h.m.list.marked)
 	}
 	if !strings.Contains(h.footer(), "2 件を完了にしました") {
 		t.Fatalf("result footer=%q", h.footer())
@@ -79,12 +79,12 @@ func TestBulkCancelKeepsMarksAndWritesNothing(t *testing.T) {
 	if ops := h.ops(); len(ops) != 0 {
 		t.Fatalf("n must not write: %+v", ops)
 	}
-	if len(h.m.marked) != 2 || h.m.bulkAsk != nil {
-		t.Fatalf("cancel keeps the marks: %v", h.m.marked)
+	if len(h.m.list.marked) != 2 || h.m.bulkAsk != nil {
+		t.Fatalf("cancel keeps the marks: %v", h.m.list.marked)
 	}
 	h.key("esc") // esc in the list unmarks
-	if len(h.m.marked) != 0 {
-		t.Fatalf("esc should clear the marks: %v", h.m.marked)
+	if len(h.m.list.marked) != 0 {
+		t.Fatalf("esc should clear the marks: %v", h.m.list.marked)
 	}
 }
 
@@ -110,8 +110,8 @@ func TestBulkMarksOfHiddenTasksAreDropped(t *testing.T) {
 	h.key("/")
 	h.typeText("ソファ")
 	h.key("enter")
-	if !reflectKeys(h.m.marked, "t1") {
-		t.Fatalf("only the task still shown keeps its mark: %v", h.m.marked)
+	if !reflectKeys(h.m.list.marked, "t1") {
+		t.Fatalf("only the task still shown keeps its mark: %v", h.m.list.marked)
 	}
 	h.key("x", "y")
 	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t2"); d.Completed {
@@ -127,8 +127,8 @@ func TestBulkMarksDroppedWhenGroupCollapsed(t *testing.T) {
 	h.markRows("t1", "t2")
 	h.m.selectInList("t1")
 	h.key("-") // collapse 家具 (t1)
-	if !reflectKeys(h.m.marked, "t2") {
-		t.Fatalf("a collapsed task loses its mark: %v", h.m.marked)
+	if !reflectKeys(h.m.list.marked, "t2") {
+		t.Fatalf("a collapsed task loses its mark: %v", h.m.list.marked)
 	}
 }
 
@@ -149,8 +149,8 @@ func TestBulkMarkAllToggles(t *testing.T) {
 		t.Fatalf("* marks every task shown: %d of %v", n, h.visibleGIDs())
 	}
 	h.key("*")
-	if len(h.m.marked) != 0 {
-		t.Fatalf("* again unmarks all: %v", h.m.marked)
+	if len(h.m.list.marked) != 0 {
+		t.Fatalf("* again unmarks all: %v", h.m.list.marked)
 	}
 }
 
@@ -311,9 +311,9 @@ func TestBulkQuestionFollowsTheList(t *testing.T) {
 func TestBulkMarksDroppedWhenListFails(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	h.markRows("t2", "t3")
-	h.send(tasksLoadedMsg{seq: h.m.taskSeq, err: errors.New("読めません")})
-	if len(h.m.marked) != 0 {
-		t.Fatalf("marks should be dropped: %v", h.m.marked)
+	h.send(tasksLoadedMsg{seq: h.m.list.seq, err: errors.New("読めません")})
+	if len(h.m.list.marked) != 0 {
+		t.Fatalf("marks should be dropped: %v", h.m.list.marked)
 	}
 }
 

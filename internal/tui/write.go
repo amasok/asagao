@@ -274,7 +274,7 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.status = msg.status
 		if msg.gid != "" {
-			m.selectAfter = msg.gid
+			m.list.selectAfter = msg.gid
 		}
 		if msg.refresh != "" {
 			return m, tea.Batch(m.afterWrite(), m.fetchDetails(msg.refresh)), true

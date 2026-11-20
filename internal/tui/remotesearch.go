@@ -61,7 +61,7 @@ func (m *Model) searchAsana() tea.Cmd {
 		m.status = "オフラインのため Asana では探せません"
 		return nil
 	}
-	query, completed := m.search.query, searchCompleted(m.filter)
+	query, completed := m.search.query, searchCompleted(m.list.filter)
 	syncer, newSyncer := m.syncer, m.deps.NewSyncer
 	m.status = "Asana で「" + termsafe.String(query) + "」を探しています…"
 	return func() tea.Msg {

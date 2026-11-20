@@ -52,17 +52,17 @@ func (m *Model) updateSearches(msg tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m *Model) showSavedSearchPicker(ss []readmodel.SavedSearch) {
-	if len(ss) == 0 && m.saved == nil {
+	if len(ss) == 0 && m.list.saved == nil {
 		m.status = "保存した検索はありません（asagao searches save <名前> で保存）"
 		return
 	}
 	p := &picker{kind: pickSavedSearch, title: "保存した検索"}
-	if m.saved != nil {
-		p.items = append(p.items, pickerItem{label: "（解除）", value: clearSavedSearch, hint: termsafe.String(m.saved.Name)})
+	if m.list.saved != nil {
+		p.items = append(p.items, pickerItem{label: "（解除）", value: clearSavedSearch, hint: termsafe.String(m.list.saved.Name)})
 	}
 	for _, s := range ss {
 		item := pickerItem{label: termsafe.String(s.Name), value: s.Name, hint: termsafe.String(strings.Join(s.Conditions(), " "))}
-		if m.saved != nil && m.saved.Name == s.Name {
+		if m.list.saved != nil && m.list.saved.Name == s.Name {
 			item.label += "（現在）"
 			p.cursor = len(p.items)
 		}
@@ -74,10 +74,10 @@ func (m *Model) showSavedSearchPicker(ss []readmodel.SavedSearch) {
 // applySavedSearch shows the saved search named name (as it is in the file now), or leaves
 // the saved search for clearSavedSearch. The other narrowings start over.
 func (m *Model) applySavedSearch(name string) tea.Cmd {
-	m.listCursor, m.listOffset = 0, 0
+	m.list.cursor, m.list.offset = 0, 0
 	m.board.col, m.board.row, m.board.colOffset = 0, 0, 0
 	if name == clearSavedSearch {
-		m.saved = nil
+		m.list.saved = nil
 		return m.loadTasks()
 	}
 	x, err := m.searches().Get(name)
@@ -85,8 +85,8 @@ func (m *Model) applySavedSearch(name string) tea.Cmd {
 		m.status = termsafe.String(err.Error())
 		return nil
 	}
-	m.saved = &x
-	m.filter, m.tagFilter, m.fieldFilter = filterOpen, "", fieldFilter{}
+	m.list.saved = &x
+	m.list.filter, m.list.tagFilter, m.list.fieldFilter = filterOpen, "", fieldFilter{}
 	m.search.query = ""
 	m.search.input.SetValue("")
 	return m.loadTasks()
@@ -131,8 +131,8 @@ func savedRows(ctx context.Context, st Store, x readmodel.SavedSearch, query str
 
 // savedSearchLabel is the header's label of the saved search shown ("" for none).
 func (m *Model) savedSearchLabel() string {
-	if m.saved == nil {
+	if m.list.saved == nil {
 		return ""
 	}
-	return "保存: " + termsafe.String(m.saved.Name)
+	return "保存: " + termsafe.String(m.list.saved.Name)
 }

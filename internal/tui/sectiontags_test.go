@@ -74,7 +74,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 	if got := opKindsOf(h); len(got) != 0 {
 		t.Fatalf("ops = %v, want none (created and deleted offline)", got)
 	}
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.header == "保留" {
 			t.Error("deleted section still shown")
 		}

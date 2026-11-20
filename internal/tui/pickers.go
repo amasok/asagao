@@ -91,10 +91,10 @@ func (m *Model) submitDue(input string) tea.Cmd {
 // --- list filter ---
 
 func (m *Model) openFilterPicker() tea.Cmd {
-	p := &picker{kind: pickFilter, title: "絞り込み", cursor: int(m.filter)}
+	p := &picker{kind: pickFilter, title: "絞り込み", cursor: int(m.list.filter)}
 	for f := range filterCount {
 		item := pickerItem{label: f.String(), value: fmt.Sprint(int(f))}
-		if f == m.filter {
+		if f == m.list.filter {
 			item.hint = "現在"
 		}
 		p.items = append(p.items, item)

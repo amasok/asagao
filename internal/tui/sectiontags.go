@@ -382,8 +382,8 @@ func (m *Model) handleSectionTagPicker(p *picker, item pickerItem) (tea.Cmd, boo
 		if item.value == "" || item.value != m.tagTarget.GID {
 			return nil, true // やめる
 		}
-		if m.tagFilter == m.tagTarget.GID {
-			m.tagFilter = "" // the list filtered by it would be empty
+		if m.list.tagFilter == m.tagTarget.GID {
+			m.list.tagFilter = "" // the list filtered by it would be empty
 		}
 		return m.deleteTag(m.tagTarget), true
 	}

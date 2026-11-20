@@ -115,17 +115,17 @@ func (m *Model) layoutDetail() {
 
 func (m *Model) ensureListVisible() {
 	h := m.listHeight()
-	if m.listCursor < m.listOffset {
-		m.listOffset = m.listCursor
+	if m.list.cursor < m.list.offset {
+		m.list.offset = m.list.cursor
 		// show the group header above the first task when scrolling up
-		if m.listOffset > 0 && m.rows[m.listOffset-1].isHeader() {
-			m.listOffset--
+		if m.list.offset > 0 && m.list.rows[m.list.offset-1].isHeader() {
+			m.list.offset--
 		}
 	}
-	if m.listCursor >= m.listOffset+h {
-		m.listOffset = m.listCursor - h + 1
+	if m.list.cursor >= m.list.offset+h {
+		m.list.offset = m.list.cursor - h + 1
 	}
-	m.listOffset = clamp(m.listOffset, 0, max(0, len(m.rows)-h))
+	m.list.offset = clamp(m.list.offset, 0, max(0, len(m.list.rows)-h))
 }
 
 func (m *Model) renderBody(h int) string {
@@ -228,15 +228,15 @@ func (m *Model) renderHeader() string {
 		badge = " " + m.statusBadge(sc.status) // latest project status
 	}
 	left := m.st.header.Render(" asagao ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
-		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
+		"  " + m.st.headerFilter.Render("["+m.list.filter.String()+"]")
 	if l := m.savedSearchLabel(); l != "" {
 		left += "  " + m.st.headerFilter.Render(l)
 	}
-	if m.tagFilter != "" {
-		left += "  " + m.st.tag.Render("#"+m.tagFilter)
+	if m.list.tagFilter != "" {
+		left += "  " + m.st.tag.Render("#"+m.list.tagFilter)
 	}
-	if m.fieldFilter.field != "" {
-		left += "  " + m.st.tag.Render(m.fieldFilter.label())
+	if m.list.fieldFilter.field != "" {
+		left += "  " + m.st.tag.Render(m.list.fieldFilter.label())
 	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
@@ -395,14 +395,14 @@ func (m *Model) sidebarGrouped() bool {
 
 func (m *Model) listTitle() string {
 	n := 0
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.notif == nil && r.task != nil && r.depth == 0 {
 			n++
 		}
 	}
 	marked := ""
-	if len(m.marked) > 0 {
-		marked = fmt.Sprintf("  印 %d 件", len(m.marked))
+	if len(m.list.marked) > 0 {
+		marked = fmt.Sprintf("  印 %d 件", len(m.list.marked))
 	}
 	if m.search.query != "" {
 		return fmt.Sprintf("検索 (%d)", n) + marked
@@ -414,7 +414,7 @@ func (m *Model) listTitle() string {
 }
 
 func (m *Model) listLines(w, h int) []string {
-	if len(m.rows) == 0 {
+	if len(m.list.rows) == 0 {
 		msg := "該当するタスクはありません"
 		if m.syncing && m.lastSync.IsZero() {
 			msg = "同期しています…"
@@ -422,16 +422,16 @@ func (m *Model) listLines(w, h int) []string {
 		return []string{m.st.dim.Render(msg)}
 	}
 	today := m.deps.Now().Format(time.DateOnly)
-	end := min(len(m.rows), m.listOffset+h)
-	lines := make([]string, 0, end-m.listOffset)
-	for i := m.listOffset; i < end; i++ {
-		r := m.rows[i]
+	end := min(len(m.list.rows), m.list.offset+h)
+	lines := make([]string, 0, end-m.list.offset)
+	for i := m.list.offset; i < end; i++ {
+		r := m.list.rows[i]
 		if r.note {
 			lines = append(lines, m.st.dim.Render(ansi.Truncate(r.header, w, "…")))
 			continue
 		}
 		if r.notif != nil {
-			lines = append(lines, m.notificationLine(r.notif, w, i == m.listCursor))
+			lines = append(lines, m.notificationLine(r.notif, w, i == m.list.cursor))
 			continue
 		}
 		if r.task == nil {
@@ -439,7 +439,7 @@ func (m *Model) listLines(w, h int) []string {
 			if r.collapsed {
 				header = fmt.Sprintf("▸ %s (%d)", r.header, r.count)
 			}
-			if i == m.listCursor {
+			if i == m.list.cursor {
 				lines = append(lines, m.highlight(header, w, true, m.focus == paneList))
 			} else {
 				lines = append(lines, m.st.sectionHeader.Render(header))
@@ -447,10 +447,10 @@ func (m *Model) listLines(w, h int) []string {
 			continue
 		}
 		if mark, ok := m.markGutter(r.task); ok {
-			lines = append(lines, mark+m.taskLine(r.task, r.depth, w-2, today, i == m.listCursor))
+			lines = append(lines, mark+m.taskLine(r.task, r.depth, w-2, today, i == m.list.cursor))
 			continue
 		}
-		lines = append(lines, m.taskLine(r.task, r.depth, w, today, i == m.listCursor))
+		lines = append(lines, m.taskLine(r.task, r.depth, w, today, i == m.list.cursor))
 	}
 	return lines
 }
@@ -472,7 +472,7 @@ func (m *Model) taskLine(t *readmodel.TaskSummary, depth, w int, today string, s
 		extra += " ↑"
 	}
 	if t.NumSubtasks > 0 {
-		if m.expanded[t.GID] {
+		if m.list.expanded[t.GID] {
 			extra += fmt.Sprintf(" ▾%d", t.NumSubtasks)
 		} else {
 			extra += fmt.Sprintf(" ↳%d", t.NumSubtasks)

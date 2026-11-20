@@ -40,7 +40,7 @@ func (m *Model) boardColumns() []boardColumn {
 		cols = append(cols, boardColumn{gid: s.GID, name: s.Name})
 	}
 	var other []*readmodel.TaskSummary
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.task == nil || r.depth > 0 { // expanded subtasks are not cards
 			continue
 		}
@@ -333,7 +333,7 @@ func (m *Model) showTagPicker(tags []readmodel.TagCount) {
 	p := &picker{kind: pickTag, title: "タグで絞り込む", items: []pickerItem{{label: "（すべてのタスク）"}}}
 	for i, t := range tags {
 		p.items = append(p.items, pickerItem{label: "#" + t.Name, value: t.Name, hint: fmt.Sprintf("未完了 %d", t.Open)})
-		if t.Name == m.tagFilter {
+		if t.Name == m.list.tagFilter {
 			p.cursor = i + 1
 		}
 	}
@@ -489,11 +489,11 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		case pickFilter:
 			var f int
 			fmt.Sscan(item.value, &f)
-			m.filter = filterMode(f)
+			m.list.filter = filterMode(f)
 			return m, m.loadTasks()
 		case pickTag:
-			m.tagFilter = item.value
-			m.listCursor, m.listOffset = 0, 0
+			m.list.tagFilter = item.value
+			m.list.cursor, m.list.offset = 0, 0
 			return m, m.loadTasks()
 		case pickSection:
 			return m, m.moveTask(p.task, p.project, item.value, item.label)

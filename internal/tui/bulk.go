@@ -44,12 +44,12 @@ func markable(r row) bool { return r.task != nil && r.notif == nil }
 // markedTasks are the marked tasks shown in the list, in list order. Marks only act in
 // the list (not on the board, the calendar or the detail view).
 func (m *Model) markedTasks() []readmodel.TaskSummary {
-	if len(m.marked) == 0 || m.keyContext() != ctxList {
+	if len(m.list.marked) == 0 || m.keyContext() != ctxList {
 		return nil
 	}
 	var out []readmodel.TaskSummary
-	for _, r := range m.rows {
-		if markable(r) && m.marked[r.task.GID] {
+	for _, r := range m.list.rows {
+		if markable(r) && m.list.marked[r.task.GID] {
 			out = append(out, *r.task)
 		}
 	}
@@ -60,13 +60,13 @@ func (m *Model) markedTasks() []readmodel.TaskSummary {
 // change that is being chosen or confirmed to the tasks still shown (as they are now):
 // what was marked when the key was pressed may have been hidden by a reload since.
 func (m *Model) pruneMarks() {
-	if len(m.marked) == 0 && m.bulkAsk == nil && m.prompt.bulkDue == nil && (m.picker == nil || m.picker.bulk == nil) {
+	if len(m.list.marked) == 0 && m.bulkAsk == nil && m.prompt.bulkDue == nil && (m.picker == nil || m.picker.bulk == nil) {
 		return
 	}
 	shown := m.shownTasks()
-	for gid := range m.marked {
+	for gid := range m.list.marked {
 		if _, ok := shown[gid]; !ok {
-			delete(m.marked, gid)
+			delete(m.list.marked, gid)
 		}
 	}
 	const gone = "対象のタスクが一覧から見えなくなったので取り消しました"
@@ -97,7 +97,7 @@ func (m *Model) pruneMarks() {
 // shownTasks are the markable tasks in the list, by gid.
 func (m *Model) shownTasks() map[string]readmodel.TaskSummary {
 	shown := map[string]readmodel.TaskSummary{}
-	for _, r := range m.rows {
+	for _, r := range m.list.rows {
 		if markable(r) {
 			shown[r.task.GID] = *r.task
 		}
@@ -119,26 +119,26 @@ func stillShown(tasks []readmodel.TaskSummary, shown map[string]readmodel.TaskSu
 // showRows recomputes the shown rows (after a reload or a collapse) and drops the marks of
 // tasks that are no longer shown.
 func (m *Model) showRows() {
-	m.rows = m.visibleRows()
+	m.list.rows = m.visibleRows()
 	m.pruneMarks()
 }
 
 // toggleMark marks (or unmarks) the selected task and moves to the next one.
 func (m *Model) toggleMark() tea.Cmd {
-	if m.listCursor < 0 || m.listCursor >= len(m.rows) || !markable(m.rows[m.listCursor]) {
+	if m.list.cursor < 0 || m.list.cursor >= len(m.list.rows) || !markable(m.list.rows[m.list.cursor]) {
 		if m.currentScope().kind == scopeInbox {
 			m.status = "通知には印を付けられません"
 		}
 		return nil
 	}
-	gid := m.rows[m.listCursor].task.GID
-	if m.marked == nil {
-		m.marked = map[string]bool{}
+	gid := m.list.rows[m.list.cursor].task.GID
+	if m.list.marked == nil {
+		m.list.marked = map[string]bool{}
 	}
-	if m.marked[gid] {
-		delete(m.marked, gid)
+	if m.list.marked[gid] {
+		delete(m.list.marked, gid)
 	} else {
-		m.marked[gid] = true
+		m.list.marked[gid] = true
 	}
 	return m.moveList(1)
 }
@@ -147,25 +147,25 @@ func (m *Model) toggleMark() tea.Cmd {
 func (m *Model) toggleMarkAll() tea.Cmd {
 	var gids []string
 	all := true
-	for _, r := range m.rows {
+	for _, r := range m.list.rows {
 		if markable(r) {
 			gids = append(gids, r.task.GID)
-			all = all && m.marked[r.task.GID]
+			all = all && m.list.marked[r.task.GID]
 		}
 	}
 	if len(gids) == 0 {
 		return nil
 	}
 	if all {
-		m.marked = nil
+		m.list.marked = nil
 		m.status = "印をすべて外しました"
 		return nil
 	}
-	if m.marked == nil {
-		m.marked = map[string]bool{}
+	if m.list.marked == nil {
+		m.list.marked = map[string]bool{}
 	}
 	for _, gid := range gids {
-		m.marked[gid] = true
+		m.list.marked[gid] = true
 	}
 	m.status = fmt.Sprintf("%d 件に印を付けました", len(gids))
 	return nil
@@ -176,7 +176,7 @@ func (m *Model) clearMarks() bool {
 	if len(m.markedTasks()) == 0 {
 		return false
 	}
-	m.marked = nil
+	m.list.marked = nil
 	m.status = "印をすべて外しました"
 	return true
 }
@@ -205,7 +205,7 @@ func (m *Model) handleBulkKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "y", "Y":
 		plan := m.bulkAsk
-		m.bulkAsk, m.marked = nil, nil
+		m.bulkAsk, m.list.marked = nil, nil
 		return m, m.runBulk(plan)
 	case "n", "N", "esc", "q", "ctrl+g":
 		m.bulkAsk = nil
@@ -450,10 +450,10 @@ func (m *Model) updateBulk(msg tea.Msg) (tea.Cmd, bool) {
 
 // markGutter is the mark shown before a task in the list while some tasks are marked.
 func (m *Model) markGutter(t *readmodel.TaskSummary) (string, bool) {
-	if len(m.marked) == 0 {
+	if len(m.list.marked) == 0 {
 		return "", false
 	}
-	if m.marked[t.GID] {
+	if m.list.marked[t.GID] {
 		return m.st.footerKey.Render("●") + " ", true
 	}
 	return "  ", true

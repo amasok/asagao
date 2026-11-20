@@ -102,7 +102,7 @@ func (m *Model) handleTimelineKey(key string) (tea.Cmd, bool) {
 		m.tl.start = time.Time{}
 	case "l", "right":
 		// The detail pane is hidden: open it full screen when there is nothing to expand.
-		if t := m.selectedTask(); t != nil && (t.NumSubtasks == 0 || m.expanded[t.GID]) {
+		if t := m.selectedTask(); t != nil && (t.NumSubtasks == 0 || m.list.expanded[t.GID]) {
 			return m.openDetail(), true
 		}
 		return nil, false
@@ -201,7 +201,7 @@ func (m *Model) renderTimeline(w, h int) string {
 			pad+m.st.dim.Render("│")+m.tlMonthLine(l, origin),
 			pad+m.st.dim.Render("│")+m.tlDayLine(l, origin, today))
 	}
-	if len(m.rows) == 0 {
+	if len(m.list.rows) == 0 {
 		msg := "該当するタスクはありません"
 		if m.syncing && m.lastSync.IsZero() {
 			msg = "同期しています…"
@@ -210,15 +210,15 @@ func (m *Model) renderTimeline(w, h int) string {
 	}
 	before, after := m.tlRelations()
 	rowsH := max(1, h-3-len(lines))
-	offset := m.listOffset
-	if m.listCursor >= offset+rowsH { // e.g. the window got shorter
-		offset = m.listCursor - rowsH + 1
+	offset := m.list.offset
+	if m.list.cursor >= offset+rowsH { // e.g. the window got shorter
+		offset = m.list.cursor - rowsH + 1
 	}
-	offset = clamp(offset, 0, max(0, len(m.rows)-1))
-	end := min(len(m.rows), offset+rowsH)
+	offset = clamp(offset, 0, max(0, len(m.list.rows)-1))
+	end := min(len(m.list.rows), offset+rowsH)
 	for i := offset; i < end; i++ {
-		r := m.rows[i]
-		selected := i == m.listCursor
+		r := m.list.rows[i]
+		selected := i == m.list.cursor
 		var name, gutter string
 		var t *readmodel.TaskSummary
 		switch {
@@ -284,7 +284,7 @@ func (m *Model) tlNameCell(t *readmodel.TaskSummary, depth, w int, selected, foc
 		s += " " + badges
 	}
 	if t.NumSubtasks > 0 {
-		if m.expanded[t.GID] {
+		if m.list.expanded[t.GID] {
 			s += fmt.Sprintf(" ▾%d", t.NumSubtasks)
 		} else {
 			s += fmt.Sprintf(" ↳%d", t.NumSubtasks)

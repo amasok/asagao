@@ -278,7 +278,7 @@ func TestToggleCompleteOffline(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	h.key("x") // complete 転居届を出す (t2)
 	s := h.screen()
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil && r.task.GID == "t2" {
 			t.Fatalf("completed task should leave the open-tasks list:\n%s", s)
 		}
@@ -452,13 +452,13 @@ func TestTagFilter(t *testing.T) {
 		t.Fatalf("tag picker:\n%s", s)
 	}
 	h.key("j", "enter") // #手続き系 sorts before #買い物? order is by name: 手続き系, 買い物
-	tag := h.m.tagFilter
+	tag := h.m.list.tagFilter
 	if tag == "" {
 		t.Fatal("tag filter should be set")
 	}
 	h.key("h", "j", "j", "l") // project view shows all assignees
 	var gids []string
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil {
 			gids = append(gids, r.task.GID)
 		}
@@ -468,7 +468,7 @@ func TestTagFilter(t *testing.T) {
 		t.Fatalf("tag %q: rows %v", tag, gids)
 	}
 	h.key("T", "g", "enter") // "（すべてのタスク）"
-	if h.m.tagFilter != "" {
+	if h.m.list.tagFilter != "" {
 		t.Fatal("first picker item should clear the filter")
 	}
 }
@@ -519,7 +519,7 @@ func projectHarness(t *testing.T, st *store.Store, viewImages func([]string) tea
 
 func (h *harness) visibleGIDs() []string {
 	var out []string
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil {
 			out = append(out, r.task.GID)
 		}
@@ -538,7 +538,7 @@ func TestCollapseSections(t *testing.T) {
 	if !strings.Contains(s, "▸ 家具 (1)") || slices.Contains(h.visibleGIDs(), "t1") {
 		t.Fatalf("家具 should be collapsed:\n%s", s)
 	}
-	if h.selected() != "" || h.m.rows[h.m.listCursor].key != "s1" {
+	if h.selected() != "" || h.m.list.rows[h.m.list.cursor].key != "s1" {
 		t.Fatal("cursor should sit on the collapsed header")
 	}
 	h.key("j")
@@ -1562,8 +1562,8 @@ func TestListCursorAfterScopeChange(t *testing.T) {
 func TestListCursorAfterArchiveToMyTasks(t *testing.T) {
 	h := projectHarness(t, fixtureStore(t), nil) // 家具 t1 | 手続き t2 t3 t4
 	h.key("j", "j", "j")
-	if h.selected() != "t4" || h.m.listCursor != 5 {
-		t.Fatalf("selected %q at row %d, want t4 at row 5", h.selected(), h.m.listCursor)
+	if h.selected() != "t4" || h.m.list.cursor != 5 {
+		t.Fatalf("selected %q at row %d, want t4 at row 5", h.selected(), h.m.list.cursor)
 	}
 	h.send(projectDoneMsg{status: "アーカイブしました", toMyTasks: true})
 	if h.m.scopeKey() != "my" {
@@ -1599,10 +1599,10 @@ func TestSelectInListNear(t *testing.T) {
 		{"no selectable rows", []row{hdr}, "x", 0, -1},
 		{"empty list", nil, "x", 0, -1},
 	} {
-		m.rows = tc.rows
+		m.list.rows = tc.rows
 		m.selectInListNear(tc.gid, tc.near)
-		if m.listCursor != tc.want {
-			t.Errorf("%s: cursor %d, want %d", tc.name, m.listCursor, tc.want)
+		if m.list.cursor != tc.want {
+			t.Errorf("%s: cursor %d, want %d", tc.name, m.list.cursor, tc.want)
 		}
 	}
 }
