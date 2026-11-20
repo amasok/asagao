@@ -756,8 +756,11 @@ func applyCustomField(ctx context.Context, tx *sql.Tx, taskGID, fieldGID string,
 	if err != nil {
 		return err
 	}
+	// A task gone from the cache is left alone: an entry being discarded has nothing to put
+	// back (#87). (The WHERE also keeps SQLite from reading ON CONFLICT as a join.)
 	_, err = tx.ExecContext(ctx, `INSERT INTO task_custom_fields(task_gid, field_gid, position, value, display)
-		VALUES(?1, ?2, COALESCE((SELECT max(position) + 1 FROM task_custom_fields WHERE task_gid = ?1), 0), ?3, ?4)
+		SELECT ?1, ?2, COALESCE((SELECT max(position) + 1 FROM task_custom_fields WHERE task_gid = ?1), 0), ?3, ?4
+		WHERE EXISTS (SELECT 1 FROM tasks WHERE gid = ?1)
 		ON CONFLICT(task_gid, field_gid) DO UPDATE SET value = excluded.value, display = excluded.display`,
 		taskGID, fieldGID, string(b), display)
 	return err
@@ -769,11 +772,6 @@ func applyCustomFieldOp(ctx context.Context, tx *sql.Tx, op Op, undo bool) error
 	src := op.Payload
 	if undo {
 		src = op.Base
-		// A task gone from the cache has no value to put back (#87).
-		var n int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", op.TaskGID).Scan(&n); err != nil || n == 0 {
-			return err
-		}
 	}
 	display, _ := src["display"].(string)
 	return applyCustomField(ctx, tx, op.TaskGID, field, src["value"], display)
