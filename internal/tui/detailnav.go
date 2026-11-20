@@ -183,7 +183,7 @@ func (m *Model) activateItem() tea.Cmd {
 		return m.openStartPicker(*d)
 	case itemSection:
 		if it.sub < len(d.Memberships) {
-			m.sectionProject = d.Memberships[it.sub].ProjectGID
+			m.choosing.sectionProject = d.Memberships[it.sub].ProjectGID
 		}
 		m.openSectionPicker()
 		return nil

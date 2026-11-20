@@ -143,77 +143,58 @@ type Model struct {
 	deps Deps
 	ctx  context.Context
 	st   styles
+	dark bool // terminal background
 
 	width, height int
 	focus         pane
+	zoom          bool // detail pane fills the screen
+	detailRatio   int  // detail pane width in % of the area right of the sidebar (layout.go)
+	hideSidebar   bool
 
+	// the sidebar
 	scopes      []scope
 	scopeCursor int
+	opening     string // project whose tasks are being fetched (lazy.go)
 
-	list   listState   // the task list (list.go)
-	detail detailState // the detail pane (detailnav.go)
-
-	search searchState
-
-	syncer    *sync.Syncer
-	syncState syncState
-	opening   string // project whose tasks are being fetched (lazy.go)
-
-	status string // transient message for the footer
+	// the panes: the task list (shown as a list, a board, a timeline or a calendar) and
+	// the detail
+	list   listState     // list.go
+	mode   viewMode      // viewmode.go
+	board  boardState    // board.go
+	cal    calendarState // calendar.go
+	tl     timelineState // timeline.go
+	detail detailState   // detailnav.go
+	cache  renderCache   // the detail's Markdown and images (markdown.go)
 
 	// overlay is the screen shown over the panes, one at a time (overlay.go)
-	overlay  overlayKind
-	menuPage int // the page of the menu shown, when it is too high for the screen
+	overlay      overlayKind
+	menuPage     int // the page of the menu shown, when it is too high for the screen
+	outboxView   outboxScreen
+	statusView   statusScreen
+	overviewView overviewScreen
+	goals        goalScreen
 
-	// writes (write.go)
-	prompt      promptState // the text input in the footer and what it changes (write.go)
-	outbox      outboxCounts
-	outboxView  outboxScreen
-	inbox       readmodel.InboxState // whether the notifications can be shown (inbox.go)
-	inboxUnread int
+	// layers over the panes and the overlay: a chooser, and the inputs in the footer
+	picker   *picker
+	choosing chooserState // pickers.go
+	prompt   promptState  // write.go
+	search   searchState
+	bulkAsk  *bulkPlan // a change to the marked tasks waiting for y/n (bulk.go)
+	status   string    // transient message for the footer
 
-	// views (board.go)
-	zoom   bool     // detail pane fills the screen
-	mode   viewMode // how the tasks are shown: a list, a board, a timeline or a calendar
-	board  boardState
-	picker *picker
+	// sync and writes
+	syncer             *sync.Syncer
+	syncState          syncState
+	outbox             outboxCounts
+	inbox              readmodel.InboxState // whether the notifications can be shown (inbox.go)
+	inboxUnread        int
+	selectProjectAfter string                  // a project created: select it when the projects load
+	fieldSaving        map[string]bool         // fieldKey: a multi_enum toggle of it is being saved (fields.go)
+	fieldQueued        map[string]*queuedField // fieldKey: its latest toggle made meanwhile
+	tmpl               templateState           // templates.go
 
-	// sections and tags (sectiontags.go)
-	planOff   map[string]planWindow // features the workspace's plan lacks (402), and until when
-	planSeq   uint64                // latest loadPlan in flight
-	tagList   []readmodel.TagCount  // the tags the tag manager shows
-	tagTarget readmodel.TagCount    // the tag being changed
-	// time tracking (timetracking.go): the task whose entries are shown
-	timeTask readmodel.TaskSummary
-
-	dark  bool        // terminal background
-	cache renderCache // detail rendering (markdown.go)
-
-	// layout (layout.go)
-	detailRatio int // detail pane width in % of the area right of the sidebar
-	hideSidebar bool
-
-	cal calendarState // calendar.go
-	tl  timelineState // timeline.go
-
-	// projects (projects.go)
-	statusView         statusScreen
-	selectProjectAfter string
-	// the project overview (project_overview.go)
-	overviewView   overviewScreen
-	newProjectName string // pickTeam: the project to create
-	// goals and portfolios (goals.go)
-	goals goalScreen
-
-	// keys (keymap.go) and choosers (pickers.go)
-	bulkAsk *bulkPlan // a change to the marked tasks waiting for y/n
-	// custom fields (fields.go)
-	fieldSaving map[string]bool         // fieldKey: a multi_enum toggle of it is being saved
-	fieldQueued map[string]*queuedField // fieldKey: its latest toggle made meanwhile
-	// dependencies (deps.go)
-	// extras.go
-	sectionProject string        // project whose sections to choose from (detail project line)
-	tmpl           templateState // templates.go
+	planOff map[string]planWindow // features the workspace's plan lacks (402), and until when
+	planSeq uint64                // latest loadPlan in flight
 }
 
 // syncState is how the background sync is doing.

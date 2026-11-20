@@ -346,8 +346,8 @@ func (m *Model) openSectionPicker() {
 	if t == nil {
 		return
 	}
-	project := m.sectionProject // chosen from a project line in the detail view
-	m.sectionProject = ""
+	project := m.choosing.sectionProject // chosen from a project line in the detail view
+	m.choosing.sectionProject = ""
 	if project == "" && m.currentScope().kind == scopeMyTasks && m.openMySectionPicker(*t) {
 		return
 	}
@@ -469,7 +469,7 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickTeam:
-			return m, m.createProjectInTeam(m.newProjectName, item.value)
+			return m, m.createProjectInTeam(m.choosing.newProjectName, item.value)
 		case pickTaskTemplate:
 			return m, m.makeTaskFromTemplate(p.project, item.value)
 		case pickProjectTemplate:

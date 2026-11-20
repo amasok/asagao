@@ -382,7 +382,7 @@ func (m *Model) updateOverview(msg tea.Msg) (tea.Cmd, bool) {
 		for _, t := range msg.teams {
 			items = append(items, pickerItem{label: t.Name, value: t.GID})
 		}
-		m.newProjectName = msg.name
+		m.choosing.newProjectName = msg.name
 		m.picker = &picker{kind: pickTeam, title: "「" + msg.name + "」を作るチーム", items: items}
 		return nil, true
 	}

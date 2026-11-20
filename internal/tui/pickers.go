@@ -13,6 +13,16 @@ import (
 // Choosers for fields that have a fixed set of values, so nothing has to be typed:
 // due date (common dates + "日付を入力…"), the list filter and the task's tags.
 
+// chooserState is what a chooser acts on that outlives it: the next chooser or prompt of
+// the same change reads it.
+type chooserState struct {
+	tags           []readmodel.TagCount  // the tags the tag manager shows (sectiontags.go)
+	tag            readmodel.TagCount    // the tag being changed
+	timeTask       readmodel.TaskSummary // the task whose time entries are shown (timetracking.go)
+	newProjectName string                // pickTeam: the project to create (projects.go)
+	sectionProject string                // project whose sections to choose from (detail project line)
+}
+
 // --- due date ---
 
 func (m *Model) openDuePicker() tea.Cmd {
