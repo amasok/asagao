@@ -12,6 +12,11 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
+func init() {
+	registerUndo(OpAddDependency, undoWith(applyDependency))
+	registerUndo(OpRemoveDependency, undoWith(applyDependency))
+}
+
 // Dependencies: a task waits for its dependencies; its dependents wait for it. Each link is
 // one row of task_dependencies (task_gid waits for dependency_gid), so both directions
 // read the same rows. A change is queued on the waiting task (add_dependency /

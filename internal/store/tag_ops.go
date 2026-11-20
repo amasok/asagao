@@ -14,6 +14,11 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpUpdateTag, undoTagOp)
+	registerUndo(OpDeleteTag, undoTagOp)
+}
+
 // Operations on tags themselves (outbox.KindUpdateTag, outbox.KindDeleteTag).
 const (
 	OpUpdateTag = outbox.KindUpdateTag

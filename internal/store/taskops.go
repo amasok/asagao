@@ -13,6 +13,19 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpSetParent, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		parent, ok := op.Base["parent"].(string)
+		if !ok {
+			return nil
+		}
+		if err := setParent(ctx, tx, op.TaskGID, parent); err != nil {
+			return err
+		}
+		return restoreSubtaskPosition(ctx, tx, op.TaskGID, op.Base)
+	})
+}
+
 // Position is where a task goes among its siblings (model.Position).
 type Position = model.Position
 

@@ -16,6 +16,13 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	// Restore the values from before the local edit.
+	registerUndo(OpUpdateProject, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		return applyProjectFields(ctx, tx, op.TaskGID, op.Base)
+	})
+}
+
 // OpUpdateProject changes a project's fields (outbox.KindUpdateProject).
 const OpUpdateProject = outbox.KindUpdateProject
 

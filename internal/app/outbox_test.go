@@ -175,3 +175,17 @@ func TestStateErrorMessage(t *testing.T) {
 		}
 	}
 }
+
+// Only a change of an existing task re-fetches it: for every other kind task_gid is a
+// local task that is gone, or not a task (an unknown kind is not trusted to be one).
+func TestOutboxRefreshTargetEveryKind(t *testing.T) {
+	for _, k := range append(outbox.AllKinds(), "from_the_future") {
+		want := ""
+		if spec, _ := outbox.SpecOf(k); spec.Subject == outbox.SubjectTask {
+			want = "1200"
+		}
+		if got := refreshTarget(outbox.Op{Kind: k, TaskGID: "1200"}); got != want {
+			t.Errorf("%s: %q, want %q", k, got, want)
+		}
+	}
+}

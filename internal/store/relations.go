@@ -14,6 +14,12 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
+func init() {
+	for _, k := range []Kind{OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject} {
+		registerUndo(k, undoWith(applyRelation))
+	}
+}
+
 // Followers, extra projects, duplicates and uploads. Like the other local edits they are
 // applied to the store at once and queued in the outbox.
 const (

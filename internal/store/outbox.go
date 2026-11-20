@@ -22,6 +22,30 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpCreateTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		return discardLocalTask(ctx, tx, op.TaskGID, true)
+	})
+	registerUndo(OpDuplicateTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		return discardLocalTask(ctx, tx, op.TaskGID, false)
+	})
+	// Restore the values from before the local edit.
+	registerUndo(OpUpdateTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		return applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{})
+	})
+	registerUndo(OpMoveTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		project, _ := op.Payload["project"].(string)
+		section, _ := op.Base["section"].(string)
+		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
+			return err
+		}
+		return restorePosition(ctx, tx, op.TaskGID, project, op.Base)
+	})
+	// The task stays in the store, hidden while its delete is queued: dropping the entry
+	// shows it again.
+	registerUndo(OpDeleteTask, nothingToUndo)
+}
+
 // Offline editing: every write is applied to the local tables immediately and recorded in
 // the outbox. The sync engine sends outbox entries to Asana in order (see sync.Push).
 //
@@ -663,137 +687,14 @@ func (s *Store) DiscardOp(ctx context.Context, id int64) error {
 	})
 }
 
-// discardOpTx drops entry op and undoes its local change.
+// discardOpTx drops entry op and undoes its local change (see undoers).
 func discardOpTx(ctx context.Context, tx *sql.Tx, op *Op) error {
-	id := op.ID
-	var err error
-	switch op.Kind {
-	case OpCreateTask, OpDuplicateTask:
-		if err := discardLocalTask(ctx, tx, op.TaskGID, op.Kind == OpCreateTask); err != nil {
-			return err
-		}
-	case OpAddComment:
-		if gid, _ := op.Payload["story_gid"].(string); gid != "" {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
-				return err
-			}
-			if err := dropChangesOf(ctx, tx, "story", gid, OpUpdateStory, OpDeleteStory); err != nil {
-				return err
-			}
-		}
-	case OpUpdateStory, OpDeleteStory:
-		if err := undoStoryOp(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpDeleteAttachment:
-		if err := undoAttachmentDelete(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpAddTimeEntry, OpUpdateTimeEntry, OpDeleteTimeEntry:
-		if err := undoTimeEntryOp(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject:
-		if err := applyRelation(ctx, tx, *op, true); err != nil {
-			return err
-		}
-	case OpCreateStatus:
-		gid, _ := op.Payload["status"].(string)
-		if _, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid); err != nil {
-			return err
-		}
-	case OpUploadAttachment:
-		gid, _ := op.Payload["attachment"].(string)
-		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
-			return err
-		}
-		if err := dropChangesOf(ctx, tx, "attachment", gid, OpDeleteAttachment); err != nil {
-			return err
-		}
-	case OpAddTag, OpRemoveTag:
-		tag, _ := op.Payload["tag"].(string)
-		q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
-		if op.Kind == OpRemoveTag {
-			q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
-		}
-		if _, err := tx.ExecContext(ctx, q, op.TaskGID, tag); err != nil {
-			return err
-		}
-	case OpMarkNotification:
-		if read, ok := op.Base["read"].(bool); ok {
-			if _, err := tx.ExecContext(ctx, "UPDATE notifications SET is_read = ? WHERE gid = ?", read, op.TaskGID); err != nil {
-				return err
-			}
-		}
-	case OpRenameSection:
-		if name, ok := op.Base["name"].(string); ok {
-			if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID); err != nil {
-				return err
-			}
-		}
-	case OpMoveMySection:
-		section, _ := op.Base["section"].(string)
-		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET assignee_section_gid = ? WHERE gid = ?", section, op.TaskGID); err != nil {
-			return err
-		}
-	case OpUpdateTag, OpDeleteTag:
-		if err := undoTagOp(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpCreateSection, OpDeleteSection, OpInsertSection:
-		if err := undoSectionOp(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpCreateEnumOption:
-		if err := undoCreateEnumOption(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpAddFieldSetting, OpRemoveFieldSetting:
-		if err := undoFieldSettingOp(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpUpdateProject:
-		// Restore the values from before the local edit.
-		if err := applyProjectFields(ctx, tx, op.TaskGID, op.Base); err != nil {
-			return err
-		}
-	case OpUpdateBrief:
-		if err := undoBriefOp(ctx, tx, op); err != nil {
-			return err
-		}
-	case OpMoveTask:
-		project, _ := op.Payload["project"].(string)
-		section, _ := op.Base["section"].(string)
-		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
-			return err
-		}
-		if err := restorePosition(ctx, tx, op.TaskGID, project, op.Base); err != nil {
-			return err
-		}
-	case OpSetCustomField:
-		if err := applyCustomFieldOp(ctx, tx, *op, true); err != nil {
-			return err
-		}
-	case OpAddDependency, OpRemoveDependency:
-		if err := applyDependency(ctx, tx, *op, true); err != nil {
-			return err
-		}
-	case OpSetParent:
-		if parent, ok := op.Base["parent"].(string); ok {
-			if err := setParent(ctx, tx, op.TaskGID, parent); err != nil {
-				return err
-			}
-			if err := restoreSubtaskPosition(ctx, tx, op.TaskGID, op.Base); err != nil {
-				return err
-			}
-		}
-	case OpUpdateTask:
-		// Restore the values from before the local edit.
-		if err := applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{}); err != nil {
+	if undo, ok := undoers[op.Kind]; ok { // an entry of a newer version: only dropped
+		if err := undo(ctx, tx, op); err != nil {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id)
+	_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 	return err
 }
 

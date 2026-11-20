@@ -14,6 +14,29 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
+func init() {
+	registerUndo(OpAddComment, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		gid, _ := op.Payload["story_gid"].(string)
+		if gid == "" {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
+			return err
+		}
+		return dropChangesOf(ctx, tx, "story", gid, OpUpdateStory, OpDeleteStory)
+	})
+	registerUndo(OpUpdateStory, undoStoryOp)
+	registerUndo(OpDeleteStory, undoStoryOp)
+	registerUndo(OpUploadAttachment, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		gid, _ := op.Payload["attachment"].(string)
+		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
+			return err
+		}
+		return dropChangesOf(ctx, tx, "attachment", gid, OpDeleteAttachment)
+	})
+	registerUndo(OpDeleteAttachment, undoAttachmentDelete)
+}
+
 // Editing and deleting the user's comments, and deleting attachments (#34). As every other
 // write, the change is applied to the local tables at once and queued in the outbox:
 //

@@ -12,6 +12,12 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
+func init() {
+	registerUndo(OpCreateSection, undoSectionOp)
+	registerUndo(OpDeleteSection, undoSectionOp)
+	registerUndo(OpInsertSection, undoSectionOp)
+}
+
 // Section operations of a project (outbox.KindCreateSection, KindDeleteSection,
 // KindInsertSection).
 const (
