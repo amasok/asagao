@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	registerUndo(OpSetCustomField, undoWith(applyCustomFieldOp))
+	registerUndo(OpSetCustomField, undoWith[outbox.SetCustomField](applyCustomFieldOp))
 }
 
 // Custom fields. Values are kept in the form Asana accepts when setting them (PUT
@@ -756,8 +756,11 @@ func applyCustomField(ctx context.Context, tx *sql.Tx, taskGID, fieldGID string,
 	if err != nil {
 		return err
 	}
+	// A task gone from the cache is left alone: an entry being discarded has nothing to put
+	// back (#87). (The WHERE also keeps SQLite from reading ON CONFLICT as a join.)
 	_, err = tx.ExecContext(ctx, `INSERT INTO task_custom_fields(task_gid, field_gid, position, value, display)
-		VALUES(?1, ?2, COALESCE((SELECT max(position) + 1 FROM task_custom_fields WHERE task_gid = ?1), 0), ?3, ?4)
+		SELECT ?1, ?2, COALESCE((SELECT max(position) + 1 FROM task_custom_fields WHERE task_gid = ?1), 0), ?3, ?4
+		WHERE EXISTS (SELECT 1 FROM tasks WHERE gid = ?1)
 		ON CONFLICT(task_gid, field_gid) DO UPDATE SET value = excluded.value, display = excluded.display`,
 		taskGID, fieldGID, string(b), display)
 	return err
@@ -765,13 +768,13 @@ func applyCustomField(ctx context.Context, tx *sql.Tx, taskGID, fieldGID string,
 
 // applyCustomFieldOp writes the value of a set_custom_field entry (or, with undo, its base).
 func applyCustomFieldOp(ctx context.Context, tx *sql.Tx, op Op, undo bool) error {
-	field, _ := op.Payload["field"].(string)
-	src := op.Payload
+	p, _ := outbox.BestEffortPayload[outbox.SetCustomField](op)
+	value, display := p.Value, p.Display
 	if undo {
-		src = op.Base
+		display, _ = op.Base["display"].(string)
+		value = op.Base["value"]
 	}
-	display, _ := src["display"].(string)
-	return applyCustomField(ctx, tx, op.TaskGID, field, src["value"], display)
+	return applyCustomField(ctx, tx, op.TaskGID, p.Field, value, display)
 }
 
 // findCustomFieldOp returns the pending or conflicted entry setting field of task.

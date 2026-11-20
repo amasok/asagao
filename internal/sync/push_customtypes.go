@@ -21,8 +21,8 @@ import (
 // and with a custom task type or its status, resource_subtype "custom" and the type too
 // (Asana takes them only on a custom task; the type is the base's when only the status
 // changes).
-func taskUpdateFields(op outbox.Op) map[string]any {
-	out := apiFields(op.Payload)
+func taskUpdateFields(op outbox.Op, p outbox.UpdateTask) map[string]any {
+	out := apiFields(p.Fields())
 	_, typ := out["custom_type"]
 	_, status := out["custom_type_status_option"]
 	if !typ && !status {
@@ -60,9 +60,9 @@ func (e *customTypeWithdrawn) Unwrap() error { return e.err }
 
 // customTypeRefused turns Asana's refusal (400 / 403 / 422, or 402 for the plan, which
 // is recorded for the workspace) of a change with a custom type into customTypeWithdrawn.
-func (s *Pusher) customTypeRefused(ctx context.Context, op outbox.Op, err error) error {
+func (s *Pusher) customTypeRefused(ctx context.Context, op outbox.Op, p outbox.UpdateTask, err error) error {
 	var apiErr *model.Error
-	if op.Kind != outbox.KindUpdateTask || !domaintask.TouchesCustomType(op.Payload) || !errors.As(err, &apiErr) {
+	if !domaintask.TouchesCustomType(p.Fields()) || !errors.As(err, &apiErr) {
 		return err
 	}
 	switch apiErr.Status {
@@ -81,8 +81,8 @@ func (s *Pusher) customTypeRefused(ctx context.Context, op outbox.Op, err error)
 // answer without it (the field ignored) is customTypeWithdrawn, applied, instead of a
 // change completed silently without its type. A task read without its custom type is not
 // checked, nor one whose type or status came without its gid.
-func customTypeApplied(op outbox.Op, t *model.Task) error {
-	if !domaintask.TouchesCustomType(op.Payload) || t == nil || t.Partial || t.NoCustomType {
+func customTypeApplied(op outbox.Op, p outbox.UpdateTask, t *model.Task) error {
+	if !domaintask.TouchesCustomType(p.Fields()) || t == nil || t.Partial || t.NoCustomType {
 		return nil
 	}
 	// A type or status without its gid (read by name only) cannot be compared: the change
@@ -92,7 +92,7 @@ func customTypeApplied(op outbox.Op, t *model.Task) error {
 			return nil
 		}
 	}
-	sent := taskUpdateFields(op)
+	sent := taskUpdateFields(op, p)
 	got := map[string]string{"resource_subtype": t.ResourceSubtype}
 	if t.CustomType != nil {
 		got["custom_type"] = t.CustomType.GID

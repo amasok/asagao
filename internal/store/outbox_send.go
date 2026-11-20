@@ -76,6 +76,13 @@ func (s *Store) MarkOpVerify(ctx context.Context, id int64, note string) error {
 	return err
 }
 
+// HoldOp records why a pending entry is not sent (this version cannot read it, see
+// sync/unreadable.go): it stays in the queue as it is, note shown as its last error.
+func (s *Store) HoldOp(ctx context.Context, id int64, note string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE outbox SET last_error = ? WHERE id = ? AND state = 'pending'", note, id)
+	return err
+}
+
 // ClearVerify records that Asana does not have what entry id would create, so it is sent
 // again (and gets a new sent_at).
 func (s *Store) ClearVerify(ctx context.Context, id int64) error {

@@ -379,8 +379,8 @@ func reapplyTimeEntryOps(ctx context.Context, tx *sql.Tx, taskGID string) error 
 }
 
 // undoTimeEntryOp puts back what a discarded add, edit or delete of an entry changed locally.
-func undoTimeEntryOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	local, _ := op.Payload["entry"].(string)
+func undoTimeEntryOp(ctx context.Context, tx *sql.Tx, op *Op, p outbox.TimeEntry) error {
+	local := p.Entry
 	if op.Kind == OpAddTimeEntry {
 		if local == "" {
 			return nil

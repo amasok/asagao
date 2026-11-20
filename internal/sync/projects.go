@@ -21,8 +21,8 @@ import (
 // are fetched when it is opened (FetchProjectOverview).
 
 func init() {
-	register(outbox.KindCreateStatus, opHandler{send: sends((*Pusher).pushStatus), find: findStatus})
-	register(outbox.KindUpdateProject, opHandler{send: (*Pusher).pushUpdateProject})
+	registerOf(outbox.KindCreateStatus, handlerOf[outbox.CreateStatus]{send: sends((*Pusher).pushStatus), find: findStatus})
+	registerOf(outbox.KindUpdateProject, handlerOf[outbox.UpdateProject]{send: (*Pusher).pushUpdateProject})
 }
 
 // ErrOffline is returned by online-only operations when there is no API client.
@@ -186,13 +186,12 @@ func (s *Details) FetchStatusUpdates(ctx context.Context, projectGID string) err
 	return s.Store.ReplaceStatusUpdates(ctx, projectGID, updates)
 }
 
-func (s *Pusher) pushStatus(ctx context.Context, op outbox.Op) error {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	u, err := s.API.CreateStatusUpdate(ctx, op.TaskGID, str("status_type"), str("title"), str("text"), str("html_text"))
+func (s *Pusher) pushStatus(ctx context.Context, op outbox.Op, p outbox.CreateStatus) error {
+	u, err := s.API.CreateStatusUpdate(ctx, op.TaskGID, p.StatusType, p.Title, p.Text, p.HTMLText)
 	if err != nil {
 		return err
 	}
-	return sentNotSaved(s.Store.CompleteStatus(ctx, op.ID, str("status"), *u))
+	return sentNotSaved(s.Store.CompleteStatus(ctx, op.ID, p.Status, *u))
 }
 
 // FetchProjectOverview refreshes what a project's overview shows that a sync does not
@@ -253,14 +252,15 @@ func (s *Details) FetchProjectOverview(ctx context.Context, projectGID string) e
 
 // pushUpdateProject sends a project edit, after checking that nobody changed the same
 // fields in Asana since it was made here (like a task's update).
-func (s *Pusher) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdateProject(ctx context.Context, op outbox.Op, edit outbox.UpdateProject) (outcome, error) {
 	server, err := s.API.Project(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
 	}
 	current := projectFieldValues(server)
 	conflicts := map[string]any{}
-	for k, local := range op.Payload {
+	fields := edit.Fields()
+	for k, local := range fields {
 		if k == "html_notes" {
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
@@ -276,7 +276,7 @@ func (s *Pusher) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, 
 	if len(conflicts) > 0 {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
-	changes := apiFields(op.Payload)
+	changes := apiFields(fields)
 	for _, k := range []string{"owner", "start_on"} {
 		if v, ok := changes[k]; ok && v == "" {
 			changes[k] = nil
@@ -329,8 +329,7 @@ func nullIfEmpty(s string) any {
 }
 
 // findStatus looks for the status update a create_status posted (see reconcile).
-func findStatus(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
-	str := func(k string) string { return payloadString(op, k) }
+func findStatus(s *Pusher, ctx context.Context, op outbox.Op, p outbox.CreateStatus, f finder) (outcome, match, error) {
 	ups, err := s.API.StatusUpdates(ctx, op.TaskGID)
 	if err != nil {
 		return sent, notFound, err
@@ -340,10 +339,10 @@ func findStatus(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome
 		return sent, notFound, err
 	}
 	u, m := pick(ups, func(u model.StatusUpdate) bool {
-		return !used[u.GID] && u.Title == str("title") && u.StatusType == str("status_type") && f.recent(u.CreatedAt) && f.byMe(u.Author)
+		return !used[u.GID] && u.Title == p.Title && u.StatusType == p.StatusType && f.recent(u.CreatedAt) && f.byMe(u.Author)
 	})
 	if m != matched {
 		return sent, m, nil
 	}
-	return sent, matched, s.Store.CompleteStatus(ctx, op.ID, str("status"), u)
+	return sent, matched, s.Store.CompleteStatus(ctx, op.ID, p.Status, u)
 }

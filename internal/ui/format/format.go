@@ -227,12 +227,11 @@ func DescribeChange(op outbox.Op) string {
 	return termsafe.String(describeChange(op))
 }
 
-func dependencyName(op outbox.Op) string {
-	if name, _ := op.Payload["dependency_name"].(string); name != "" {
-		return name
+func dependencyName(p outbox.Dependency) string {
+	if p.DependencyName != "" {
+		return p.DependencyName
 	}
-	dep, _ := op.Payload["dependency"].(string)
-	return dep
+	return p.Dependency
 }
 
 // KindLabel is a task's type as it is shown: the name of its custom type, if it has one,

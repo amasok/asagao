@@ -81,10 +81,11 @@ func TestMatchSameAsBeforeOnRandomText(t *testing.T) {
 		if r.Intn(2) == 0 {
 			p["html_notes"] = d
 		}
-		if r.Intn(5) == 0 {
-			p["assignee"] = 5 // not a string
+		cp, err := PayloadOf[CreateTask](Op{Kind: KindCreateTask, Payload: p})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if g, w := SameTaskFields(f, p), oldSameFields(f, p); g != w {
+		if g, w := SameTaskFields(f, cp), oldSameFields(f, p); g != w {
 			t.Fatalf("SameTaskFields(%+v, %v) = %v, old %v", f, p, g, w)
 		}
 	}

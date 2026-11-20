@@ -322,9 +322,9 @@ func scanIDsQuery(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]int
 // undoCreateEnumOption drops an option created offline whose creation is discarded: it
 // goes from the field's options, and from every value that uses it (the changes that only
 // set it are dropped with it; a task created offline is created without it).
-func undoCreateEnumOption(ctx context.Context, tx *sql.Tx, op *Op) error {
+func undoCreateEnumOption(ctx context.Context, tx *sql.Tx, op *Op, p outbox.CreateEnumOption) error {
 	local := op.TaskGID
-	field, _ := op.Payload["field"].(string)
+	field := p.Field
 	d, err := getFieldDef(ctx, tx, field)
 	known := err == nil
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -478,8 +478,8 @@ func attachField(ctx context.Context, tx *sql.Tx, projectGID, fieldGID string, p
 }
 
 // undoFieldSettingOp puts a project's fields back as they were before op.
-func undoFieldSettingOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	field, _ := op.Payload["field"].(string)
+func undoFieldSettingOp(ctx context.Context, tx *sql.Tx, op *Op, p outbox.FieldSetting) error {
+	field := p.Field
 	if op.Kind == OpAddFieldSetting {
 		_, err := tx.ExecContext(ctx, "DELETE FROM project_custom_fields WHERE project_gid = ? AND field_gid = ?", op.TaskGID, field)
 		return err

@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	registerUndo(OpMarkNotification, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpMarkNotification, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.MarkNotification) error {
 		read, ok := op.Base["read"].(bool)
 		if !ok {
 			return nil

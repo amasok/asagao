@@ -99,12 +99,12 @@ func (s *Pusher) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 }
 
 // sameTaskFields is outbox.SameTaskFields on the task as Asana returns it.
-func sameTaskFields(t model.Task, payload map[string]any) bool {
+func sameTaskFields(t model.Task, p outbox.CreateTask) bool {
 	f := outbox.TaskFields{DueOn: t.DueOn, StartOn: t.StartOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
 	if t.Assignee != nil {
 		f.AssigneeGID = t.Assignee.GID
 	}
-	return outbox.SameTaskFields(f, payload)
+	return outbox.SameTaskFields(f, p)
 }
 
 // tasksCreatedUnder lists the tasks a new task could be among: the parent's subtasks, the

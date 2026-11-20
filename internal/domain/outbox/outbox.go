@@ -2,11 +2,8 @@
 // and queued to be sent to Asana. Each entry has a kind (what to do) and a state (where it
 // is in being sent). The store keeps the entries; the sync engine sends them.
 //
-// update_task payloads use these keys (values are what Asana accepts):
-//
-//	completed bool, name string, notes string, due_on "YYYY-MM-DD" or "", assignee gid or ""
-//
-// "" means "clear" for due_on and assignee.
+// The payload of each kind is a struct (payloads.go), converted from and to the stored
+// JSON object in one place (payload.go).
 package outbox
 
 // Kinds of outbox entries (the outbox kind column).

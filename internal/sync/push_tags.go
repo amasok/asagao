@@ -11,27 +11,29 @@ import (
 // Sending changes to tags themselves (#33).
 
 func init() {
-	waits := func(s *Pusher, ctx context.Context, op outbox.Op) (bool, error) {
-		return s.waitsForTag(ctx, op.TaskGID)
-	}
-	register(outbox.KindUpdateTag, opHandler{send: (*Pusher).pushUpdateTag, waits: waits,
-		planWorkspace: func(s *Pusher, ctx context.Context, op outbox.Op) string {
+	registerOf(outbox.KindUpdateTag, handlerOf[outbox.UpdateTag]{send: (*Pusher).pushUpdateTag,
+		waits: func(s *Pusher, ctx context.Context, op outbox.Op, _ outbox.UpdateTag) (bool, error) {
+			return s.waitsForTag(ctx, op.TaskGID)
+		},
+		planWorkspace: func(s *Pusher, ctx context.Context, op outbox.Op, _ outbox.UpdateTag) string {
 			ws, _ := s.Store.TagWorkspace(ctx, op.TaskGID)
 			return ws
 		}})
-	register(outbox.KindDeleteTag, opHandler{send: sends((*Pusher).pushDeleteTag), waits: waits, planWorkspace: deletedTagWorkspace})
+	registerOf(outbox.KindDeleteTag, handlerOf[outbox.DeleteTag]{send: sends((*Pusher).pushDeleteTag), planWorkspace: deletedTagWorkspace,
+		waits: func(s *Pusher, ctx context.Context, op outbox.Op, _ outbox.DeleteTag) (bool, error) {
+			return s.waitsForTag(ctx, op.TaskGID)
+		}})
 }
 
 // deletedTagWorkspace is the workspace of a tag being deleted. The tag is gone from the
 // cache: its workspace is kept in the entry (or, for an entry queued before #68, the tasks
 // it was on, in the order TagWorkspace reads them).
-func deletedTagWorkspace(s *Pusher, ctx context.Context, op outbox.Op) string {
-	if ws := payloadString(op, "workspace"); ws != "" {
-		return ws
+func deletedTagWorkspace(s *Pusher, ctx context.Context, _ outbox.Op, p outbox.DeleteTag) string {
+	if p.Workspace != "" {
+		return p.Workspace
 	}
-	tasks, _ := op.Payload["tasks"].([]any)
-	for _, t := range tasks {
-		if g, _ := t.(string); g != "" {
+	for _, g := range p.Tasks {
+		if g != "" {
 			if ws, _ := s.Store.TaskWorkspace(ctx, g); ws != "" {
 				return ws
 			}
@@ -42,7 +44,7 @@ func deletedTagWorkspace(s *Pusher, ctx context.Context, op outbox.Op) string {
 
 // pushUpdateTag renames and/or recolors a tag. A value changed in Asana since the local
 // edit (to something else) is a conflict.
-func (s *Pusher) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdateTag(ctx context.Context, op outbox.Op, p outbox.UpdateTag) (outcome, error) {
 	gid, err := s.Store.RealTagGID(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -57,8 +59,11 @@ func (s *Pusher) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, erro
 	current := map[string]string{"name": server.Name, "color": server.Color}
 	changes := map[string]any{}
 	conflict := map[string]any{}
-	for k, v := range op.Payload {
-		want, _ := v.(string)
+	for k, v := range map[string]*string{"name": p.Name, "color": p.Color} {
+		if v == nil {
+			continue // unchanged
+		}
+		want := *v
 		cur, base := any(current[k]), op.Base[k]
 		cmpWant := any(want)
 		if k == "color" { // "none" ≡ "", and Asana renames the written names, like a project's
@@ -97,7 +102,7 @@ func (s *Pusher) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, erro
 }
 
 // pushDeleteTag deletes a tag. One that is already gone (or was never created) is done.
-func (s *Pusher) pushDeleteTag(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDeleteTag(ctx context.Context, op outbox.Op, _ outbox.DeleteTag) error {
 	gid, err := s.Store.RealTagGID(ctx, op.TaskGID)
 	if err != nil {
 		return err

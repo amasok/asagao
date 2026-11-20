@@ -13,8 +13,8 @@ import (
 )
 
 func init() {
-	registerUndo(OpAddDependency, undoWith(applyDependency))
-	registerUndo(OpRemoveDependency, undoWith(applyDependency))
+	registerUndo(OpAddDependency, undoWith[outbox.Dependency](applyDependency))
+	registerUndo(OpRemoveDependency, undoWith[outbox.Dependency](applyDependency))
 }
 
 // Dependencies: a task waits for its dependencies; its dependents wait for it. Each link is
@@ -98,7 +98,8 @@ func (s *Store) ReplaceDependencies(ctx context.Context, taskGID string, deps, d
 
 // applyDependency writes (or, with undo, reverts) a dependency change locally.
 func applyDependency(ctx context.Context, tx *sql.Tx, op Op, undo bool) error {
-	dep, _ := op.Payload["dependency"].(string)
+	p, _ := outbox.BestEffortPayload[outbox.Dependency](op)
+	dep := p.Dependency
 	q := "INSERT OR IGNORE INTO task_dependencies(task_gid, dependency_gid) VALUES(?, ?)"
 	if (op.Kind == OpRemoveDependency) != undo {
 		q = "DELETE FROM task_dependencies WHERE task_gid = ? AND dependency_gid = ?"

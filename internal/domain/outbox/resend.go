@@ -9,16 +9,23 @@ import "github.com/amasok/asagao/internal/domain/gid"
 // Adding a tag created offline first creates the tag. Once that is recorded only the
 // (harmless) adding remains, so it depends on tagCreated, which reports whether the local
 // tag has a real gid now. tagCreated is called only for such an entry.
+//
+// An entry of a kind this version does not know (written by a newer one) may be a create:
+// it is not taken for safe, so it is checked before it is sent again. Neither is an add_tag
+// whose payload cannot be read.
 func SafeToResend(op Op, tagCreated func(localTag string) (bool, error)) (bool, error) {
-	if specs[op.Kind].Creates {
+	if spec, ok := specs[op.Kind]; !ok || spec.Creates {
 		return false, nil
 	}
 	if op.Kind == KindAddTag {
-		tag, _ := op.Payload["tag"].(string)
-		if !gid.IsLocal(tag) {
+		p, err := PayloadOf[AddTag](op)
+		if err != nil {
+			return false, nil
+		}
+		if !gid.IsLocal(p.Tag) {
 			return true, nil
 		}
-		return tagCreated(tag)
+		return tagCreated(p.Tag)
 	}
 	return true, nil
 }

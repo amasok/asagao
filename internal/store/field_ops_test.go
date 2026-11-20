@@ -306,3 +306,27 @@ func TestProjectFieldsInProjectOrder(t *testing.T) {
 		t.Fatalf("order = %v", got)
 	}
 }
+
+// Discarding an option added offline rewrites the values that kept other options; a task
+// gone from the cache meanwhile has no value to rewrite, and the discard still goes (#87).
+func TestDiscardCreateEnumOptionOfTaskNotInCache(t *testing.T) {
+	s := setupFieldOps(t)
+	ctx := context.Background()
+	local, _, _ := s.AddEnumOptionLocal(ctx, "cf4", "C", testNow)
+	_, err := s.SetCustomFieldLocal(ctx, "t1", "cf4", []string{"m2", local}, testNow)
+	must(t, err)
+	_, err = s.db.ExecContext(ctx, "DELETE FROM tasks WHERE gid = 't1'")
+	must(t, err)
+	create := fieldOpsOfKind(t, s, OpCreateEnumOption)[0]
+	if err := s.DiscardOp(ctx, create.ID); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if len(fieldOpsOfKind(t, s, OpCreateEnumOption)) != 0 {
+		t.Fatal("create left")
+	}
+	var n int
+	must(t, s.db.QueryRowContext(ctx, "SELECT count(*) FROM task_custom_fields WHERE task_gid = 't1'").Scan(&n))
+	if n != 0 {
+		t.Fatalf("%d values of the gone task", n)
+	}
+}

@@ -26,10 +26,14 @@ func TestSameTaskFields(t *testing.T) {
 		{"rich notes match by plain notes", TaskFields{Notes: "メモ", HTMLNotes: "<body>別物</body>"}, map[string]any{"html_notes": "<body>他</body>", "notes": "メモ"}, true},
 		{"rich notes match by neither", TaskFields{Notes: "メモ", HTMLNotes: "<body>別物</body>"}, map[string]any{"html_notes": "<body>他</body>", "notes": "違う"}, false},
 		{"plain payload ignores Asana's html", TaskFields{Notes: "メモ", HTMLNotes: "<body>別物</body>"}, map[string]any{"notes": "メモ"}, true},
-		{"a value that is not a string is empty", TaskFields{}, map[string]any{"due_on": 1, "assignee": true, "notes": nil}, true},
+		{"a null value is empty", TaskFields{}, map[string]any{"due_on": nil, "assignee": nil, "notes": nil}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := SameTaskFields(tc.task, tc.payload); got != tc.want {
+			p, err := PayloadOf[CreateTask](Op{Kind: KindCreateTask, Payload: tc.payload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := SameTaskFields(tc.task, p); got != tc.want {
 				t.Fatalf("SameTaskFields = %v, want %v", got, tc.want)
 			}
 		})

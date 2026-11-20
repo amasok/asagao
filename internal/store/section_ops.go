@@ -13,9 +13,12 @@ import (
 )
 
 func init() {
-	registerUndo(OpCreateSection, undoSectionOp)
-	registerUndo(OpDeleteSection, undoSectionOp)
-	registerUndo(OpInsertSection, undoSectionOp)
+	// The section goes, with what was queued for it (it would fail without it).
+	registerUndo(OpCreateSection, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.CreateSection) error {
+		return forgetLocalSection(ctx, tx, op.TaskGID)
+	})
+	registerUndo(OpDeleteSection, undoDeleteSection)
+	registerUndo(OpInsertSection, undoInsertSection)
 }
 
 // Section operations of a project (outbox.KindCreateSection, KindDeleteSection,
@@ -423,24 +426,19 @@ func applySectionOp(ctx context.Context, tx *sql.Tx, op Op) error {
 	return writeSectionOrder(ctx, tx, placeSection(order, op.TaskGID, str("before"), str("after")))
 }
 
-// undoSectionOp undoes the local change of a section entry that is discarded.
-func undoSectionOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	switch op.Kind {
-	case OpCreateSection:
-		// The section goes, with what was queued for it (it would fail without it).
-		return forgetLocalSection(ctx, tx, op.TaskGID)
-	case OpDeleteSection:
-		pos, _ := op.Payload["position"].(float64)
-		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO sections(gid, project_gid, name, position) VALUES(?, ?, ?, 1 << 30)",
-			op.TaskGID, str("project"), str("name")); err != nil {
-			return err
-		}
-		return putSectionAt(ctx, tx, str("project"), op.TaskGID, int(pos))
-	case OpInsertSection:
-		if pos, ok := op.Base["position"].(float64); ok {
-			return putSectionAt(ctx, tx, str("project"), op.TaskGID, int(pos))
-		}
+// undoDeleteSection puts back a section whose delete is discarded, where it was.
+func undoDeleteSection(ctx context.Context, tx *sql.Tx, op *Op, p outbox.DeleteSection) error {
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO sections(gid, project_gid, name, position) VALUES(?, ?, ?, 1 << 30)",
+		op.TaskGID, p.Project, p.Name); err != nil {
+		return err
+	}
+	return putSectionAt(ctx, tx, p.Project, op.TaskGID, p.Position)
+}
+
+// undoInsertSection puts a section whose move is discarded back where it was.
+func undoInsertSection(ctx context.Context, tx *sql.Tx, op *Op, p outbox.InsertSection) error {
+	if pos, ok := op.Base["position"].(float64); ok {
+		return putSectionAt(ctx, tx, p.Project, op.TaskGID, int(pos))
 	}
 	return nil
 }
