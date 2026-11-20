@@ -37,6 +37,9 @@ func batchActionFor(w model.BatchWrite, taskFields []string) (act batchAction, w
 		if err := requireBatchGID(w.Kind, "task gid", w.TaskGID); err != nil {
 			return batchAction{}, false, err
 		}
+		if len(w.Fields) == 0 {
+			return batchAction{}, false, fmt.Errorf("asana: batch %q: fields must not be empty", w.Kind)
+		}
 		return batchAction{
 			Method:       "put",
 			RelativePath: "/tasks/" + url.PathEscape(w.TaskGID),

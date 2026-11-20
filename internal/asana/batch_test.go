@@ -269,6 +269,8 @@ func TestBatchActionForInvalidInputs(t *testing.T) {
 		{"unknown kind", model.BatchWrite{Kind: "delete_everything", TaskGID: "t1"}},
 		{"unknown kind with control chars", model.BatchWrite{Kind: "\x1b[31mbad", TaskGID: "t1"}},
 		{"update task missing task gid", model.BatchUpdateTask("", map[string]any{"completed": true})},
+		{"update task nil fields", model.BatchUpdateTask("t1", nil)},
+		{"update task empty fields", model.BatchUpdateTask("t1", map[string]any{})},
 		{"move task missing section gid", model.BatchMoveTaskToSection("", "t1")},
 		{"move task missing task gid", model.BatchMoveTaskToSection("s1", "")},
 		{"add tag missing task gid", model.BatchAddTag("", "tag1")},
@@ -291,8 +293,12 @@ func TestBatchActionForInvalidInputs(t *testing.T) {
 
 	for _, tc := range invalid {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := batchActionFor(tc.write, []string{"name"}); err == nil {
+			_, _, err := batchActionFor(tc.write, []string{"name"})
+			if err == nil {
 				t.Fatalf("expected error for %+v", tc.write)
+			}
+			if strings.ContainsRune(err.Error(), '\x1b') {
+				t.Fatalf("error leaked raw control character: %q", err.Error())
 			}
 		})
 	}
@@ -305,6 +311,8 @@ func TestBatchValidationBeforeHTTP(t *testing.T) {
 	}{
 		{"unknown kind", []BatchWrite{{Kind: "bogus", TaskGID: "t1"}}},
 		{"empty task gid", []BatchWrite{model.BatchUpdateTask("", map[string]any{"name": "x"})}},
+		{"nil update fields", []BatchWrite{model.BatchUpdateTask("t1", nil)}},
+		{"empty update fields", []BatchWrite{model.BatchUpdateTask("t1", map[string]any{})}},
 		{"empty tag gid after valid write", []BatchWrite{
 			model.BatchUpdateTask("t1", map[string]any{"name": "x"}),
 			model.BatchAddTag("t1", ""),
