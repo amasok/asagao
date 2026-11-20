@@ -17,6 +17,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/termsafe"
@@ -307,7 +308,7 @@ func TestTaskByCustomID500FallbackNoisySecondChunk(t *testing.T) {
 			t.Errorf("decoy task %s should not be cached: %v", gid, err)
 		}
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "real-rc1" {
+	if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "real-rc1" {
 		t.Fatalf("sync_state custom_id:RC-1 = %q, want real-rc1", v)
 	}
 }
@@ -326,7 +327,7 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "known-gid"); err != nil {
+		if err := st.SetCustomIDTaskGID(ctx, "RC-1", "known-gid"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -338,7 +339,7 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError {
 			t.Fatalf("err = %v, want original 500 *model.Error", err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "known-gid" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "known-gid" {
 			t.Fatalf("truncated search wiped cached gid: got %q, want known-gid", v)
 		}
 		for gid := range f.tasks {
@@ -357,7 +358,7 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "known-gid"); err != nil {
+		if err := st.SetCustomIDTaskGID(ctx, "RC-1", "known-gid"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -369,7 +370,7 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError {
 			t.Fatalf("err = %v, want original 500 *model.Error", err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "known-gid" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "known-gid" {
 			t.Fatalf("cached gid wiped: got %q, want known-gid", v)
 		}
 	})
@@ -391,7 +392,7 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 		if err != nil || gid != "m100" {
 			t.Fatalf("got %q, %v; want m100, nil", gid, err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "m100" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "m100" {
 			t.Fatalf("sync_state = %q, want m100", v)
 		}
 	})
@@ -405,14 +406,14 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "stale-gid"); err != nil {
+		if err := st.SetCustomIDTaskGID(ctx, "RC-1", "stale-gid"); err != nil {
 			t.Fatal(err)
 		}
 		_, err := s.TaskByCustomID(ctx, "RC-1")
 		if !errors.Is(err, readmodel.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound for non-truncated 99 results", err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "" {
 			t.Fatalf("stale gid not cleared: %q", v)
 		}
 	})
@@ -490,9 +491,9 @@ func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 			defer cancel()
 			c.setup(f, cancel)
 			s, st, _ := setupCustomIDAttack(t, f)
-			if err := st.SetSyncState(context.Background(), readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
-				t.Fatal(err)
-			}
+				if err := st.SetCustomIDTaskGID(context.Background(), "RC-1", "old-gid"); err != nil {
+					t.Fatal(err)
+				}
 
 			_, err := s.TaskByCustomID(ctx, "RC-1")
 			if err == nil || errors.Is(err, readmodel.ErrNotFound) {
@@ -508,18 +509,18 @@ func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 				t.Fatalf("err = %v, want context.Canceled", err)
 			}
 			bg := context.Background()
-			if v, _ := st.SyncState(bg, readmodel.KeyCustomID+"RC-1"); v != "old-gid" {
+			if v, _ := st.CustomIDTaskGID(bg, "RC-1"); v != "old-gid" {
 				t.Fatalf("cached gid wiped: got %q, want old-gid", v)
 			}
-			if v, _ := st.SyncState(bg, readmodel.PlanKey(readmodel.PlanCustomID, "w1")); v != "" {
-				t.Fatalf("PlanCustomID wrongly marked 402: %q", v)
+			if _, ok, _ := st.PlanRefusedAt(bg, plan.CustomID, "w1"); ok {
+				t.Fatal("PlanCustomID wrongly marked 402")
 			}
-			ps, _ := st.SyncState(bg, readmodel.PlanKey(readmodel.PlanSearch, "w1"))
-			if c.wantPlanSearch && ps == "" {
+			_, ps, _ := st.PlanRefusedAt(bg, plan.Search, "w1")
+			if c.wantPlanSearch && !ps {
 				t.Fatal("PlanSearch 402 not recorded")
 			}
-			if !c.wantPlanSearch && ps != "" {
-				t.Fatalf("PlanSearch wrongly marked 402: %q", ps)
+			if !c.wantPlanSearch && ps {
+				t.Fatal("PlanSearch wrongly marked 402")
 			}
 		})
 	}
@@ -531,21 +532,21 @@ func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		expired := s.now().Add(-readmodel.PlanRecheckAfter - time.Minute).Format(time.RFC3339)
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w1"), expired); err != nil {
+		expired := s.now().Add(-plan.RecheckAfter - time.Minute)
+		if err := st.RecordPlanRefusal(ctx, plan.Search, "w1", expired); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w2"), s.now().Format(time.RFC3339)); err != nil {
+		if err := st.RecordPlanRefusal(ctx, plan.Search, "w2", s.now()); err != nil {
 			t.Fatal(err)
 		}
 		gid, err := s.TaskByCustomID(ctx, "RC-1")
 		if err != nil || gid != "t-ok" {
 			t.Fatalf("got %q, %v; want t-ok, nil", gid, err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w1")); v != "" {
-			t.Fatalf("expired PlanSearch for w1 not cleared: %q", v)
+		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); ok {
+			t.Fatal("expired PlanSearch for w1 not cleared")
 		}
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w2")); v == "" {
+		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w2"); !ok {
 			t.Fatal("PlanSearch for w2 should remain untouched")
 		}
 	})
@@ -575,7 +576,7 @@ func TestTaskByCustomID500FallbackTasksByGIDFailures(t *testing.T) {
 				}
 				s, st, _ := setupCustomIDAttack(t, f)
 				ctx := context.Background()
-				if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
+				if err := st.SetCustomIDTaskGID(ctx, "RC-1", "old-gid"); err != nil {
 					t.Fatal(err)
 				}
 				_, err := s.TaskByCustomID(ctx, "RC-1")
@@ -585,7 +586,7 @@ func TestTaskByCustomID500FallbackTasksByGIDFailures(t *testing.T) {
 				if f.batchCalls != 2 {
 					t.Fatalf("batchCalls = %d, want 2", f.batchCalls)
 				}
-				if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "old-gid" {
+				if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 					t.Fatalf("cached gid lost: %q", v)
 				}
 				for i := 1; i <= 10; i++ {
@@ -609,7 +610,7 @@ func TestTaskByCustomID500FallbackTasksByGIDFailures(t *testing.T) {
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
+		if err := st.SetCustomIDTaskGID(ctx, "RC-1", "old-gid"); err != nil {
 			t.Fatal(err)
 		}
 		_, err := s.TaskByCustomID(ctx, "RC-1")
@@ -617,7 +618,7 @@ func TestTaskByCustomID500FallbackTasksByGIDFailures(t *testing.T) {
 		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusInternalServerError {
 			t.Fatalf("err = %v, want original 500 *model.Error", err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "old-gid" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 			t.Fatalf("cached gid lost: %q", v)
 		}
 	})
@@ -640,14 +641,14 @@ func TestTaskByCustomID500FallbackTasksByGIDFailures(t *testing.T) {
 				}
 				s, st, _ := setupCustomIDAttack(t, f)
 				ctx := context.Background()
-				if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
+				if err := st.SetCustomIDTaskGID(ctx, "RC-1", "old-gid"); err != nil {
 					t.Fatal(err)
 				}
 				_, err := s.TaskByCustomID(ctx, "RC-1")
 				if err == nil || errors.Is(err, readmodel.ErrNotFound) {
 					t.Fatalf("err = %v, want non-NotFound error", err)
 				}
-				if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "old-gid" {
+				if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 					t.Fatalf("cached gid lost: %q", v)
 				}
 			})
@@ -661,14 +662,14 @@ func TestTaskByCustomID500FallbackTasksByGIDFailures(t *testing.T) {
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
+		if err := st.SetCustomIDTaskGID(ctx, "RC-1", "old-gid"); err != nil {
 			t.Fatal(err)
 		}
 		_, err := s.TaskByCustomID(ctx, "RC-1")
 		if !errors.Is(err, readmodel.ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "" {
 			t.Fatalf("stale gid not cleared: %q", v)
 		}
 	})
@@ -720,7 +721,7 @@ func TestTaskByCustomIDNon500NeverFallsBackToSearch(t *testing.T) {
 			f := &customIDAttackServer{customStatus: tc.status, customBody: tc.body}
 			s, st, _ := setupCustomIDAttack(t, f)
 			ctx := context.Background()
-			if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
+			if err := st.SetCustomIDTaskGID(ctx, "RC-1", "old-gid"); err != nil {
 				t.Fatal(err)
 			}
 
@@ -737,22 +738,22 @@ func TestTaskByCustomIDNon500NeverFallsBackToSearch(t *testing.T) {
 			if f.searchCalls != 0 || f.batchCalls != 0 || f.taskGetCalls != 0 {
 				t.Fatalf("unexpected fallback calls: search=%d batch=%d get=%d", f.searchCalls, f.batchCalls, f.taskGetCalls)
 			}
-			gotCache, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1")
+			gotCache, _ := st.CustomIDTaskGID(ctx, "RC-1")
 			if tc.wantCacheKept && gotCache != "old-gid" {
 				t.Fatalf("cached gid = %q, want old-gid", gotCache)
 			}
 			if !tc.wantCacheKept && gotCache != "" {
 				t.Fatalf("cached gid = %q, want cleared", gotCache)
 			}
-			pc, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomID, "w1"))
-			if tc.wantPlanCustom && pc == "" {
+			_, pc, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1")
+			if tc.wantPlanCustom && !pc {
 				t.Fatal("PlanCustomID 402 not recorded")
 			}
-			if !tc.wantPlanCustom && pc != "" {
-				t.Fatalf("PlanCustomID wrongly recorded: %q", pc)
+			if !tc.wantPlanCustom && pc {
+				t.Fatal("PlanCustomID wrongly recorded")
 			}
-			if ps, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w1")); ps != "" {
-				t.Fatalf("PlanSearch wrongly recorded: %q", ps)
+			if _, ps, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); ps {
+				t.Fatal("PlanSearch wrongly recorded")
 			}
 		})
 	}
@@ -951,10 +952,10 @@ func TestTaskByCustomID500FallbackConcurrent(t *testing.T) {
 		}
 		wg.Wait()
 
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "c2" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "c2" {
 			t.Errorf("RC-1 cache = %q, want c2", v)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-2"); v != "c12" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-2"); v != "c12" {
 			t.Errorf("RC-2 cache = %q, want c12", v)
 		}
 		if _, err := st.GetTask(ctx, "c2"); err != nil {
@@ -978,7 +979,7 @@ func TestTaskByCustomID500FallbackConcurrent(t *testing.T) {
 		}
 		s, st, _ := setupCustomIDAttack(t, f)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, readmodel.KeyCustomID+"RC-1", "old-gid"); err != nil {
+		if err := st.SetCustomIDTaskGID(ctx, "RC-1", "old-gid"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -999,13 +1000,13 @@ func TestTaskByCustomID500FallbackConcurrent(t *testing.T) {
 		if searchHits.Load() < 1 {
 			t.Fatal("expected at least 1 search call")
 		}
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSearch, "w1")); v == "" {
+		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); !ok {
 			t.Error("PlanSearch 402 not recorded")
 		}
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomID, "w1")); v != "" {
-			t.Errorf("PlanCustomID wrongly recorded: %q", v)
+		if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); ok {
+			t.Error("PlanCustomID wrongly recorded")
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyCustomID+"RC-1"); v != "old-gid" {
+		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 			t.Errorf("cached gid lost: %q", v)
 		}
 	})

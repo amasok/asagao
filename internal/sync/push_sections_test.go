@@ -16,7 +16,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -209,7 +209,7 @@ func setupSections(t *testing.T) (*sectionServer, *Syncer, *store.Store) {
 		}
 	}
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"))
-	must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
+	must(st.SetMeGID(ctx, "me"))
 	must(st.ReplaceSections(ctx, "p1", f.sections))
 	must(st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", Workspace: &asana.Ref{GID: "w1"},
 		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}},
@@ -522,10 +522,10 @@ func TestPushPaymentRequiredHidesFeature(t *testing.T) {
 	if _, err := sections.CreateHere(ctx, "p1", "x", "", ""); !app.IsPlanUnavailable(err) {
 		t.Fatalf("create after a 402: err = %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1")); v != now.Format(time.RFC3339) {
-		t.Errorf("recorded for w1 = %q", v)
+	if got, ok, _ := st.PlanRefusedAt(ctx, plan.Sections, "w1"); !ok || !got.Equal(now) {
+		t.Errorf("recorded for w1 = (%v, %v)", got, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanSections); v != "" {
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.Sections); v != "" {
 		t.Errorf("recorded for every workspace (before #50) = %q", v)
 	}
 	// Tags are another feature: still offered.

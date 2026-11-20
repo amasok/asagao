@@ -1,5 +1,15 @@
 package model
 
+// Types of custom fields that Asana uses and asagao shows and edits.
+const (
+	CFText      = "text"
+	CFNumber    = "number"
+	CFEnum      = "enum"
+	CFMultiEnum = "multi_enum"
+	CFDate      = "date"
+	CFPeople    = "people"
+)
+
 // EnumOption is a choice of an enum / multi_enum custom field.
 type EnumOption struct {
 	GID     string `json:"gid"`

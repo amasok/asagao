@@ -1,4 +1,4 @@
-package readmodel
+package format
 
 import (
 	"reflect"
@@ -6,7 +6,22 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
+
+func TestOpStateLabel(t *testing.T) {
+	for state, want := range map[string]string{
+		outbox.StatePending:  "未送信",
+		outbox.StateConflict: "競合",
+		outbox.StateFailed:   "失敗",
+		outbox.StateSending:  "送信中",
+		"other":              "other",
+	} {
+		if got := OpStateLabel(state); got != want {
+			t.Errorf("OpStateLabel(%q) = %q, want %q", state, got, want)
+		}
+	}
+}
 
 func TestOpLabel(t *testing.T) {
 	for _, tc := range []struct {
@@ -56,15 +71,15 @@ func TestOpNote(t *testing.T) {
 func TestDiscardLine(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		d     Discard
+		d     readmodel.Discard
 		want  string
 		reset bool
 	}{
-		{"with task", Discard{TaskName: "牛乳", Summary: "コメント「x」"}, "「牛乳」: コメント「x」", false},
-		{"without task", Discard{Summary: "通知を既読にする"}, "通知を既読にする", false},
-		{"deleted in Asana", Discard{TaskName: "t", Summary: "s", Reason: "404"}, "「t」: s", false},
-		{"reset", Discard{TaskName: "t", Summary: "s", Reason: ResetReason}, "「t」: s（初期化で破棄）", true},
-		{"reset without task", Discard{Summary: "s", Reason: ResetReason}, "s（初期化で破棄）", true},
+		{"with task", readmodel.Discard{TaskName: "牛乳", Summary: "コメント「x」"}, "「牛乳」: コメント「x」", false},
+		{"without task", readmodel.Discard{Summary: "通知を既読にする"}, "通知を既読にする", false},
+		{"deleted in Asana", readmodel.Discard{TaskName: "t", Summary: "s", Reason: "404"}, "「t」: s", false},
+		{"reset", readmodel.Discard{TaskName: "t", Summary: "s", Reason: ResetReason}, "「t」: s（初期化で破棄）", true},
+		{"reset without task", readmodel.Discard{Summary: "s", Reason: ResetReason}, "s（初期化で破棄）", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := DiscardLine(tc.d); got != tc.want {
@@ -189,16 +204,16 @@ func TestDescribeChangeAndOp(t *testing.T) {
 func TestTaskBadges(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		t    TaskSummary
+		t    readmodel.TaskSummary
 		want string
 	}{
-		{"plain", TaskSummary{ResourceSubtype: "default_task"}, ""},
-		{"milestone", TaskSummary{ResourceSubtype: "milestone"}, "◆"},
-		{"approval, no status", TaskSummary{ResourceSubtype: "approval"}, "[承認待ち]"},
-		{"approval", TaskSummary{ResourceSubtype: "approval", ApprovalStatus: "approved"}, "[承認済み]"},
-		{"waiting", TaskSummary{OpenDependencies: 2}, "[待ち2]"},
-		{"waiting but done", TaskSummary{OpenDependencies: 2, Completed: true}, ""},
-		{"milestone waiting", TaskSummary{ResourceSubtype: "milestone", OpenDependencies: 1}, "◆ [待ち1]"},
+		{"plain", readmodel.TaskSummary{ResourceSubtype: "default_task"}, ""},
+		{"milestone", readmodel.TaskSummary{ResourceSubtype: "milestone"}, "◆"},
+		{"approval, no status", readmodel.TaskSummary{ResourceSubtype: "approval"}, "[承認待ち]"},
+		{"approval", readmodel.TaskSummary{ResourceSubtype: "approval", ApprovalStatus: "approved"}, "[承認済み]"},
+		{"waiting", readmodel.TaskSummary{OpenDependencies: 2}, "[待ち2]"},
+		{"waiting but done", readmodel.TaskSummary{OpenDependencies: 2, Completed: true}, ""},
+		{"milestone waiting", readmodel.TaskSummary{ResourceSubtype: "milestone", OpenDependencies: 1}, "◆ [待ち1]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := TaskBadges(tc.t); got != tc.want {
@@ -225,5 +240,84 @@ func TestAccountChangedHelp(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("AccountChangedHelp = %q, want it to hold %q", got, want)
 		}
+	}
+}
+
+func TestDescribeBriefChange(t *testing.T) {
+	for _, tc := range []struct {
+		payload, base map[string]any
+		want          string
+	}{
+		{map[string]any{"title": "目的"}, map[string]any{"state": readmodel.BriefNone}, "ブリーフ「目的」の作成"},
+		{map[string]any{"title": "目的"}, map[string]any{"state": ""}, "ブリーフ「目的」の作成"},
+		{map[string]any{"title": "目的"}, map[string]any{"state": readmodel.BriefAvailable}, "ブリーフ「目的」の変更"},
+		{map[string]any{"delete": true}, map[string]any{"state": readmodel.BriefAvailable}, "ブリーフの削除"},
+	} {
+		op := outbox.Op{Kind: outbox.KindUpdateProjectBrief, TaskName: "新居", Payload: tc.payload, Base: tc.base}
+		if got := DescribeOp(op); got != "新居: "+tc.want {
+			t.Errorf("%v: %q, want %q", tc.payload, got, tc.want)
+		}
+	}
+}
+
+func TestBriefConflictDeletedThere(t *testing.T) {
+	op := outbox.Op{Kind: outbox.KindUpdateProjectBrief, Payload: map[string]any{"title": "t", "text": "x"},
+		Conflict: map[string]any{"state": readmodel.BriefNone}}
+	if lines := ConflictLines(op); len(lines) != 1 || lines[0] != "ブリーフ: こちら=t / Asana=（ブリーフがありません。削除されています）" {
+		t.Fatalf("lines = %q", lines)
+	}
+}
+
+func TestCustomTypeBadgeAndLabel(t *testing.T) {
+	tk := readmodel.TaskSummary{
+		ResourceSubtype:  "custom",
+		CustomType:       &readmodel.CustomTypeRef{GID: "ct1", Name: "バグ"},
+		CustomTypeStatus: &readmodel.CustomTypeStatusView{GID: "cs1", Name: "対応中"},
+	}
+	if got := TaskBadges(tk); got != "[バグ: 対応中]" {
+		t.Errorf("badge %q", got)
+	}
+	if got := KindLabel(tk); got != "バグ" {
+		t.Errorf("label %q", got)
+	}
+	tk.CustomTypeStatus = nil
+	if got := TaskBadges(tk); got != "[バグ]" {
+		t.Errorf("badge without status %q", got)
+	}
+	tk.CustomType = nil
+	if got := KindLabel(tk); got != "カスタムタイプ" {
+		t.Errorf("label of an unknown type %q", got)
+	}
+	if got := KindLabel(readmodel.TaskSummary{ResourceSubtype: "milestone"}); got != "マイルストーン" {
+		t.Errorf("milestone %q", got)
+	}
+}
+
+func TestDescribeCustomTypeChange(t *testing.T) {
+	op := outbox.Op{Kind: outbox.KindUpdateTask, Payload: map[string]any{"resource_subtype": "custom", "custom_type": "ct1", "custom_type_status_option": "cs1"}}
+	got := DescribeOp(op)
+	if !strings.Contains(got, "種類をカスタムタイプに変更") || !strings.Contains(got, "ステータスの変更") || strings.Contains(got, "種類を「") {
+		t.Errorf("describe %q", got)
+	}
+}
+
+func TestAmbiguousMessageText(t *testing.T) {
+	const want = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+	if AmbiguousMessage != want {
+		t.Errorf("%q", AmbiguousMessage)
+	}
+}
+
+func TestReactionsLine(t *testing.T) {
+	rs := []readmodel.Reaction{
+		{EmojiBase: "👍", Count: 2},
+		{EmojiBase: "🎉", Variant: "🎊", Count: 1, Reacted: true},
+		{EmojiBase: "❤️", Count: 0},
+	}
+	if got, want := ReactionsLine(rs), "👍 2  🎊* 1"; got != want {
+		t.Errorf("ReactionsLine = %q, want %q", got, want)
+	}
+	if got := ReactionsLine(nil); got != "" {
+		t.Errorf("ReactionsLine(nil) = %q, want empty", got)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -199,7 +200,7 @@ func TestPushTimeEntries(t *testing.T) {
 		t.Fatalf("after the push %+v", es.Entries)
 	}
 	real := es.Entries[0].GID
-	if r, _, _ := st.LocalResult(ctx, store.ResultTimeEntry, local); r != real {
+	if r, _, _ := st.LocalResult(ctx, readmodel.ResultTimeEntry, local); r != real {
 		t.Errorf("result of %s = %q, want %q", local, r, real)
 	}
 	if err := st.DeleteTimeEntryLocal(ctx, real, now); err != nil {
@@ -336,13 +337,13 @@ func TestTimeTrackingPaymentRequired(t *testing.T) {
 	if res, _ := s.Push(ctx); res.Failed != 1 {
 		t.Fatalf("Push = %+v", res)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); !ok {
 		t.Fatal("402 not recorded")
 	}
 	before := ts.count("")
 	err := s.FetchTimeEntries(ctx, "t1")
-	var pe *readmodel.PlanUnavailableError
-	if !errors.As(err, &pe) || pe.Feature != readmodel.PlanTimeTracking {
+	var pe *plan.UnavailableError
+	if !errors.As(err, &pe) || pe.Feature != plan.TimeTracking {
 		t.Errorf("FetchTimeEntries = %v", err)
 	}
 	if ts.count("") != before {
@@ -355,14 +356,14 @@ func TestFetchTimeEntriesPaymentRequired(t *testing.T) {
 	ts, s, st := setupTimePush(t)
 	ctx := context.Background()
 	ts.unpaid = true
-	var pe *readmodel.PlanUnavailableError
+	var pe *plan.UnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatalf("FetchTimeEntries = %v", err)
 	}
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) || ts.count("GET ") != 1 {
 		t.Errorf("second fetch = %v, calls %v", err, ts.calls)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); !ok {
 		t.Error("402 not recorded")
 	}
 }
@@ -394,7 +395,7 @@ func TestTimeTrackingPlanPerWorkspaceAndRechecked(t *testing.T) {
 	clock := time.Now()
 	s.now = func() time.Time { return clock }
 	ts.unpaid = true
-	var pe *readmodel.PlanUnavailableError
+	var pe *plan.UnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatalf("w1 = %v", err)
 	}
@@ -408,11 +409,11 @@ func TestTimeTrackingPlanPerWorkspaceAndRechecked(t *testing.T) {
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) || ts.count("GET /tasks/t1/") != before {
 		t.Errorf("w1 asked again within the day: %v", err)
 	}
-	clock = clock.Add(readmodel.PlanRecheckAfter)
+	clock = clock.Add(plan.RecheckAfter)
 	if err := s.FetchTimeEntries(ctx, "t1"); err != nil || ts.count("GET /tasks/t1/") != before+1 {
 		t.Fatalf("a day later = %v (%v)", err, ts.calls)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v != "" {
-		t.Errorf("402 kept after a list read: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); ok {
+		t.Error("402 kept after a list read")
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -18,7 +19,7 @@ import (
 // sync prunes it, like any task outside the synced projects).
 //
 // The search API needs a premium plan. When Asana answers 402, that is remembered for the
-// workspace for readmodel.PlanRecheckAfter (readmodel.PlanKey with PlanSearch) and
+// workspace for plan.RecheckAfter (plan.Search) and
 // typeahead, which matches task names only, is used meanwhile. If typeahead too answers
 // 402, it is remembered the same way: remote search then fails with
 // ErrRemoteSearchUnavailable, and names are looked up in the cache only. After that time
@@ -26,7 +27,7 @@ import (
 
 // ErrRemoteSearchUnavailable is returned by SearchTasks when the workspace's plan offers
 // neither the search API nor typeahead.
-var ErrRemoteSearchUnavailable = errors.New(readmodel.PlanUnavailableMessage(readmodel.PlanTypeahead))
+var ErrRemoteSearchUnavailable = errors.New(plan.UnavailableMessage(plan.Typeahead))
 
 // SearchResult is what SearchTasks found.
 type SearchResult = readmodel.RemoteSearchResult
@@ -99,21 +100,21 @@ func (s *Syncer) SearchTasks(ctx context.Context, text string, completed *bool, 
 
 // searchRefs asks the search API, or typeahead when the plan lacks it (byName).
 func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *bool, limit int) (refs []model.Ref, byName bool, err error) {
-	if no, err := s.planHidden(ctx, readmodel.PlanSearch, ws); err != nil {
+	if no, err := s.planHidden(ctx, plan.Search, ws); err != nil {
 		return nil, false, err
 	} else if !no {
 		refs, err := s.API.SearchTasks(ctx, ws, text, completed, limit)
-		if !s.planAnswer(ctx, readmodel.PlanSearch, ws, err) {
+		if !s.planAnswer(ctx, plan.Search, ws, err) {
 			return refs, false, err
 		}
 	}
-	if no, err := s.planHidden(ctx, readmodel.PlanTypeahead, ws); err != nil {
+	if no, err := s.planHidden(ctx, plan.Typeahead, ws); err != nil {
 		return nil, true, err
 	} else if no {
 		return nil, true, ErrRemoteSearchUnavailable
 	}
 	refs, err = s.API.TypeaheadTasks(ctx, ws, text, limit)
-	if s.planAnswer(ctx, readmodel.PlanTypeahead, ws, err) {
+	if s.planAnswer(ctx, plan.Typeahead, ws, err) {
 		return nil, true, ErrRemoteSearchUnavailable
 	}
 	return refs, true, err
@@ -151,11 +152,11 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 	if err != nil {
 		return 0, err
 	}
-	if no, err := s.planHidden(ctx, readmodel.PlanTypeahead, ws); err != nil || no {
+	if no, err := s.planHidden(ctx, plan.Typeahead, ws); err != nil || no {
 		return 0, err
 	}
 	found, err := find(ctx, ws, query, typeaheadNames)
-	if s.planAnswer(ctx, readmodel.PlanTypeahead, ws, err) {
+	if s.planAnswer(ctx, plan.Typeahead, ws, err) {
 		return 0, nil
 	}
 	if err != nil {
@@ -166,12 +167,12 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 
 // ErrCustomIDUnavailable is returned by TaskByCustomID when the workspace's plan does not
 // give tasks by custom ID (Asana answered 402, now or before).
-var ErrCustomIDUnavailable = errors.New(readmodel.PlanUnavailableMessage(readmodel.PlanCustomID))
+var ErrCustomIDUnavailable = errors.New(plan.UnavailableMessage(plan.CustomID))
 
 // TaskByCustomID finds the task with the custom ID (e.g. "ENG-123") in Asana, caches it,
-// remembers its gid (readmodel.KeyCustomID) and returns it. A custom ID Asana does not know
+// remembers its gid and returns it. A custom ID Asana does not know
 // is readmodel.ErrNotFound (and forgotten). A 402 is remembered for the workspace
-// (PlanCustomID): Asana is not asked again there for readmodel.PlanRecheckAfter.
+// (plan.CustomID): Asana is not asked again there for plan.RecheckAfter.
 //
 // When GET /tasks/custom_id/{id} answers 500 (Issue #65: real Asana workspaces return 500
 // even for existing custom IDs), TaskByCustomID falls back to the search API (text=<ID>),
@@ -181,34 +182,33 @@ func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, e
 	if err != nil {
 		return "", err
 	}
-	if no, err := s.planHidden(ctx, readmodel.PlanCustomID, ws); err != nil {
+	if no, err := s.planHidden(ctx, plan.CustomID, ws); err != nil {
 		return "", err
 	} else if no {
 		return "", ErrCustomIDUnavailable
 	}
-	key := readmodel.KeyCustomID + customID
 	t, err := s.API.TaskByCustomID(ctx, ws, customID)
 	var apiErr *model.Error
-	if s.planAnswer(ctx, readmodel.PlanCustomID, ws, notFoundIsAnswer(err)) {
+	if s.planAnswer(ctx, plan.CustomID, ws, notFoundIsAnswer(err)) {
 		return "", ErrCustomIDUnavailable
 	}
 	switch {
 	case err == nil:
 		if t == nil || t.GID == "" {
-			_ = s.Store.SetSyncState(ctx, key, "")
+			_ = s.Store.SetCustomIDTaskGID(ctx, customID, "")
 			return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
 		}
 	case errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound:
-		_ = s.Store.SetSyncState(ctx, key, "")
+		_ = s.Store.SetCustomIDTaskGID(ctx, customID, "")
 		return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
 	case errors.As(err, &apiErr) && apiErr.Status == http.StatusInternalServerError:
 		t, err = s.taskByCustomIDFromSearch(ctx, ws, customID, err)
 		if err != nil {
 			return "", err
 		}
-		_ = s.clearPlanRefusal(ctx, readmodel.PlanCustomID, ws)
+		_ = s.clearPlanRefusal(ctx, plan.CustomID, ws)
 		if t == nil || t.GID == "" {
-			_ = s.Store.SetSyncState(ctx, key, "")
+			_ = s.Store.SetCustomIDTaskGID(ctx, customID, "")
 			return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
 		}
 	default:
@@ -217,7 +217,7 @@ func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, e
 	if err := s.Store.UpsertTasks(ctx, []model.Task{*t}); err != nil {
 		return "", err
 	}
-	if err := s.Store.SetSyncState(ctx, key, t.GID); err != nil {
+	if err := s.Store.SetCustomIDTaskGID(ctx, customID, t.GID); err != nil {
 		return "", err
 	}
 	return t.GID, nil
@@ -226,18 +226,18 @@ func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, e
 // taskByCustomIDFromSearch resolves customID via the search API when the custom ID endpoint
 // answered 500 (origErr). A nil task with a nil error means Asana answered with fewer than
 // customIDSearchLimit results, all candidates had full fields, and none has customID. When
-// the workspace's plan lacks the search API (402, now or before), PlanSearch is recorded as
-// usual, PlanCustomID is left untouched, and origErr is returned. When no match is found
+// the workspace's plan lacks the search API (402, now or before), plan.Search is recorded as
+// usual, plan.CustomID is left untouched, and origErr is returned. When no match is found
 // and the search hit customIDSearchLimit (truncated) or any candidate was Partial (custom
 // fields omitted), existence cannot be ruled out, so origErr is returned.
 func (s *Syncer) taskByCustomIDFromSearch(ctx context.Context, ws, customID string, origErr error) (*model.Task, error) {
-	if no, err := s.planHidden(ctx, readmodel.PlanSearch, ws); err != nil {
+	if no, err := s.planHidden(ctx, plan.Search, ws); err != nil {
 		return nil, err
 	} else if no {
 		return nil, origErr
 	}
 	refs, err := s.API.SearchTasks(ctx, ws, customID, nil, customIDSearchLimit)
-	if s.planAnswer(ctx, readmodel.PlanSearch, ws, err) {
+	if s.planAnswer(ctx, plan.Search, ws, err) {
 		return nil, origErr
 	}
 	if err != nil {

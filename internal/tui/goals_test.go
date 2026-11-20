@@ -13,6 +13,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
@@ -109,7 +110,7 @@ func TestGoalsScreen(t *testing.T) {
 // Goals and portfolios that Asana refused with a 402 are not in the menu.
 func TestGoalsMenuHiddenByPlan(t *testing.T) {
 	st := goalsStore(t)
-	if err := st.SetSyncState(context.Background(), readmodel.PlanKey(readmodel.PlanGoals, "w1"), testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(context.Background(), plan.Goals, "w1", testNow.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	h := goalsHarness(t, st, func() time.Time { return testNow })

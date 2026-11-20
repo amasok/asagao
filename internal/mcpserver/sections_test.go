@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -104,9 +105,8 @@ func TestSectionToolsHiddenAfterPaymentRequired(t *testing.T) {
 	if err != nil || len(wss) == 0 {
 		t.Fatalf("workspaces = %v, %v", wss, err)
 	}
-	at := testNow.Add(-time.Hour).UTC().Format(time.RFC3339)
 	for _, ws := range wss { // refused in every workspace
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, ws), at); err != nil {
+		if err := st.RecordPlanRefusal(ctx, plan.Sections, ws, testNow.Add(-time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}

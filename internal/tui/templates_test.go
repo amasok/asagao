@@ -15,7 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -195,7 +195,7 @@ func TestTemplatesHiddenWithoutTemplates(t *testing.T) {
 			t.Errorf("%s: fetched again at once", tc)
 		}
 		if tc == "402" {
-			if v, _ := st.SyncState(context.Background(), readmodel.PlanKey(readmodel.PlanTaskTemplates, "w1")); v == "" {
+			if _, ok, _ := st.PlanRefusedAt(context.Background(), plan.TaskTemplates, "w1"); !ok {
 				t.Error("402 did not mark the plan")
 			}
 			// After templateTTL Asana is not asked while the mark counts (the project's
@@ -206,7 +206,7 @@ func TestTemplatesHiddenWithoutTemplates(t *testing.T) {
 			if f.gets["GET /task_templates"] != gets {
 				t.Errorf("asked again within a day of the 402")
 			}
-			if h.m.planOK(readmodel.PlanProjectTemplates) {
+			if h.m.planOK(plan.ProjectTemplates) {
 				t.Error("project templates offered after their 402")
 			}
 			// ...and is asked a day later when opening the menu (without any write or
@@ -270,8 +270,8 @@ func TestTemplatesFailedFetchWaits(t *testing.T) {
 func TestTemplatesMarkOfAnotherWorkspace(t *testing.T) {
 	h, _, st, now := templateHarness(t, true)
 	ctx := context.Background()
-	for _, f := range []string{readmodel.PlanTaskTemplates, readmodel.PlanProjectTemplates} {
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(f, "w-free"), now.UTC().Format(time.RFC3339)); err != nil {
+	for _, f := range []string{plan.TaskTemplates, plan.ProjectTemplates} {
+		if err := st.RecordPlanRefusal(ctx, f, "w-free", *now); err != nil {
 			t.Fatal(err)
 		}
 	}

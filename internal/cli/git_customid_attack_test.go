@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -77,7 +76,7 @@ func TestGitScanOfflineNeverAsks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = st.SetSyncState(context.Background(), readmodel.KeyCustomID+"ENG-1", gitA)
+	_ = st.SetCustomIDTaskGID(context.Background(), "ENG-1", gitA)
 	_ = st.Close()
 	repo := gitRepo(t)
 	gitCommit(t, repo, "asana#ENG-1 and asana#NEW-5")

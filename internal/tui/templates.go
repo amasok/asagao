@@ -9,7 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -80,7 +80,7 @@ func (m *Model) prefetchTemplates() tea.Cmd {
 			cmds = append(cmds, m.fetchTaskTemplates(p, false))
 		}
 	}
-	if m.planOK(readmodel.PlanProjectTemplates) && (m.tmpl.project.at.IsZero() || now.Sub(m.tmpl.project.at) >= templateTTL) {
+	if m.planOK(plan.ProjectTemplates) && (m.tmpl.project.at.IsZero() || now.Sub(m.tmpl.project.at) >= templateTTL) {
 		cmds = append(cmds, m.fetchProjectTemplates(false))
 	}
 	return tea.Batch(cmds...)
@@ -98,8 +98,8 @@ func (m *Model) fetchTaskTemplates(project string, open bool) tea.Cmd {
 	syncer, ctx, st, now := m.syncer, m.ctx, m.deps.Store, m.deps.Now()
 	return func() tea.Msg {
 		// A 402 in the project's workspace less than a day ago: not asked again yet.
-		if ws, _ := st.ProjectWorkspace(ctx, project); !open && !app.TemplatesOffered(ctx, st, readmodel.PlanTaskTemplates, ws, now) {
-			return taskTemplatesMsg{project: project, err: &sync.TemplatePlanError{Feature: readmodel.PlanTaskTemplates}, open: open}
+		if ws, _ := st.ProjectWorkspace(ctx, project); !open && !app.TemplatesOffered(ctx, st, plan.TaskTemplates, ws, now) {
+			return taskTemplatesMsg{project: project, err: &sync.TemplatePlanError{Feature: plan.TaskTemplates}, open: open}
 		}
 		list, err := syncer.TaskTemplates(ctx, project)
 		return taskTemplatesMsg{project: project, list: list, err: err, open: open}
@@ -283,7 +283,7 @@ func (m *Model) updateTemplates(msg tea.Msg) (tea.Cmd, bool) {
 		if m.tmpl.task == nil {
 			m.tmpl.task = map[string]taskTemplates{}
 		}
-		if m.templateError(msg.err, readmodel.PlanTaskTemplates, msg.open) {
+		if m.templateError(msg.err, plan.TaskTemplates, msg.open) {
 			// Not looked for again before templateTTL; what was known is kept.
 			c := m.tmpl.task[msg.project]
 			m.tmpl.task[msg.project] = taskTemplates{list: c.list, at: m.deps.Now()}
@@ -301,7 +301,7 @@ func (m *Model) updateTemplates(msg tea.Msg) (tea.Cmd, bool) {
 		return nil, true
 	case projectTemplatesMsg:
 		delete(m.tmpl.fetching, "project")
-		if m.templateError(msg.err, readmodel.PlanProjectTemplates, msg.open) {
+		if m.templateError(msg.err, plan.ProjectTemplates, msg.open) {
 			m.tmpl.project.at = m.deps.Now() // not looked for again before templateTTL
 			var pe *sync.TemplatePlanError
 			if errors.As(msg.err, &pe) {
@@ -331,12 +331,13 @@ func (m *Model) templateError(err error, feature string, open bool) bool {
 	}
 	var pe *sync.TemplatePlanError
 	// Task templates are hidden per project (no list), project templates by planOff.
-	if errors.As(err, &pe) && feature == readmodel.PlanProjectTemplates {
+	if errors.As(err, &pe) && feature == plan.ProjectTemplates {
 		if m.planOff == nil {
 			m.planOff = map[string]planWindow{}
 		}
 		at := m.now().Truncate(time.Second)
-		m.planOff[feature] = planWindow{from: at, until: at.Add(readmodel.PlanRecheckAfter)}
+		from, until, _ := plan.Window(at, at)
+		m.planOff[feature] = planWindow{from: from, until: until}
 	}
 	if open {
 		m.status = err.Error()

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // #57: a task's start date is edited locally and queued, with Asana's rules checked first.
@@ -141,29 +141,29 @@ func TestUpdateTaskLocalStartOnPlan(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	now := time.Now()
-	key := readmodel.PlanKey(readmodel.PlanStartOn, "w1")
-	if err := s.SetSyncState(ctx, key, now.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	key := planKey(plan.StartOn, "w1")
+	if err := s.RecordPlanRefusal(ctx, plan.StartOn, "w1", now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-11-15"}, now)
-	var pe *readmodel.PlanUnavailableError
-	if !errors.As(err, &pe) || pe.Feature != readmodel.PlanStartOn {
+	var pe *plan.UnavailableError
+	if !errors.As(err, &pe) || pe.Feature != plan.StartOn {
 		t.Fatalf("err = %v, want a plan error", err)
 	}
 	if ops, _ := s.PendingOps(ctx); len(ops) != 0 {
 		t.Fatalf("queued: %+v", ops)
 	}
 	// Another workspace is not affected; and after PlanRecheckAfter it is offered again.
-	if err := s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1"), ""); err != nil {
+	if err := s.ClearPlanRefusal(ctx, plan.StartOn, "w1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w2"), now.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.RecordPlanRefusal(ctx, plan.StartOn, "w2", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-11-15"}, now); err != nil {
 		t.Fatalf("w2's 402 hid it in w1: %v", err)
 	}
-	if err := s.SetSyncState(ctx, key, now.Add(-readmodel.PlanRecheckAfter-time.Minute).UTC().Format(time.RFC3339)); err != nil {
+	if err := s.SetSyncState(ctx, key, now.Add(-plan.RecheckAfter-time.Minute).UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpdateTaskLocal(ctx, "t2", map[string]any{"start_on": "2026-11-01"}, now); err != nil {
@@ -206,7 +206,7 @@ func TestCreateTaskLocalStartOn(t *testing.T) {
 			t.Errorf("%+v was accepted", nt)
 		}
 	}
-	if err := s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1"), now.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.RecordPlanRefusal(ctx, plan.StartOn, "w1", now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CreateTaskLocal(ctx, NewTask{Name: "y", ProjectGID: "p1", DueOn: "2026-12-10", StartOn: "2026-12-01"}, now); err == nil {
@@ -223,11 +223,11 @@ func TestCreateSubtaskStartOnPlanWorkspace(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t) // t1 has no workspace of its own; its project p1 is in w1
 	now := time.Now()
-	if err := s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1"), now.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.RecordPlanRefusal(ctx, plan.StartOn, "w1", now); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.CreateTaskLocal(ctx, NewTask{Name: "採寸", ParentGID: "t1", DueOn: "2026-11-19", StartOn: "2026-11-18"}, now)
-	var pe *readmodel.PlanUnavailableError
+	var pe *plan.UnavailableError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err = %v, want a plan error", err)
 	}

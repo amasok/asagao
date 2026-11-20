@@ -14,8 +14,9 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // briefServer is Asana with one project (p1, in workspace w1) and its brief (#60).
@@ -148,7 +149,7 @@ func setupBrief(t *testing.T, title, text string) (*briefServer, *Syncer, *store
 	api := asana.NewClient(srv.Client())
 	api.BaseURL, api.MaxRetries = srv.URL, 0
 	s := &Syncer{API: api, Store: st, now: func() time.Time { return now }}
-	_ = st.SetSyncState(ctx, store.KeyMeGID, "me")
+	_ = st.SetMeGID(ctx, "me")
 	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "会社", IsOrganization: true}}); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func TestPushBriefConflict(t *testing.T) {
 	if len(ops) != 1 || ops[0].Conflict["text"] != "夏までに" || ops[0].Conflict["state"] != store.BriefAvailable {
 		t.Fatalf("conflict = %+v", ops)
 	}
-	if lines := readmodel.ConflictLines(ops[0]); len(lines) != 1 || lines[0] != "ブリーフ: こちら=春までに / Asana=夏までに" {
+	if lines := format.ConflictLines(ops[0]); len(lines) != 1 || lines[0] != "ブリーフ: こちら=春までに / Asana=夏までに" {
 		t.Fatalf("lines = %q", lines)
 	}
 	// another edit while in conflict folds into the same entry, still in conflict
@@ -353,11 +354,11 @@ func TestPushBriefRefusedByPlan(t *testing.T) {
 	if len(ops) != 1 || ops[0].State != store.OpFailed || !strings.Contains(ops[0].LastError, "402") {
 		t.Fatalf("ops = %+v", ops)
 	}
-	v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1"))
-	if !readmodel.PlanOffFor(v, now) {
-		t.Fatalf("workspace not marked (%q)", v)
+	at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1")
+	if !ok || !plan.OffAt(at, now) {
+		t.Fatalf("workspace not marked (%v, %v)", at, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanProjectBrief); v != "" {
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.ProjectBrief); v != "" {
 		t.Fatal("marked for every workspace")
 	}
 }
@@ -380,8 +381,8 @@ func TestPushBriefForbiddenIsThisProjectOnly(t *testing.T) {
 	if len(ops) != 1 || ops[0].State != store.OpFailed || !strings.Contains(ops[0].LastError, "403") {
 		t.Fatalf("ops = %+v", ops)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); v != "" {
-		t.Fatalf("workspace marked by a 403: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); ok {
+		t.Fatalf("workspace marked by a 403")
 	}
 	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefUnavailable || o.Brief != nil {
 		t.Fatalf("overview = %+v", o)
@@ -398,8 +399,8 @@ func TestPushBriefForbiddenIsThisProjectOnly(t *testing.T) {
 	if err := s.FetchProjectOverview(ctx, "p1"); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); v != "" {
-		t.Fatalf("workspace marked by a 403 on GET: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); ok {
+		t.Fatalf("workspace marked by a 403 on GET")
 	}
 	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefUnavailable {
 		t.Fatalf("after GET 403 = %+v", o)

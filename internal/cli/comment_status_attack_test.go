@@ -124,7 +124,7 @@ func TestCommentAndStatusPostSameAsBeforeA4(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer st.Close()
-				if err := st.SetSyncState(ctx, store.KeyMeGID, ""); err != nil {
+				if err := st.SetMeGID(ctx, ""); err != nil {
 					t.Fatal(err)
 				}
 			}

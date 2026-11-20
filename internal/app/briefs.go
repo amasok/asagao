@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // BriefStore is the part of the local cache that changing a project's brief needs.
@@ -15,7 +17,7 @@ import (
 type BriefStore interface {
 	ResolveProject(ctx context.Context, arg string) (string, error)
 	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 	ProjectOverview(ctx context.Context, gid string) (*readmodel.ProjectOverview, error)
 	UpdateProjectBriefLocal(ctx context.Context, projectGID string, e readmodel.BriefEdit, now time.Time) error
 }
@@ -50,20 +52,20 @@ var ErrEmptyBrief = errors.New("ブリーフのタイトルも本文も空です
 
 // ErrBriefForbidden: Asana does not let us read or change this project's brief (it
 // answered 403; the overview asks again when it is opened).
-var ErrBriefForbidden = errors.New(readmodel.BriefForbiddenMessage)
+var ErrBriefForbidden = errors.New(format.BriefForbiddenMessage)
 
 // ErrNoBrief: the project has no brief (to delete).
 var ErrNoBrief = errors.New("このプロジェクトにはブリーフがありません")
 
 // Available returns nil when the project's brief can be changed here: ErrPlanUnavailable
-// while a 402 hides the brief API in its workspace (for readmodel.PlanRecheckAfter), and
+// while a 402 hides the brief API in its workspace (for plan.RecheckAfter), and
 // ErrBriefForbidden when the cache says Asana does not give this project's brief (403).
 func (b *Briefs) Available(ctx context.Context, projectGID string) error {
 	ws, err := b.Store.ProjectWorkspace(ctx, projectGID)
 	if err != nil {
 		return err
 	}
-	if err := planOffered(ctx, b.Store, readmodel.PlanProjectBrief, ws, b.Clock()); err != nil {
+	if err := planOffered(ctx, b.Store, plan.ProjectBrief, ws, b.Clock()); err != nil {
 		return err
 	}
 	o, err := b.Store.ProjectOverview(ctx, projectGID)

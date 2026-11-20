@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -145,7 +145,7 @@ func setupProject(t *testing.T) (*projectServer, *Syncer, *store.Store) {
 	api.BaseURL = srv.URL
 	api.MaxRetries = 0
 	s := &Syncer{API: api, Store: st, now: func() time.Time { return now }}
-	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
+	if err := st.SetMeGID(ctx, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "会社", IsOrganization: true}}); err != nil {
@@ -330,8 +330,7 @@ func TestFetchProjectOverview(t *testing.T) {
 	}
 	// The 402 is recorded for the workspace (#60; a 403 only for the project), and the
 	// brief is not asked for there for a while; forget it to go on.
-	key := readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")
-	if v, _ := st.SyncState(ctx, key); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); !ok {
 		t.Fatal("refusal not recorded for the workspace")
 	}
 	ps.briefStatus = 0
@@ -345,7 +344,7 @@ func TestFetchProjectOverview(t *testing.T) {
 	if o, _ := st.ProjectOverview(ctx, "p1"); o.BriefState != store.BriefUnavailable {
 		t.Fatalf("brief state %q while refused", o.BriefState)
 	}
-	_ = st.SetSyncState(ctx, key, "")
+	_ = st.ClearPlanRefusal(ctx, plan.ProjectBrief, "w1")
 	// A project without a brief does not ask for one.
 	ps.brief, ps.briefStatus = "", 0
 	before := ps.calls["GET /project_briefs/b1"]

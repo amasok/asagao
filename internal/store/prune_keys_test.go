@@ -26,12 +26,12 @@ func TestPruneDeletesProjectAndWorkspaceKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := []string{
-		KeyCustomFields + "111", KeyCustomFields + "222", KeyCustomFields + "333",
-		KeyCollapsed + "111", KeyCollapsed + "222", KeyCollapsed + "333",
-		KeyCollapsed + "999",                                     // left behind by an older version (project already gone)
-		KeyCustomFields + "999",                                  // likewise
-		KeyCollapsed + "my", KeyCollapsed + "inbox", "ui:layout", // not project keys
-		KeyMeGID, KeyLastSync, ResultTask + "local:abc", "tag:local:def",
+		keyCustomFields + "111", keyCustomFields + "222", keyCustomFields + "333",
+		keyCollapsed + "111", keyCollapsed + "222", keyCollapsed + "333",
+		keyCollapsed + "999",                                     // left behind by an older version (project already gone)
+		keyCustomFields + "999",                                  // likewise
+		keyCollapsed + "my", keyCollapsed + "inbox", "ui:layout", // not project keys
+		keyMeGID, keyLastSync, resultPrefixTask + "local:abc", "tag:local:def",
 	}
 	for _, k := range keys {
 		if err := st.SetSyncState(ctx, k, "x"); err != nil {
@@ -62,7 +62,7 @@ func TestPruneDeletesProjectAndWorkspaceKeys(t *testing.T) {
 	if err := st.PruneProjects(ctx, "w1", []asana.Project{{GID: "111"}}); err != nil {
 		t.Fatal(err)
 	}
-	gone := []string{KeyCustomFields + "222", KeyCollapsed + "222", KeyCollapsed + "999", KeyCustomFields + "999"}
+	gone := []string{keyCustomFields + "222", keyCollapsed + "222", keyCollapsed + "999", keyCustomFields + "999"}
 	check("prune projects", gone...)
 
 	// An empty answer is not trusted: nothing is removed.
@@ -75,7 +75,7 @@ func TestPruneDeletesProjectAndWorkspaceKeys(t *testing.T) {
 	if err := st.PruneWorkspaces(ctx, []asana.Workspace{{GID: "w1"}}); err != nil {
 		t.Fatal(err)
 	}
-	gone = append(gone, KeyCustomFields+"333", KeyCollapsed+"333")
+	gone = append(gone, keyCustomFields+"333", keyCollapsed+"333")
 	check("prune workspaces", gone...)
 	if stats, _ := st.Stats(ctx); stats.Workspaces != 1 || stats.Projects != 1 {
 		t.Fatalf("stats = %+v, want 1 workspace and 1 project", stats)

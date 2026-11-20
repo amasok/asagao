@@ -1,9 +1,14 @@
-package readmodel
+// Package format holds human-readable (Japanese) UI labels and descriptions of outbox
+// entries, dropped changes, status updates, and task badges, shared by the TUI, CLI,
+// and MCP server.
+package format
 
 import (
 	"fmt"
 	"maps"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -11,21 +16,9 @@ import (
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/domain/timetrack"
+	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/termsafe"
 )
-
-// Discard is a local change dropped because its target was deleted in Asana.
-type Discard struct {
-	ID          int64  `json:"id"`
-	Kind        string `json:"kind"`
-	TaskGID     string `json:"task_gid,omitempty"`
-	TaskName    string `json:"task_name,omitempty"`
-	Summary     string `json:"summary"` // what the change was, e.g. 「名前を「…」に変更」
-	Reason      string `json:"reason,omitempty"`
-	DiscardedAt string `json:"discarded_at"`
-	// Payload is the dropped change as it was queued (e.g. the full comment text, the new
-	// notes, the path of the attachment's local copy, which is kept), to recover it.
-	Payload map[string]any `json:"payload,omitempty"`
-}
 
 // ResetReason is the reason recorded for unsent changes deleted by Reset.
 const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"
@@ -42,10 +35,8 @@ func StatusLabel(t string) string {
 			return s.Label
 		}
 	}
-	return t
+	return termsafe.String(t)
 }
-
-// Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
 
 // VerifyNote tells the user that an entry being checked against Asana needs nothing from them.
 const VerifyNote = "操作は不要です。次の同期で自動的に確認します"
@@ -53,6 +44,25 @@ const VerifyNote = "操作は不要です。次の同期で自動的に確認し
 // AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
 // has several candidates for what it created.
 const AmbiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+
+// BriefForbiddenMessage says that Asana does not let us read or change one project's
+// brief (it answered 403; BriefUnavailable).
+const BriefForbiddenMessage = "このプロジェクトのブリーフは、Asana が読み書きを許していません (403。権限がないか、API がプレビューのため)。概要を開き直すと、もう一度確かめます"
+
+// OpStateLabel is the Japanese name of an outbox entry's state.
+func OpStateLabel(state string) string {
+	switch state {
+	case outbox.StatePending:
+		return "未送信"
+	case outbox.StateConflict:
+		return "競合"
+	case outbox.StateFailed:
+		return "失敗"
+	case outbox.StateSending:
+		return "送信中"
+	}
+	return termsafe.String(state)
+}
 
 // OpLabel is OpStateLabel, except that a queued entry Asana may already have applied
 // (Verify: Push checks Asana by itself before sending it again) is "自動確認中".
@@ -68,7 +78,7 @@ func OpLabel(op outbox.Op) string {
 // that the user does not need to do anything.
 func OpNote(op outbox.Op) (heading, text string) {
 	if op.State == outbox.StateFailed {
-		return "エラー", op.LastError
+		return "エラー", termsafe.String(op.LastError)
 	}
 	text = op.LastError
 	if op.Verify {
@@ -80,7 +90,7 @@ func OpNote(op outbox.Op) (heading, text string) {
 	if text == "" {
 		return "", ""
 	}
-	return "状況", text
+	return "状況", termsafe.String(text)
 }
 
 // DiscardNotice heads the one-time notice about changes dropped because what they changed
@@ -89,7 +99,7 @@ const DiscardNotice = "Asana で削除されたものへの変更を破棄しま
 
 // DiscardLine describes one dropped change: 「task」: what it changed (and, for an unsent
 // change deleted by a reset, that it was).
-func DiscardLine(d Discard) string {
+func DiscardLine(d readmodel.Discard) string {
 	s := d.Summary
 	if d.TaskName != "" {
 		s = "「" + d.TaskName + "」: " + s
@@ -97,12 +107,12 @@ func DiscardLine(d Discard) string {
 	if IsResetDiscard(d) {
 		s += "（初期化で破棄）"
 	}
-	return s
+	return termsafe.String(s)
 }
 
 // IsResetDiscard reports whether d was an unsent change deleted by Reset (which the user
 // confirmed), rather than a change to something deleted in Asana.
-func IsResetDiscard(d Discard) bool { return d.Reason == ResetReason }
+func IsResetDiscard(d readmodel.Discard) bool { return d.Reason == ResetReason }
 
 // DiscardDetail is a piece of a dropped change worth keeping in full, e.g. a comment.
 type DiscardDetail struct {
@@ -115,19 +125,19 @@ type DiscardDetail struct {
 // be recovered. Rich text is given as Markdown, which keeps the formatting when pasted back
 // (the editors and the MCP tools take Markdown): toMarkdown converts it, and is
 // richtext.ToEditableMarkdown in the callers (the store does not convert rich text).
-func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDetail {
+func DiscardDetails(d readmodel.Discard, toMarkdown func(html string) string) []DiscardDetail {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return v }
 	var out []DiscardDetail
 	add := func(label, key string) {
 		if v := str(key); v != "" {
-			out = append(out, DiscardDetail{label, v})
+			out = append(out, DiscardDetail{label, termsafe.String(v)})
 		}
 	}
 	// addRich prefers the rich text (htmlKey) as Markdown over the plain text (key).
 	addRich := func(label, key, htmlKey string) {
 		if h := str(htmlKey); h != "" {
 			if md := strings.TrimSpace(toMarkdown(h)); md != "" {
-				out = append(out, DiscardDetail{label + "（Markdown）", md})
+				out = append(out, DiscardDetail{label + "（Markdown）", termsafe.String(md)})
 				return
 			}
 		}
@@ -184,7 +194,7 @@ func ConflictLines(op outbox.Op) []string {
 			return fmt.Sprint(m["value"])
 		}
 		name, _ := op.Payload["field_name"].(string)
-		return []string{fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict))}
+		return []string{termsafe.String(fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict)))}
 	}
 	if op.Kind == outbox.KindUpdateProjectBrief {
 		return BriefConflictLines(op)
@@ -196,7 +206,7 @@ func ConflictLines(op outbox.Op) []string {
 	keys := slices.Sorted(maps.Keys(op.Conflict))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), op.Payload[k], op.Conflict[k]))
+		lines = append(lines, termsafe.String(fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), op.Payload[k], op.Conflict[k])))
 	}
 	return lines
 }
@@ -216,13 +226,17 @@ func DescribeOp(op outbox.Op) string {
 	if name == "" {
 		name = op.TaskGID
 	}
-	return name + ": " + what
+	return termsafe.String(name) + ": " + what
 }
 
 // DescribeChange says in a few words what an outbox entry changes, without naming the
 // task (e.g. 「名前を「…」に変更」「コメント「…」」). It is the one vocabulary for outbox
 // entries: DescribeOp adds the task, and dropped changes are recorded with it (Discard.Summary).
 func DescribeChange(op outbox.Op) string {
+	return termsafe.String(describeChange(op))
+}
+
+func describeChange(op outbox.Op) string {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	switch op.Kind {
 	case outbox.KindCreateTask:
@@ -330,7 +344,7 @@ func DescribeChange(op outbox.Op) string {
 		if op.Payload["delete"] == true {
 			return "ブリーフの削除"
 		}
-		if state, _ := op.Base["state"].(string); state != BriefAvailable {
+		if state, _ := op.Base["state"].(string); state != readmodel.BriefAvailable {
 			return fmt.Sprintf("ブリーフ「%s」の作成", clip(str("title"), 40))
 		}
 		if _, ok := op.Payload["title"]; !ok { // the body only
@@ -430,10 +444,40 @@ func dependencyName(op outbox.Op) string {
 	return dep
 }
 
+// KindLabel is a task's type as it is shown: the name of its custom type, if it has one,
+// else the Japanese name of its resource_subtype.
+func KindLabel(t readmodel.TaskSummary) string {
+	if t.ResourceSubtype == "custom" && t.CustomType != nil && t.CustomType.Name != "" {
+		return termsafe.String(t.CustomType.Name)
+	}
+	return termsafe.String(task.SubtypeLabel(t.ResourceSubtype))
+}
+
+// ReactionsLine shows a comment's reactions in one line, e.g. "👍 2  🎉 1" ("" for none).
+// The emoji the user reacted with is marked with "*".
+func ReactionsLine(rs []readmodel.Reaction) string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if r.Count <= 0 {
+			continue
+		}
+		emoji := r.Variant
+		if emoji == "" {
+			emoji = r.EmojiBase
+		}
+		mark := ""
+		if r.Reacted {
+			mark = "*"
+		}
+		parts = append(parts, fmt.Sprintf("%s%s %d", emoji, mark, r.Count))
+	}
+	return termsafe.String(strings.Join(parts, "  "))
+}
+
 // TaskBadges are short marks for a task in a list: ◆ for a milestone, the approval status
 // of an approval task, the custom type and status of a custom one, and how many incomplete
 // tasks it waits for.
-func TaskBadges(t TaskSummary) string {
+func TaskBadges(t readmodel.TaskSummary) string {
 	var parts []string
 	switch t.ResourceSubtype {
 	case "milestone":
@@ -455,7 +499,100 @@ func TaskBadges(t TaskSummary) string {
 	if t.OpenDependencies > 0 && !t.Completed {
 		parts = append(parts, fmt.Sprintf("[待ち%d]", t.OpenDependencies))
 	}
-	return strings.Join(parts, " ")
+	return termsafe.String(strings.Join(parts, " "))
+}
+
+// ProjectGroup is the heading a project is listed under (ListProjects' order): ★ お気に入り,
+// its team, or チームなし.
+func ProjectGroup(p readmodel.ProjectView) string {
+	switch {
+	case p.Favorite:
+		return "★ お気に入り"
+	case p.TeamName != "":
+		return termsafe.String(p.TeamName)
+	case p.TeamGID != "":
+		return termsafe.String(p.TeamGID)
+	}
+	return "チームなし"
+}
+
+// GoalStatusLabel names a goal's status in Japanese.
+func GoalStatusLabel(status string) string {
+	switch status {
+	case "green":
+		return "順調"
+	case "yellow":
+		return "要注意"
+	case "red":
+		return "遅れ"
+	case "achieved":
+		return "達成"
+	case "partial":
+		return "一部達成"
+	case "missed":
+		return "未達"
+	case "dropped":
+		return "中止"
+	case "":
+		return "未設定"
+	}
+	return termsafe.String(status)
+}
+
+// goalMetricPercent is the progress in whole percent, rounded down: computed as (current - initial)
+// * 100 / span so that e.g. 29 of 100 is 29 (29/100*100 is 28.999…), with a margin for
+// what is left of the rounding.
+func goalMetricPercent(m *readmodel.GoalMetric) (int, bool) {
+	if _, ok := m.Progress(); !ok {
+		return 0, false
+	}
+	start := 0.0
+	if m.Initial != nil {
+		start = *m.Initial
+	}
+	pct := math.Floor((*m.Current-start)*100/(*m.Target-start) + 1e-9)
+	if math.IsNaN(pct) {
+		return 0, false
+	}
+	return int(math.Max(0, math.Min(100, pct))), true
+}
+
+// GoalMetricText describes a goal metric's progress, e.g. "40 / 100（40%）".
+func GoalMetricText(m *readmodel.GoalMetric) string {
+	if m == nil {
+		return ""
+	}
+	num := func(v *float64) string {
+		if v == nil {
+			return ""
+		}
+		x := *v
+		if m.Kind == "percentage" {
+			x *= 100 // Asana keeps a percentage as a fraction (1 is 100%)
+		}
+		s := strconv.FormatFloat(x, 'f', max(0, min(m.Precision, 6)), 64)
+		switch m.Kind {
+		case "percentage":
+			return s + "%"
+		case "currency":
+			return strings.TrimSpace(m.Currency + " " + s)
+		}
+		return s
+	}
+	cur := m.Display
+	if cur == "" || (m.Kind == "percentage" && m.Current != nil) {
+		// Asana's display of a percentage is "0%" in a GET but "0.00" in other answers
+		// (#31): build it from the value instead.
+		cur = num(m.Current)
+	}
+	text := cur
+	if t := num(m.Target); t != "" {
+		text = strings.TrimSpace(cur + " / " + t)
+	}
+	if pct, ok := goalMetricPercent(m); ok {
+		text += "（" + strconv.Itoa(pct) + "%）"
+	}
+	return termsafe.String(text)
 }
 
 func clip(s string, n int) string {
@@ -490,18 +627,18 @@ func BriefConflictLines(op outbox.Op) []string {
 		}
 		return clip(str(op.Payload, k), 60)
 	}
-	if str(op.Conflict, "state") != BriefAvailable {
-		return []string{"ブリーフ: こちら=" + local("title") + " / Asana=（ブリーフがありません。削除されています）"}
+	if str(op.Conflict, "state") != readmodel.BriefAvailable {
+		return []string{termsafe.String("ブリーフ: こちら=" + local("title") + " / Asana=（ブリーフがありません。削除されています）")}
 	}
 	var lines []string
 	del := op.Payload["delete"] == true
 	_, title := op.Payload["title"] // a change sends only what it changes
 	_, text := op.Payload["text"]
 	if del || title && str(op.Payload, "title") != str(op.Conflict, "title") {
-		lines = append(lines, fmt.Sprintf("ブリーフのタイトル: こちら=%s / Asana=%s", local("title"), clip(str(op.Conflict, "title"), 60)))
+		lines = append(lines, termsafe.String(fmt.Sprintf("ブリーフのタイトル: こちら=%s / Asana=%s", local("title"), clip(str(op.Conflict, "title"), 60))))
 	}
 	if del || text && str(op.Payload, "text") != str(op.Conflict, "text") {
-		lines = append(lines, fmt.Sprintf("ブリーフ: こちら=%s / Asana=%s", local("text"), clip(str(op.Conflict, "text"), 60)))
+		lines = append(lines, termsafe.String(fmt.Sprintf("ブリーフ: こちら=%s / Asana=%s", local("text"), clip(str(op.Conflict, "text"), 60))))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, "ブリーフ: Asana でも変更されています")

@@ -74,8 +74,8 @@ func TestPushMoveRefreshesSectionOrderAfterExternalReorder(t *testing.T) {
 }
 
 // If SectionTaskOrder fails transiently (500) right after pushMove, Push still succeeds
-// and records the section in KeyTaskOrder so the next Run picks up Asana's order.
-// A 404 leaves KeyTaskOrder clean.
+// and records the section in PendingSectionOrders so the next Run picks up Asana's order.
+// A 404 leaves PendingSectionOrders clean.
 func TestPushMoveSectionOrderFailureQueuesPendingOrIgnores404(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestPushMoveSectionOrderFailureQueuesPendingOrIgnores404(t *testing.T) {
 			if err != nil || res.Sent != 1 || res.Failed != 0 {
 				t.Fatalf("push = %+v, %v", res, err)
 			}
-			pending, _ := e.st.SyncState(ctx, store.KeyTaskOrder+"p1")
+			pending, _ := e.st.PendingSectionOrders(ctx, "p1")
 			if status == http.StatusInternalServerError {
 				if pending != "s1" {
 					t.Fatalf("pending = %q, want s1", pending)
@@ -120,7 +120,7 @@ func TestPushMoveSectionOrderFailureQueuesPendingOrIgnores404(t *testing.T) {
 				}
 				e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t2", "t1", "t3")
 			} else if pending != "" {
-				t.Fatalf("404 dirtied KeyTaskOrder: %q", pending)
+				t.Fatalf("404 dirtied PendingSectionOrders: %q", pending)
 			}
 		})
 	}

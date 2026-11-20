@@ -4,25 +4,24 @@ import (
 	"context"
 	"time"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // A 402 (the workspace's plan lacks a feature) hides the feature in that workspace for
-// readmodel.PlanRecheckAfter (readmodel.PlanKey). The records of sections, tags and My
-// Tasks' sections before #50 (readmodel.KeyPlanUnavailable + feature, for every workspace
-// and for good) are not read any more: such a feature is offered again and, if the plan
-// still lacks it, Asana's next 402 records it for its workspace.
+// plan.RecheckAfter. The records of sections, tags and My Tasks' sections before #50
+// (workspace-less) are not read any more: such a feature is offered again and, if the
+// plan still lacks it, Asana's next 402 records it for its workspace.
 
-// planOffered returns ErrPlanUnavailable while a recent 402 hides feature in a workspace
-// (readmodel.PlanKey), and nil otherwise.
+// planOffered returns ErrPlanUnavailable while a recent 402 hides feature in a workspace,
+// and nil otherwise.
 func planOffered(ctx context.Context, st interface {
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 }, feature, workspaceGID string, now time.Time) error {
-	v, err := st.SyncState(ctx, readmodel.PlanKey(feature, workspaceGID))
+	at, ok, err := st.PlanRefusedAt(ctx, feature, workspaceGID)
 	if err != nil {
 		return err
 	}
-	if readmodel.PlanOffFor(v, now) {
+	if ok && plan.OffAt(at, now) {
 		return &ErrPlanUnavailable{Feature: feature}
 	}
 	return nil
@@ -30,7 +29,7 @@ func planOffered(ctx context.Context, st interface {
 
 // planInStore is what planIn needs of the local cache.
 type planInStore interface {
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
 }
 
@@ -51,7 +50,7 @@ func planIn(ctx context.Context, st planInStore, feature, ws string, wsErr error
 // menu, a tool list): unless a recent 402 hides it in every workspace of the cache. A
 // cache that knows no workspace (or cannot say) offers it.
 func planAnywhere(ctx context.Context, st interface {
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 	WorkspaceGIDs(ctx context.Context) ([]string, error)
 }, feature string, now time.Time) bool {
 	wss, err := st.WorkspaceGIDs(ctx)
@@ -75,15 +74,15 @@ func planNow(c Clock) time.Time {
 }
 
 // StartDateOffered reports whether a start date can be set on task gid at now: unless a
-// recent 402 hides start dates in its workspace (readmodel.PlanStartOn). A task whose
+// recent 402 hides start dates in its workspace (plan.StartOn). A task whose
 // workspace cannot be read is offered them (the store checks again when one is set).
 func StartDateOffered(ctx context.Context, st interface {
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 }, gid string, now time.Time) bool {
 	ws, err := st.TaskWorkspace(ctx, gid)
 	if err != nil {
 		return true
 	}
-	return !IsPlanUnavailable(planOffered(ctx, st, readmodel.PlanStartOn, ws, now))
+	return !IsPlanUnavailable(planOffered(ctx, st, plan.StartOn, ws, now))
 }

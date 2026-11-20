@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/dates"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/timetrack"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -13,7 +14,7 @@ import (
 // *store.Store satisfies it.
 type TimeTrackingStore interface {
 	Me(ctx context.Context) (readmodel.UserRef, error)
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	WorkspaceGIDs(ctx context.Context) ([]string, error)
 	TimeEntries(ctx context.Context, taskGID string) (readmodel.TimeEntries, error)
@@ -24,7 +25,7 @@ type TimeTrackingStore interface {
 }
 
 // TimeTracking is the use case of the time tracking entries of tasks (#6): the time worked
-// on a task, recorded per day. Asana offers it on paid plans only: for readmodel.PlanRecheckAfter after it
+// on a task, recorded per day. Asana offers it on paid plans only: for plan.RecheckAfter after it
 // refused it in a workspace (402) the writes there return an *ErrPlanUnavailable, and
 // while it is refused in every workspace Available is false.
 type TimeTracking struct {
@@ -35,7 +36,7 @@ type TimeTracking struct {
 // Available reports whether time tracking can be offered: it is unless Asana refused it
 // (recently) in every workspace.
 func (t *TimeTracking) Available(ctx context.Context) bool {
-	return planAnywhere(ctx, t.Store, readmodel.PlanTimeTracking, t.Clock())
+	return planAnywhere(ctx, t.Store, plan.TimeTracking, t.Clock())
 }
 
 // AvailableFor returns an *ErrPlanUnavailable while Asana's 402 for time tracking in the
@@ -49,7 +50,7 @@ func (t *TimeTracking) AvailableFor(ctx context.Context, taskGID string) error {
 }
 
 func (t *TimeTracking) off(ctx context.Context, ws string) error {
-	return planOffered(ctx, t.Store, readmodel.PlanTimeTracking, ws, t.Clock())
+	return planOffered(ctx, t.Store, plan.TimeTracking, ws, t.Clock())
 }
 
 // List returns a task's entries in the cache (fetching them is the sync engine's).

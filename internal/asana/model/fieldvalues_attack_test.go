@@ -1,0 +1,225 @@
+package model
+
+import (
+	"reflect"
+	"slices"
+	"testing"
+)
+
+// refGIDList / refNormalize / refAPIValue are copies of the store's implementation on
+// main (before e1); the moved functions must give the same results.
+func refGIDList(gids []string) any {
+	if len(gids) == 0 {
+		return nil
+	}
+	gids = slices.Clone(gids)
+	slices.Sort(gids)
+	return slices.Compact(gids)
+}
+
+func refNormalize(v any) any {
+	switch x := v.(type) {
+	case string:
+		if x == "" {
+			return nil
+		}
+	case []string:
+		return refGIDList(x)
+	case []any:
+		var gids []string
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				gids = append(gids, s)
+			}
+		}
+		return refGIDList(gids)
+	case int:
+		return float64(x)
+	}
+	return v
+}
+
+func refAPIValue(fieldType string, v any) any {
+	v = refNormalize(v)
+	if s, ok := v.(string); ok && fieldType == "date" {
+		return map[string]any{"date": s}
+	}
+	// Changed since (#1, checked on Asana): an empty people / multi_enum field goes as [].
+	if v == nil && (fieldType == "people" || fieldType == "multi_enum") {
+		return []string{}
+	}
+	return v
+}
+
+func TestMovedValuesMatchOldStore(t *testing.T) {
+	vals := []any{nil, "", "x", "2024-01-02", 3, 2.5, int64(7), true,
+		[]string{}, []string{"b", "a", "b"}, []string(nil),
+		[]any{}, []any{"b", 1, "a", nil, "a"}, []any{1, 2}, map[string]any{"a": 1}}
+	for _, ft := range []string{"text", "number", "enum", "multi_enum", "date", "people", ""} {
+		for _, v := range vals {
+			if got, want := NormalizeCustomFieldValue(v), refNormalize(v); !reflect.DeepEqual(got, want) {
+				t.Errorf("Normalize(%#v) = %#v, want %#v", v, got, want)
+			}
+			if got, want := CustomFieldAPIValue(ft, v), refAPIValue(ft, v); !reflect.DeepEqual(got, want) {
+				t.Errorf("APIValue(%q,%#v) = %#v, want %#v", ft, v, got, want)
+			}
+		}
+	}
+	if got := CustomFieldAPIValue("date", "2024-01-02"); !reflect.DeepEqual(got, map[string]any{"date": "2024-01-02"}) {
+		t.Errorf("date = %#v", got)
+	}
+	if got := CustomFieldAPIValue("text", "2024-01-02"); got != "2024-01-02" {
+		t.Errorf("text = %#v", got)
+	}
+	if got := CustomFieldAPIValue("date", ""); got != nil {
+		t.Errorf("empty date = %#v", got)
+	}
+	// Asana refuses null for people ("people_value: Not an array"): [] clears it.
+	for _, ft := range []string{"people", "multi_enum"} {
+		if got := CustomFieldAPIValue(ft, nil); !reflect.DeepEqual(got, []string{}) {
+			t.Errorf("empty %s = %#v", ft, got)
+		}
+	}
+	if got := CustomFieldAPIValue("enum", nil); got != nil {
+		t.Errorf("empty enum = %#v", got)
+	}
+	in := []string{"b", "a"}
+	GIDList(in)
+	if in[0] != "b" {
+		t.Error("GIDList sorted its input")
+	}
+}
+
+func TestTaskFieldValuesAttack(t *testing.T) {
+	tk := &Task{Name: "n", Notes: "o", Completed: true, Liked: true, DueOn: "2024-01-01", StartOn: "2023-12-25", ApprovalStatus: "approved", ResourceSubtype: "approval", Assignee: &Ref{GID: "9"}}
+	v := TaskFieldValues(tk)
+	if v["approval_status"] != "approved" || v["assignee"] != "9" || v["completed"] != true || v["due_on"] != "2024-01-01" || v["start_on"] != "2023-12-25" || len(v) != 12 || v["custom_type"] != "" {
+		t.Errorf("%v", v)
+	}
+	tk.Partial, tk.Assignee = true, nil
+	v = TaskFieldValues(tk)
+	if _, ok := v["approval_status"]; ok || v["assignee"] != "" || v["start_on"] != "2023-12-25" || len(v) != 9 {
+		t.Errorf("partial: %v", v)
+	}
+}
+
+// A task read without its custom type is not compared on it (a conflict check).
+func TestTaskFieldValuesWithoutCustomType(t *testing.T) {
+	v := TaskFieldValues(&Task{ResourceSubtype: "custom", NoCustomType: true})
+	if _, ok := v["custom_type"]; ok {
+		t.Errorf("custom_type compared: %v", v)
+	}
+	if _, ok := v["custom_type_status_option"]; ok {
+		t.Errorf("status compared: %v", v)
+	}
+	if _, ok := v["resource_subtype"]; !ok {
+		t.Error("resource_subtype is fetched")
+	}
+}
+
+func TestCustomFieldValueAndServer(t *testing.T) {
+	s := func(x string) *string { return &x }
+	f := func(x float64) *float64 { return &x }
+	for _, tc := range []struct {
+		f    CustomField
+		want any
+	}{
+		{CustomField{Type: "text", TextValue: s("")}, nil},
+		{CustomField{Type: "text", TextValue: s("a")}, "a"},
+		{CustomField{Type: "number", NumberValue: f(0)}, float64(0)},
+		{CustomField{Type: "number"}, nil},
+		{CustomField{Type: "enum", EnumValue: &EnumOption{GID: ""}}, nil},
+		{CustomField{Type: "enum", EnumValue: &EnumOption{GID: "e"}}, "e"},
+		{CustomField{Type: "multi_enum", MultiEnumValues: []EnumOption{{GID: "b"}, {GID: "a"}, {GID: "b"}}}, []string{"a", "b"}},
+		{CustomField{Type: "multi_enum"}, nil},
+		{CustomField{Type: "people", PeopleValue: []Ref{{GID: "2"}, {GID: "1"}}}, []string{"1", "2"}},
+		{CustomField{Type: "date", DateValue: &DateValue{Date: "2024-02-03"}}, "2024-02-03"},
+		{CustomField{Type: "date", DateValue: &DateValue{}}, nil},
+		{CustomField{Type: "unknown"}, nil},
+	} {
+		if got := CustomFieldValue(tc.f); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %#v, want %#v", tc.f.Type, got, tc.want)
+		}
+	}
+	tk := &Task{CustomFields: []CustomField{{GID: "1", Type: "text", TextValue: s("a"), DisplayValue: s("disp")}, {GID: "2", Type: "number"}}}
+	if v, d, ok := ServerCustomField(tk, "1"); v != "a" || d != "disp" || !ok {
+		t.Errorf("%v %v %v", v, d, ok)
+	}
+	if v, d, ok := ServerCustomField(tk, "2"); v != nil || d != "" || !ok {
+		t.Errorf("%v %v %v", v, d, ok)
+	}
+	if _, _, ok := ServerCustomField(tk, "3"); ok {
+		t.Error("found")
+	}
+}
+
+func TestCustomFieldAPIValueAndServerBoundaries(t *testing.T) {
+	s := func(x string) *string { return &x }
+	f := func(x float64) *float64 { return &x }
+
+	// Non-string values for CFDate should not be wrapped in {"date": ...}.
+	for _, v := range []any{123, true, []string{"2026-01-01"}} {
+		if got := CustomFieldAPIValue(CFDate, v); !reflect.DeepEqual(got, NormalizeCustomFieldValue(v)) {
+			t.Errorf("CustomFieldAPIValue(CFDate, %#v) = %#v", v, got)
+		}
+	}
+	// []any with only non-strings or empty slice normalizes to nil, and for CFPeople/CFMultiEnum becomes [].
+	for _, ft := range []string{CFPeople, CFMultiEnum} {
+		if got := CustomFieldAPIValue(ft, []any{1, nil, true}); !reflect.DeepEqual(got, []string{}) {
+			t.Errorf("CustomFieldAPIValue(%s, non-string slice) = %#v, want []string{}", ft, got)
+		}
+		if got := CustomFieldAPIValue(ft, []string{}); !reflect.DeepEqual(got, []string{}) {
+			t.Errorf("CustomFieldAPIValue(%s, empty []string) = %#v, want []string{}", ft, got)
+		}
+	}
+	// []any containing empty string "" in multi_enum/people: confirm current behavior doesn't panic and sorts/compacts.
+	if got := NormalizeCustomFieldValue([]any{"b", "", "a", "b"}); !reflect.DeepEqual(got, []string{"", "a", "b"}) {
+		t.Errorf("NormalizeCustomFieldValue([]any with empty) = %#v", got)
+	}
+	// Negative and zero float64 values are preserved for CFNumber.
+	if got := CustomFieldValue(CustomField{ResourceSubtype: CFNumber, NumberValue: f(-42.5)}); got != -42.5 {
+		t.Errorf("negative number = %#v", got)
+	}
+
+	// TaskFieldValues boundaries: ResourceSubtype != "custom" ignores CustomType fields.
+	nonCustom := &Task{
+		ResourceSubtype:        "default_task",
+		CustomType:             &Ref{GID: "ct1"},
+		CustomTypeStatusOption: &Ref{GID: "cs1"},
+	}
+	vals := TaskFieldValues(nonCustom)
+	if vals["custom_type"] != "" || vals["custom_type_status_option"] != "" {
+		t.Errorf("non-custom task should report empty custom_type fields: %v", vals)
+	}
+
+	// ResourceSubtype == "custom" with partial CustomType/StatusOption.
+	partialCustom := &Task{
+		ResourceSubtype: "custom",
+		CustomType:      &Ref{GID: "ct1"},
+	}
+	vals = TaskFieldValues(partialCustom)
+	if vals["custom_type"] != "ct1" || vals["custom_type_status_option"] != "" {
+		t.Errorf("partial custom task = %v", vals)
+	}
+
+	// NoCustomType keeps approval_status while deleting custom_type keys.
+	noCT := &Task{ResourceSubtype: "custom", NoCustomType: true, ApprovalStatus: "pending"}
+	vals = TaskFieldValues(noCT)
+	if vals["approval_status"] != "pending" {
+		t.Errorf("NoCustomType dropped approval_status: %v", vals)
+	}
+
+	// ServerCustomField with empty CustomFields, nil DisplayValue, and duplicate GIDs.
+	if _, _, ok := ServerCustomField(&Task{}, "1"); ok {
+		t.Error("empty task should not find field")
+	}
+	dupTask := &Task{
+		CustomFields: []CustomField{
+			{GID: "f1", ResourceSubtype: CFText, TextValue: s("first"), DisplayValue: nil},
+			{GID: "f1", ResourceSubtype: CFText, TextValue: s("second"), DisplayValue: s("second")},
+		},
+	}
+	if v, d, ok := ServerCustomField(dupTask, "f1"); !ok || v != "first" || d != "" {
+		t.Errorf("ServerCustomField(dup) = (%v, %q, %v), want ('first', '', true)", v, d, ok)
+	}
+}

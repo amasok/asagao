@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Resetting the local data (to use another Asana account), with a confirmation that shows
@@ -101,5 +102,5 @@ func (m *Model) updateReset(msg tea.Msg) (tea.Cmd, bool) {
 // accountChangedStatus explains a sync stopped by sync.ErrAccountChanged.
 func (m *Model) accountChangedStatus() string {
 	unsent := m.outbox.pending + m.outbox.conflict + m.outbox.failed
-	return readmodel.AccountChangedHelp(unsent, m.actionKey("reset")+" で初期化")
+	return format.AccountChangedHelp(unsent, m.actionKey("reset")+" で初期化")
 }

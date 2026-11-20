@@ -7,7 +7,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Goals and portfolios (#7), read only: space Q opens the goals, space l my portfolios
@@ -261,7 +263,7 @@ func (m *Model) handleGoalKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		other := !g.portfolios
-		if (other && !m.planOK(readmodel.PlanPortfolios)) || (!other && !m.planOK(readmodel.PlanGoals)) {
+		if (other && !m.planOK(plan.Portfolios)) || (!other && !m.planOK(plan.Goals)) {
 			return m, nil
 		}
 		return m, m.openGoalScreen(other)
@@ -338,7 +340,7 @@ func (m *Model) openGoalRow() tea.Cmd {
 
 // goalBadge is a goal's status, colored.
 func (m *Model) goalBadge(status string) string {
-	label := "[" + readmodel.GoalStatusLabel(status) + "]"
+	label := "[" + format.GoalStatusLabel(status) + "]"
 	switch status {
 	case "green", "achieved":
 		return m.st.tag.Render(label)
@@ -352,7 +354,7 @@ func (m *Model) goalBadge(status string) string {
 
 // metricBar is "■■■□□□ 40 / 100（40%）", or the text alone when the progress is unknown.
 func metricBar(mt *readmodel.GoalMetric, width int) string {
-	text := mt.Text()
+	text := format.GoalMetricText(mt)
 	p, ok := mt.Progress()
 	if !ok {
 		return text
@@ -461,7 +463,7 @@ func (m *Model) renderGoals(w, h int) string {
 	case g.portfolios:
 		title = "ポートフォリオ（自分がオーナーのもの）"
 		help := "j/k 選ぶ  enter 開く  r 取り直す  esc 閉じる"
-		if m.planOK(readmodel.PlanGoals) {
+		if m.planOK(plan.Goals) {
 			help = "j/k 選ぶ  enter 開く  tab ゴール  r 取り直す  esc 閉じる"
 		}
 		lines = append(lines, m.st.dim.Render(help), "")
@@ -489,7 +491,7 @@ func (m *Model) renderGoals(w, h int) string {
 			title = "ゴール（今日を含む期間）"
 		}
 		help := "j/k 選ぶ  enter 開く  c 今の期間だけ / すべて  r 取り直す  esc 閉じる"
-		if m.planOK(readmodel.PlanPortfolios) {
+		if m.planOK(plan.Portfolios) {
 			help = "j/k 選ぶ  enter 開く  c 今の期間だけ / すべて  tab ポートフォリオ  r 取り直す  esc 閉じる"
 		}
 		lines = append(lines, m.st.dim.Render(help), "")

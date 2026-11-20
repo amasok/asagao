@@ -73,7 +73,7 @@ func postStore(t *testing.T, withMe bool) *store.Store {
 		}
 	}
 	if withMe {
-		must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
+		must(st.SetMeGID(ctx, "me"))
 		must(st.UpsertUsers(ctx, []asana.User{{GID: "me", Name: "私"}}))
 	}
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{

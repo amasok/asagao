@@ -230,7 +230,7 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	if err := s.db.QueryRowContext(ctx, q).Scan(&st.Workspaces, &st.Projects, &st.Sections, &st.Tasks, &st.OpenTasks); err != nil {
 		return st, err
 	}
-	v, err := s.SyncState(ctx, KeyLastSync)
+	v, err := s.SyncState(ctx, keyLastSync)
 	if err != nil {
 		return st, err
 	}
@@ -239,6 +239,3 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	}
 	return st, nil
 }
-
-// KeyLastSync is when the last sync finished (readmodel's).
-const KeyLastSync = readmodel.KeyLastSync

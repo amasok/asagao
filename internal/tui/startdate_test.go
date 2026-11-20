@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // #57: the start date is chosen in the detail like the due date, and not offered where a
@@ -77,7 +77,7 @@ func TestDetailStartDateHiddenByPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, ws), testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.StartOn, ws, testNow.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	h := projectHarness(t, st, nil)

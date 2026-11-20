@@ -7,7 +7,7 @@ import (
 )
 
 // The workspace a section or a tag is in, so that a 402 for it is recorded (and read) for
-// that workspace only (readmodel.PlanKey, #50).
+// that workspace only (planKey, #50).
 
 // SectionWorkspace returns the workspace of a cached section: its project's ("" if the
 // section or its project is not cached).

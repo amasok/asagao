@@ -11,6 +11,7 @@ import (
 
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // The comment and status-update closures as on main before a4 (copied verbatim).
@@ -33,7 +34,7 @@ func legacyStatus(ctx context.Context, st *store.Store, project, status, title, 
 	if _, err := st.CreateStatusLocal(ctx, project, status, title, richtext.StatusUpdate.PlainFromMarkdown(body), richtext.StatusUpdate.FromMarkdown(body), me, now); err != nil {
 		return writeDoneMsg{err: err}
 	}
-	return writeDoneMsg{status: "ステータスを投稿しました（" + store.StatusLabel(status) + "）"}
+	return writeDoneMsg{status: "ステータスを投稿しました（" + format.StatusLabel(status) + "）"}
 }
 
 var commentLocalGID = regexp.MustCompile(`local[-_:][A-Za-z0-9-]+`)
@@ -93,7 +94,7 @@ func TestCommentAndStatusSameAsBeforeA4(t *testing.T) {
 			a, b := fixtureStore(t), fixtureStore(t)
 			if c.noMe {
 				for _, st := range []*store.Store{a, b} {
-					if err := st.SetSyncState(ctx, store.KeyMeGID, ""); err != nil {
+					if err := st.SetMeGID(ctx, ""); err != nil {
 						t.Fatal(err)
 					}
 				}

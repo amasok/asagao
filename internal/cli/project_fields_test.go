@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -48,7 +48,7 @@ func TestTaskFieldAddOptionRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(context.Background(), readmodel.KeyFieldOptionsLocked+"cf1", "x"); err != nil {
+	if err := st.SetFieldOptionsLocked(context.Background(), "cf1", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

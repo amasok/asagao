@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // The inline comment prompt (c) sends Markdown as rich text, like the editor (C), the CLI and MCP.
@@ -178,7 +179,7 @@ func TestDiscardedChangesAnnouncedOnce(t *testing.T) {
 		}
 	}
 	h.run(h.m.loadOutbox())
-	if s := h.m.status; !strings.Contains(s, store.DiscardNotice) || !strings.Contains(s, "ソファを2台買う") || !strings.Contains(s, "ほか 1 件（! で一覧）") {
+	if s := h.m.status; !strings.Contains(s, format.DiscardNotice) || !strings.Contains(s, "ソファを2台買う") || !strings.Contains(s, "ほか 1 件（! で一覧）") {
 		t.Fatalf("status = %q", s)
 	}
 	if ds, _ := st.PendingDiscards(ctx); len(ds) != 0 {

@@ -19,6 +19,7 @@ import (
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Deps are the TUI's external dependencies (swapped out in tests).
@@ -94,7 +95,7 @@ type scope struct {
 	project  string // gid
 	sections []readmodel.SectionView
 	status   string // latest status update type of the project
-	group    string // the sidebar heading it is under (readmodel.ProjectGroup)
+	group    string // the sidebar heading it is under (format.ProjectGroup)
 	notice   string // scopeRecent: why the inbox is not shown (inbox.go)
 	fetched  bool   // scopeProject: its tasks are cached (lazy.go)
 }
@@ -950,7 +951,7 @@ func (m *Model) setProjects(ps []readmodel.ProjectView) {
 	scopes := []scope{{kind: scopeMyTasks, name: "My Tasks"}, m.inboxScope()}
 	for _, p := range ps {
 		scopes = append(scopes, scope{kind: scopeProject, name: p.Name, project: p.GID, sections: p.Sections, status: p.Status,
-			group: readmodel.ProjectGroup(p), fetched: !p.Unfetched})
+			group: format.ProjectGroup(p), fetched: !p.Unfetched})
 	}
 	m.scopes = scopes
 	m.scopeCursor = 0

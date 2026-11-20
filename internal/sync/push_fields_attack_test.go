@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -380,14 +380,17 @@ func TestAttackForbiddenIsScoped(t *testing.T) {
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyFieldOptionsLocked+"cf2"); v != "" {
+	if locked, _ := st.FieldOptionsLocked(ctx, "cf2"); locked {
 		t.Fatal("cf2 locked")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyFieldOptionsLocked+"cf1"); v == "" {
+	if locked, _ := st.FieldOptionsLocked(ctx, "cf1"); !locked {
 		t.Fatal("cf1 not locked")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanCustomFields); v != "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomFields, ""); ok {
 		t.Fatal("403 marked the plan unavailable")
+	}
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.CustomFields); v != "" {
+		t.Fatal("403 marked legacy global plan unavailable")
 	}
 	if f.count("POST /custom_fields/cf2/enum_options") != 1 {
 		t.Fatalf("calls %v", f.calls)

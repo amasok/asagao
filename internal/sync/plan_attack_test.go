@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/app"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // A failure that is not a 402 (500, 429) records nothing for My Tasks' sections.
@@ -22,11 +22,11 @@ func TestMySectionsOtherFailuresRecordNothing(t *testing.T) {
 		ctx := context.Background()
 		_ = s.syncMySections(ctx, "w1")
 		for _, ws := range []string{"w1", "w2", ""} {
-			if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, ws)); v != "" {
-				t.Errorf("status %d: recorded for %q = %q", status, ws, v)
+			if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, ws); ok {
+				t.Errorf("status %d: recorded for %q", status, ws)
 			}
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanMySection); v != "" {
+		if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.MySection); v != "" {
 			t.Errorf("status %d: global record = %q", status, v)
 		}
 	}
@@ -49,11 +49,11 @@ func TestMySectionsConcurrentWorkspaces(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w1")); v != now.Format(time.RFC3339) {
-		t.Fatalf("w1 record = %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w1"); !ok || !at.Equal(*now) {
+		t.Fatalf("w1 record = (%v, %v)", at, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w2")); v != "" {
-		t.Fatalf("w2 record = %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w2"); ok {
+		t.Fatal("w2 record unexpected")
 	}
 	sections := &app.Sections{Store: st, Clock: func() time.Time { return *now }}
 	if secs, _ := sections.MySections(ctx, "w1"); len(secs) != 0 {
@@ -70,8 +70,7 @@ func TestMySectionsFutureRecordAsksAgain(t *testing.T) {
 	f := &myTasksAsana{section: "m2"}
 	s, st, now := setupMyTasks(t, f)
 	ctx := context.Background()
-	key := readmodel.PlanKey(readmodel.PlanMySection, "w1")
-	if err := st.SetSyncState(ctx, key, now.Add(48*time.Hour).Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.MySection, "w1", now.Add(48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.syncMySections(ctx, "w1"); err != nil {
@@ -80,8 +79,8 @@ func TestMySectionsFutureRecordAsksAgain(t *testing.T) {
 	if f.listsIn("w1") != 1 {
 		t.Fatal("not asked with a record in the future")
 	}
-	if v, _ := st.SyncState(ctx, key); v != "" {
-		t.Fatalf("future record kept after an answer: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w1"); ok {
+		t.Fatal("future record kept after an answer")
 	}
 }
 
@@ -90,7 +89,7 @@ func TestMySectionsGarbageRecordAsksAgain(t *testing.T) {
 	f := &myTasksAsana{section: "m2"}
 	s, st, _ := setupMyTasks(t, f)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w1"), "1"); err != nil {
+	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.MySection+":w1", "1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.syncMySections(ctx, "w1"); err != nil {
@@ -107,7 +106,7 @@ func TestMySectionsRecheckBoundary(t *testing.T) {
 	s, _, now := setupMyTasks(t, f)
 	ctx := context.Background()
 	_ = s.syncMySections(ctx, "w1")
-	*now = now.Add(readmodel.PlanRecheckAfter - time.Nanosecond)
+	*now = now.Add(plan.RecheckAfter - time.Nanosecond)
 	_ = s.syncMySections(ctx, "w1")
 	if n := f.listsIn("w1"); n != 1 {
 		t.Fatalf("asked %d times 1ns before the day", n)
@@ -162,11 +161,11 @@ func planRecords(t *testing.T, st *store.Store, features ...string) map[string]s
 	out := map[string]string{}
 	for _, f := range features {
 		for _, ws := range []string{"w1", "w2", ""} {
-			if v, _ := st.SyncState(context.Background(), readmodel.PlanKey(f, ws)); v != "" {
-				out[f+"@"+ws] = v
+			if at, ok, _ := st.PlanRefusedAt(context.Background(), f, ws); ok {
+				out[f+"@"+ws] = at.Format(time.RFC3339)
 			}
 		}
-		if v, _ := st.SyncState(context.Background(), readmodel.KeyPlanUnavailable+f); v != "" {
+		if v, _ := st.SyncState(context.Background(), "plan_unavailable:"+f); v != "" {
 			out[f+"@global"] = v
 		}
 	}
@@ -188,8 +187,8 @@ func TestPushDeleteTag402RecordsItsWorkspace(t *testing.T) {
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got := planRecords(t, st, readmodel.PlanTags)
-	if len(got) != 1 || got[readmodel.PlanTags+"@w2"] == "" {
+	got := planRecords(t, st, plan.Tags)
+	if len(got) != 1 || got[plan.Tags+"@w2"] == "" {
 		t.Fatalf("records = %v, want only tags@w2", got)
 	}
 }
@@ -212,7 +211,7 @@ func TestPushOtherFailuresRecordNothing(t *testing.T) {
 		}
 		f.hook = refuseAll(status)
 		_, _ = s.Push(ctx)
-		if got := planRecords(t, st, readmodel.PlanSections, readmodel.PlanTags); len(got) != 0 {
+		if got := planRecords(t, st, plan.Sections, plan.Tags); len(got) != 0 {
 			t.Errorf("status %d: records = %v", status, got)
 		}
 	}
@@ -224,8 +223,8 @@ func TestPushSuccessInOtherWorkspaceKeepsRecord(t *testing.T) {
 	ctx := context.Background()
 	at := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return at }
-	for _, feature := range []string{readmodel.PlanSections, readmodel.PlanTags} {
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(feature, "w1"), at.Add(-time.Hour).Format(time.RFC3339)); err != nil {
+	for _, feature := range []string{plan.Sections, plan.Tags} {
+		if err := st.RecordPlanRefusal(ctx, feature, "w1", at.Add(-time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -251,8 +250,8 @@ func TestPushSuccessInOtherWorkspaceKeepsRecord(t *testing.T) {
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got := planRecords(t, st, readmodel.PlanSections, readmodel.PlanTags)
-	if got[readmodel.PlanSections+"@w1"] == "" || got[readmodel.PlanTags+"@w1"] == "" {
+	got := planRecords(t, st, plan.Sections, plan.Tags)
+	if got[plan.Sections+"@w1"] == "" || got[plan.Tags+"@w1"] == "" {
 		t.Fatalf("w1's records were forgotten by w2's answers: %v", got)
 	}
 }
@@ -280,7 +279,7 @@ func TestPlanChecksConcurrentWithPush(t *testing.T) {
 		go func() { defer wg.Done(); _, _ = s.Push(ctx) }()
 	}
 	wg.Wait()
-	if got := planRecords(t, st, readmodel.PlanSections); len(got) != 2 {
+	if got := planRecords(t, st, plan.Sections); len(got) != 2 {
 		t.Fatalf("records = %v, want sections@w1 and @w2", got)
 	}
 	if sections.Available(ctx) || !tags.Available(ctx) {

@@ -20,6 +20,7 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // writeResult is the JSON output of write commands.
@@ -48,8 +49,8 @@ func printDiscard(w io.Writer, d readmodel.Discard) {
 	if t, err := time.Parse(time.RFC3339, d.DiscardedAt); err == nil {
 		when = "  (" + t.Local().Format("2006-01-02 15:04") + ")"
 	}
-	fmt.Fprintln(w, "  - "+readmodel.DiscardLine(d)+when)
-	for _, dt := range readmodel.DiscardDetails(d, richtext.ToEditableMarkdown) {
+	fmt.Fprintln(w, "  - "+format.DiscardLine(d)+when)
+	for _, dt := range format.DiscardDetails(d, richtext.ToEditableMarkdown) {
 		fmt.Fprintf(w, "      %s:\n", dt.Label)
 		for _, l := range strings.Split(strings.TrimRight(dt.Text, "\n"), "\n") {
 			fmt.Fprintln(w, "        "+l)
@@ -66,12 +67,12 @@ func takeDiscards(ctx context.Context, st Store, w io.Writer, print bool) []read
 	}
 	var announce []readmodel.Discard // changes deleted by a reset were confirmed by the user
 	for _, d := range ds {
-		if !readmodel.IsResetDiscard(d) {
+		if !format.IsResetDiscard(d) {
 			announce = append(announce, d)
 		}
 	}
 	if print && len(announce) > 0 {
-		fmt.Fprintln(w, readmodel.DiscardNotice+"（Asana で削除されていたため）:")
+		fmt.Fprintln(w, format.DiscardNotice+"（Asana で削除されていたため）:")
 		for _, d := range announce {
 			printDiscard(w, d)
 		}
@@ -792,11 +793,11 @@ func (a *app) outboxCmd() *cobra.Command {
 				return nil
 			}
 			for _, op := range ops {
-				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, readmodel.OpLabel(op), readmodel.DescribeOp(op))
-				for _, c := range readmodel.ConflictLines(op) {
+				fmt.Fprintf(cmd.OutOrStdout(), "#%d  [%s]  %s\n", op.ID, format.OpLabel(op), format.DescribeOp(op))
+				for _, c := range format.ConflictLines(op) {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s\n", c)
 				}
-				if heading, text := readmodel.OpNote(op); text != "" {
+				if heading, text := format.OpNote(op); text != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "      %s: %s\n", heading, text)
 				}
 			}

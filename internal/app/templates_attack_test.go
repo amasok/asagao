@@ -6,25 +6,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 type fakeState map[string]string
 
-func (f fakeState) SyncState(_ context.Context, k string) (string, error) {
-	if k == "ERR" {
-		return "", errors.New("db")
+func (f fakeState) PlanRefusedAt(_ context.Context, feature, workspaceGID string) (time.Time, bool, error) {
+	v := f[feature+":"+workspaceGID]
+	if v == "" {
+		return time.Time{}, false, nil
 	}
-	return f[k], nil
+	at, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	return at, true, nil
 }
 
 type errState struct{}
 
-func (errState) SyncState(context.Context, string) (string, error) { return "", errors.New("db") }
+func (errState) PlanRefusedAt(context.Context, string, string) (time.Time, bool, error) {
+	return time.Time{}, false, errors.New("db")
+}
 
 func TestAttackTemplatesOfferedBoundaries(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	key := readmodel.PlanKey(readmodel.PlanTaskTemplates, "w1")
+	key := plan.TaskTemplates + ":w1"
 	cases := []struct {
 		name string
 		mark string
@@ -42,21 +49,21 @@ func TestAttackTemplatesOfferedBoundaries(t *testing.T) {
 		{"future by 2 days", now.Add(48 * time.Hour).Format(time.RFC3339), true},
 	}
 	for _, c := range cases {
-		if got := TemplatesOffered(context.Background(), fakeState{key: c.mark}, readmodel.PlanTaskTemplates, "w1", now); got != c.want {
+		if got := TemplatesOffered(context.Background(), fakeState{key: c.mark}, plan.TaskTemplates, "w1", now); got != c.want {
 			t.Errorf("%s: offered = %v, want %v", c.name, got, c.want)
 		}
 	}
-	if !TemplatesOffered(context.Background(), errState{}, readmodel.PlanTaskTemplates, "w1", now) {
+	if !TemplatesOffered(context.Background(), errState{}, plan.TaskTemplates, "w1", now) {
 		t.Error("a store error hides the menu")
 	}
 	// The other feature's mark does not hide this one.
-	other := fakeState{readmodel.PlanKey(readmodel.PlanProjectTemplates, "w1"): now.Format(time.RFC3339)}
-	if !TemplatesOffered(context.Background(), other, readmodel.PlanTaskTemplates, "w1", now) {
+	other := fakeState{plan.ProjectTemplates + ":w1": now.Format(time.RFC3339)}
+	if !TemplatesOffered(context.Background(), other, plan.TaskTemplates, "w1", now) {
 		t.Error("project mark hid task templates")
 	}
 	// Another workspace's mark does not hide this one's.
-	ws2 := fakeState{readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2"): now.Format(time.RFC3339)}
-	if !TemplatesOffered(context.Background(), ws2, readmodel.PlanTaskTemplates, "w1", now) {
+	ws2 := fakeState{plan.TaskTemplates + ":w2": now.Format(time.RFC3339)}
+	if !TemplatesOffered(context.Background(), ws2, plan.TaskTemplates, "w1", now) {
 		t.Error("another workspace's mark hid it")
 	}
 }

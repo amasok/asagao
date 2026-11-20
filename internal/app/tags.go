@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -15,8 +16,8 @@ type TagStore interface {
 	GetTag(ctx context.Context, gid string) (readmodel.TagCount, error)
 	UpdateTagLocal(ctx context.Context, tagGID string, changes map[string]any, now time.Time) error
 	DeleteTagLocal(ctx context.Context, tagGID string, now time.Time) error
-	SyncState(ctx context.Context, key string) (string, error)
-	// The workspaces a 402 is recorded for (readmodel.PlanKey).
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+	// The workspaces a 402 is recorded for.
 	TagWorkspace(ctx context.Context, tagGID string) (string, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
 	WorkspaceGIDs(ctx context.Context) ([]string, error)
@@ -32,14 +33,14 @@ type Tags struct {
 // Available reports whether renaming, recoloring and deleting tags can be offered: unless
 // a recent 402 hides them in every workspace. Each change checks its tag's workspace (in).
 func (t *Tags) Available(ctx context.Context) bool {
-	return planAnywhere(ctx, t.Store, readmodel.PlanTags, planNow(t.Clock))
+	return planAnywhere(ctx, t.Store, plan.Tags, planNow(t.Clock))
 }
 
 // in returns ErrPlanUnavailable while a recent 402 hides changing tags in the workspace of
 // tag tagGID.
 func (t *Tags) in(ctx context.Context, tagGID string) error {
 	ws, err := t.Store.TagWorkspace(ctx, tagGID)
-	return planIn(ctx, t.Store, readmodel.PlanTags, ws, err, planNow(t.Clock))
+	return planIn(ctx, t.Store, plan.Tags, ws, err, planNow(t.Clock))
 }
 
 // Resolve finds the tag named (or with the gid) arg, with how many tasks carry it.

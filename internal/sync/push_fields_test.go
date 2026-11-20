@@ -16,6 +16,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -247,7 +248,7 @@ func setupOptions(t *testing.T) (*optionServer, *Syncer, *store.Store) {
 			t.Fatal(err)
 		}
 	}
-	must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
+	must(st.SetMeGID(ctx, "me"))
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"))
 	must(s.syncCustomFields(ctx, "p1", true))
 	must(s.syncWorkspaceCustomFields(ctx, "w1", true))
@@ -451,7 +452,7 @@ func TestPushNewOptionPaymentRequired(t *testing.T) {
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomFields, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomFields, "w1"); !ok {
 		t.Fatal("plan not recorded")
 	}
 	ops, _ := st.ListOps(ctx)
@@ -463,7 +464,7 @@ func TestPushNewOptionPaymentRequired(t *testing.T) {
 	if err := options.Addable(ctx, "t1", fieldOf(t, st, "t1", "cf2")); !app.IsPlanUnavailable(err) {
 		t.Fatalf("addable = %v", err)
 	}
-	options.Clock = func() time.Time { return now.Add(readmodel.PlanRecheckAfter) }
+	options.Clock = func() time.Time { return now.Add(plan.RecheckAfter) }
 	if err := options.Addable(ctx, "t1", fieldOf(t, st, "t1", "cf2")); err != nil {
 		t.Fatalf("after 24h = %v", err)
 	}
@@ -481,8 +482,8 @@ func TestPushNewOptionPaymentRequired(t *testing.T) {
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomFields, "w1")); v != "" {
-		t.Fatalf("mark left: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomFields, "w1"); ok {
+		t.Fatal("mark left")
 	}
 }
 
@@ -571,7 +572,7 @@ func TestValueWaitsForFailedFieldSetting(t *testing.T) {
 	if f.count("PUT /tasks/t1") != 0 {
 		t.Fatalf("calls %v", f.calls)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyProjectFieldsLocked+"p1"); v == "" {
+	if locked, _ := st.ProjectFieldsLocked(ctx, "p1"); !locked {
 		t.Fatal("403 not recorded")
 	}
 }
@@ -632,7 +633,7 @@ func TestSyncWorkspaceCustomFields(t *testing.T) {
 	if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomFields, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomFields, "w1"); !ok {
 		t.Fatal("plan not recorded")
 	}
 	fields, _ = st.ProjectFields(ctx, "p1")

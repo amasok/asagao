@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
 )
 
 func (s *Store) UpsertUser(ctx context.Context, u model.User) error {
@@ -477,29 +476,16 @@ func (s *Store) DeleteGoneTasks(ctx context.Context, gids []string) (int64, erro
 	return deleted, err
 }
 
-// Prefixes of the sync_state keys kept per project (prefix + project gid). They are
-// deleted with the project (see PruneProjects), so they do not pile up.
-const (
-	// KeyCustomFields + project gid: when the project's custom fields were last fetched.
-	KeyCustomFields = readmodel.KeyCustomFields
-	// KeyCollapsed + scope: the TUI's collapsed groups of a list ("my", "inbox", or a project gid).
-	KeyCollapsed = readmodel.KeyCollapsed
-	// KeyEvents + project gid: the sync token for the project's changes (GET /events).
-	KeyEvents = readmodel.KeyEvents
-)
-
-// KeyTeams + workspace gid: when the teams and favorite projects were last fetched
-// (deleted with the workspace).
-const KeyTeams = readmodel.KeyTeams
-
 // projectKeys lists, for each per-project key prefix, the SQL condition that tells a
 // project's key from other keys with the same prefix ({gid} is the part after the prefix).
 var projectKeys = []struct{ prefix, isProject string }{
-	{KeyCustomFields, "1"},
-	{KeyEvents, "1"},
-	{KeyProjectTasks, "1"},
-	{KeyTaskOrder, "1"},
-	{KeyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
+	{keyCustomFields, "1"},
+	{keyCustomTypes, "1"},
+	{keyEvents, "1"},
+	{keyProjectTasks, "1"},
+	{keyTaskOrder, "1"},
+	{keyProjectFieldsLocked, "1"},
+	{keyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
 }
 
 // PruneProjects deletes projects (and their sections) of a workspace that are no longer returned.
@@ -598,14 +584,14 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) err
 			for _, q := range []string{
 				"DELETE FROM teams WHERE workspace_gid = ?",
 				"DELETE FROM project_favorites WHERE workspace_gid = ?",
-				"DELETE FROM sync_state WHERE key = '" + KeyTeams + "' || ?",
-				"DELETE FROM sync_state WHERE key = '" + KeyMyTasks + "' || ?",
+				"DELETE FROM sync_state WHERE key = '" + keyTeams + "' || ?",
+				"DELETE FROM sync_state WHERE key = '" + keyMyTasks + "' || ?",
 				"DELETE FROM goal_supports WHERE goal_gid IN (SELECT gid FROM goals WHERE workspace_gid = ?)",
 				"DELETE FROM goals WHERE workspace_gid = ?",
 				"DELETE FROM time_periods WHERE workspace_gid = ?",
 				"UPDATE portfolios SET mine = 0 WHERE workspace_gid = ?",
-				"DELETE FROM sync_state WHERE key IN ('" + readmodel.KeyGoals + "' || ?1, '" + readmodel.KeyPortfolios + "' || ?1)",
-				"DELETE FROM sync_state WHERE key GLOB '" + readmodel.KeyPlanUnavailable + "*:' || ?", // its 402s (readmodel.PlanKey)
+				"DELETE FROM sync_state WHERE key IN ('" + keyGoals + "' || ?1, '" + keyPortfolios + "' || ?1, '" + keyUserTaskList + "' || ?1, '" + keyWorkspaceCustomFields + "' || ?1)",
+				"DELETE FROM sync_state WHERE key GLOB '" + keyPlanUnavailable + "*:' || ?", // its 402s (planKey)
 				"DELETE FROM workspaces WHERE gid = ?",
 			} {
 				if _, err := tx.ExecContext(ctx, q, gid); err != nil {

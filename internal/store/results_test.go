@@ -60,7 +60,7 @@ func prune(t *testing.T, st *Store, now time.Time) int {
 func TestPruneResultsAfterGrace(t *testing.T) {
 	ctx := context.Background()
 	st := resultsStore(t)
-	keys := []string{ResultTask + "local:a", ResultStory + "local:b", ResultAttachment + "local:c", ResultStatus + "local:d", ResultTag + "local:e"}
+	keys := []string{resultPrefixTask + "local:a", resultPrefixStory + "local:b", resultPrefixAttachment + "local:c", resultPrefixStatus + "local:d", resultPrefixTag + "local:e"}
 	for _, k := range keys {
 		mustSet(t, st, k, "1200")
 	}
@@ -98,7 +98,7 @@ func TestPruneResultsKeepsReferenced(t *testing.T) {
 	ctx := context.Background()
 	st := resultsStore(t)
 	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	mustSet(t, st, ResultTask+"local:a", "1200", ResultTask+"local:p", "1300", ResultTag+"local:tag", "1400")
+	mustSet(t, st, resultPrefixTask+"local:a", "1200", resultPrefixTask+"local:p", "1300", resultPrefixTag+"local:tag", "1400")
 	prune(t, st, now) // all stamped
 
 	// t1 now waits for local:a (an entry queued before the task was sent, say)
@@ -117,7 +117,7 @@ func TestPruneResultsKeepsReferenced(t *testing.T) {
 	if n := prune(t, st, later); n != 0 {
 		t.Fatalf("deleted %d referenced mappings", n)
 	}
-	for _, k := range []string{ResultTask + "local:a", ResultTask + "local:p", ResultTag + "local:tag"} {
+	for _, k := range []string{resultPrefixTask + "local:a", resultPrefixTask + "local:p", resultPrefixTag + "local:tag"} {
 		if syncStateOf(t, st, k) == "" {
 			t.Errorf("%s deleted", k)
 		}
@@ -148,7 +148,7 @@ func TestPruneResultsKeepsWhileSameKindQueued(t *testing.T) {
 	ctx := context.Background()
 	st := resultsStore(t)
 	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	mustSet(t, st, ResultStory+"local:old", "1500", ResultTask+"local:old", "1600")
+	mustSet(t, st, resultPrefixStory+"local:old", "1500", resultPrefixTask+"local:old", "1600")
 	prune(t, st, now)
 	if _, err := st.AddRichCommentLocal(ctx, "t1", "次", "", UserRef{GID: "me", Name: "Me"}, now); err != nil {
 		t.Fatal(err)
@@ -156,10 +156,10 @@ func TestPruneResultsKeepsWhileSameKindQueued(t *testing.T) {
 	if n := prune(t, st, now.Add(ResultGrace)); n != 1 {
 		t.Fatalf("deleted %d, want only the task mapping", n)
 	}
-	if syncStateOf(t, st, ResultStory+"local:old") == "" {
+	if syncStateOf(t, st, resultPrefixStory+"local:old") == "" {
 		t.Fatal("a story mapping was deleted while a comment is queued")
 	}
-	if syncStateOf(t, st, ResultTask+"local:old") != "" {
+	if syncStateOf(t, st, resultPrefixTask+"local:old") != "" {
 		t.Fatal("the task mapping should not be held back by a comment")
 	}
 }
@@ -169,12 +169,12 @@ func TestPruneResultsKeepsWhileSameKindQueued(t *testing.T) {
 func TestPruneResultsLeavesOtherKeys(t *testing.T) {
 	st := resultsStore(t)
 	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	others := []string{ResultTask + "1234", KeyMeGID, KeyLastSync, KeyCustomFields + "p1", ResultTag + "5678"}
+	others := []string{resultPrefixTask + "1234", keyMeGID, keyLastSync, keyCustomFields + "p1", resultPrefixTag + "5678"}
 	for _, k := range others {
 		mustSet(t, st, k, "x")
 	}
-	mustSet(t, st, keyResultSeen+ResultTask+"local:gone", now.Format(time.RFC3339),
-		ResultStory+"local:f", "1700", keyResultSeen+ResultStory+"local:f", now.Add(3*ResultGrace).Format(time.RFC3339))
+	mustSet(t, st, keyResultSeen+resultPrefixTask+"local:gone", now.Format(time.RFC3339),
+		resultPrefixStory+"local:f", "1700", keyResultSeen+resultPrefixStory+"local:f", now.Add(3*ResultGrace).Format(time.RFC3339))
 	if n := prune(t, st, now.Add(2*ResultGrace)); n != 0 {
 		t.Fatalf("deleted %d", n)
 	}
@@ -183,13 +183,13 @@ func TestPruneResultsLeavesOtherKeys(t *testing.T) {
 			t.Errorf("%s should not be touched", k)
 		}
 	}
-	if syncStateOf(t, st, keyResultSeen+ResultTask+"local:gone") != "" {
+	if syncStateOf(t, st, keyResultSeen+resultPrefixTask+"local:gone") != "" {
 		t.Error("a stamp without its mapping should be removed")
 	}
-	if got := syncStateOf(t, st, keyResultSeen+ResultStory+"local:f"); got != now.Add(2*ResultGrace).Format(time.RFC3339) {
+	if got := syncStateOf(t, st, keyResultSeen+resultPrefixStory+"local:f"); got != now.Add(2*ResultGrace).Format(time.RFC3339) {
 		t.Errorf("a future stamp should start over now: %q", got)
 	}
-	if syncStateOf(t, st, ResultStory+"local:f") == "" {
+	if syncStateOf(t, st, resultPrefixStory+"local:f") == "" {
 		t.Error("deleted on an untrusted stamp")
 	}
 }
@@ -209,7 +209,7 @@ func TestPruneResultsAfterCreate(t *testing.T) {
 		t.Fatalf("ops %+v", ops)
 	}
 	prune(t, st, now)
-	if syncStateOf(t, st, keyResultSeen+ResultTask+local) != "" {
+	if syncStateOf(t, st, keyResultSeen+resultPrefixTask+local) != "" {
 		t.Fatal("nothing to prune before it is sent")
 	}
 	if err := st.CompleteCreate(ctx, ops[0].ID, local, "1800", nil); err != nil {
@@ -234,17 +234,17 @@ func TestPruneResultsKeepsWhileRowHasLocalGID(t *testing.T) {
 		name, key string
 		insert    string // SQL putting the local gid "local:x" in a row
 	}{
-		{"task", ResultTask + "local:x", `INSERT INTO tasks(gid, name) VALUES ('local:x', 'n')`},
-		{"parent", ResultTask + "local:x", `INSERT INTO tasks(gid, name, parent_gid) VALUES ('c1', 'n', 'local:x')`},
-		{"waits for", ResultTask + "local:x", `INSERT INTO task_dependencies(task_gid, dependency_gid) VALUES ('t1', 'local:x')`},
-		{"waited on", ResultTask + "local:x", `INSERT INTO task_dependencies(task_gid, dependency_gid) VALUES ('local:x', 't1')`},
-		{"story", ResultStory + "local:x", `INSERT INTO stories(gid, task_gid) VALUES ('local:x', 't1')`},
-		{"attachment", ResultAttachment + "local:x", `INSERT INTO attachments(gid, parent_gid) VALUES ('local:x', 't1')`},
-		{"status update", ResultStatus + "local:x", `INSERT INTO status_updates(gid, project_gid) VALUES ('local:x', 'p1')`},
-		{"tag", ResultTag + "local:x", `INSERT INTO tags(gid, name) VALUES ('local:x', 'n')`},
-		{"tag on a task", ResultTag + "local:x", `INSERT INTO task_tags(task_gid, tag_gid) VALUES ('t1', 'local:x')`},
-		{"outbox task", ResultStatus + "local:x", `INSERT INTO outbox(kind, task_gid, payload, created_at) VALUES ('update_task', 'local:x', '{}', '')`},
-		{"outbox base", ResultTag + "local:x", `INSERT INTO outbox(kind, task_gid, payload, base, created_at) VALUES ('remove_tag', 't1', '{}', '{"tag":"local:x"}', '')`},
+		{"task", resultPrefixTask + "local:x", `INSERT INTO tasks(gid, name) VALUES ('local:x', 'n')`},
+		{"parent", resultPrefixTask + "local:x", `INSERT INTO tasks(gid, name, parent_gid) VALUES ('c1', 'n', 'local:x')`},
+		{"waits for", resultPrefixTask + "local:x", `INSERT INTO task_dependencies(task_gid, dependency_gid) VALUES ('t1', 'local:x')`},
+		{"waited on", resultPrefixTask + "local:x", `INSERT INTO task_dependencies(task_gid, dependency_gid) VALUES ('local:x', 't1')`},
+		{"story", resultPrefixStory + "local:x", `INSERT INTO stories(gid, task_gid) VALUES ('local:x', 't1')`},
+		{"attachment", resultPrefixAttachment + "local:x", `INSERT INTO attachments(gid, parent_gid) VALUES ('local:x', 't1')`},
+		{"status update", resultPrefixStatus + "local:x", `INSERT INTO status_updates(gid, project_gid) VALUES ('local:x', 'p1')`},
+		{"tag", resultPrefixTag + "local:x", `INSERT INTO tags(gid, name) VALUES ('local:x', 'n')`},
+		{"tag on a task", resultPrefixTag + "local:x", `INSERT INTO task_tags(task_gid, tag_gid) VALUES ('t1', 'local:x')`},
+		{"outbox task", resultPrefixStatus + "local:x", `INSERT INTO outbox(kind, task_gid, payload, created_at) VALUES ('update_task', 'local:x', '{}', '')`},
+		{"outbox base", resultPrefixTag + "local:x", `INSERT INTO outbox(kind, task_gid, payload, base, created_at) VALUES ('remove_tag', 't1', '{}', '{"tag":"local:x"}', '')`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -265,13 +265,13 @@ func TestPruneResultsKeepsWhileRowHasLocalGID(t *testing.T) {
 // Each kind verified against the recorded results holds back the mappings of its prefix,
 // and only those (one case per entry in resultKinds).
 func TestPruneResultsKindsHoldTheirPrefix(t *testing.T) {
-	prefixes := []string{ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag}
+	prefixes := []string{resultPrefixTask, resultPrefixStory, resultPrefixAttachment, resultPrefixStatus, resultPrefixTag}
 	for _, tc := range []struct{ kind, prefix string }{
-		{OpCreateTask, ResultTask},
-		{OpDuplicateTask, ResultTask},
-		{OpAddComment, ResultStory},
-		{OpUploadAttachment, ResultAttachment},
-		{OpCreateStatus, ResultStatus},
+		{OpCreateTask, resultPrefixTask},
+		{OpDuplicateTask, resultPrefixTask},
+		{OpAddComment, resultPrefixStory},
+		{OpUploadAttachment, resultPrefixAttachment},
+		{OpCreateStatus, resultPrefixStatus},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			ctx := context.Background()
@@ -315,8 +315,8 @@ func TestPruneResultsFindsLocalGIDsInPayloadText(t *testing.T) {
 	ctx := context.Background()
 	st := resultsStore(t)
 	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	mustSet(t, st, ResultTask+"local:abc", "1", ResultTask+"local:in", "2", ResultTask+"local:key", "3",
-		ResultTask+"local:raw", "4", ResultTask+"local:abcd", "5")
+	mustSet(t, st, resultPrefixTask+"local:abc", "1", resultPrefixTask+"local:in", "2", resultPrefixTask+"local:key", "3",
+		resultPrefixTask+"local:raw", "4", resultPrefixTask+"local:abcd", "5")
 	for _, payload := range []string{
 		`{"notes":"see local:abcdef and local:in, ok"}`, // longer gid: kept (conservative)
 		`{"list":[{"local:key":true}]}`,
@@ -330,7 +330,7 @@ func TestPruneResultsFindsLocalGIDsInPayloadText(t *testing.T) {
 	prune(t, st, now)
 	prune(t, st, now.Add(ResultGrace))
 	for k, kept := range map[string]bool{"local:abc": true, "local:abcd": true, "local:in": true, "local:key": true, "local:raw": true} {
-		if got := syncStateOf(t, st, ResultTask+k) != ""; got != kept {
+		if got := syncStateOf(t, st, resultPrefixTask+k) != ""; got != kept {
 			t.Errorf("%s kept = %v, want %v", k, got, kept)
 		}
 	}
@@ -339,10 +339,10 @@ func TestPruneResultsFindsLocalGIDsInPayloadText(t *testing.T) {
 	}
 	prune(t, st, now.Add(ResultGrace))
 	prune(t, st, now.Add(3*ResultGrace))
-	if syncStateOf(t, st, ResultTask+"local:abc") != "" || syncStateOf(t, st, ResultTask+"local:in") != "" {
+	if syncStateOf(t, st, resultPrefixTask+"local:abc") != "" || syncStateOf(t, st, resultPrefixTask+"local:in") != "" {
 		t.Error("no longer referred to: should go after the grace")
 	}
-	if syncStateOf(t, st, ResultTask+"local:key") == "" {
+	if syncStateOf(t, st, resultPrefixTask+"local:key") == "" {
 		t.Error("still referred to")
 	}
 }

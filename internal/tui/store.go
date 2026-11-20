@@ -32,8 +32,10 @@ type Store interface {
 	app.QuickAddStore
 	sync.LocalStore
 
-	SyncState(ctx context.Context, key string) (string, error)
-	SetSyncState(ctx context.Context, key, value string) error
+	CollapsedGroups(ctx context.Context, scope string) (string, error)
+	SetCollapsedGroups(ctx context.Context, scope, raw string) error
+	LayoutState(ctx context.Context) (string, error)
+	SetLayoutState(ctx context.Context, raw string) error
 	ResetWithBackup(ctx context.Context, backupDir string, upTo int64, now time.Time) (readmodel.ResetResult, error)
 	MarkDiscardsNotified(ctx context.Context, ids []int64) error
 }

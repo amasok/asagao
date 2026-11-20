@@ -12,11 +12,13 @@ import (
 
 type stateMap map[string]string
 
-func (s stateMap) SyncState(_ context.Context, key string) (string, error) { return s[key], nil }
+func (s stateMap) CustomIDTaskGID(_ context.Context, id string) (string, error) { return s[id], nil }
 
 type stateErr struct{}
 
-func (stateErr) SyncState(context.Context, string) (string, error) { return "", errors.New("db") }
+func (stateErr) CustomIDTaskGID(context.Context, string) (string, error) {
+	return "", errors.New("db")
+}
 
 type scriptedFinder struct {
 	answers map[string]error // nil error: found as "g-"+id
@@ -37,7 +39,7 @@ func TestResolveCustomIDsMixed(t *testing.T) {
 	notFound := fmt.Errorf("x: %w", readmodel.ErrNotFound)
 	e500 := &model.Error{Status: 500}
 	e402 := &model.Error{Status: 402}
-	remembered := stateMap{readmodel.KeyCustomID + "A": "old-A", readmodel.KeyCustomID + "B": "old-B", readmodel.KeyCustomID + "C": "old-C", readmodel.KeyCustomID + "D": "old-D"}
+	remembered := stateMap{"A": "old-A", "B": "old-B", "C": "old-C", "D": "old-D"}
 	ctx := context.Background()
 
 	t.Run("500, 404, 402 then ok: all asked", func(t *testing.T) {

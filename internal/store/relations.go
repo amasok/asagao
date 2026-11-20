@@ -342,7 +342,7 @@ func replaceLocalAttachment(ctx context.Context, tx *sql.Tx, local, real, viewUR
 	if _, err := tx.ExecContext(ctx, "UPDATE attachments SET gid = ?, view_url = ? WHERE gid = ?", real, viewURL, local); err != nil {
 		return err
 	}
-	if err := recordResult(ctx, tx, ResultAttachment, local, real); err != nil {
+	if err := recordResult(ctx, tx, resultPrefixAttachment, local, real); err != nil {
 		return err
 	}
 	return reapplyAttachmentDeletes(ctx, tx, parent)

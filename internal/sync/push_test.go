@@ -407,7 +407,7 @@ func setupPush(t *testing.T) (*writeServer, *httptest.Server, *Syncer, *store.St
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
+	if err := st.SetMeGID(ctx, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", Workspace: &asana.Ref{GID: "w1"},
@@ -1127,7 +1127,7 @@ func TestProjectOperations(t *testing.T) {
 	}
 	defer st.Close()
 	_ = st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1"}})
-	_ = st.SetSyncState(ctx, store.KeyMeGID, "me")
+	_ = st.SetMeGID(ctx, "me")
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
 	s := &Syncer{API: api, Store: st, RichText: richtext.Converter{}}
@@ -2523,7 +2523,7 @@ func TestPushDoesNotDropWhenAccountChanged(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, _, s, st := setupPush(t)
 			ctx := context.Background()
-			_ = st.SetSyncState(ctx, store.KeyMeGID, tc.storedMe)
+			_ = st.SetMeGID(ctx, tc.storedMe)
 			_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "前のアカウントのタスク"}})
 			_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"completed": true}, now)
 			_, _ = st.AddCommentLocal(ctx, "t2", "メモ", store.UserRef{GID: "me"}, now)

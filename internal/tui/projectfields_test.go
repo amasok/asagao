@@ -5,9 +5,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -95,17 +95,27 @@ func TestNewOptionFromChooser(t *testing.T) {
 
 // Not offered when Asana refused it (402 for the plan, 403 for the field).
 func TestNewOptionNotOfferedWhenRefused(t *testing.T) {
-	for _, key := range []string{readmodel.PlanKey(readmodel.PlanCustomFields, "w1"), readmodel.KeyFieldOptionsLocked + "cf"} {
+	for _, lock := range []struct {
+		name string
+		set  func(context.Context, *store.Store) error
+	}{
+		{"plan_402", func(ctx context.Context, st *store.Store) error {
+			return st.RecordPlanRefusal(ctx, plan.CustomFields, "w1", testNow)
+		}},
+		{"field_options_403", func(ctx context.Context, st *store.Store) error {
+			return st.SetFieldOptionsLocked(ctx, "cf", testNow)
+		}},
+	} {
 		h, st := setupFieldHarness(t, store.CFEnum)
 		ctx := context.Background()
-		if err := st.SetSyncState(ctx, key, testNow.UTC().Format(time.RFC3339)); err != nil {
+		if err := lock.set(ctx, st); err != nil {
 			t.Fatal(err)
 		}
 		h.run(h.m.loadPlan())
 		d, _ := st.GetTask(ctx, "t1")
 		h.m.showFieldPicker(d.TaskSummary, h.field("cf"))
 		if slices.ContainsFunc(h.m.picker.items, func(it pickerItem) bool { return it.value == newOptionValue }) {
-			t.Fatalf("%s: offered", key)
+			t.Fatalf("%s: offered", lock.name)
 		}
 	}
 }
@@ -147,7 +157,7 @@ func TestProjectFieldsToggle(t *testing.T) {
 // A project whose fields Asana refused to change (403) says so instead of listing them.
 func TestProjectFieldsLocked(t *testing.T) {
 	h, st := setupFieldHarness(t, store.CFEnum)
-	if err := st.SetSyncState(context.Background(), readmodel.KeyProjectFieldsLocked+"p1", "x"); err != nil {
+	if err := st.SetProjectFieldsLocked(context.Background(), "p1", testNow); err != nil {
 		t.Fatal(err)
 	}
 	h.run(h.m.loadProjectFields("p1"))

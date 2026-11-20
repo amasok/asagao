@@ -61,7 +61,7 @@ func setupDeps(t *testing.T) (*depServer, *Syncer, *store.Store) {
 	t.Cleanup(func() { st.Close() })
 	api := asana.NewClient(srv.Client())
 	api.BaseURL, api.MaxRetries = srv.URL, 0
-	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
+	if err := st.SetMeGID(ctx, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A"}, {GID: "t2", Name: "B"}, {GID: "gone", Name: "C"}}); err != nil {

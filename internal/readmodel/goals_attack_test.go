@@ -2,23 +2,10 @@ package readmodel
 
 import (
 	"math"
-	"strconv"
-	"strings"
 	"testing"
 )
 
 func f64(v float64) *float64 { return &v }
-
-// 29 of 100 is 29%, not 28% (29/100*100 is 28.999999999999996 in floats).
-func TestAttackMetricTextDoesNotLoseAPercent(t *testing.T) {
-	for _, cur := range []float64{29, 57, 58, 14, 7} {
-		m := &GoalMetric{Initial: f64(0), Target: f64(100), Current: f64(cur)}
-		want := "（" + strconv.Itoa(int(cur)) + "%）"
-		if got := m.Text(); !strings.HasSuffix(got, want) {
-			t.Errorf("current %v: %q, want suffix %q", cur, got, want)
-		}
-	}
-}
 
 func TestAttackMetricProgressEdges(t *testing.T) {
 	cases := []struct {
@@ -42,22 +29,6 @@ func TestAttackMetricProgressEdges(t *testing.T) {
 		if p != c.p || ok != c.ok {
 			t.Errorf("%s: (%v, %v), want (%v, %v)", c.name, p, ok, c.p, c.ok)
 		}
-	}
-}
-
-func TestAttackMetricTextOddInputs(t *testing.T) {
-	for _, m := range []*GoalMetric{
-		{Precision: -3, Current: f64(1.5), Target: f64(3)},
-		{Precision: 1 << 30, Current: f64(1), Target: f64(3)},
-		{Kind: "currency", Current: f64(1), Target: f64(0)},
-		{Kind: "percentage", Target: f64(math.NaN()), Current: f64(math.NaN())},
-		{},
-		nil,
-	} {
-		_ = m.Text() // must not panic
-	}
-	if got := (&GoalMetric{Kind: "currency", Currency: "JPY", Current: f64(5), Target: f64(10)}).Text(); got != "JPY 5 / JPY 10（50%）" {
-		t.Errorf("currency text = %q", got)
 	}
 }
 

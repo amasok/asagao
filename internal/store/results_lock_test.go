@@ -11,7 +11,7 @@ import (
 func TestPruneResultsWithNothingToChangeTakesNoWriteLock(t *testing.T) {
 	st := resultsStore(t)
 	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	mustSet(t, st, ResultTask+"local:a", "1200")
+	mustSet(t, st, resultPrefixTask+"local:a", "1200")
 	prune(t, st, now) // stamped: within the grace, the next prune changes nothing
 
 	release := holdWriteLock(t, st)
@@ -27,7 +27,7 @@ func TestPruneResultsWithNothingToChangeTakesNoWriteLock(t *testing.T) {
 		t.Fatalf("PruneResults waited %v for the write lock with nothing to change", d)
 	}
 	release()
-	if got := syncStateOf(t, st, keyResultSeen+ResultTask+"local:a"); got != now.Format(time.RFC3339) {
+	if got := syncStateOf(t, st, keyResultSeen+resultPrefixTask+"local:a"); got != now.Format(time.RFC3339) {
 		t.Fatalf("stamp = %q, want it unchanged", got)
 	}
 }
@@ -39,7 +39,7 @@ func TestPruneResultsReadsAgainUnderTheWriteLock(t *testing.T) {
 	ctx := context.Background()
 	st := resultsStore(t)
 	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	mustSet(t, st, ResultTask+"local:a", "1200")
+	mustSet(t, st, resultPrefixTask+"local:a", "1200")
 	prune(t, st, now)
 
 	pruneResultsPlanned = func() {
@@ -52,10 +52,10 @@ func TestPruneResultsReadsAgainUnderTheWriteLock(t *testing.T) {
 	if n := prune(t, st, now.Add(ResultGrace)); n != 0 {
 		t.Fatalf("deleted %d mappings, one still referred to", n)
 	}
-	if syncStateOf(t, st, ResultTask+"local:a") != "1200" {
+	if syncStateOf(t, st, resultPrefixTask+"local:a") != "1200" {
 		t.Fatal("the mapping of local:a was deleted while an outbox entry refers to it")
 	}
-	if syncStateOf(t, st, keyResultSeen+ResultTask+"local:a") != "" {
+	if syncStateOf(t, st, keyResultSeen+resultPrefixTask+"local:a") != "" {
 		t.Fatal("the grace should start over while the mapping is needed")
 	}
 }

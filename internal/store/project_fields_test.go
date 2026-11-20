@@ -19,7 +19,7 @@ func projectStore(t *testing.T) *Store {
 	s, err := Open(ctx, filepath.Join(t.TempDir(), "store.db"))
 	must(t, err)
 	t.Cleanup(func() { s.Close() })
-	must(t, s.SetSyncState(ctx, KeyMeGID, "me"))
+	must(t, s.SetSyncState(ctx, keyMeGID, "me"))
 	must(t, s.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "会社", IsOrganization: true}}))
 	me := []asana.Ref{{GID: "me", Name: "私"}}
 	must(t, s.UpsertProjects(ctx, "w1", []asana.Project{
@@ -266,7 +266,7 @@ func TestPruneProjectsAndWorkspacesTakeTheirRows(t *testing.T) {
 	must(t, s.ReplaceFavoriteProjects(ctx, "w1", []asana.Ref{{GID: "p1"}}))
 	must(t, s.ReplaceTeams(ctx, "w1", []asana.Team{{GID: "tm1", Name: "営業"}}))
 	must(t, s.SaveProjectOverview(ctx, "p1", &asana.TaskCounts{NumTasks: 1}, BriefNone, nil, testNow))
-	must(t, s.SetSyncState(ctx, KeyTeams+"w1", "x"))
+	must(t, s.SetSyncState(ctx, keyTeams+"w1", "x"))
 	must(t, s.PruneProjects(ctx, "w1", []asana.Project{{GID: "p2"}}))
 	for _, table := range []string{"project_favorites", "project_overviews"} {
 		var n int
@@ -279,7 +279,7 @@ func TestPruneProjectsAndWorkspacesTakeTheirRows(t *testing.T) {
 	must(t, s.PruneWorkspaces(ctx, []asana.Workspace{{GID: "w2"}}))
 	var n int
 	must(t, s.db.QueryRowContext(ctx, "SELECT count(*) FROM teams").Scan(&n))
-	if v, _ := s.SyncState(ctx, KeyTeams+"w1"); n != 0 || v != "" {
+	if v, _ := s.SyncState(ctx, keyTeams+"w1"); n != 0 || v != "" {
 		t.Errorf("a pruned workspace keeps %d teams, key %q", n, v)
 	}
 }

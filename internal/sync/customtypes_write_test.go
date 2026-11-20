@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // PUT /tasks gets resource_subtype "custom", the type and the status; a status alone goes
@@ -88,7 +88,7 @@ func TestPushCustomTypePaymentRequired(t *testing.T) {
 	if err != nil || len(res.Discarded) != 1 || !strings.Contains(res.Discarded[0].Reason, "カスタムタイプ") || res.Failed != 0 {
 		t.Fatalf("push %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); !ok {
 		t.Fatal("402 not recorded")
 	}
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
@@ -170,7 +170,7 @@ func TestPushCustomTypeAndStartOnPaymentRequired(t *testing.T) {
 	if len(res.Discarded) != 1 || !strings.Contains(res.Discarded[0].Reason, "カスタムタイプ") {
 		t.Fatalf("push %+v", res)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1")); v != "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1"); ok {
 		t.Fatal("start dates hidden for a custom type's 402")
 	}
 	f.failRest = false

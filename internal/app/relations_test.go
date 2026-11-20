@@ -141,7 +141,13 @@ func (f *relationStore) AddEnumOptionLocal(_ context.Context, fieldGID, name str
 	return "opt-" + name, true, f.write("AddEnumOptionLocal", "%s %s", fieldGID, name)
 }
 
-func (f *relationStore) SyncState(context.Context, string) (string, error) { return "", nil }
+func (f *relationStore) PlanRefusedAt(context.Context, string, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+
+func (f *relationStore) FieldOptionsLocked(context.Context, string) (bool, error) {
+	return false, nil
+}
 
 func (f *relationStore) TaskWorkspace(context.Context, string) (string, error) { return "w1", nil }
 

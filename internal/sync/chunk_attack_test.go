@@ -238,13 +238,13 @@ func TestChunkAttackFailureMidWriteKeepsStateAndRecovers(t *testing.T) {
 		t.Fatalf("expected the write error, got %+v, %v", res, err)
 	}
 	after := e.state(t)
-	for _, k := range []string{store.KeyLastSync, keyLastFullSync, keyLastPoll} {
+	for _, k := range []string{"last_sync", "last_full_sync", "last_poll"} {
 		if after[k] != before[k] {
 			t.Errorf("%s advanced on a failed sync: %q -> %q", k, before[k], after[k])
 		}
 	}
 	for k, v := range before {
-		if after[k] != v && strings.HasPrefix(k, store.KeyEvents) {
+		if after[k] != v && strings.HasPrefix(k, "events:") {
 			t.Errorf("events token %s moved on a failed sync", k)
 		}
 	}
@@ -269,7 +269,7 @@ func TestChunkAttackFailureMidWriteKeepsStateAndRecovers(t *testing.T) {
 	if len(got) != 501 || !got["zbad"] || !got["a499"] {
 		t.Fatalf("after recovery %d tasks", len(got))
 	}
-	if e.state(t)[keyLastFullSync] == before[keyLastFullSync] {
+	if e.state(t)["last_full_sync"] == before["last_full_sync"] {
 		t.Error("last full sync did not advance after a good sync")
 	}
 }
@@ -321,7 +321,7 @@ func TestChunkAttackServerErrorsAndCancel(t *testing.T) {
 				t.Fatalf("status %d: a failed full sync reported success", status)
 			}
 			after := e.state(t)
-			if after[store.KeyLastSync] != before[store.KeyLastSync] || after[keyLastFullSync] != before[keyLastFullSync] {
+			if after["last_sync"] != before["last_sync"] || after["last_full_sync"] != before["last_full_sync"] {
 				t.Errorf("status %d: sync state advanced: %v -> %v", status, before, after)
 			}
 			if got := e.taskGIDs(t); len(got) != 200 {
@@ -345,7 +345,7 @@ func TestChunkAttackCancelDuringWrite(t *testing.T) {
 		return
 	}
 	st := e.state(t)
-	if st[store.KeyLastSync] != "" || st[keyLastFullSync] != "" {
+	if st["last_sync"] != "" || st["last_full_sync"] != "" {
 		t.Fatalf("sync state advanced after cancel: %v", st)
 	}
 	e.fake.hook = nil

@@ -167,7 +167,7 @@ type LocalStore interface {
 	GetOp(ctx context.Context, id int64) (*outbox.Op, error)
 	GetTask(ctx context.Context, gid string) (*readmodel.TaskDetail, error)
 	InboxState(ctx context.Context) (readmodel.InboxState, error)
-	LocalResult(ctx context.Context, prefix, gid string) (real string, waiting bool, err error)
+	LocalResult(ctx context.Context, kind readmodel.ResultKind, gid string) (real string, waiting bool, err error)
 	MarkOpConflict(ctx context.Context, id int64, server map[string]any) error
 	MarkOpFailed(ctx context.Context, id int64, cause error) error
 	MarkOpVerify(ctx context.Context, id int64, note string) error
@@ -183,7 +183,7 @@ type LocalStore interface {
 	PruneWorkspaces(ctx context.Context, keep []model.Workspace) error
 	RealGID(ctx context.Context, gid string) (string, error)
 	RealTagGID(ctx context.Context, gid string) (string, error)
-	RecordedResults(ctx context.Context, prefix string) (map[string]bool, error)
+	RecordedResults(ctx context.Context, kind readmodel.ResultKind) (map[string]bool, error)
 	RecoverInterruptedOps(ctx context.Context) (requeued, verify int, err error)
 	ReleaseNotSent(ctx context.Context, id int64) error
 	ReleaseOp(ctx context.Context, id int64) error
@@ -217,9 +217,44 @@ type LocalStore interface {
 	SetInboxState(ctx context.Context, st readmodel.InboxState) error
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
 	SetProjectArchivedLocal(ctx context.Context, projectGID string, archived bool) error
-	SetSyncState(ctx context.Context, key, value string) error
-	SyncState(ctx context.Context, key string) (string, error)
-	SyncStatesWithPrefix(ctx context.Context, prefix string) (map[string]string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+	RecordPlanRefusal(ctx context.Context, feature, workspaceGID string, at time.Time) error
+	ClearPlanRefusal(ctx context.Context, feature, workspaceGID string) error
+	SyncedMeGID(ctx context.Context) (string, error)
+	SetMeGID(ctx context.Context, gid string) error
+	LastSyncAt(ctx context.Context) (time.Time, error)
+	SetLastSyncAt(ctx context.Context, at time.Time) error
+	LastFullSyncAt(ctx context.Context) (time.Time, error)
+	SetLastFullSyncAt(ctx context.Context, at time.Time) error
+	LastPollAt(ctx context.Context) (time.Time, error)
+	SetLastPollAt(ctx context.Context, at time.Time) error
+	EventsToken(ctx context.Context, projectGID string) (string, error)
+	SetEventsToken(ctx context.Context, projectGID, token string) error
+	SetUserTaskListGID(ctx context.Context, workspaceGID, listGID string) error
+	ProjectCustomFieldsFetchedAt(ctx context.Context, projectGID string) (string, error)
+	SetProjectCustomFieldsFetchedAt(ctx context.Context, projectGID string, at time.Time) error
+	ProjectCustomTypesFetchedAt(ctx context.Context, projectGID string) (string, error)
+	SetProjectCustomTypesFetchedAt(ctx context.Context, projectGID string, at time.Time) error
+	WorkspaceTeamsFetchedAt(ctx context.Context, workspaceGID string) (string, error)
+	SetWorkspaceTeamsFetchedAt(ctx context.Context, workspaceGID string, at time.Time) error
+	WorkspaceCustomFieldsFetchedAt(ctx context.Context, workspaceGID string) (string, error)
+	SetWorkspaceCustomFieldsFetchedAt(ctx context.Context, workspaceGID string, at time.Time) error
+	GoalsFetchedAt(ctx context.Context, workspaceGID string) (string, error)
+	SetGoalsFetchedAt(ctx context.Context, workspaceGID string, at time.Time) error
+	PortfoliosFetchedAt(ctx context.Context, workspaceGID string) (string, error)
+	SetPortfoliosFetchedAt(ctx context.Context, workspaceGID string, at time.Time) error
+	SetFieldOptionsLocked(ctx context.Context, fieldGID string, at time.Time) error
+	SetProjectFieldsLocked(ctx context.Context, projectGID string, at time.Time) error
+	SetCustomIDTaskGID(ctx context.Context, customID, taskGID string) error
+	SetProjectTaskState(ctx context.Context, projectGID, state string) error
+	StoredProjectTaskStates(ctx context.Context) (map[string]string, error)
+	MyTaskState(ctx context.Context, workspaceGID string) (string, error)
+	MyTaskStates(ctx context.Context) (map[string]string, error)
+	SetMyTaskState(ctx context.Context, workspaceGID, state string) error
+	PendingSectionOrders(ctx context.Context, projectGID string) (string, error)
+	SetPendingSectionOrders(ctx context.Context, projectGID, value string) error
+	PendingSubtaskOrders(ctx context.Context) (string, error)
+	SetPendingSubtaskOrders(ctx context.Context, value string) error
 	// Which projects' tasks are cached (#54, see lazy.go).
 	ProjectTaskStates(ctx context.Context) (map[string]string, error)
 	ProjectTaskState(ctx context.Context, projectGID string) (string, error)

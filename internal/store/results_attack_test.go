@@ -27,7 +27,7 @@ func TestPruneResultsBrokenStampsNeverDelete(t *testing.T) {
 	for _, stamp := range []string{"", "abc", "2026-11-16", "0", "-1", "9999-12-31T00:00:00Z", "2020-01-01T00:00:00", "2020-01-01 00:00:00", "\x00", "2026-13-45T25:61:61Z",
 		attackNow.Add(11 * ResultGrace).Format(time.RFC3339), strings.Repeat("9", 5000)} {
 		st := resultsStore(t)
-		key := ResultTask + "local:x"
+		key := resultPrefixTask + "local:x"
 		mustSet(t, st, key, "1200", keyResultSeen+key, stamp)
 		if n := prune(t, st, attackNow.Add(10*ResultGrace)); n != 0 {
 			t.Errorf("stamp %q: deleted %d on a stamp that cannot be trusted", stamp, n)
@@ -42,7 +42,7 @@ func TestPruneResultsBrokenStampsNeverDelete(t *testing.T) {
 // past" keeps everything, and when the clock is right again the grace counts from there.
 func TestPruneResultsClockGoesBack(t *testing.T) {
 	st := resultsStore(t)
-	key := ResultStory + "local:s"
+	key := resultPrefixStory + "local:s"
 	mustSet(t, st, key, "1500")
 	prune(t, st, attackNow)
 	if n := prune(t, st, attackNow.Add(-48*time.Hour)); n != 0 { // clock set back two days
@@ -61,7 +61,7 @@ func TestPruneResultsKeepsForOpsInAnyState(t *testing.T) {
 	for _, state := range []string{"pending", "conflict", "failed"} {
 		for _, where := range []string{"task", "payload", "base"} {
 			st := resultsStore(t)
-			key := ResultTask + "local:abc123"
+			key := resultPrefixTask + "local:abc123"
 			mustSet(t, st, key, "1200")
 			prune(t, st, attackNow)
 			task, payload, base := "t1", "{}", "{}"
@@ -84,7 +84,7 @@ func TestPruneResultsKeepsForOpsInAnyState(t *testing.T) {
 // A queued entry of a verified kind in a failed/conflict state still holds the mappings of
 // its kind back (its verification will read them).
 func TestPruneResultsHeldBackByFailedVerifiedKinds(t *testing.T) {
-	for kind, prefix := range map[string]string{OpCreateTask: ResultTask, OpDuplicateTask: ResultTask, OpAddComment: ResultStory, OpUploadAttachment: ResultAttachment, OpCreateStatus: ResultStatus} {
+	for kind, prefix := range map[string]string{OpCreateTask: resultPrefixTask, OpDuplicateTask: resultPrefixTask, OpAddComment: resultPrefixStory, OpUploadAttachment: resultPrefixAttachment, OpCreateStatus: resultPrefixStatus} {
 		for _, state := range []string{"pending", "conflict", "failed"} {
 			st := resultsStore(t)
 			key := prefix + "local:old"
@@ -104,7 +104,7 @@ func TestPruneResultsOnlyRealMappings(t *testing.T) {
 	st := resultsStore(t)
 	keep := []string{
 		"GID:local:a", "xgid:local:a", "gid:xlocal:a", "gid: local:a", "tag:Local:a", "story:", "ui:collapsed:local:a",
-		KeyCustomFields + "local:a", KeyEvents + "local:a", "inbox_status", "result_seen_x", "status", "att", "events:local:p",
+		keyCustomFields + "local:a", keyEvents + "local:a", "inbox_status", "result_seen_x", "status", "att", "events:local:p",
 	}
 	for _, k := range keep {
 		mustSet(t, st, k, "v")
@@ -124,7 +124,7 @@ func TestPruneResultsOnlyRealMappings(t *testing.T) {
 func TestPruneResultsOddLocalGIDs(t *testing.T) {
 	st := resultsStore(t)
 	for _, g := range []string{"local:%", "local:_", "local:a'b", `local:a"b`, "local:a;DROP TABLE outbox;--", "local:日本語", "local:\x00x", "local:"} {
-		mustSet(t, st, ResultTask+g, "1")
+		mustSet(t, st, resultPrefixTask+g, "1")
 	}
 	insertOp(t, st, OpUpdateTask, "t1", `{"k":"unrelated"}`, "{}", "pending")
 	prune(t, st, attackNow)
@@ -156,7 +156,7 @@ func TestPruneResultsConcurrentWithPush(t *testing.T) {
 	}
 	// old, unneeded mappings that are past their grace (the worst case for a wrong delete)
 	for i := 0; i < 50; i++ {
-		k := fmt.Sprintf("%slocal:old%d", ResultTask, i)
+		k := fmt.Sprintf("%slocal:old%d", resultPrefixTask, i)
 		mustSet(t, a, k, "1", keyResultSeen+k, attackNow.Add(-2*ResultGrace).Format(time.RFC3339))
 	}
 	var wg sync.WaitGroup
@@ -194,13 +194,13 @@ func TestPruneResultsConcurrentWithPush(t *testing.T) {
 			// a freshly recorded mapping was stamped by a prune that ran at +10 grace and then
 			// "deleted" at the next one: both prunes use the same clock, so the grace is 0 here.
 			// Only fail if the stamp is not older than the grace relative to its own first sight.
-			if seen := syncStateOf(t, a, keyResultSeen+ResultTask+l); seen != "" {
+			if seen := syncStateOf(t, a, keyResultSeen+resultPrefixTask+l); seen != "" {
 				t.Errorf("%s: stamp left without mapping", l)
 			}
 		}
 	}
 	for i := 0; i < 50; i++ {
-		if syncStateOf(t, a, fmt.Sprintf("%slocal:old%d", ResultTask, i)) != "" {
+		if syncStateOf(t, a, fmt.Sprintf("%slocal:old%d", resultPrefixTask, i)) != "" {
 			t.Errorf("old%d should be pruned", i)
 		}
 	}
@@ -219,7 +219,7 @@ func TestPruneResultsLargeOutboxIsFast(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < maps; i++ {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO sync_state(key, value) VALUES (?, '1')", fmt.Sprintf("%slocal:%032d", ResultTask, i)); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO sync_state(key, value) VALUES (?, '1')", fmt.Sprintf("%slocal:%032d", resultPrefixTask, i)); err != nil {
 			t.Fatal(err)
 		}
 	}

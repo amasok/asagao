@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Section operations of a project (outbox.KindCreateSection, KindDeleteSection,
@@ -20,9 +19,6 @@ const (
 	OpDeleteSection = outbox.KindDeleteSection
 	OpInsertSection = outbox.KindInsertSection
 )
-
-// ResultSection maps a section created offline to the section Asana created.
-const ResultSection = readmodel.ResultSection
 
 // ErrSectionNotEmpty is returned when deleting a section that still holds tasks (Asana
 // deletes only empty sections).
@@ -340,7 +336,7 @@ func replaceLocalSectionGID(ctx context.Context, tx *sql.Tx, local, real string)
 			return err
 		}
 	}
-	return recordResult(ctx, tx, ResultSection, local, real)
+	return recordResult(ctx, tx, resultPrefixSection, local, real)
 }
 
 // RealSectionGID returns the Asana gid of a section created offline once it was created
@@ -349,7 +345,7 @@ func (s *Store) RealSectionGID(ctx context.Context, gid string) (string, error) 
 	if !IsLocalGID(gid) {
 		return gid, nil
 	}
-	v, err := s.SyncState(ctx, ResultSection+gid)
+	v, err := s.SyncState(ctx, resultPrefixSection+gid)
 	if err != nil || v == "" {
 		return gid, err
 	}

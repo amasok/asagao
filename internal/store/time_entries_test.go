@@ -194,7 +194,7 @@ func TestTimeEntryChangedWhileSending(t *testing.T) {
 		t.Fatal(err)
 	}
 	must(t, s.UpdateTimeEntryLocal(ctx, gid, 20, "2026-11-13", testNow))
-	if real, waiting, err := s.LocalResult(ctx, ResultTimeEntry, gid); err != nil || real != "" || !waiting {
+	if real, waiting, err := s.LocalResult(ctx, readmodel.ResultTimeEntry, gid); err != nil || real != "" || !waiting {
 		t.Fatalf("LocalResult = %q %v %v", real, waiting, err)
 	}
 	// Asana created it with the values sent (45m); the queued edit is applied again.
@@ -204,7 +204,7 @@ func TestTimeEntryChangedWhileSending(t *testing.T) {
 	if len(es.Entries) != 1 || es.Entries[0].GID != "e9" || es.Entries[0].DurationMinutes != 20 || !es.Entries[0].Pending {
 		t.Fatalf("entries %+v", es.Entries)
 	}
-	if real, waiting, err := s.LocalResult(ctx, ResultTimeEntry, gid); err != nil || real != "e9" || waiting {
+	if real, waiting, err := s.LocalResult(ctx, readmodel.ResultTimeEntry, gid); err != nil || real != "e9" || waiting {
 		t.Errorf("LocalResult = %q %v %v", real, waiting, err)
 	}
 	// A refresh read before Asana created it keeps it.
