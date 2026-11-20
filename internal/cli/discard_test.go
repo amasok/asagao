@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 func TestTakeDiscards(t *testing.T) {
@@ -24,7 +25,7 @@ func TestTakeDiscards(t *testing.T) {
 
 	var b bytes.Buffer
 	ds := takeDiscards(ctx, st, &b, true)
-	if len(ds) != 1 || !strings.Contains(b.String(), store.DiscardNotice) || !strings.Contains(b.String(), "牛乳を買う") {
+	if len(ds) != 1 || !strings.Contains(b.String(), format.DiscardNotice) || !strings.Contains(b.String(), "牛乳を買う") {
 		t.Fatalf("discards = %+v, output %q", ds, b.String())
 	}
 	b.Reset()

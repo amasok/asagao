@@ -12,6 +12,7 @@ import (
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 const (
@@ -463,7 +464,7 @@ func (m *Model) taskLine(t *readmodel.TaskSummary, depth, w int, today string, s
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	extra := fieldBadges(t)
-	if badges := readmodel.TaskBadges(*t); badges != "" {
+	if badges := format.TaskBadges(*t); badges != "" {
 		extra = " " + badges + extra
 	}
 	if t.Pending {
@@ -646,7 +647,7 @@ func (m *Model) renderDetail(w int) string {
 		field(itemCompleted, "状態", done, "")
 	}
 	if subtype := d.ResourceSubtype; active || (subtype != "" && subtype != "default_task") {
-		label := readmodel.KindLabel(d.TaskSummary)
+		label := format.KindLabel(d.TaskSummary)
 		if subtype == "milestone" {
 			label = "◆ " + label
 		}
@@ -808,7 +809,7 @@ func (m *Model) renderDetail(w int) string {
 			}
 			text := m.withImages(m.markdown(textMarkdown(c.HTMLText, c.Text), max(10, w-2)), max(10, w-2), imageNo)
 			b.WriteString(indentLines(text, 2) + "\n")
-			if r := readmodel.ReactionsLine(c.Reactions); r != "" {
+			if r := format.ReactionsLine(c.Reactions); r != "" {
 				b.WriteString("  " + m.st.dim.Render(ansi.Truncate(r, max(1, w-2), "…")) + "\n")
 			}
 		}

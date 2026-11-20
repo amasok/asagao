@@ -11,7 +11,6 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
 
@@ -101,7 +100,7 @@ func TestListTasksUnfetchedProjectOffline(t *testing.T) {
 	if so.Count != 1 || !strings.Contains(so.Note, "1 of the user's projects are not cached") {
 		t.Fatalf("search_tasks = %+v", so)
 	}
-	if err := st.SetSyncState(context.Background(), store.KeyProjectTasks+"p2", readmodel.TasksAll); err != nil {
+	if err := st.SetProjectTaskState(context.Background(), "p2", readmodel.TasksAll); err != nil {
 		t.Fatal(err)
 	}
 	so = SearchOutput{} // decoded afresh: an omitted note must not keep the old one

@@ -16,7 +16,7 @@ import (
 // Projects fetched when they are opened (#54).
 //
 // A sync fetches the list of every project, but the tasks only of the projects to sync:
-// those opened once (KeyProjectTasks), the favorites, those synced before #54 (they have
+// those opened once (ProjectTaskState), the favorites, those synced before #54 (they have
 // an events token), and with Config.AllProjects every project (with LazyProjects false,
 // every project I am a member of). Only those projects' events are read. A project opened
 // for the first time is fetched by OpenProject (or, offline, by the next sync).
@@ -28,18 +28,19 @@ import (
 
 // pull is what one Run (or OpenProject, FetchCompleted) has fetched so far.
 type pull struct {
-	keep         map[string]bool   // tasks fetched (a full sync removes the others)
-	withSubtasks []string          // fetched tasks whose subtasks are to be fetched
-	subsFetched  map[string]bool   // tasks whose subtasks were fetched
-	parents      []string          // parents of changed subtasks: their order may have changed (#51)
-	tokens       map[string]string // project gid -> events token, saved once everything is stored
-	states       map[string]string // sync_state key -> tasks state, saved with the tokens
-	res          *Result
+	keep          map[string]bool   // tasks fetched (a full sync removes the others)
+	withSubtasks  []string          // fetched tasks whose subtasks are to be fetched
+	subsFetched   map[string]bool   // tasks whose subtasks were fetched
+	parents       []string          // parents of changed subtasks: their order may have changed (#51)
+	tokens        map[string]string // project gid -> events token, saved once everything is stored
+	projectStates map[string]string // project gid -> tasks state, saved with the tokens
+	myStates      map[string]string // workspace gid -> My Tasks state, saved with the tokens
+	res           *Result
 }
 
 func newPull(res *Result) *pull {
 	return &pull{keep: map[string]bool{}, subsFetched: map[string]bool{}, tokens: map[string]string{},
-		states: map[string]string{}, res: res}
+		projectStates: map[string]string{}, myStates: map[string]string{}, res: res}
 }
 
 // pullMode is how a pull asks for tasks.
@@ -118,7 +119,7 @@ func (s *Syncer) storeSubtasks(ctx context.Context, pl *pull, parent string, sub
 // those a previous sync could not list: their order may have changed, which only the
 // parent's list shows (#51). The subtasks themselves were fetched already.
 func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
-	pending, err := s.Store.SyncState(ctx, readmodel.KeySubtaskOrder)
+	pending, err := s.Store.PendingSubtaskOrders(ctx)
 	if err != nil {
 		return err
 	}
@@ -143,7 +144,9 @@ func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
 		}
 	}
 	pl.res.OrderPending += len(left)
-	return s.setPending(ctx, readmodel.KeySubtaskOrder, pending, left)
+	return setPendingOrders(pending, left, func(v string) error {
+		return s.Store.SetPendingSubtaskOrders(ctx, v)
+	})
 }
 
 // refreshSections lists the order of the sections of project (#51) whose tasks changed
@@ -151,8 +154,7 @@ func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
 // reordered there. Sections a previous sync could not list are listed too.
 func (s *Syncer) refreshSections(ctx context.Context, pl *pull, project string, sections []string,
 	completedSince time.Time, listed bool) error {
-	key := readmodel.KeyTaskOrder + project
-	pending, err := s.Store.SyncState(ctx, key)
+	pending, err := s.Store.PendingSectionOrders(ctx, project)
 	if err != nil {
 		return err
 	}
@@ -178,7 +180,9 @@ func (s *Syncer) refreshSections(ctx context.Context, pl *pull, project string, 
 		}
 	}
 	pl.res.OrderPending += len(left)
-	return s.setPending(ctx, key, pending, left)
+	return setPendingOrders(pending, left, func(v string) error {
+		return s.Store.SetPendingSectionOrders(ctx, project, v)
+	})
 }
 
 // orderFailed sorts out the error of a listing of the order. ok: done, or nothing to do
@@ -196,10 +200,10 @@ func (s *Syncer) orderFailed(err error, what string) (ok bool, _ error) {
 	return false, nil
 }
 
-// setPending saves what is still to list under key, if it changed.
-func (s *Syncer) setPending(ctx context.Context, key, before string, left []string) error {
+// setPendingOrders saves what is still to list, if it changed.
+func setPendingOrders(before string, left []string, save func(string) error) error {
 	if v := strings.Join(left, " "); v != before {
-		return s.Store.SetSyncState(ctx, key, v)
+		return save(v)
 	}
 	return nil
 }
@@ -246,17 +250,23 @@ func (s *Syncer) finishPull(ctx context.Context, pl *pull) error {
 		return err
 	}
 	for gid, token := range pl.tokens {
-		if err := s.Store.SetSyncState(ctx, readmodel.KeyEvents+gid, token); err != nil {
+		if err := s.Store.SetEventsToken(ctx, gid, token); err != nil {
 			return err
 		}
 	}
-	for key, state := range pl.states {
-		if err := s.Store.SetSyncState(ctx, key, state); err != nil {
+	for gid, state := range pl.projectStates {
+		if err := s.Store.SetProjectTaskState(ctx, gid, state); err != nil {
+			return err
+		}
+	}
+	for ws, state := range pl.myStates {
+		if err := s.Store.SetMyTaskState(ctx, ws, state); err != nil {
 			return err
 		}
 	}
 	clear(pl.tokens)
-	clear(pl.states)
+	clear(pl.projectStates)
+	clear(pl.myStates)
 	return nil
 }
 
@@ -394,7 +404,7 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 		pl.tokens[p.gid] = ev.token
 	}
 	if first {
-		pl.states[readmodel.KeyProjectTasks+p.gid] = mode.fetchedState()
+		pl.projectStates[p.gid] = mode.fetchedState()
 	}
 	return nil
 }
@@ -405,8 +415,7 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 // asked for (the completed ones come with pullCompleted). firstSync: no sync finished
 // before (otherwise My Tasks without a state was fetched in full before #54).
 func (s *Syncer) pullMyTasks(ctx context.Context, pl *pull, w model.Workspace, mode pullMode, firstSync bool) error {
-	key := readmodel.KeyMyTasks + w.GID
-	state, err := s.Store.SyncState(ctx, key)
+	state, err := s.Store.MyTaskState(ctx, w.GID)
 	if err != nil {
 		return err
 	}
@@ -418,7 +427,7 @@ func (s *Syncer) pullMyTasks(ctx context.Context, pl *pull, w model.Workspace, m
 		q.CompletedSince = mode.stamp
 		if state != readmodel.TasksOpen {
 			q.ModifiedSince = time.Time{}
-			pl.states[key] = mode.fetchedState()
+			pl.myStates[w.GID] = mode.fetchedState()
 		}
 	}
 	s.progress("ワークスペース %s: 自分のタスク", w.Name)
@@ -435,26 +444,26 @@ func (s *Syncer) pullMyTasks(ctx context.Context, pl *pull, w model.Workspace, m
 // It is called after finishPull (the states it reads are saved).
 func (s *Syncer) pullCompleted(ctx context.Context, pl *pull, mode pullMode, only string) error {
 	type scope struct {
-		key, name string
-		q         model.TaskQuery
+		ws, project, name string
+		q                 model.TaskQuery
 	}
 	// A task completed since window was modified since then too: modified_since leaves out
 	// the incomplete tasks (fetched already) that did not change meanwhile.
 	since := mode.window
 	var scopes []scope
 	if only == "" {
-		my, err := s.Store.SyncStatesWithPrefix(ctx, readmodel.KeyMyTasks)
+		my, err := s.Store.MyTaskStates(ctx)
 		if err != nil {
 			return err
 		}
 		for _, ws := range sortedKeys(my) {
 			if my[ws] == readmodel.TasksOpen {
-				scopes = append(scopes, scope{readmodel.KeyMyTasks + ws, "自分のタスク",
-					model.TaskQuery{Assignee: "me", Workspace: ws, CompletedSince: since, ModifiedSince: since}})
+				scopes = append(scopes, scope{ws: ws, name: "自分のタスク",
+					q: model.TaskQuery{Assignee: "me", Workspace: ws, CompletedSince: since, ModifiedSince: since}})
 			}
 		}
 	}
-	projects, err := s.Store.SyncStatesWithPrefix(ctx, readmodel.KeyProjectTasks)
+	projects, err := s.Store.StoredProjectTaskStates(ctx)
 	if err != nil {
 		return err
 	}
@@ -466,8 +475,8 @@ func (s *Syncer) pullCompleted(ctx context.Context, pl *pull, mode pullMode, onl
 		if ref, err := s.Store.ProjectRef(ctx, gid); err == nil && ref.Name != "" {
 			name = ref.Name
 		}
-		scopes = append(scopes, scope{readmodel.KeyProjectTasks + gid, name,
-			model.TaskQuery{Project: gid, CompletedSince: since, ModifiedSince: since}})
+		scopes = append(scopes, scope{project: gid, name: name,
+			q: model.TaskQuery{Project: gid, CompletedSince: since, ModifiedSince: since}})
 	}
 	for _, sc := range scopes {
 		s.progress("完了済みのタスク: %s", sc.name)
@@ -500,7 +509,12 @@ func (s *Syncer) pullCompleted(ctx context.Context, pl *pull, mode pullMode, onl
 		if err := s.fetchSubtasks(ctx, pl); err != nil {
 			return err
 		}
-		if err := s.Store.SetSyncState(ctx, sc.key, readmodel.TasksAll); err != nil {
+		if sc.ws != "" {
+			err = s.Store.SetMyTaskState(ctx, sc.ws, readmodel.TasksAll)
+		} else {
+			err = s.Store.SetProjectTaskState(ctx, sc.project, readmodel.TasksAll)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -518,15 +532,22 @@ func sortedKeys(m map[string]string) []string {
 
 // completedPending reports whether some completed tasks are still to fetch (pullCompleted).
 func (s *Syncer) completedPending(ctx context.Context) (bool, error) {
-	for _, prefix := range []string{readmodel.KeyMyTasks, readmodel.KeyProjectTasks} {
-		states, err := s.Store.SyncStatesWithPrefix(ctx, prefix)
-		if err != nil {
-			return false, err
+	my, err := s.Store.MyTaskStates(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, st := range my {
+		if st == readmodel.TasksOpen {
+			return true, nil
 		}
-		for _, st := range states {
-			if st == readmodel.TasksOpen {
-				return true, nil
-			}
+	}
+	projects, err := s.Store.StoredProjectTaskStates(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, st := range projects {
+		if st == readmodel.TasksOpen {
+			return true, nil
 		}
 	}
 	return false, nil

@@ -14,8 +14,10 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // goalsAsana answers the goal, time period and portfolio endpoints as Asana documents
@@ -147,7 +149,7 @@ func TestFetchGoalsAndGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.HTMLNotes == "" || g.Owner == nil || g.Owner.Name != "山田" || g.Metric == nil || g.Metric.Text() != "40 / 100（40%）" ||
+	if g.HTMLNotes == "" || g.Owner == nil || g.Owner.Name != "山田" || g.Metric == nil || format.GoalMetricText(g.Metric) != "40 / 100（40%）" ||
 		len(g.Supporting) != 2 || g.Supporting[0].Type != "goal" || g.Supporting[1].Name != "営業" || g.FetchedAt == "" {
 		t.Fatalf("goal = %+v", g)
 	}
@@ -190,7 +192,7 @@ func TestGoals402HidesThemForADay(t *testing.T) {
 	if err := s.FetchGoal(ctx, "g1"); err != nil || f.count("/goals/g1") != 0 {
 		t.Fatalf("a goal asked for while hidden: %d calls, %v", f.count("/goals/g1"), err)
 	}
-	*now = now.Add(readmodel.PlanRecheckAfter + time.Minute)
+	*now = now.Add(plan.RecheckAfter + time.Minute)
 	if !uc.Available(ctx) {
 		t.Fatal("still hidden after a day")
 	}
@@ -198,8 +200,8 @@ func TestGoals402HidesThemForADay(t *testing.T) {
 	if err := s.FetchGoals(ctx); err != nil || f.count("/goals") != 2 {
 		t.Fatalf("not tried again: %d calls, %v", f.count("/goals"), err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1")); v != "" {
-		t.Fatalf("the 402 is still recorded: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Goals, "w1"); ok {
+		t.Fatal("the 402 is still recorded")
 	}
 	if l, err := uc.List(ctx, ""); err != nil || len(l.Goals) != 2 {
 		t.Fatalf("list once offered: %+v, %v", l, err)
@@ -340,10 +342,11 @@ func TestGoals402IsPerWorkspace(t *testing.T) {
 	s, st, f, now := setupGoals(t)
 	ctx := context.Background()
 	fresh := now.UTC().Format(time.RFC3339)
-	for _, key := range []string{readmodel.PlanKey(readmodel.PlanGoals, "w9"), readmodel.KeyPlanUnavailable + readmodel.PlanGoals} {
-		if err := st.SetSyncState(ctx, key, fresh); err != nil {
-			t.Fatal(err)
-		}
+	if err := st.RecordPlanRefusal(ctx, plan.Goals, "w9", *now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.Goals, fresh); err != nil {
+		t.Fatal(err)
 	}
 	if !goalUC(st, now).Available(ctx) {
 		t.Fatal("hidden by another workspace's 402")
@@ -355,7 +358,7 @@ func TestGoals402IsPerWorkspace(t *testing.T) {
 	if err := s.FetchGoals(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1")); v != fresh {
-		t.Fatalf("402 recorded as %q for w1", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.Goals, "w1"); !ok || !at.Equal(*now) {
+		t.Fatalf("402 recorded as (%v, %v) for w1", at, ok)
 	}
 }

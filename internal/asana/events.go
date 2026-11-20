@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 
 	"github.com/amasok/asagao/internal/asana/model"
 )
@@ -45,13 +44,6 @@ const (
 	// MaxBatchActions is how many requests Asana accepts in one POST /batch.
 	MaxBatchActions = model.MaxBatchActions
 )
-
-type batchAction struct {
-	Method       string         `json:"method"`
-	RelativePath string         `json:"relative_path"`
-	Data         map[string]any `json:"data,omitempty"`
-	Options      map[string]any `json:"options,omitempty"`
-}
 
 type batchResult struct {
 	StatusCode int             `json:"status_code"`
@@ -133,12 +125,16 @@ func (c *Client) Batch(ctx context.Context, writes []model.BatchWrite) ([]model.
 		return nil, fmt.Errorf("asana: batch: %d requests (at most %d)", len(writes), MaxBatchActions)
 	}
 	tier := c.tier()
+	taskFields := tier.fields(TaskFields)
 	actions := make([]batchAction, len(writes))
+	wantTask := make([]bool, len(writes))
 	for i, w := range writes {
-		actions[i] = batchAction{Method: strings.ToLower(w.Method), RelativePath: w.Path, Data: w.Data}
-		if w.Task {
-			actions[i].Options = map[string]any{"fields": c.taskFields(false)}
+		act, wt, err := batchActionFor(w, taskFields)
+		if err != nil {
+			return nil, err
 		}
+		actions[i] = act
+		wantTask[i] = wt
 	}
 	var results []batchResult
 	if _, err := c.do(ctx, http.MethodPost, batchPath, nil, map[string]any{"actions": actions}, &results); err != nil {
@@ -157,7 +153,7 @@ func (c *Client) Batch(ctx context.Context, writes []model.BatchWrite) ([]model.
 			out[i].Err = c.newError(status, r.Body)
 			continue
 		}
-		if !writes[i].Task {
+		if !wantTask[i] {
 			continue
 		}
 		var env struct {

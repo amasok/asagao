@@ -392,7 +392,7 @@ func TestGitAttackCutPostNotDuplicated(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	runOn := func(args ...string) (string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&out)

@@ -1,12 +1,6 @@
 package readmodel
 
-import (
-	"fmt"
-	"strings"
-
-	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/domain/task"
-)
+import "github.com/amasok/asagao/internal/asana/model"
 
 type MembershipView struct {
 	ProjectGID  string `json:"project_gid"`
@@ -174,27 +168,6 @@ type FieldOption struct {
 	Tasks     int    `json:"tasks"` // incomplete tasks with this value
 }
 
-// ReactionsLine shows a comment's reactions in one line, e.g. "👍 2  🎉 1" ("" for none).
-// The emoji the user reacted with is marked with "*".
-func ReactionsLine(rs []Reaction) string {
-	parts := make([]string, 0, len(rs))
-	for _, r := range rs {
-		if r.Count <= 0 {
-			continue
-		}
-		emoji := r.Variant
-		if emoji == "" {
-			emoji = r.EmojiBase
-		}
-		mark := ""
-		if r.Reacted {
-			mark = "*"
-		}
-		parts = append(parts, fmt.Sprintf("%s%s %d", emoji, mark, r.Count))
-	}
-	return strings.Join(parts, "  ")
-}
-
 // DeletePlan is what deleting a task does: the task, its subtasks (counted with theirs),
 // and the changes queued for them, which are dropped with it.
 type DeletePlan struct {
@@ -228,13 +201,4 @@ type CustomTypeView struct {
 	GID      string                 `json:"gid"`
 	Name     string                 `json:"name"`
 	Statuses []CustomTypeStatusView `json:"statuses"`
-}
-
-// KindLabel is a task's type as it is shown: the name of its custom type, if it has one,
-// else the Japanese name of its resource_subtype.
-func KindLabel(t TaskSummary) string {
-	if t.ResourceSubtype == "custom" && t.CustomType != nil && t.CustomType.Name != "" {
-		return t.CustomType.Name
-	}
-	return task.SubtypeLabel(t.ResourceSubtype)
 }

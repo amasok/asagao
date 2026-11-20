@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -114,7 +114,7 @@ func setupStart(t *testing.T, task map[string]any) (*startServer, *Syncer, *stor
 	api := asana.NewClient(srv.Client())
 	api.BaseURL = srv.URL
 	api.MaxRetries = 0
-	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
+	if err := st.SetMeGID(ctx, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"); err != nil {
@@ -196,9 +196,8 @@ func TestPushStartOn402(t *testing.T) {
 	if d := res.Discarded[0]; !strings.Contains(d.Reason, "タスクの開始日") || !strings.Contains(d.Summary, "開始日を 2026-12-01") {
 		t.Fatalf("discard = %+v", d)
 	}
-	key := readmodel.PlanKey(readmodel.PlanStartOn, "w1")
-	if v, _ := st.SyncState(ctx, key); !readmodel.PlanOffFor(v, now) {
-		t.Fatalf("402 not recorded for w1: %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1"); !ok || !plan.OffAt(at, now) {
+		t.Fatalf("402 not recorded for w1: (%v, %v)", at, ok)
 	}
 	// Only the start date was changed: the entry is gone, and so is the local start date.
 	ops, _ := st.ListOps(ctx)
@@ -218,23 +217,23 @@ func TestPushStartOn402(t *testing.T) {
 
 	// The plan was upgraded and the 402 expired: a start date that is sent forgets it.
 	f.plan402 = false
-	later := now.Add(readmodel.PlanRecheckAfter + time.Minute)
+	later := now.Add(plan.RecheckAfter + time.Minute)
 	s.now = func() time.Time { return later }
-	if err := st.SetSyncState(ctx, key, now.Add(-readmodel.PlanRecheckAfter).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.StartOn, "w1", now.Add(-plan.RecheckAfter)); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-02"}, later); err != nil {
 		t.Fatal(err)
 	}
 	// (a 402 recorded again meanwhile, e.g. by another process: the answer clears it)
-	if err := st.SetSyncState(ctx, key, later.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.StartOn, "w1", later.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if res, err := s.Push(ctx); err != nil || res.Failed != 0 {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, key); v != "" {
-		t.Fatalf("402 not forgotten after a start date was accepted: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1"); ok {
+		t.Fatal("402 not forgotten after a start date was accepted")
 	}
 }
 

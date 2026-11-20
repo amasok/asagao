@@ -206,16 +206,15 @@ func repoRune(r rune) rune {
 	return r
 }
 
-// CustomIDFinder finds a task by its custom ID in Asana, caches it and remembers its gid
-// (readmodel.KeyCustomID). An ID Asana does not know is readmodel.ErrNotFound. sync.Syncer
-// satisfies it.
+// CustomIDFinder finds a task by its custom ID in Asana, caches it and remembers its gid.
+// An ID Asana does not know is readmodel.ErrNotFound. sync.Syncer satisfies it.
 type CustomIDFinder interface {
 	TaskByCustomID(ctx context.Context, customID string) (string, error)
 }
 
-// SyncStateReader reads the local cache's sync state (*store.Store).
-type SyncStateReader interface {
-	SyncState(ctx context.Context, key string) (string, error)
+// CustomIDStore reads cached task GIDs for custom IDs (*store.Store).
+type CustomIDStore interface {
+	CustomIDTaskGID(ctx context.Context, customID string) (string, error)
 }
 
 // CustomIDs returns the custom IDs the commits reference, each once.
@@ -239,7 +238,7 @@ func CustomIDs(commits []GitCommit) []string {
 // (offline, out of time), it is not asked for the other IDs. The error is that failure,
 // for a warning: the IDs are resolved as far as they can be anyway. A time limit for Asana
 // belongs to find, not ctx: the gids found before are read with ctx.
-func ResolveCustomIDs(ctx context.Context, st SyncStateReader, find CustomIDFinder, ids []string) (map[string]string, error) {
+func ResolveCustomIDs(ctx context.Context, st CustomIDStore, find CustomIDFinder, ids []string) (map[string]string, error) {
 	out := map[string]string{}
 	var last error
 	for _, id := range ids {
@@ -260,7 +259,7 @@ func ResolveCustomIDs(ctx context.Context, st SyncStateReader, find CustomIDFind
 				find = nil
 			}
 		}
-		gid, err := st.SyncState(ctx, readmodel.KeyCustomID+id)
+		gid, err := st.CustomIDTaskGID(ctx, id)
 		if err != nil {
 			return out, err
 		}

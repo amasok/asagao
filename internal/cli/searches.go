@@ -14,7 +14,7 @@ import (
 )
 
 // searches are the saved searches in searches.toml (wire: config.SearchFile).
-func searches() usecase.Searches { return usecase.Searches{File: wiring.Searches} }
+func (a *app) searches() usecase.Searches { return usecase.Searches{File: a.wiring.Searches} }
 
 func (a *app) searchesCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -47,7 +47,7 @@ func (a *app) searchesSaveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			err = searches().Save(s, force)
+			err = a.searches().Save(s, force)
 			if errors.Is(err, usecase.ErrSearchExists) {
 				return fmt.Errorf("%w（上書きするには --force）", err)
 			}
@@ -100,7 +100,7 @@ func (a *app) searchesListCmd() *cobra.Command {
 		Short: "保存した検索を一覧表示する",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ss, err := searches().List()
+			ss, err := a.searches().List()
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func (a *app) searchesRmCmd() *cobra.Command {
 		Short:   "保存した検索を削除する",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := searches().Remove(args[0]); err != nil {
+			if err := a.searches().Remove(args[0]); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "削除しました: %s\n", args[0])
@@ -154,7 +154,7 @@ func (a *app) searchesRunCmd() *cobra.Command {
 		Example: "  asagao searches run 今週\n  asagao searches run 今週 --json",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := searches().Get(args[0])
+			s, err := a.searches().Get(args[0])
 			if err != nil {
 				return err
 			}

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // #57: create_task and update_task take start_on.
@@ -57,7 +57,7 @@ func TestUpdateTaskStartOn(t *testing.T) {
 	}
 
 	// A recent 402 for the workspace: refused, saying why.
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1"), testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.StartOn, "w1", testNow.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if msg := toolError(call(t, cs, "update_task", map[string]any{"gid": "t2", "start_on": "2026-11-01"}, nil)); !strings.Contains(msg, "タスクの開始日") {

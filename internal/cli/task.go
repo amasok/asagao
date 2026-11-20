@@ -15,6 +15,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 func (a *app) taskCmd() *cobra.Command {
@@ -346,7 +347,7 @@ func printTaskTable(w io.Writer, tasks []readmodel.TaskSummary) {
 			}
 		}
 		name := t.Name
-		if b := readmodel.TaskBadges(t); b != "" {
+		if b := format.TaskBadges(t); b != "" {
 			name += " " + b
 		}
 		rows = append(rows, []string{checkbox(t.Completed), formatDue(t), name, membershipLabel(t.Memberships), tags, t.GID})
@@ -375,7 +376,7 @@ func printTaskDetail(w io.Writer, d *readmodel.TaskDetail) {
 		row("親タスク", d.Parent.Name+" ("+d.Parent.GID+")")
 	}
 	if d.ResourceSubtype != "" && d.ResourceSubtype != "default_task" {
-		row("種類", readmodel.KindLabel(d.TaskSummary))
+		row("種類", format.KindLabel(d.TaskSummary))
 	}
 	if d.ResourceSubtype == task.SubtypeCustom && d.CustomTypeStatus != nil {
 		row("ステータス", d.CustomTypeStatus.Name)
@@ -461,7 +462,7 @@ func printTaskDetail(w io.Writer, d *readmodel.TaskDetail) {
 				pending = "  （未送信）"
 			}
 			fmt.Fprintf(w, "  %s  %s  [%s]%s\n%s\n", who, when, c.GID, pending, indent(indent(c.Text)))
-			if r := readmodel.ReactionsLine(c.Reactions); r != "" {
+			if r := format.ReactionsLine(c.Reactions); r != "" {
 				fmt.Fprintf(w, "      %s\n", r)
 			}
 		}

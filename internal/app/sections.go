@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -22,12 +23,12 @@ type SectionStore interface {
 	CreateSectionLocal(ctx context.Context, projectGID, name, before, after string, now time.Time) (string, error)
 	DeleteSectionLocal(ctx context.Context, sectionGID string, now time.Time) error
 	MoveSectionLocal(ctx context.Context, sectionGID, before, after string, now time.Time) error
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
 	SectionName(ctx context.Context, gid string) (string, error)
 	ListMyTaskSections(ctx context.Context, workspaceGID string) ([]readmodel.SectionView, error)
 	ResolveMySection(ctx context.Context, taskGID, arg string) (string, error)
 	MoveMySectionLocal(ctx context.Context, gid, sectionGID string, now time.Time) error
-	// The workspaces a 402 is recorded for (readmodel.PlanKey).
+	// The workspaces a 402 is recorded for.
 	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
 	SectionWorkspace(ctx context.Context, sectionGID string) (string, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
@@ -86,8 +87,8 @@ func (s *Sections) RenameHere(ctx context.Context, sectionGID, name string) erro
 }
 
 // ErrPlanUnavailable is returned for a feature that Asana refused because the workspace's
-// plan lacks it (see readmodel.PlanKey). The message says which.
-type ErrPlanUnavailable = readmodel.PlanUnavailableError
+// plan lacks it. The message says which.
+type ErrPlanUnavailable = plan.UnavailableError
 
 // IsPlanUnavailable reports whether err is an ErrPlanUnavailable.
 func IsPlanUnavailable(err error) bool {
@@ -99,20 +100,20 @@ func IsPlanUnavailable(err error) bool {
 // unless a recent 402 hides them in every workspace. Each change checks its project's
 // workspace (inProject).
 func (s *Sections) Available(ctx context.Context) bool {
-	return planAnywhere(ctx, s.Store, readmodel.PlanSections, planNow(s.Clock))
+	return planAnywhere(ctx, s.Store, plan.Sections, planNow(s.Clock))
 }
 
 // inProject returns ErrPlanUnavailable while a recent 402 hides creating, deleting and
 // reordering sections in the workspace of project projectGID.
 func (s *Sections) inProject(ctx context.Context, projectGID string) error {
 	ws, err := s.Store.ProjectWorkspace(ctx, projectGID)
-	return planIn(ctx, s.Store, readmodel.PlanSections, ws, err, planNow(s.Clock))
+	return planIn(ctx, s.Store, plan.Sections, ws, err, planNow(s.Clock))
 }
 
 // ofSection is inProject for the project of section sectionGID.
 func (s *Sections) ofSection(ctx context.Context, sectionGID string) error {
 	ws, err := s.Store.SectionWorkspace(ctx, sectionGID)
-	return planIn(ctx, s.Store, readmodel.PlanSections, ws, err, planNow(s.Clock))
+	return planIn(ctx, s.Store, plan.Sections, ws, err, planNow(s.Clock))
 }
 
 // SectionPlace says where a new or moved section goes: just before or just after another
@@ -212,7 +213,7 @@ func (s *Sections) ReorderHere(ctx context.Context, sectionGID, before, after st
 // one), in order: none when they are not known (not synced yet, or a recent 402 says the
 // workspace's plan lacks them).
 func (s *Sections) MySections(ctx context.Context, workspaceGID string) ([]readmodel.SectionView, error) {
-	if planIn(ctx, s.Store, readmodel.PlanMySection, workspaceGID, nil, planNow(s.Clock)) != nil {
+	if planIn(ctx, s.Store, plan.MySection, workspaceGID, nil, planNow(s.Clock)) != nil {
 		return []readmodel.SectionView{}, nil
 	}
 	return s.Store.ListMyTaskSections(ctx, workspaceGID)
@@ -243,5 +244,5 @@ func (s *Sections) MoveMineHere(ctx context.Context, taskGID, sectionGID string)
 // workspace of task taskGID.
 func (s *Sections) myIn(ctx context.Context, taskGID string) error {
 	ws, err := s.Store.TaskWorkspace(ctx, taskGID)
-	return planIn(ctx, s.Store, readmodel.PlanMySection, ws, err, planNow(s.Clock))
+	return planIn(ctx, s.Store, plan.MySection, ws, err, planNow(s.Clock))
 }

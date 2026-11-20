@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // A title-only change (same plain text) is sent.
@@ -96,7 +97,7 @@ func TestBriefAttackConflictLinesTermsafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := briefOps(t, st)
-	for _, l := range readmodel.ConflictLines(ops[0]) {
+	for _, l := range format.ConflictLines(ops[0]) {
 		if strings.ContainsAny(l, "\x1b\x07\u009b") {
 			t.Fatalf("control char in %q", l)
 		}
@@ -120,11 +121,11 @@ func TestBriefAttackRefusalOnGetAndClear(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); !readmodel.PlanOffFor(v, now) {
-		t.Fatalf("not marked: %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); !ok || !plan.OffAt(at, now) {
+		t.Fatalf("not marked: (%v, %v)", at, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w2")); v != "" {
-		t.Fatalf("w2 marked: %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w2"); ok {
+		t.Fatalf("w2 marked: %v", at)
 	}
 	delete(bs.status, "GET /project_briefs/b1")
 	ops := briefOps(t, st)
@@ -134,8 +135,8 @@ func TestBriefAttackRefusalOnGetAndClear(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); readmodel.PlanOffFor(v, now) {
-		t.Fatalf("mark not cleared: %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); ok && plan.OffAt(at, now) {
+		t.Fatalf("mark not cleared: %v", at)
 	}
 }
 
@@ -149,7 +150,7 @@ func TestBriefAttackServerErrorsDoNotMark(t *testing.T) {
 		}
 		bs.status["GET /project_briefs/b1"] = code
 		_, _ = s.Push(ctx)
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); readmodel.PlanOffFor(v, now) {
+		if at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); ok && plan.OffAt(at, now) {
 			t.Fatalf("%d marked the workspace", code)
 		}
 	}

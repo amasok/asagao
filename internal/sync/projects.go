@@ -62,7 +62,7 @@ func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*mode
 		_ = s.Store.ReplaceSections(ctx, p.GID, secs)
 	}
 	// A new project has no tasks yet: it is synced from now on, not shown as unfetched (#54).
-	if err := s.Store.SetSyncState(ctx, readmodel.KeyProjectTasks+p.GID, readmodel.TasksAll); err != nil {
+	if err := s.Store.SetProjectTaskState(ctx, p.GID, readmodel.TasksAll); err != nil {
 		return nil, err
 	}
 	return p, nil

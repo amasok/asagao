@@ -13,23 +13,12 @@ import (
 // but the tasks only of the projects that were opened (or are favorites, see
 // sync.Syncer.Run); the others are listed only.
 
-const (
-	// KeyProjectTasks + project gid: how far the project's tasks are cached (readmodel.Tasks*).
-	KeyProjectTasks = readmodel.KeyProjectTasks
-	// KeyMyTasks + workspace gid: how far My Tasks of the workspace is fetched.
-	KeyMyTasks = readmodel.KeyMyTasks
-	// KeyTaskOrder + project gid, KeySubtaskOrder: the sections and parents whose order
-	// (#51) the next sync lists again.
-	KeyTaskOrder    = readmodel.KeyTaskOrder
-	KeySubtaskOrder = readmodel.KeySubtaskOrder
-)
-
 // fetchedSQL is true for a row of projects whose tasks are cached: their incomplete tasks
 // at least were fetched, or the project has an events token (it was synced before #54,
 // when every member project was).
-const fetchedSQL = `(EXISTS(SELECT 1 FROM sync_state ps WHERE ps.key = '` + KeyProjectTasks + `' || projects.gid
+const fetchedSQL = `(EXISTS(SELECT 1 FROM sync_state ps WHERE ps.key = '` + keyProjectTasks + `' || projects.gid
 		AND ps.value IN ('` + readmodel.TasksOpen + `', '` + readmodel.TasksAll + `'))
-	OR EXISTS(SELECT 1 FROM sync_state pe WHERE pe.key = '` + KeyEvents + `' || projects.gid AND pe.value <> ''))`
+	OR EXISTS(SELECT 1 FROM sync_state pe WHERE pe.key = '` + keyEvents + `' || projects.gid AND pe.value <> ''))`
 
 // ProjectTaskStates returns, for every project whose tasks a sync fetches, how far they are
 // cached (readmodel.TasksWanted, TasksOpen or TasksAll): those with a state, those with an
@@ -38,7 +27,7 @@ const fetchedSQL = `(EXISTS(SELECT 1 FROM sync_state ps WHERE ps.key = '` + KeyP
 func (s *Store) ProjectTaskStates(ctx context.Context) (map[string]string, error) {
 	states := map[string]string{}
 	rows, err := s.db.QueryContext(ctx, `SELECT substr(key, ?), value FROM sync_state WHERE substr(key, 1, ?) = ? AND value <> ''`,
-		len(KeyProjectTasks)+1, len(KeyProjectTasks), KeyProjectTasks)
+		len(keyProjectTasks)+1, len(keyProjectTasks), keyProjectTasks)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +61,7 @@ func (s *Store) ProjectTaskStates(ctx context.Context) (map[string]string, error
 		return rows.Err()
 	}
 	if err := add(`SELECT substr(key, ?) FROM sync_state WHERE substr(key, 1, ?) = ? AND value <> ''`, readmodel.TasksAll,
-		len(KeyEvents)+1, len(KeyEvents), KeyEvents); err != nil {
+		len(keyEvents)+1, len(keyEvents), keyEvents); err != nil {
 		return nil, err
 	}
 	if err := add(`SELECT project_gid FROM project_favorites`, readmodel.TasksWanted); err != nil {
@@ -85,11 +74,11 @@ func (s *Store) ProjectTaskStates(ctx context.Context) (map[string]string, error
 // readmodel.TasksWanted, TasksOpen and TasksAll. A project with an events token and no
 // state was synced before #54: TasksAll.
 func (s *Store) ProjectTaskState(ctx context.Context, projectGID string) (string, error) {
-	v, err := s.SyncState(ctx, KeyProjectTasks+projectGID)
+	v, err := s.SyncState(ctx, keyProjectTasks+projectGID)
 	if err != nil || v != "" {
 		return v, err
 	}
-	token, err := s.SyncState(ctx, KeyEvents+projectGID)
+	token, err := s.SyncState(ctx, keyEvents+projectGID)
 	if err != nil || token == "" {
 		return "", err
 	}
@@ -118,7 +107,7 @@ func wantProject(ctx context.Context, db interface {
 	_, err := db.ExecContext(ctx, `INSERT INTO sync_state(key, value) SELECT ?, ?
 		WHERE NOT EXISTS(SELECT 1 FROM sync_state WHERE key = ? AND value <> '')
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE sync_state.value = ''`,
-		KeyProjectTasks+projectGID, readmodel.TasksWanted, KeyEvents+projectGID)
+		keyProjectTasks+projectGID, readmodel.TasksWanted, keyEvents+projectGID)
 	return err
 }
 

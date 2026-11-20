@@ -76,11 +76,11 @@ func TestVersionFlag(t *testing.T) {
 	version, commit, date = "1.2.3", "fedcba9876543210fedcba9876543210fedcba98", "2026-11-17T01:02:03Z"
 
 	called := false
-	defer func(w Wiring) { wiring = w }(wiring)
-	wiring.MigrateLegacyDirs = func() error { called = true; return nil }
-	wiring.LoadSettings = nil // would panic if --version read config.toml
+	w := testWiring()
+	w.MigrateLegacyDirs = func() error { called = true; return nil }
+	w.LoadSettings = nil // would panic if --version read config.toml
 
-	root := newRoot(&app{})
+	root := NewRoot(w)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetArgs([]string{"--version"})

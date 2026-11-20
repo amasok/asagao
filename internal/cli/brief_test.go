@@ -88,7 +88,7 @@ func TestProjectBriefShowAndFile(t *testing.T) {
 // create is dropped: nothing to send).
 func TestProjectBriefCreateAndRm(t *testing.T) {
 	path := briefCLIEnv(t, nil)
-	cmd := newRoot(&app{baseURL: unreachableAsana(t)})
+	cmd := newTestRoot(unreachableAsana(t))
 	var out strings.Builder
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -185,7 +185,7 @@ func TestProjectBriefFileDoesNotOverwriteAsana(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	run := func(args ...string) (string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)

@@ -40,14 +40,10 @@ func TestInlineAssets(t *testing.T) {
 	}
 }
 
-// The values are stored (sync_state keys, custom field types from Asana), so they must
-// not change.
-func TestStoredNames(t *testing.T) {
+func TestStoredConstants(t *testing.T) {
 	for got, want := range map[string]string{
-		KeyMeGID: "me_gid", KeyCollapsed: "ui:collapsed:",
-		KeyLastSync: "last_sync", KeyEvents: "events:", KeyCustomFields: "custom_fields:", KeyTeams: "teams:",
 		BriefNone: "none", BriefUnavailable: "unavailable", BriefAvailable: "available",
-		ResultTask: "gid:", ResultStory: "story:", ResultAttachment: "att:", ResultStatus: "status:", ResultTag: "tag:",
+		TasksWanted: "wanted", TasksOpen: "open", TasksAll: "all",
 		CFText: "text", CFNumber: "number", CFEnum: "enum", CFMultiEnum: "multi_enum", CFDate: "date", CFPeople: "people",
 	} {
 		if got != want {

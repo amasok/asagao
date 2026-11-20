@@ -10,6 +10,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Sending outbox entries (used by sync.Push).
@@ -35,8 +36,8 @@ const OpSending = outbox.StateSending
 var ErrOpSending = readmodel.ErrOpSending
 
 // AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
-// has several candidates for what it created (readmodel's).
-const AmbiguousMessage = readmodel.AmbiguousMessage
+// has several candidates for what it created (format's).
+const AmbiguousMessage = format.AmbiguousMessage
 
 // BeginSend marks a pending entry as being sent at now. It returns false if the entry is no
 // longer pending (sent, discarded or resolved by someone else in the meantime). An entry
@@ -101,7 +102,7 @@ type queryer interface {
 func safeToResend(ctx context.Context, q queryer, op Op) (bool, error) {
 	return outbox.SafeToResend(op, func(tag string) (bool, error) {
 		var real string
-		err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", ResultTag+tag).Scan(&real)
+		err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", resultPrefixTag+tag).Scan(&real)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}

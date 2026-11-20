@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	stdsync "sync"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
@@ -90,7 +91,7 @@ func setupFieldPush(t *testing.T) (*fieldServer, *Syncer, *store.Store) {
 	api := asana.NewClient(srv.Client())
 	api.BaseURL, api.MaxRetries = srv.URL, 0
 	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}}
-	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
+	if err := st.SetMeGID(ctx, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"); err != nil {
@@ -185,14 +186,14 @@ func TestCustomFieldsUnavailableIsNotAnError(t *testing.T) {
 func TestCustomFieldsKeptOnUnauthorized(t *testing.T) {
 	fs, s, st := setupFieldPush(t)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, store.KeyCustomFields+"p1", ""); err != nil {
+	if err := st.SetProjectCustomFieldsFetchedAt(ctx, "p1", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	fs.settings = http.StatusUnauthorized
 	if err := s.syncCustomFields(ctx, "p1", false); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, store.KeyCustomFields+"p1"); v != "" {
+	if v, _ := st.ProjectCustomFieldsFetchedAt(ctx, "p1"); v != "" {
 		t.Fatalf("a failed fetch must not be recorded as done: %q", v)
 	}
 	d, _ := st.GetTask(ctx, "t1")

@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -19,10 +20,10 @@ import (
 // Deleting cannot be undone in Asana, so it asks first. A feature Asana refused with a 402
 // (the workspace's plan lacks it) is not offered while its mark holds (planOff, refreshed
 // with the outbox and when opening the menu, and checked against Now so marks expire after
-// readmodel.PlanRecheckAfter even without any write, #68).
+// plan.RecheckAfter even without any write, #68).
 
 // planWindow is the time interval [from, until) during which a 402 hides a feature
-// (readmodel.PlanOffFor: age >= 0 && age < PlanRecheckAfter). When several workspaces
+// (plan.OffAt: age >= 0 && age < plan.RecheckAfter). When several workspaces
 // have 402s, the feature is hidden only while every workspace's 402 holds: from the latest
 // refusal until the earliest one expires.
 type planWindow struct {
@@ -36,12 +37,15 @@ func (w planWindow) off(now time.Time) bool {
 // planOffIn returns the window during which a recent 402 hides feature in workspaceGID at
 // now (false when the feature is offered).
 func planOffIn(ctx context.Context, st Store, feature, workspaceGID string, now time.Time) (planWindow, bool) {
-	v, err := st.SyncState(ctx, readmodel.PlanKey(feature, workspaceGID))
-	if err != nil || !readmodel.PlanOffFor(v, now) {
+	at, ok, err := st.PlanRefusedAt(ctx, feature, workspaceGID)
+	if err != nil || !ok {
 		return planWindow{}, false
 	}
-	at, _ := time.Parse(time.RFC3339, v)
-	return planWindow{from: at, until: at.Add(readmodel.PlanRecheckAfter)}, true
+	from, until, off := plan.Window(at, now)
+	if !off {
+		return planWindow{}, false
+	}
+	return planWindow{from: from, until: until}, true
 }
 
 // planOffEverywhere returns the window during which a recent 402 hides feature in every
@@ -88,7 +92,7 @@ func (m *Model) loadPlan() tea.Cmd {
 		off := map[string]planWindow{}
 		// Sections, tags and time tracking: unless a recent 402 hides them in every
 		// workspace (each change checks its own workspace).
-		for _, f := range []string{readmodel.PlanSections, readmodel.PlanTags, readmodel.PlanTimeTracking} {
+		for _, f := range []string{plan.Sections, plan.Tags, plan.TimeTracking} {
 			if w, hidden := planOffEverywhere(ctx, st, f, now); hidden {
 				off[f] = w
 			}
@@ -96,14 +100,14 @@ func (m *Model) loadPlan() tea.Cmd {
 		// Goals, portfolios, project templates and custom fields: the default workspace's.
 		// (Task templates are hidden per project: templates.go.)
 		ws, wsErr := st.DefaultWorkspace(ctx)
-		for _, f := range []string{readmodel.PlanGoals, readmodel.PlanPortfolios, readmodel.PlanProjectTemplates} {
+		for _, f := range []string{plan.Goals, plan.Portfolios, plan.ProjectTemplates} {
 			if w, hidden := planOffIn(ctx, st, f, ws, now); hidden {
 				off[f] = w
 			}
 		}
 		if wsErr == nil {
-			if w, hidden := planOffIn(ctx, st, readmodel.PlanCustomFields, ws, now); hidden {
-				off[readmodel.PlanCustomFields] = w
+			if w, hidden := planOffIn(ctx, st, plan.CustomFields, ws, now); hidden {
+				off[plan.CustomFields] = w
 			}
 		}
 		return planLoadedMsg{seq: seq, off: off}

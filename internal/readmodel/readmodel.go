@@ -1,20 +1,51 @@
-// Package readmodel holds the types that the store returns to be shown, and that the
-// application layer also passes back to the store. It has no dependencies, so the ports in
-// internal/app can use these types without importing the store
-// (docs/design/adr/0006-application-use-cases.md, decision 4).
+// Package readmodel holds the DTO types that the store returns to be shown, and that the
+// application layer also passes back to the store. It only imports the standard library
+// and internal/asana/model, so the ports in internal/app can use these types without
+// importing the store (docs/design/adr/0006-application-use-cases.md, decision 4).
 //
 // The store keeps type aliases for them (store.UserRef), so its methods and their callers
-// do not change. Stage c2 (migration-plan.md) moves the read types here: the views of
-// tasks (tasks.go) and of projects (projects.go), the inbox (inbox.go), the task list
-// query (filter.go), the errors the entry points check (errors.go) and the wording of
-// outbox entries, dropped changes and status updates (describe.go).
+// do not change.
 package readmodel
 
 import (
 	"errors"
 
-	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/asana/model"
 )
+
+// Types of custom fields (CustomFieldView.Type) that asagao shows and edits.
+const (
+	CFText      = model.CFText
+	CFNumber    = model.CFNumber
+	CFEnum      = model.CFEnum
+	CFMultiEnum = model.CFMultiEnum
+	CFDate      = model.CFDate
+	CFPeople    = model.CFPeople
+)
+
+// ResultKind identifies what kind of locally created entity a LocalResult or
+// RecordedResults lookup asks about without exposing SQLite sync_state key prefixes.
+type ResultKind string
+
+const (
+	ResultTask       ResultKind = "task"
+	ResultStory      ResultKind = "story"
+	ResultAttachment ResultKind = "attachment"
+	ResultStatus     ResultKind = "status"
+	ResultTag        ResultKind = "tag"
+	ResultSection    ResultKind = "section"
+	ResultTimeEntry  ResultKind = "time_entry"
+	ResultEnumOption ResultKind = "enum_option"
+)
+
+// ResetResult says what a reset with a backup did.
+type ResetResult struct {
+	Unsent     int    `json:"unsent"`                // unsent changes deleted
+	BackupPath string `json:"backup_path,omitempty"` // "" when there was nothing to keep
+}
+
+// AnyUnsent lets a reset delete every unsent change, however many there are.
+const AnyUnsent int64 = -1
 
 // UserRef is a user as the CLI and MCP show it (keep the JSON stable), and the author of
 // a comment or a status update written locally.
@@ -76,18 +107,3 @@ type ProjectFieldView struct {
 // ErrOpSending is returned when an outbox entry that is being sent is retried, resolved
 // or discarded.
 var ErrOpSending = errors.New("この変更は送信中です。送信が終わってからやり直してください")
-
-// OpStateLabel is the Japanese name of an outbox entry's state.
-func OpStateLabel(state string) string {
-	switch state {
-	case outbox.StatePending:
-		return "未送信"
-	case outbox.StateConflict:
-		return "競合"
-	case outbox.StateFailed:
-		return "失敗"
-	case outbox.StateSending:
-		return "送信中"
-	}
-	return state
-}

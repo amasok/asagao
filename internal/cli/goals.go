@@ -13,6 +13,7 @@ import (
 	usecase "github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Goals, portfolios and time periods (#7): read only. Online, they are fetched from Asana
@@ -255,8 +256,8 @@ func isGID(arg string) bool {
 }
 
 func goalLine(g readmodel.GoalView) string {
-	parts := []string{"[" + readmodel.GoalStatusLabel(g.Status) + "] " + g.Name}
-	if t := g.Metric.Text(); t != "" {
+	parts := []string{"[" + format.GoalStatusLabel(g.Status) + "] " + g.Name}
+	if t := format.GoalMetricText(g.Metric); t != "" {
 		parts = append(parts, t)
 	}
 	if g.TimePeriod != nil {
@@ -296,8 +297,8 @@ func printGoal(out io.Writer, g *readmodel.GoalDetail, now time.Time) {
 			fmt.Fprintf(out, "  %s: %s\n", label, v)
 		}
 	}
-	line("ステータス", readmodel.GoalStatusLabel(g.Status))
-	line("進み具合", g.Metric.Text())
+	line("ステータス", format.GoalStatusLabel(g.Status))
+	line("進み具合", format.GoalMetricText(g.Metric))
 	if g.TimePeriod != nil {
 		line("期間", g.TimePeriod.DisplayName)
 	}
@@ -345,7 +346,7 @@ func supportLabel(t string) string {
 func portfolioLine(name string, st *readmodel.StatusBrief, owner *readmodel.UserRef, due string) string {
 	parts := []string{name}
 	if st != nil {
-		parts[0] = "[" + readmodel.StatusLabel(st.StatusType) + "] " + name
+		parts[0] = "[" + format.StatusLabel(st.StatusType) + "] " + name
 	}
 	if due != "" {
 		parts = append(parts, "期日 "+due)

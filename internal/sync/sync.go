@@ -11,12 +11,10 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 const (
-	keyLastFullSync = "last_full_sync"
-	keyLastPoll     = "last_poll"
 	// FullSyncInterval forces a full sync (which also removes deleted tasks) this often.
 	FullSyncInterval = 24 * time.Hour
 	// PollInterval is how often every project is fetched again with modified_since, besides
@@ -158,7 +156,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("ユーザー情報の取得: %w", err)
 	}
-	if want, err := s.Store.SyncState(ctx, readmodel.KeyMeGID); err != nil {
+	if want, err := s.Store.SyncedMeGID(ctx); err != nil {
 		return res, err
 	} else if want != "" && me.GID != want {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
@@ -168,11 +166,11 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	// The times recorded and compared below are by Asana's clock (measured from the Date
 	// header of the answer to Me), as modified_since is compared with Asana's modified_at.
 	stamp := started.Add(s.API.ClockOffset())
-	lastSync, err := s.stateTime(ctx, readmodel.KeyLastSync)
+	lastSync, err := s.Store.LastSyncAt(ctx)
 	if err != nil {
 		return res, err
 	}
-	lastFull, err := s.stateTime(ctx, keyLastFullSync)
+	lastFull, err := s.Store.LastFullSyncAt(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -186,7 +184,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	if limit := stamp.Add(modifiedSinceMargin); lastSync.After(limit) || lastFull.After(limit) {
 		res.Full = true
 	}
-	lastPoll, err := s.stateTime(ctx, keyLastPoll)
+	lastPoll, err := s.Store.LastPollAt(ctx)
 	if err != nil {
 		return res, err
 	}
@@ -228,7 +226,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	if err := s.Store.UpsertUser(ctx, *me); err != nil {
 		return res, err
 	}
-	if err := s.Store.SetSyncState(ctx, readmodel.KeyMeGID, me.GID); err != nil {
+	if err := s.Store.SetMeGID(ctx, me.GID); err != nil {
 		return res, err
 	}
 	workspaces, err := s.API.Workspaces(ctx)
@@ -335,12 +333,12 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 		if res.Pruned, err = s.Store.PruneTasks(ctx, pl.keep); err != nil {
 			return res, err
 		}
-		if err := s.Store.SetSyncState(ctx, keyLastFullSync, stamp.UTC().Format(time.RFC3339)); err != nil {
+		if err := s.Store.SetLastFullSyncAt(ctx, stamp); err != nil {
 			return res, err
 		}
 	}
 	if res.Poll {
-		if err := s.Store.SetSyncState(ctx, keyLastPoll, stamp.UTC().Format(time.RFC3339)); err != nil {
+		if err := s.Store.SetLastPollAt(ctx, stamp); err != nil {
 			return res, err
 		}
 	}
@@ -350,7 +348,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	} else if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
-	if err := s.Store.SetSyncState(ctx, readmodel.KeyLastSync, stamp.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.Store.SetLastSyncAt(ctx, stamp); err != nil {
 		return res, err
 	}
 	// Mappings of things created offline to their Asana gids that nothing needs any more
@@ -366,9 +364,8 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 // or if they were never fetched. A workspace without custom fields (Asana answers e.g. 402
 // on a free plan) simply has none; any other failure is retried on the next sync.
 func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
-	key := readmodel.KeyCustomFields + projectGID
 	if !full {
-		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+		if last, err := s.Store.ProjectCustomFieldsFetchedAt(ctx, projectGID); err != nil || last != "" {
 			return err
 		}
 	}
@@ -385,7 +382,7 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 	default:
 		return nil // e.g. an expired token or a 5xx: keep what is cached, try again next time
 	}
-	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+	return s.Store.SetProjectCustomFieldsFetchedAt(ctx, projectGID, s.clock())
 }
 
 // syncCustomTypes fetches the custom task types a project offers (#59), with their
@@ -393,17 +390,16 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 // them) records it for the workspace (plan.go): no project of it asks again for a while,
 // and it has no types meanwhile. Any other failure is retried on the next sync.
 func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID string, full bool) error {
-	key := readmodel.KeyCustomTypes + projectGID
 	if !full {
-		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+		if last, err := s.Store.ProjectCustomTypesFetchedAt(ctx, projectGID); err != nil || last != "" {
 			return err
 		}
 	}
-	if hidden, err := s.planHidden(ctx, readmodel.PlanCustomTypes, workspaceGID); err != nil || hidden {
+	if hidden, err := s.planHidden(ctx, plan.CustomTypes, workspaceGID); err != nil || hidden {
 		return err // tried again on a full sync after the 402 is forgotten
 	}
 	types, err := s.API.CustomTypes(ctx, projectGID)
-	if refused, recErr := s.recordPlanRefusal(ctx, readmodel.PlanCustomTypes, workspaceGID, err); refused || recErr != nil {
+	if refused, recErr := s.recordPlanRefusal(ctx, plan.CustomTypes, workspaceGID, err); refused || recErr != nil {
 		if recErr != nil {
 			return recErr
 		}
@@ -411,7 +407,7 @@ func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID s
 	}
 	switch {
 	case err == nil:
-		if err := s.clearPlanRefusal(ctx, readmodel.PlanCustomTypes, workspaceGID); err != nil {
+		if err := s.clearPlanRefusal(ctx, plan.CustomTypes, workspaceGID); err != nil {
 			return err
 		}
 		if err := s.Store.ReplaceProjectCustomTypes(ctx, projectGID, types); err != nil {
@@ -424,7 +420,7 @@ func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID s
 	default:
 		return nil // e.g. an expired token or a 5xx: keep what is cached, try again next time
 	}
-	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+	return s.Store.SetProjectCustomTypesFetchedAt(ctx, projectGID, s.clock())
 }
 
 // syncTeamsAndFavorites fetches the teams I am in and my favorite projects of a workspace
@@ -433,9 +429,8 @@ func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID s
 // organization has no teams. A failure keeps what is cached and is tried again on the
 // next sync; only a local error stops the sync.
 func (s *Syncer) syncTeamsAndFavorites(ctx context.Context, w model.Workspace, poll bool) error {
-	key := readmodel.KeyTeams + w.GID
 	if !poll {
-		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+		if last, err := s.Store.WorkspaceTeamsFetchedAt(ctx, w.GID); err != nil || last != "" {
 			return err
 		}
 	}
@@ -469,9 +464,9 @@ func (s *Syncer) syncTeamsAndFavorites(ctx context.Context, w model.Workspace, p
 		done = false
 	}
 	if !done { // tried again on the next sync
-		return s.Store.SetSyncState(ctx, key, "")
+		return s.Store.SetWorkspaceTeamsFetchedAt(ctx, w.GID, time.Time{})
 	}
-	return s.Store.SetSyncState(ctx, key, s.clock().UTC().Format(time.RFC3339))
+	return s.Store.SetWorkspaceTeamsFetchedAt(ctx, w.GID, s.clock())
 }
 
 func isForbidden(err error) bool {
@@ -549,18 +544,6 @@ func (e *AttachmentsError) Error() string {
 	return "添付ファイルを取得できませんでした: " + e.Err.Error()
 }
 func (e *AttachmentsError) Unwrap() error { return e.Err }
-
-func (s *Syncer) stateTime(ctx context.Context, key string) (time.Time, error) {
-	v, err := s.Store.SyncState(ctx, key)
-	if err != nil || v == "" {
-		return time.Time{}, err
-	}
-	t, err := time.Parse(time.RFC3339, v)
-	if err != nil {
-		return time.Time{}, nil // corrupt value: treat as never synced
-	}
-	return t, nil
-}
 
 func (s *Syncer) progress(format string, args ...any) {
 	if s.Progress != nil {

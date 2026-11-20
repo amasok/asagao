@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // 429 / 403 / 5xx on goals: the error comes back, the cache stays, and nothing is hidden.
@@ -36,8 +36,8 @@ func TestAttackGoalsNon402FailuresHideNothing(t *testing.T) {
 			if l, err := uc.List(ctx, ""); err != nil || len(l.Goals) != 2 {
 				t.Fatalf("cache after %d: %+v, %v", code, l, err)
 			}
-			if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1")); v != "" {
-				t.Fatalf("%d recorded as a 402: %q", code, v)
+			if _, ok, _ := st.PlanRefusedAt(ctx, plan.Goals, "w1"); ok {
+				t.Fatalf("%d recorded as a 402", code)
 			}
 		})
 	}
@@ -52,7 +52,7 @@ func TestAttackGoals402KeepsCacheAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.set(func() { f.status["/goals"] = http.StatusPaymentRequired })
-	*now = now.Add(readmodel.PlanRecheckAfter + time.Second)
+	*now = now.Add(plan.RecheckAfter + time.Second)
 	if err := s.FetchGoals(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestAttackGoals402KeepsCacheAndRecovers(t *testing.T) {
 	if uc.Available(ctx) {
 		t.Fatal("not hidden")
 	}
-	*now = now.Add(readmodel.PlanRecheckAfter + time.Second)
+	*now = now.Add(plan.RecheckAfter + time.Second)
 	if l, err := uc.List(ctx, ""); err != nil || len(l.Goals) != 2 {
 		t.Fatalf("cache lost by a 402: %+v, %v", l, err)
 	}
@@ -111,7 +111,7 @@ func TestAttackClockBehindA402(t *testing.T) {
 func TestAttackGarbageMarker(t *testing.T) {
 	s, st, _, now := setupGoals(t)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1"), "yesterday"); err != nil {
+	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.Goals+":w1", "yesterday"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.FetchGoals(ctx); err != nil {

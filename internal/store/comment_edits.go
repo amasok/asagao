@@ -11,6 +11,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Editing and deleting the user's comments, and deleting attachments (#34). As every other
@@ -288,7 +289,7 @@ func resolvedSQL(key, prefix string) string {
 // again (after they were replaced by what Asana returned). A failed one is not: Asana's
 // version is shown, as for a failed task update.
 func reapplyStoryOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
-	gid := resolvedSQL("story", ResultStory)
+	gid := resolvedSQL("story", resultPrefixStory)
 	if _, err := tx.ExecContext(ctx, `UPDATE stories SET
 		text = (SELECT json_extract(o.payload, '$.text') FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed' AND `+gid+` = stories.gid ORDER BY o.id DESC LIMIT 1),
 		html_text = (SELECT json_extract(o.payload, '$.html_text') FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed' AND `+gid+` = stories.gid ORDER BY o.id DESC LIMIT 1)
@@ -303,7 +304,7 @@ func reapplyStoryOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
 // reapplyAttachmentDeletes removes again a task's attachments whose delete is queued.
 func reapplyAttachmentDeletes(ctx context.Context, tx *sql.Tx, taskGID string) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM attachments WHERE parent_gid = ? AND gid IN
-		(SELECT `+resolvedSQL("attachment", ResultAttachment)+` FROM outbox o WHERE o.kind = ? AND o.state <> 'failed')`, taskGID, OpDeleteAttachment)
+		(SELECT `+resolvedSQL("attachment", resultPrefixAttachment)+` FROM outbox o WHERE o.kind = ? AND o.state <> 'failed')`, taskGID, OpDeleteAttachment)
 	return err
 }
 
@@ -324,7 +325,7 @@ func resolveResult(ctx context.Context, tx *sql.Tx, prefix, gid string) (string,
 // undoStoryOp puts back what a discarded update_story or delete_story changed locally.
 func undoStoryOp(ctx context.Context, tx *sql.Tx, op *Op) error {
 	gid, _ := op.Payload["story"].(string)
-	gid, err := resolveResult(ctx, tx, ResultStory, gid)
+	gid, err := resolveResult(ctx, tx, resultPrefixStory, gid)
 	if err != nil {
 		return err
 	}
@@ -350,7 +351,7 @@ func undoStoryOp(ctx context.Context, tx *sql.Tx, op *Op) error {
 // undoAttachmentDelete puts back an attachment whose delete is discarded.
 func undoAttachmentDelete(ctx context.Context, tx *sql.Tx, op *Op) error {
 	gid, _ := op.Payload["attachment"].(string)
-	gid, err := resolveResult(ctx, tx, ResultAttachment, gid)
+	gid, err := resolveResult(ctx, tx, resultPrefixAttachment, gid)
 	if err != nil {
 		return err
 	}
@@ -391,9 +392,13 @@ func dropChangesOf(ctx context.Context, tx *sql.Tx, key, gid string, kinds ...st
 }
 
 // LocalResult returns, for a comment, attachment or time entry with a local gid, what Asana created for
-// it (prefix ResultStory, ResultAttachment or ResultTimeEntry) and whether its create is still in the
+// it (kind readmodel.ResultStory, ResultAttachment or ResultTimeEntry) and whether its create is still in the
 // outbox (waiting: a change to it waits for that). real is "" if none is recorded.
-func (s *Store) LocalResult(ctx context.Context, prefix, gid string) (real string, waiting bool, err error) {
+func (s *Store) LocalResult(ctx context.Context, kind readmodel.ResultKind, gid string) (real string, waiting bool, err error) {
+	prefix, err := resultPrefix(kind)
+	if err != nil {
+		return "", false, err
+	}
 	if !IsLocalGID(gid) {
 		return gid, false, nil
 	}
@@ -403,15 +408,15 @@ func (s *Store) LocalResult(ctx context.Context, prefix, gid string) (real strin
 	if real != "" {
 		return real, false, nil
 	}
-	kind, key := OpAddComment, "story_gid"
-	switch prefix {
-	case ResultAttachment:
-		kind, key = OpUploadAttachment, "attachment"
-	case ResultTimeEntry:
-		kind, key = OpAddTimeEntry, "entry"
+	opKind, key := OpAddComment, "story_gid"
+	switch kind {
+	case readmodel.ResultAttachment:
+		opKind, key = OpUploadAttachment, "attachment"
+	case readmodel.ResultTimeEntry:
+		opKind, key = OpAddTimeEntry, "entry"
 	}
 	var n int
-	err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?", kind, key, gid).Scan(&n)
+	err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?", opKind, key, gid).Scan(&n)
 	return "", n > 0, err
 }
 

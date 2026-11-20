@@ -26,6 +26,9 @@ type Store struct {
 	attachmentDir string
 }
 
+// ErrNewerSchema reports that the local store uses a newer schema version than this build supports.
+var ErrNewerSchema = errors.New("ローカルのストアがより新しいバージョンのスキーマです")
+
 // Open opens (creating if needed) the database at path with 0600 permissions and migrates it.
 func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -128,12 +131,25 @@ type migrator interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+func checkSchemaVersion(v int) error {
+	if v > len(migrations) {
+		return fmt.Errorf("%w (db=%d, supported=%d)", ErrNewerSchema, v, len(migrations))
+	}
+	if v < 0 {
+		return fmt.Errorf("invalid schema version %d", v)
+	}
+	return nil
+}
+
 func migrate(ctx context.Context, db migrator) error {
 	var version int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version >= len(migrations) {
+	if err := checkSchemaVersion(version); err != nil {
+		return err
+	}
+	if version == len(migrations) {
 		return nil // up to date: no need for the write lock
 	}
 	for {
@@ -148,7 +164,11 @@ func migrate(ctx context.Context, db migrator) error {
 			tx.Rollback()
 			return err
 		}
-		if i >= len(migrations) {
+		if err := checkSchemaVersion(i); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if i == len(migrations) {
 			return tx.Rollback()
 		}
 		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
@@ -210,7 +230,7 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	if err := s.db.QueryRowContext(ctx, q).Scan(&st.Workspaces, &st.Projects, &st.Sections, &st.Tasks, &st.OpenTasks); err != nil {
 		return st, err
 	}
-	v, err := s.SyncState(ctx, KeyLastSync)
+	v, err := s.SyncState(ctx, keyLastSync)
 	if err != nil {
 		return st, err
 	}
@@ -219,6 +239,3 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	}
 	return st, nil
 }
-
-// KeyLastSync is when the last sync finished (readmodel's).
-const KeyLastSync = readmodel.KeyLastSync

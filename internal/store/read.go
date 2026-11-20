@@ -30,8 +30,6 @@ func notFound(err error, what string) error {
 // ErrAmbiguous is readmodel.ErrAmbiguous.
 var ErrAmbiguous = readmodel.ErrAmbiguous
 
-const KeyMeGID = readmodel.KeyMeGID
-
 // --- views (the JSON shapes returned by the CLI and MCP; keep them stable) ---
 
 // UserRef is readmodel.UserRef (an alias, so that internal/app can use it without
@@ -350,7 +348,7 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 	// A comment whose edit is not sent yet is pending too (#34); a failed edit is not
 	// applied (reapplyStoryOps), so its comment shows Asana's text and is not.
 	rows, err := s.db.QueryContext(ctx, `SELECT gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text,
-		reactions, EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.state <> 'failed' AND `+resolvedSQL("story", ResultStory)+` = stories.gid)
+		reactions, EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.state <> 'failed' AND `+resolvedSQL("story", resultPrefixStory)+` = stories.gid)
 		FROM stories WHERE task_gid = ? ORDER BY created_at`, OpUpdateStory, gid)
 	if err != nil {
 		return nil, err
@@ -507,7 +505,7 @@ func (s *Store) resolveMoveProject(ctx context.Context, taskGID, project string)
 
 // ListUsers returns known users (workspace members and people seen on tasks), me first.
 func (s *Store) ListUsers(ctx context.Context) ([]UserRef, error) {
-	me, _ := s.SyncState(ctx, KeyMeGID)
+	me, _ := s.SyncState(ctx, keyMeGID)
 	rows, err := s.db.QueryContext(ctx, `SELECT gid, CASE WHEN name <> '' THEN name ELSE email END FROM users
 		WHERE name <> '' OR email <> '' ORDER BY gid = ? DESC, name`, me)
 	if err != nil {
@@ -530,7 +528,7 @@ type UserContact = readmodel.UserContact
 
 // ListUserContacts returns known users with their name and email, me first.
 func (s *Store) ListUserContacts(ctx context.Context) ([]UserContact, error) {
-	me, _ := s.SyncState(ctx, KeyMeGID)
+	me, _ := s.SyncState(ctx, keyMeGID)
 	rows, err := s.db.QueryContext(ctx, `SELECT gid, name, email FROM users
 		WHERE name <> '' OR email <> '' ORDER BY gid = ? DESC, name`, me)
 	if err != nil {
@@ -673,7 +671,7 @@ func (s *Store) FirstSection(ctx context.Context, projectGID string) (string, er
 }
 
 func (s *Store) MeGID(ctx context.Context) (string, error) {
-	gid, err := s.SyncState(ctx, KeyMeGID)
+	gid, err := s.SyncState(ctx, keyMeGID)
 	if err == nil && gid == "" {
 		return "", errors.New("自分のユーザー情報がローカルストアにありません。`asagao sync` を実行してください")
 	}

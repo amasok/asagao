@@ -99,7 +99,7 @@ func TestRunModifiedSinceUsesAsanaClock(t *testing.T) {
 func TestPushCreateDroppedBeforeFirstSyncPCClockAhead(t *testing.T) {
 	ws, _, s, st := setupPush(t)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, store.KeyMeGID, ""); err != nil {
+	if err := st.SetMeGID(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	ws.shift = -3 * time.Hour // Asana's clock is 3 hours behind this PC's
@@ -133,7 +133,7 @@ func TestPushCreateDroppedBeforeFirstSyncPCClockAhead(t *testing.T) {
 // 3 hours ahead are in the future by Asana's clock. modified_since from them would miss
 // changes, so the first sync after the update is a full one.
 func TestRunStampsInFutureForceFullSync(t *testing.T) {
-	for _, key := range []string{store.KeyLastSync, keyLastFullSync} {
+	for _, key := range []string{"last_sync", "last_full_sync"} {
 		t.Run(key, func(t *testing.T) {
 			fake := &fakeAsana{t: t, projectTasks: `[]`}
 			srv := httptest.NewServer(fake.handler())
@@ -155,12 +155,16 @@ func TestRunStampsInFutureForceFullSync(t *testing.T) {
 			if res, err := s.Run(ctx, false); err != nil || res.Full {
 				t.Fatalf("normal second run = %+v %v", res, err)
 			}
-			_ = st.SetSyncState(ctx, key, pc.Add(5*time.Minute+30*time.Second).Format(time.RFC3339)) // 30s ahead at the next run
+			setStamp := st.SetLastSyncAt
+			if key == "last_full_sync" {
+				setStamp = st.SetLastFullSyncAt
+			}
+			_ = setStamp(ctx, pc.Add(5*time.Minute+30*time.Second)) // 30s ahead at the next run
 			pc = pc.Add(5 * time.Minute)
 			if res, err := s.Run(ctx, false); err != nil || res.Full {
 				t.Fatalf("a few seconds in the future is noise, not a reason for a full sync: %+v %v", res, err)
 			}
-			_ = st.SetSyncState(ctx, key, pc.Add(3*time.Hour).Format(time.RFC3339))
+			_ = setStamp(ctx, pc.Add(3*time.Hour))
 			pc = pc.Add(5 * time.Minute)
 			if res, err := s.Run(ctx, false); err != nil || !res.Full {
 				t.Fatalf("run after a stamp in the future = %+v %v, want full", res, err)

@@ -10,14 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amasok/asagao/internal/readmodel"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
-
-// ResultTag is the prefix of the sync_state keys that map a tag created offline to the
-// tag Asana created (see ReplaceLocalTagGID).
-const ResultTag = readmodel.ResultTag
 
 // keyResultSeen + a mapping key records when PruneResults first found the mapping no
 // longer needed; the mapping is deleted once that is ResultGrace old.
@@ -33,27 +28,29 @@ const ResultGrace = 30 * 24 * time.Hour
 // belongs to another local entry (RecordedResults). While any of them is queued, no
 // mapping of that prefix is deleted.
 var resultKinds = map[string][]string{
-	ResultTask:       {OpCreateTask, OpDuplicateTask},
-	ResultStory:      {OpAddComment},
-	ResultAttachment: {OpUploadAttachment},
-	ResultStatus:     {OpCreateStatus},
-	ResultTag:        nil,
-	ResultSection:    {OpCreateSection},
-	ResultEnumOption: {OpCreateEnumOption},
+	resultPrefixTask:       {OpCreateTask, OpDuplicateTask},
+	resultPrefixStory:      {OpAddComment},
+	resultPrefixAttachment: {OpUploadAttachment},
+	resultPrefixStatus:     {OpCreateStatus},
+	resultPrefixTag:        nil,
+	resultPrefixSection:    {OpCreateSection},
+	resultPrefixTimeEntry:  {OpAddTimeEntry},
+	resultPrefixEnumOption: {OpCreateEnumOption},
 }
 
 // resultTables are, per mapping prefix, the local gids in the rows that would still carry
 // one when the swap to the Asana gid has not happened (or not everywhere).
 var resultTables = map[string][]string{
-	ResultTask: {localIn("tasks", "gid"), localIn("tasks", "parent_gid"),
+	resultPrefixTask: {localIn("tasks", "gid"), localIn("tasks", "parent_gid"),
 		localIn("task_dependencies", "task_gid"), localIn("task_dependencies", "dependency_gid")},
-	ResultStory:      {localIn("stories", "gid")},
-	ResultAttachment: {localIn("attachments", "gid")},
-	ResultStatus:     {localIn("status_updates", "gid")},
-	ResultTag:        {localIn("tags", "gid"), localIn("task_tags", "tag_gid")},
-	ResultSection:    {localIn("sections", "gid"), localIn("task_memberships", "section_gid")},
+	resultPrefixStory:      {localIn("stories", "gid")},
+	resultPrefixAttachment: {localIn("attachments", "gid")},
+	resultPrefixStatus:     {localIn("status_updates", "gid")},
+	resultPrefixTag:        {localIn("tags", "gid"), localIn("task_tags", "tag_gid")},
+	resultPrefixSection:    {localIn("sections", "gid"), localIn("task_memberships", "section_gid")},
+	resultPrefixTimeEntry:  {localIn("time_entries", "gid")},
 	// An option is stored inside JSON: in the field's options, and in the tasks' values.
-	ResultEnumOption: {localInJSON("custom_fields", "enum_options", "$.gid"), localInJSON("task_custom_fields", "value", "")},
+	resultPrefixEnumOption: {localInJSON("custom_fields", "enum_options", "$.gid"), localInJSON("task_custom_fields", "value", "")},
 }
 
 // localIn selects the local gids in a column (substr, not LIKE: "_" and "%" are literal).
@@ -165,13 +162,13 @@ type stateChange struct {
 func planPruneResults(ctx context.Context, tx *sql.Tx, now time.Time) ([]stateChange, int, error) {
 	var changes []stateChange
 	deleted := 0
-	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, ResultTask, ResultStory, ResultAttachment, ResultStatus, ResultTag, ResultEnumOption)
+	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, resultPrefixTask, resultPrefixStory, resultPrefixAttachment, resultPrefixStatus, resultPrefixTag, resultPrefixSection, resultPrefixTimeEntry, resultPrefixEnumOption)
 	if err != nil {
 		return nil, 0, err
 	}
 	maxLen := 0
 	for key := range state {
-		if _, local := resultPrefix(key); IsLocalGID(local) {
+		if _, local := splitResultKey(key); IsLocalGID(local) {
 			maxLen = max(maxLen, len(local))
 		}
 	}
@@ -200,7 +197,7 @@ func planPruneResults(ctx context.Context, tx *sql.Tx, now time.Time) ([]stateCh
 			}
 			continue
 		}
-		prefix, local := resultPrefix(key)
+		prefix, local := splitResultKey(key)
 		if prefix == "" || !IsLocalGID(local) {
 			continue // not a mapping of a local gid: never touched
 		}
@@ -227,8 +224,8 @@ func planPruneResults(ctx context.Context, tx *sql.Tx, now time.Time) ([]stateCh
 	return changes, deleted, nil
 }
 
-// resultPrefix splits a mapping key into its prefix and the local gid.
-func resultPrefix(key string) (prefix, local string) {
+// splitResultKey splits a mapping key into its prefix and the local gid.
+func splitResultKey(key string) (prefix, local string) {
 	for p := range resultKinds {
 		if l, ok := strings.CutPrefix(key, p); ok {
 			return p, l

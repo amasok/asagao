@@ -164,13 +164,13 @@ func TestFullSyncEmptyWorkspaceListKeepsProjectsAndKeys(t *testing.T) {
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(ctx, store.KeyCollapsed+"123", `["x"]`); err != nil {
+	if err := st.SetCollapsedGroups(ctx, "123", `["x"]`); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "123"}}, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(ctx, store.KeyCustomFields+"p1", "2026-11-16T00:00:00Z"); err != nil {
+	if err := st.SetProjectCustomFieldsFetchedAt(ctx, "p1", time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	empty = true
@@ -180,9 +180,10 @@ func TestFullSyncEmptyWorkspaceListKeepsProjectsAndKeys(t *testing.T) {
 	if ws, err := st.DefaultWorkspace(ctx); err != nil || ws != "w1" {
 		t.Fatalf("workspace deleted on an empty answer: %q %v", ws, err)
 	}
-	for _, k := range []string{store.KeyCustomFields + "p1", store.KeyCollapsed + "123"} {
-		if v, _ := st.SyncState(ctx, k); v == "" {
-			t.Errorf("%s deleted on an empty workspace list", k)
-		}
+	if v, _ := st.ProjectCustomFieldsFetchedAt(ctx, "p1"); v == "" {
+		t.Error("custom_fields:p1 deleted on an empty workspace list")
+	}
+	if v, _ := st.CollapsedGroups(ctx, "123"); v == "" {
+		t.Error("ui:collapsed:123 deleted on an empty workspace list")
 	}
 }

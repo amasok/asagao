@@ -198,7 +198,7 @@ func TestRunStopsWhenAccountChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_ = st.SetSyncState(ctx, store.KeyMeGID, "old-account")
+	_ = st.SetMeGID(ctx, "old-account")
 	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t9", Name: "前のアカウント"}})
 	_ = st.UpdateTaskLocal(ctx, "t9", map[string]any{"completed": true}, time.Now())
 	api := asana.NewClient(srv.Client())
@@ -207,7 +207,7 @@ func TestRunStopsWhenAccountChanged(t *testing.T) {
 	if !errors.Is(err, ErrAccountChanged) {
 		t.Fatalf("run = %v", err)
 	}
-	if me, _ := st.SyncState(ctx, store.KeyMeGID); me != "old-account" {
+	if me, _ := st.SyncedMeGID(ctx); me != "old-account" {
 		t.Fatalf("stored account overwritten: %q", me)
 	}
 	if p, _, _, _ := st.OutboxCounts(ctx); p != 1 || len(fake.modifiedSince) != 0 {
@@ -341,20 +341,20 @@ func TestRunPrunesOldResults(t *testing.T) {
 	api.BaseURL = srv.URL
 	now := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
 	s := &Syncer{API: api, Store: st, Cfg: Config{CompletedDays: 14}, now: func() time.Time { return now }}
-	if err := st.SetSyncState(ctx, store.ResultStory+"local:x", "1900"); err != nil {
+	if err := st.SetSyncState(ctx, "story:local:x", "1900"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Run(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, store.ResultStory+"local:x"); v != "1900" {
+	if v, _ := st.SyncState(ctx, "story:local:x"); v != "1900" {
 		t.Fatal("deleted at once")
 	}
 	now = now.Add(store.ResultGrace)
 	if _, err := s.Run(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, store.ResultStory+"local:x"); v != "" {
+	if v, _ := st.SyncState(ctx, "story:local:x"); v != "" {
 		t.Fatalf("still there after the grace: %q", v)
 	}
 }

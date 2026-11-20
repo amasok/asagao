@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -20,8 +21,16 @@ type timeStore struct {
 func (f *timeStore) Me(context.Context) (readmodel.UserRef, error) {
 	return readmodel.UserRef{GID: "me", Name: "Me"}, nil
 }
-func (f *timeStore) SyncState(_ context.Context, key string) (string, error) {
-	return f.state[key], nil
+func (f *timeStore) PlanRefusedAt(_ context.Context, feature, workspaceGID string) (time.Time, bool, error) {
+	v := f.state[feature+":"+workspaceGID]
+	if v == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	return at, true, nil
 }
 func (f *timeStore) TaskWorkspace(_ context.Context, task string) (string, error) {
 	if task == "t9" {
@@ -113,7 +122,7 @@ func TestTimeTrackingPlanUnavailable(t *testing.T) {
 	if !tt.Available(ctx) {
 		t.Fatal("not available before a 402")
 	}
-	st.state[readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")] = "2026-11-13T00:00:00Z" // 9 hours before the clock
+	st.state[plan.TimeTracking+":w1"] = "2026-11-13T00:00:00Z" // 9 hours before the clock
 	if !tt.Available(ctx) {
 		t.Error("hidden although w2 has it")
 	}
@@ -121,7 +130,7 @@ func TestTimeTrackingPlanUnavailable(t *testing.T) {
 		t.Errorf("a task of w2: %v", err)
 	}
 	st.wrote = nil
-	st.state[readmodel.PlanKey(readmodel.PlanTimeTracking, "w2")] = "2026-11-13T00:00:00Z"
+	st.state[plan.TimeTracking+":w2"] = "2026-11-13T00:00:00Z"
 	if tt.Available(ctx) {
 		t.Error("available after a 402 in every workspace")
 	}
@@ -159,8 +168,8 @@ func TestPlanOffFor(t *testing.T) {
 		{v, at, true}, {v, at.Add(23 * time.Hour), true}, {v, at.Add(24 * time.Hour), false},
 		{v, at.Add(-time.Minute), false}, {"", at, false}, {"garbage", at, false},
 	} {
-		if got := readmodel.PlanOffFor(tc.value, tc.now); got != tc.off {
-			t.Errorf("PlanOffFor(%q, %v) = %v", tc.value, tc.now, got)
+		if got := plan.OffFor(tc.value, tc.now); got != tc.off {
+			t.Errorf("plan.OffFor(%q, %v) = %v", tc.value, tc.now, got)
 		}
 	}
 }

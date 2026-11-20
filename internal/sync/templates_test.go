@@ -15,7 +15,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -188,7 +188,7 @@ func setupTemplates(t *testing.T) (*templateServer, *Syncer, *store.Store, *int)
 	waits := 0
 	s := &Syncer{API: api, Store: st, now: func() time.Time { return now },
 		sleep: func(ctx context.Context, d time.Duration) error { waits++; return ctx.Err() }}
-	if err := st.SetSyncState(ctx, store.KeyMeGID, "me"); err != nil {
+	if err := st.SetMeGID(ctx, "me"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "家", IsOrganization: true}}); err != nil {
@@ -202,11 +202,14 @@ func setupTemplates(t *testing.T) (*templateServer, *Syncer, *store.Store, *int)
 
 func planMark(t *testing.T, st *store.Store, feature string) string {
 	t.Helper()
-	v, err := st.SyncState(context.Background(), readmodel.PlanKey(feature, "w1"))
+	at, ok, err := st.PlanRefusedAt(context.Background(), feature, "w1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return v
+	if !ok {
+		return ""
+	}
+	return at.Format(time.RFC3339)
 }
 
 // Task templates are listed with names safe for a terminal; a 402 marks the feature
@@ -227,21 +230,21 @@ func TestTaskTemplatesListAndPlan(t *testing.T) {
 	if !errors.As(err, &pe) || !model.IsPaymentRequired(err) || !strings.Contains(err.Error(), "タスクテンプレート") {
 		t.Fatalf("402 err = %v", err)
 	}
-	if planMark(t, st, readmodel.PlanTaskTemplates) == "" {
+	if planMark(t, st, plan.TaskTemplates) == "" {
 		t.Fatal("402 did not mark the plan")
 	}
 	// The mark is the default workspace's only (another workspace may have another plan).
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanTaskTemplates); v != "" {
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.TaskTemplates); v != "" {
 		t.Errorf("marked for every workspace: %q", v)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2")); v != "" {
-		t.Errorf("marked another workspace: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TaskTemplates, "w2"); ok {
+		t.Error("marked another workspace")
 	}
 	delete(f.status, "GET /task_templates")
 	if _, err := s.TaskTemplates(ctx, "p1"); err != nil {
 		t.Fatal(err)
 	}
-	if v := planMark(t, st, readmodel.PlanTaskTemplates); v != "" {
+	if v := planMark(t, st, plan.TaskTemplates); v != "" {
 		t.Errorf("mark kept after a working list: %q", v)
 	}
 	// Other errors leave the mark alone and are returned as they are.
@@ -249,7 +252,7 @@ func TestTaskTemplatesListAndPlan(t *testing.T) {
 	if _, err := s.TaskTemplates(ctx, "p1"); err == nil || errors.As(err, &pe) {
 		t.Errorf("500 err = %v", err)
 	}
-	if planMark(t, st, readmodel.PlanTaskTemplates) != "" {
+	if planMark(t, st, plan.TaskTemplates) != "" {
 		t.Error("500 marked the plan")
 	}
 }
@@ -269,10 +272,10 @@ func TestProjectTemplatesListAndPlan(t *testing.T) {
 	if _, err := s.ProjectTemplates(ctx, ""); !model.IsPaymentRequired(err) {
 		t.Fatalf("402 err = %v", err)
 	}
-	if planMark(t, st, readmodel.PlanProjectTemplates) == "" {
+	if planMark(t, st, plan.ProjectTemplates) == "" {
 		t.Fatal("402 did not mark the plan")
 	}
-	if planMark(t, st, readmodel.PlanTaskTemplates) != "" {
+	if planMark(t, st, plan.TaskTemplates) != "" {
 		t.Error("marked the other feature")
 	}
 }
@@ -452,7 +455,7 @@ func TestInstantiateTaskRefused(t *testing.T) {
 		if *waits != 0 {
 			t.Errorf("%d: waited", status)
 		}
-		if marked := planMark(t, st, readmodel.PlanTaskTemplates) != ""; marked != (status == 402) {
+		if marked := planMark(t, st, plan.TaskTemplates) != ""; marked != (status == 402) {
 			t.Errorf("%d: marked = %v", status, marked)
 		}
 	}
@@ -550,8 +553,8 @@ func TestInstantiateProjectPlan(t *testing.T) {
 	if _, err := s.InstantiateProject(ctx, tmplProject, ProjectInput{Name: "x"}); !model.IsPaymentRequired(err) {
 		t.Fatalf("err = %v", err)
 	}
-	if planMark(t, st, readmodel.PlanProjectTemplates) == "" || *waits != 0 {
-		t.Errorf("mark = %q waits = %d", planMark(t, st, readmodel.PlanProjectTemplates), *waits)
+	if planMark(t, st, plan.ProjectTemplates) == "" || *waits != 0 {
+		t.Errorf("mark = %q waits = %d", planMark(t, st, plan.ProjectTemplates), *waits)
 	}
 }
 
@@ -583,7 +586,7 @@ func TestDuplicateProject(t *testing.T) {
 	if _, err := s.DuplicateProject(ctx, "p1", "x", ""); !model.IsPaymentRequired(err) {
 		t.Errorf("err = %v", err)
 	}
-	if planMark(t, st, readmodel.PlanProjectTemplates) != "" {
+	if planMark(t, st, plan.ProjectTemplates) != "" {
 		t.Error("duplicate marked project templates")
 	}
 }
@@ -706,20 +709,20 @@ func TestTaskTemplatesPlanOfTheProjectsWorkspace(t *testing.T) {
 	if _, err := s.TaskTemplates(ctx, "p2"); !model.IsPaymentRequired(err) {
 		t.Fatalf("err = %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TaskTemplates, "w2"); !ok {
 		t.Error("the project's workspace not marked")
 	}
-	if v := planMark(t, st, readmodel.PlanTaskTemplates); v != "" {
+	if v := planMark(t, st, plan.TaskTemplates); v != "" {
 		t.Errorf("the default workspace marked: %q", v)
 	}
 	// instantiateTask's 402 marks the template's project's workspace too.
 	f.status["POST /task_templates/tt1/instantiateTask"] = http.StatusPaymentRequired
 	delete(f.status, "GET /task_templates")
-	_ = st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2"), "")
+	_ = st.ClearPlanRefusal(ctx, plan.TaskTemplates, "w2")
 	if _, err := s.InstantiateTask(ctx, model.TaskTemplate{GID: "tt1", Name: "x", Project: &model.Ref{GID: "p2"}}, ""); !model.IsPaymentRequired(err) {
 		t.Fatalf("err = %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTaskTemplates, "w2")); v == "" || planMark(t, st, readmodel.PlanTaskTemplates) != "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TaskTemplates, "w2"); !ok || planMark(t, st, plan.TaskTemplates) != "" {
 		t.Errorf("instantiate marked the wrong workspace")
 	}
 }

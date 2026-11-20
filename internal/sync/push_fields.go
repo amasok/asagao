@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -147,7 +147,7 @@ func (s *Syncer) pushFieldSetting(ctx context.Context, op outbox.Op) error {
 	}
 	if err == nil { // else fetched on a later sync
 		if err := s.Store.ReplaceProjectCustomFields(ctx, project, settings); err == nil {
-			_ = s.Store.SetSyncState(ctx, readmodel.KeyCustomFields+project, s.clock().UTC().Format(time.RFC3339))
+			_ = s.Store.SetProjectCustomFieldsFetchedAt(ctx, project, s.clock())
 		}
 	}
 	return nil
@@ -183,14 +183,14 @@ func (s *Syncer) fieldForbidden(ctx context.Context, op outbox.Op, cause error) 
 	if !isForbidden(cause) {
 		return cause
 	}
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.clock()
 	switch op.Kind {
 	case outbox.KindCreateEnumOption:
 		field, _ := op.Payload["field"].(string)
-		_ = s.Store.SetSyncState(ctx, readmodel.KeyFieldOptionsLocked+field, now)
+		_ = s.Store.SetFieldOptionsLocked(ctx, field, now)
 		return fmt.Errorf("Asana がこのフィールドへの選択肢の追加を許可しませんでした (選択肢の編集が制限されているか、権限がありません): %w", cause)
 	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
-		_ = s.Store.SetSyncState(ctx, readmodel.KeyProjectFieldsLocked+op.TaskGID, now)
+		_ = s.Store.SetProjectFieldsLocked(ctx, op.TaskGID, now)
 		return fmt.Errorf("Asana がこのプロジェクトのカスタムフィールドの変更を許可しませんでした (権限がありません): %w", cause)
 	}
 	return cause
@@ -201,17 +201,16 @@ func (s *Syncer) fieldForbidden(ctx context.Context, op outbox.Op, cause error) 
 // plan) or the right to list them (403) there are none to offer; any other failure is
 // retried on the next sync.
 func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID string, poll bool) error {
-	key := readmodel.KeyWorkspaceCustomFields + workspaceGID
 	if !poll {
-		if last, err := s.Store.SyncState(ctx, key); err != nil || last != "" {
+		if last, err := s.Store.WorkspaceCustomFieldsFetchedAt(ctx, workspaceGID); err != nil || last != "" {
 			return err
 		}
 	}
-	if hidden, err := s.planHidden(ctx, readmodel.PlanCustomFields, workspaceGID); err != nil || hidden {
+	if hidden, err := s.planHidden(ctx, plan.CustomFields, workspaceGID); err != nil || hidden {
 		return err // a recent 402: not asked for again yet
 	}
 	fields, err := s.API.WorkspaceCustomFields(ctx, workspaceGID)
-	now := s.clock().UTC().Format(time.RFC3339)
+	now := s.clock()
 	switch {
 	case err == nil:
 		if err := s.Store.ReplaceWorkspaceCustomFields(ctx, workspaceGID, fields); err != nil {
@@ -221,7 +220,7 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 		if err := s.Store.ReplaceWorkspaceCustomFields(ctx, workspaceGID, nil); err != nil {
 			return err
 		}
-		if _, err := s.recordPlanRefusal(ctx, readmodel.PlanCustomFields, workspaceGID, err); err != nil {
+		if _, err := s.recordPlanRefusal(ctx, plan.CustomFields, workspaceGID, err); err != nil {
 			return err
 		}
 	case isForbidden(err):
@@ -231,5 +230,5 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 	default:
 		return nil
 	}
-	return s.Store.SetSyncState(ctx, key, now)
+	return s.Store.SetWorkspaceCustomFieldsFetchedAt(ctx, workspaceGID, now)
 }

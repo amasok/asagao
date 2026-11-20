@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -202,7 +202,7 @@ func TestSyncCustomTypesPaymentRequired(t *testing.T) {
 	if err := s.syncCustomTypes(ctx, "p1", "w1", true); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); !ok {
 		t.Fatal("402 not recorded")
 	}
 	for _, p := range []string{"p1", "p2"} {
@@ -217,12 +217,12 @@ func TestSyncCustomTypesPaymentRequired(t *testing.T) {
 	if err := s.syncCustomTypes(ctx, "p3", "w2", true); err != nil || len(f.typeGets) != 2 {
 		t.Fatalf("another workspace: %v %v", f.typeGets, err)
 	}
-	*clock = clock.Add(readmodel.PlanRecheckAfter + time.Minute)
+	*clock = clock.Add(plan.RecheckAfter + time.Minute)
 	f.refuse = false
 	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil || len(f.typeGets) != 3 {
 		t.Fatalf("not asked again after the recheck: %v %v", f.typeGets, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v != "" {
-		t.Fatalf("402 not forgotten: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); ok {
+		t.Fatal("402 not forgotten")
 	}
 }

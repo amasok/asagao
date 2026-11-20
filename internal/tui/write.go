@@ -12,6 +12,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Writes (complete / create / comment) are applied to the local store immediately and
@@ -91,7 +92,7 @@ func (m *Model) loadOutboxOnly() tea.Cmd {
 			ids := make([]int64, len(pending))
 			for i, d := range pending {
 				ids[i] = d.ID
-				if !readmodel.IsResetDiscard(d) {
+				if !format.IsResetDiscard(d) {
 					discards = append(discards, d)
 				}
 			}
@@ -511,7 +512,7 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 
 // discardStatus is the one-line notice for changes dropped by a push.
 func (m *Model) discardStatus(ds []readmodel.Discard) string {
-	s := readmodel.DiscardNotice + ": " + readmodel.DiscardLine(ds[0])
+	s := format.DiscardNotice + ": " + format.DiscardLine(ds[0])
 	if len(ds) > 1 {
 		s += fmt.Sprintf(" ほか %d 件（%s で一覧）", len(ds)-1, m.actionKey("outbox"))
 	}
@@ -559,8 +560,8 @@ func (m *Model) outboxCursorLine() int {
 	line := 2 // help, blank
 	for _, op := range m.ops[:min(m.opCursor, len(m.ops))] {
 		line++
-		line += len(readmodel.ConflictLines(op))
-		if _, text := readmodel.OpNote(op); text != "" {
+		line += len(format.ConflictLines(op))
+		if _, text := format.OpNote(op); text != "" {
 			line++
 		}
 	}
@@ -591,12 +592,12 @@ func (m *Model) outboxLines(inner int) []string {
 		case outbox.StateFailed:
 			style = m.st.errorText
 		}
-		line := style.Render(padRight("["+readmodel.OpLabel(op)+"]", opStateWidth)) + " " + readmodel.DescribeOp(op)
+		line := style.Render(padRight("["+format.OpLabel(op)+"]", opStateWidth)) + " " + format.DescribeOp(op)
 		lines = append(lines, m.highlight(line, inner, i == m.opCursor, true))
-		for _, c := range readmodel.ConflictLines(op) {
+		for _, c := range format.ConflictLines(op) {
 			lines = append(lines, opDetailIndent+c)
 		}
-		if _, text := readmodel.OpNote(op); text != "" {
+		if _, text := format.OpNote(op); text != "" {
 			note := m.st.dim // e.g. being checked against Asana: nothing to do
 			if op.State == outbox.StateFailed {
 				note = m.st.errorText
@@ -607,8 +608,8 @@ func (m *Model) outboxLines(inner int) []string {
 	if len(m.discards) > 0 {
 		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
 		for _, d := range m.discards {
-			lines = append(lines, "  "+readmodel.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
-			for _, dt := range readmodel.DiscardDetails(d, richtext.ToEditableMarkdown) {
+			lines = append(lines, "  "+format.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
+			for _, dt := range format.DiscardDetails(d, richtext.ToEditableMarkdown) {
 				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))
 				for _, l := range strings.Split(ansi.Wrap(dt.Text, max(10, inner-6), ""), "\n") {
 					lines = append(lines, "      "+l)

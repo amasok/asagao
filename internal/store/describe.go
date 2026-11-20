@@ -2,64 +2,63 @@ package store
 
 import (
 	"github.com/amasok/asagao/internal/domain/task"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI,
-// are readmodel's (readmodel/describe.go). These call them, so that the entry points do not
-// change until they stop using the store.
+// are format's (ui/format). These call them, so that existing callers stay working.
 
-// OpStateLabel is readmodel.OpStateLabel.
-func OpStateLabel(state string) string { return readmodel.OpStateLabel(state) }
+// OpStateLabel is format.OpStateLabel.
+func OpStateLabel(state string) string { return format.OpStateLabel(state) }
 
-// VerifyNote is readmodel.VerifyNote.
-const VerifyNote = readmodel.VerifyNote
+// VerifyNote is format.VerifyNote.
+const VerifyNote = format.VerifyNote
 
-// OpLabel is readmodel.OpLabel.
-func OpLabel(op Op) string { return readmodel.OpLabel(op) }
+// OpLabel is format.OpLabel.
+func OpLabel(op Op) string { return format.OpLabel(op) }
 
-// OpNote is readmodel.OpNote.
-func OpNote(op Op) (heading, text string) { return readmodel.OpNote(op) }
+// OpNote is format.OpNote.
+func OpNote(op Op) (heading, text string) { return format.OpNote(op) }
 
-// DiscardNotice is readmodel.DiscardNotice.
-const DiscardNotice = readmodel.DiscardNotice
+// DiscardNotice is format.DiscardNotice.
+const DiscardNotice = format.DiscardNotice
 
-// DiscardLine is readmodel.DiscardLine.
-func DiscardLine(d Discard) string { return readmodel.DiscardLine(d) }
+// DiscardLine is format.DiscardLine.
+func DiscardLine(d Discard) string { return format.DiscardLine(d) }
 
-// IsResetDiscard is readmodel.IsResetDiscard.
-func IsResetDiscard(d Discard) bool { return readmodel.IsResetDiscard(d) }
+// IsResetDiscard is format.IsResetDiscard.
+func IsResetDiscard(d Discard) bool { return format.IsResetDiscard(d) }
 
-// DiscardDetail is readmodel.DiscardDetail as a type of the store's own, not an alias: this
+// DiscardDetail is format.DiscardDetail as a type of the store's own, not an alias: this
 // package's tests write it without field names, which go vet allows only for a type of the
 // same package.
-type DiscardDetail readmodel.DiscardDetail
+type DiscardDetail format.DiscardDetail
 
-// DiscardDetails is readmodel.DiscardDetails.
+// DiscardDetails is format.DiscardDetails.
 func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDetail {
 	var out []DiscardDetail
-	for _, dt := range readmodel.DiscardDetails(d, toMarkdown) {
+	for _, dt := range format.DiscardDetails(d, toMarkdown) {
 		out = append(out, DiscardDetail(dt))
 	}
 	return out
 }
 
-// AccountChangedHelp is readmodel.AccountChangedHelp.
+// AccountChangedHelp is format.AccountChangedHelp.
 func AccountChangedHelp(unsent int, resetHow string) string {
-	return readmodel.AccountChangedHelp(unsent, resetHow)
+	return format.AccountChangedHelp(unsent, resetHow)
 }
 
-// FieldLabel is readmodel.FieldLabel.
-func FieldLabel(k string) string { return readmodel.FieldLabel(k) }
+// FieldLabel is format.FieldLabel.
+func FieldLabel(k string) string { return format.FieldLabel(k) }
 
-// ConflictLines is readmodel.ConflictLines.
-func ConflictLines(op Op) []string { return readmodel.ConflictLines(op) }
+// ConflictLines is format.ConflictLines.
+func ConflictLines(op Op) []string { return format.ConflictLines(op) }
 
-// DescribeOp is readmodel.DescribeOp.
-func DescribeOp(op Op) string { return readmodel.DescribeOp(op) }
+// DescribeOp is format.DescribeOp.
+func DescribeOp(op Op) string { return format.DescribeOp(op) }
 
-// DescribeChange is readmodel.DescribeChange.
-func DescribeChange(op Op) string { return readmodel.DescribeChange(op) }
+// DescribeChange is format.DescribeChange.
+func DescribeChange(op Op) string { return format.DescribeChange(op) }
 
 // SubtypeLabel is task.SubtypeLabel (kept here until the entry points stop using store).
 func SubtypeLabel(s string) string { return task.SubtypeLabel(s) }
@@ -73,5 +72,5 @@ func ParseSubtype(s string) (string, error) { return task.ParseSubtype(s) }
 // ParseApprovalStatus is task.ParseApprovalStatus.
 func ParseApprovalStatus(s string) (string, error) { return task.ParseApprovalStatus(s) }
 
-// TaskBadges is readmodel.TaskBadges.
-func TaskBadges(t TaskSummary) string { return readmodel.TaskBadges(t) }
+// TaskBadges is format.TaskBadges.
+func TaskBadges(t TaskSummary) string { return format.TaskBadges(t) }

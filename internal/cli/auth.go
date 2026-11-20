@@ -16,7 +16,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 	"github.com/amasok/asagao/internal/xdg"
 )
 
@@ -117,7 +117,7 @@ func (a *app) loginPAT(cmd *cobra.Command, ts auth.TokenStore) error {
 	defer cancel()
 	// The user is waiting: retry a busy or failing Asana once, briefly and saying so, not
 	// with the backoff of a sync (about 30 s in all, #24).
-	me, err := wiring.CheckPAT(checkCtx, token, a.baseURL, loginRetryDelay, func(status int, wait time.Duration) {
+	me, err := a.wiring.CheckPAT(checkCtx, token, a.baseURL, loginRetryDelay, func(status int, wait time.Duration) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s。%s後にもう一度確かめます…\n", busyMessage(status), wait.Round(time.Second))
 	})
 	if model.IsUnauthorized(err) {
@@ -192,11 +192,11 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 	}
 	defer st.Close()
 	_ = st.SetInboxWriteForbidden(ctx, false) // the new login may allow marking notifications
-	if want, err := st.SyncState(ctx, readmodel.KeyMeGID); err != nil || want == "" || want == gid {
+	if want, err := st.SyncedMeGID(ctx); err != nil || want == "" || want == gid {
 		return
 	}
 	n, _ := query(st).UnsentCount(ctx)
-	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+readmodel.AccountChangedHelp(n, "asagao reset"))
+	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+format.AccountChangedHelp(n, "asagao reset"))
 }
 
 // clientSecret takes the secret from the environment, an existing login, or a hidden prompt.

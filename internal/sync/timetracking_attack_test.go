@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -67,8 +68,8 @@ func TestAttackTimeEntryAdd403(t *testing.T) {
 	if res, _ := s.Push(ctx); res.Failed != 1 {
 		t.Fatalf("Push = %+v", res)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v != "" {
-		t.Errorf("403 marked the plan unavailable: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); ok {
+		t.Error("403 marked the plan unavailable")
 	}
 }
 
@@ -95,7 +96,7 @@ func TestAttackTimeEntry402OnEditAndDelete(t *testing.T) {
 			if res, _ := s.Push(ctx); res.Failed != 1 {
 				t.Fatalf("Push = %+v", res)
 			}
-			var pe *readmodel.PlanUnavailableError
+			var pe *plan.UnavailableError
 			if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 				t.Errorf("402 on %s was not recorded: %v", method, err)
 			}
@@ -118,7 +119,7 @@ func TestAttackTimeEntryEdit5xxThenOK(t *testing.T) {
 	if _, err := s.Push(ctx); err != nil {
 		t.Fatal(err)
 	}
-	real, _, _ := st.LocalResult(ctx, store.ResultTimeEntry, local)
+	real, _, _ := st.LocalResult(ctx, readmodel.ResultTimeEntry, local)
 	must(t, st.UpdateTimeEntryLocal(ctx, real, 40, "2026-11-12", now))
 	ts.mu.Lock()
 	ts.lose[http.MethodPut] = 1
@@ -271,7 +272,7 @@ func TestAttackTimeEntryOnOfflineTaskAfterCreate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	real, _, _ := st.LocalResult(ctx, store.ResultTask, gid)
+	real, _, _ := st.LocalResult(ctx, readmodel.ResultTask, gid)
 	if real == "" {
 		t.Fatal("task not created")
 	}
@@ -284,7 +285,7 @@ func TestAttackTimeEntryOnOfflineTaskAfterCreate(t *testing.T) {
 	assertOutboxEmpty(t, st)
 }
 
-func twKey(ws string) string { return readmodel.PlanKey(readmodel.PlanTimeTracking, ws) }
+func twKey(ws string) string { return "plan_unavailable:" + plan.TimeTracking + ":" + ws }
 
 // A recent 402 hides the list without asking Asana; at 24 hours it is asked again, and an
 // answer forgets the 402. A value that is garbage or from the future does not hide it.
@@ -294,8 +295,8 @@ func TestAttackPlanRecheckAfter24h(t *testing.T) {
 	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 	cur := at
 	s.now = func() time.Time { return cur }
-	must(t, st.SetSyncState(ctx, twKey("w1"), at.Format(time.RFC3339)))
-	var pe *readmodel.PlanUnavailableError
+	must(t, st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", at))
+	var pe *plan.UnavailableError
 	for _, d := range []time.Duration{0, time.Hour, 24*time.Hour - time.Second} {
 		cur = at.Add(d)
 		if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
@@ -310,8 +311,8 @@ func TestAttackPlanRecheckAfter24h(t *testing.T) {
 	if n := ts.count("GET "); n != 1 {
 		t.Fatalf("not asked again at 24h: %v", ts.calls)
 	}
-	if v, _ := st.SyncState(ctx, twKey("w1")); v != "" {
-		t.Errorf("402 not forgotten after an answer: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); ok {
+		t.Error("402 not forgotten after an answer")
 	}
 	for _, v := range []string{"garbage", cur.Add(time.Hour).Format(time.RFC3339)} {
 		must(t, st.SetSyncState(ctx, twKey("w1"), v))
@@ -330,9 +331,9 @@ func TestAttackPlanRecheckStill402(t *testing.T) {
 	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 	cur := at.Add(25 * time.Hour)
 	s.now = func() time.Time { return cur }
-	must(t, st.SetSyncState(ctx, twKey("w1"), at.Format(time.RFC3339)))
+	must(t, st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", at))
 	ts.unpaid = true
-	var pe *readmodel.PlanUnavailableError
+	var pe *plan.UnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatal(err)
 	}
@@ -347,8 +348,8 @@ func TestAttackPlanPerWorkspace(t *testing.T) {
 	ts, s, st := setupTimePush(t)
 	ctx := context.Background()
 	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "B", Workspace: &asana.Ref{GID: "w2"}}}))
-	must(t, st.SetSyncState(ctx, twKey("w1"), time.Now().UTC().Format(time.RFC3339)))
-	var pe *readmodel.PlanUnavailableError
+	must(t, st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", time.Now().UTC()))
+	var pe *plan.UnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatalf("t1: %v", err)
 	}
@@ -360,12 +361,12 @@ func TestAttackPlanPerWorkspace(t *testing.T) {
 	}
 	// and a 402 on t2 records w2 only
 	ts.unpaid = true
-	must(t, st.SetSyncState(ctx, twKey("w1"), ""))
+	must(t, st.ClearPlanRefusal(ctx, plan.TimeTracking, "w1"))
 	_ = s.FetchTimeEntries(ctx, "t2")
-	if v, _ := st.SyncState(ctx, twKey("w2")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w2"); !ok {
 		t.Error("w2 not recorded")
 	}
-	if v, _ := st.SyncState(ctx, twKey("w1")); v != "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); ok {
 		t.Error("w1 recorded by a 402 of w2")
 	}
 }

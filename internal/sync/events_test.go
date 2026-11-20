@@ -212,7 +212,7 @@ func (e *eventsEnv) run(t *testing.T, d time.Duration) Result {
 }
 
 func (e *eventsEnv) token(t *testing.T) string {
-	v, err := e.st.SyncState(context.Background(), store.KeyEvents+"p1")
+	v, err := e.st.EventsToken(context.Background(), "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,8 +494,8 @@ func TestEventsBatchFailureFallsBack(t *testing.T) {
 			if got := e.fake.calls("GET /users/me/notifications"); len(got) == 0 {
 				t.Fatalf("the sync stopped at the project: %v", e.fake.log)
 			}
-			if v, _ := e.st.SyncState(context.Background(), store.KeyLastSync); v != "2026-11-13T09:05:00Z" {
-				t.Fatalf("last_sync = %q", v)
+			if v, _ := e.st.LastSyncAt(context.Background()); v.Format(time.RFC3339) != "2026-11-13T09:05:00Z" {
+				t.Fatalf("last_sync = %q", v.Format(time.RFC3339))
 			}
 		})
 	}

@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // briefStore is a project p1 (in w1) with a brief, recording the brief changes.
 type briefStore struct {
 	overview readmodel.ProjectOverview
-	plan     string // the PlanKey value of w1
+	plan     string // the PlanRefusedAt RFC3339 value of w1
 	edits    []readmodel.BriefEdit
 }
 
@@ -24,11 +25,13 @@ func (b *briefStore) ResolveProject(_ context.Context, arg string) (string, erro
 	return "", errors.New("no such project")
 }
 func (b *briefStore) ProjectWorkspace(context.Context, string) (string, error) { return "w1", nil }
-func (b *briefStore) SyncState(_ context.Context, key string) (string, error) {
-	if key == readmodel.PlanKey(readmodel.PlanProjectBrief, "w1") {
-		return b.plan, nil
+func (b *briefStore) PlanRefusedAt(_ context.Context, feature, workspaceGID string) (time.Time, bool, error) {
+	if feature == plan.ProjectBrief && workspaceGID == "w1" && b.plan != "" {
+		if at, err := time.Parse(time.RFC3339, b.plan); err == nil {
+			return at, true, nil
+		}
 	}
-	return "", nil
+	return time.Time{}, false, nil
 }
 func (b *briefStore) ProjectOverview(context.Context, string) (*readmodel.ProjectOverview, error) {
 	o := b.overview
@@ -101,7 +104,7 @@ func TestBriefRefusals(t *testing.T) {
 	}
 	st.plan = now.Add(-time.Hour).UTC().Format(time.RFC3339)
 	var pe *ErrPlanUnavailable
-	if _, err := briefs.SaveHere(ctx, "p1", BriefInput{Title: ptr("x")}); !errors.As(err, &pe) || pe.Feature != readmodel.PlanProjectBrief {
+	if _, err := briefs.SaveHere(ctx, "p1", BriefInput{Title: ptr("x")}); !errors.As(err, &pe) || pe.Feature != plan.ProjectBrief {
 		t.Fatalf("refused: %v", err)
 	}
 	if err := briefs.DeleteHere(ctx, "p1"); !errors.As(err, &pe) {

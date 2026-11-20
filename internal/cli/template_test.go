@@ -79,7 +79,7 @@ func templateCLIEnv(t *testing.T) (string, *fakeTemplateAsana, func(args ...stri
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	run := func(args ...string) (string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&out)

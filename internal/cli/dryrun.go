@@ -17,7 +17,7 @@ import (
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 	"github.com/amasok/asagao/internal/xdg"
 )
 
@@ -80,7 +80,7 @@ func removeOnSignal(dir string) (unwatch func()) {
 }
 
 // openDryRun copies st (which it closes) to a private temporary folder and opens the copy.
-func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
+func (a *app) openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	defer func() { err = errors.Join(err, st.Close()) }()
 	removeStaleDryRuns(time.Now())
 	dir, err := os.MkdirTemp("", dryRunPrefix) // 0700
@@ -96,7 +96,7 @@ func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	if err := st.CopyTo(ctx, path); err != nil {
 		return fail(err)
 	}
-	cp, err := wiring.OpenStore(ctx, path)
+	cp, err := a.wiring.OpenStore(ctx, path)
 	if err != nil {
 		return fail(err)
 	}
@@ -178,13 +178,13 @@ func (d *dryRunStore) queuedChanges(ctx context.Context) ([]plannedChange, []can
 		}
 		planned = append(planned, plannedChange{
 			Kind: op.Kind, TaskGID: dryRunGID(op.TaskGID), TaskName: op.TaskName,
-			Description: readmodel.DescribeOp(op), Payload: op.Payload,
+			Description: format.DescribeOp(op), Payload: op.Payload,
 		})
 	}
 	var cancelled []cancelledChange
 	for _, op := range d.before {
 		if _, gone := old[op.ID]; gone {
-			cancelled = append(cancelled, cancelledChange{ID: op.ID, Description: readmodel.DescribeOp(op)})
+			cancelled = append(cancelled, cancelledChange{ID: op.ID, Description: format.DescribeOp(op)})
 		}
 	}
 	return planned, cancelled, nil
@@ -262,7 +262,7 @@ func (a *app) dryRunResolve(cmd *cobra.Command, d *dryRunStore, id int64, act us
 	}
 	return a.dryRunPlan(cmd, plannedChange{
 		Kind: string(act), TaskGID: dryRunGID(r.Op.TaskGID), TaskName: r.Op.TaskName,
-		Description: fmt.Sprintf("#%d %s の%s", id, readmodel.DescribeOp(r.Op), resolveLabels[act]),
+		Description: fmt.Sprintf("#%d %s の%s", id, format.DescribeOp(r.Op), resolveLabels[act]),
 	})
 }
 

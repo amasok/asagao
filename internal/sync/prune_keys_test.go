@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
@@ -39,24 +40,31 @@ func TestFullSyncPrunesGoneWorkspaceAndProjectKeys(t *testing.T) {
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "901"}}, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{store.KeyCustomFields + "900", store.KeyCollapsed + "900", store.KeyCustomFields + "901", store.KeyCollapsed + "901"}
-	for _, k := range keys {
-		_ = st.SetSyncState(ctx, k, "x")
+	ts := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+	for _, p := range []string{"900", "901"} {
+		_ = st.SetProjectCustomFieldsFetchedAt(ctx, p, ts)
+		_ = st.SetCollapsedGroups(ctx, p, "x")
 	}
 	if res, err := s.Run(ctx, false); err != nil || res.Full {
 		t.Fatalf("incremental = %+v %v", res, err)
 	}
-	for _, k := range keys {
-		if v, _ := st.SyncState(ctx, k); v == "" {
-			t.Fatalf("incremental sync must not prune (%s)", k)
+	for _, p := range []string{"900", "901"} {
+		if v, _ := st.ProjectCustomFieldsFetchedAt(ctx, p); v == "" {
+			t.Fatalf("incremental sync must not prune custom_fields:%s", p)
+		}
+		if v, _ := st.CollapsedGroups(ctx, p); v == "" {
+			t.Fatalf("incremental sync must not prune ui:collapsed:%s", p)
 		}
 	}
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range keys {
-		if v, _ := st.SyncState(ctx, k); v != "" {
-			t.Errorf("key %s left after full sync", k)
+	for _, p := range []string{"900", "901"} {
+		if v, _ := st.ProjectCustomFieldsFetchedAt(ctx, p); v != "" {
+			t.Errorf("key custom_fields:%s left after full sync", p)
+		}
+		if v, _ := st.CollapsedGroups(ctx, p); v != "" {
+			t.Errorf("key ui:collapsed:%s left after full sync", p)
 		}
 	}
 	if stats, _ := st.Stats(ctx); stats.Workspaces != 1 {
@@ -90,7 +98,7 @@ func TestFullSyncEmptyWorkspaceListKeepsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := st.Stats(ctx)
-	full, _ := st.SyncState(ctx, keyLastFullSync)
+	full, _ := st.LastFullSyncAt(ctx)
 	empty = true
 	res, err := s.Run(ctx, true)
 	if err != nil {
@@ -99,7 +107,7 @@ func TestFullSyncEmptyWorkspaceListKeepsTasks(t *testing.T) {
 	if after, _ := st.Stats(ctx); res.Pruned != 0 || after.Tasks != before.Tasks || before.Tasks == 0 {
 		t.Fatalf("empty workspace list pruned tasks: %d -> %d (%+v)", before.Tasks, after.Tasks, res)
 	}
-	if v, _ := st.SyncState(ctx, keyLastFullSync); v != full {
-		t.Fatalf("a full sync without workspaces must not count as done (%q -> %q)", full, v)
+	if v, _ := st.LastFullSyncAt(ctx); !v.Equal(full) {
+		t.Fatalf("a full sync without workspaces must not count as done (%v -> %v)", full, v)
 	}
 }

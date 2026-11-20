@@ -31,7 +31,7 @@ func TestProjectTaskStates(t *testing.T) {
 		{GID: "3", Name: "fav", Members: me}, {GID: "4", Name: "listed", Members: me}, {GID: "5", Name: "other"},
 	}, "me"))
 	must(st.ReplaceFavoriteProjects(ctx, "w1", []asana.Ref{{GID: "3"}}))
-	must(st.SetSyncState(ctx, KeyEvents+"2", "T")) // synced before #54
+	must(st.SetSyncState(ctx, keyEvents+"2", "T")) // synced before #54
 
 	if s, err := st.WantProject(ctx, "1"); err != nil || s != readmodel.TasksWanted {
 		t.Fatalf("want 1: %q %v", s, err)
@@ -40,10 +40,10 @@ func TestProjectTaskStates(t *testing.T) {
 	if s, err := st.WantProject(ctx, "2"); err != nil || s != readmodel.TasksAll {
 		t.Fatalf("want 2: %q %v", s, err)
 	}
-	if v, _ := st.SyncState(ctx, KeyProjectTasks+"2"); v != "" {
+	if v, _ := st.SyncState(ctx, keyProjectTasks+"2"); v != "" {
 		t.Fatalf("want 2 wrote %q", v)
 	}
-	must(st.SetSyncState(ctx, KeyProjectTasks+"1", readmodel.TasksOpen))
+	must(st.SetSyncState(ctx, keyProjectTasks+"1", readmodel.TasksOpen))
 	if s, _ := st.WantProject(ctx, "1"); s != readmodel.TasksOpen {
 		t.Fatalf("want 1 again: %q, want open (not back to wanted)", s)
 	}
@@ -83,18 +83,18 @@ func TestProjectTaskStates(t *testing.T) {
 	if s, _ := st.ProjectTaskState(ctx, "6"); s != readmodel.TasksWanted {
 		t.Errorf("project of a new task: %q, want wanted", s)
 	}
-	if v, _ := st.SyncState(ctx, KeyProjectTasks+"2"); v != "" {
+	if v, _ := st.SyncState(ctx, keyProjectTasks+"2"); v != "" {
 		t.Errorf("project synced before #54 got %q", v)
 	}
 	// The state goes with its project, My Tasks' with its workspace.
-	must(st.SetSyncState(ctx, KeyMyTasks+"w1", readmodel.TasksAll))
+	must(st.SetSyncState(ctx, keyMyTasks+"w1", readmodel.TasksAll))
 	must(st.PruneProjects(ctx, "w1", []asana.Project{{GID: "2"}}))
-	if v, _ := st.SyncState(ctx, KeyProjectTasks+"1"); v != "" {
+	if v, _ := st.SyncState(ctx, keyProjectTasks+"1"); v != "" {
 		t.Errorf("state of a removed project kept: %q", v)
 	}
 	must(st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w2", Name: "B"}}))
 	must(st.PruneWorkspaces(ctx, []asana.Workspace{{GID: "w2"}}))
-	if v, _ := st.SyncState(ctx, KeyMyTasks+"w1"); v != "" {
+	if v, _ := st.SyncState(ctx, keyMyTasks+"w1"); v != "" {
 		t.Errorf("my tasks state of a removed workspace kept: %q", v)
 	}
 	if r, err := st.ProjectRef(ctx, "9"); err == nil {

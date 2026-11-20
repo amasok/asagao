@@ -16,9 +16,11 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 type PushResult struct {
@@ -117,7 +119,7 @@ func (s *Syncer) checkPushAccount(ctx context.Context) error {
 	if s.accountOK.Load() {
 		return nil
 	}
-	want, err := s.Store.SyncState(ctx, readmodel.KeyMeGID)
+	want, err := s.Store.SyncedMeGID(ctx)
 	if err != nil || want == "" {
 		return err
 	}
@@ -197,7 +199,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 	}()
 	verified := map[int64]bool{} // checked in Asana during this push (at most once each)
 	// The account is checked only before dropping anything (dropGone), not here: only Run
-	// changes the stored account (KeyMeGID), and Run refuses to when Asana answers as
+	// changes the stored account (SyncedMeGID/SetMeGID), and Run refuses to when Asana answers as
 	// another account, so the stored one stays the account the local data belongs to.
 	drops.res = &res // this pass's counts
 	for i := 0; i < len(ops); {
@@ -305,7 +307,7 @@ func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 				}
 				sendIt = false
 			case m == ambiguous:
-				if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(readmodel.AmbiguousMessage)); err != nil {
+				if err := s.Store.MarkOpFailed(ctx, op.ID, errors.New(format.AmbiguousMessage)); err != nil {
 					return err
 				}
 				res.Failed++
@@ -447,7 +449,7 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
 // workspace's plan lacks the feature (402) also hides that feature in the workspace for
-// readmodel.PlanRecheckAfter (readmodel.PlanKey).
+// plan.RecheckAfter.
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
 	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)
@@ -463,7 +465,7 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	if isForbidden(err) {
 		err = s.fieldForbidden(ctx, op, err)
 	}
-	if feature := readmodel.PlanFeatureOf(op.Kind); feature == readmodel.PlanCustomFields { // recorded per workspace
+	if feature := plan.FeatureOf(op.Kind); feature == plan.CustomFields { // recorded per workspace
 		ws, _ := op.Payload["workspace"].(string)
 		if ws == "" {
 			ws, _ = s.Store.DefaultWorkspace(ctx)
@@ -474,7 +476,7 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		if refused, rerr := s.recordPlanRefusal(ctx, feature, ws, err); rerr != nil {
 			return out, rerr
 		} else if refused {
-			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
+			err = fmt.Errorf("%s: %w", plan.UnavailableMessage(feature), err)
 		}
 		return out, err
 	}
@@ -483,14 +485,14 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		// the more likely cause: the start date is tried again with the rest.
 		return out, s.startOnOutcome(ctx, startWS, op, out, err)
 	}
-	switch feature := readmodel.PlanFeatureOf(op.Kind); feature {
-	case readmodel.PlanTimeTracking:
+	switch feature := plan.FeatureOf(op.Kind); feature {
+	case plan.TimeTracking:
 		if model.IsPaymentRequired(err) {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
 				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
 			}
 		}
-	case readmodel.PlanSections, readmodel.PlanTags, readmodel.PlanMySection: // per workspace, for a while (#50)
+	case plan.Sections, plan.Tags, plan.MySection: // per workspace, for a while (#50)
 		switch {
 		case err == nil && out != conflicted:
 			// Asana took it: a failure to forget the 402 only hides the feature until it expires.
@@ -505,20 +507,20 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 
 // startOnOutcome records what sending a task's start date (an update or create with
 // start_on) to workspace ws said about its plan: a 402 hides start dates there for a while
-// (readmodel.PlanStartOn), and the error says why; an answer that set one forgets an
+// (plan.StartOn), and the error says why; an answer that set one forgets an
 // earlier 402. err is returned, wrapped when it is a 402.
 func (s *Syncer) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
 	if err == nil {
 		if v, _ := op.Payload["start_on"].(string); v != "" && out != conflicted {
 			// Sent: a failure to forget the 402 only hides start dates until it expires.
-			_ = s.clearPlanRefusal(ctx, readmodel.PlanStartOn, ws)
+			_ = s.clearPlanRefusal(ctx, plan.StartOn, ws)
 		}
 		return nil
 	}
-	if refused, rerr := s.recordPlanRefusal(ctx, readmodel.PlanStartOn, ws, err); rerr != nil {
+	if refused, rerr := s.recordPlanRefusal(ctx, plan.StartOn, ws, err); rerr != nil {
 		return errors.Join(err, rerr)
 	} else if refused {
-		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(readmodel.PlanStartOn), err: err}
+		return &startOnWithdrawn{reason: plan.UnavailableMessage(plan.StartOn), err: err}
 	}
 	return err
 }
@@ -814,7 +816,7 @@ func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
 		st.checked, st.account = true, fmt.Errorf("%w (%v)", ErrAccountChanged, err)
 		return st.account
 	}
-	want, err := s.Store.SyncState(ctx, readmodel.KeyMeGID)
+	want, err := s.Store.SyncedMeGID(ctx)
 	if err != nil {
 		return err
 	}
@@ -999,7 +1001,7 @@ func withDue(fields map[string]any, server *model.Task) map[string]any {
 // updateConflicts compares an update with the task in Asana: the server's values of the
 // fields that were changed there too (nil if none).
 func updateConflicts(op outbox.Op, server *model.Task) map[string]any {
-	current := readmodel.TaskFieldValues(server)
+	current := model.TaskFieldValues(server)
 	conflicts := map[string]any{}
 	for k, local := range op.Payload {
 		if k == "html_notes" {
@@ -1027,7 +1029,7 @@ func customFieldConflict(op outbox.Op, server *model.Task) (map[string]any, erro
 		return nil, nil
 	}
 	field, _ := op.Payload["field"].(string)
-	sv, display, found := readmodel.ServerCustomField(server, field)
+	sv, display, found := model.ServerCustomField(server, field)
 	if !found {
 		return nil, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
 	}
@@ -1041,7 +1043,7 @@ func customFieldConflict(op outbox.Op, server *model.Task) (map[string]any, erro
 func customFieldUpdate(op outbox.Op) map[string]any {
 	field, _ := op.Payload["field"].(string)
 	fieldType, _ := op.Payload["type"].(string)
-	return map[string]any{"custom_fields": map[string]any{field: readmodel.CustomFieldAPIValue(fieldType, op.Payload["value"])}}
+	return map[string]any{"custom_fields": map[string]any{field: model.CustomFieldAPIValue(fieldType, op.Payload["value"])}}
 }
 
 // normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
@@ -1167,7 +1169,7 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 // refreshSectionOrderAfterMove fetches Asana's order for section right after pushing a
 // move into it (#69: Asana emits no Events on intra-section reorders, so an external
 // reorder before our push would otherwise leave the cache out of order). Transient
-// failures queue section in KeyTaskOrder so the next sync retries it.
+// failures queue section in PendingSectionOrders so the next sync retries it.
 func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, section string) {
 	if section == "" || localgid.IsLocal(section) {
 		return
@@ -1183,12 +1185,13 @@ func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, sect
 	if isNotFound(err) || isForbidden(err) || project == "" || localgid.IsLocal(project) {
 		return
 	}
-	key := readmodel.KeyTaskOrder + project
-	pending, perr := s.Store.SyncState(ctx, key)
+	pending, perr := s.Store.PendingSectionOrders(ctx, project)
 	if perr != nil {
 		return
 	}
-	_ = s.setPending(ctx, key, pending, addNew(strings.Fields(pending), section))
+	_ = setPendingOrders(pending, addNew(strings.Fields(pending), section), func(v string) error {
+		return s.Store.SetPendingSectionOrders(ctx, project, v)
+	})
 }
 
 // position is where op puts its task (insert_before / insert_after), with the real gid of
@@ -1414,8 +1417,8 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 }
 
 // storyTarget returns, for an edit or a delete of a comment, attachment or time entry, the payload key
-// of its gid and the prefix under which a local one's result is recorded ("" otherwise).
-func storyTarget(kind string) (key, prefix string) {
+// of its gid and the ResultKind under which a local one's result is recorded ("" otherwise).
+func storyTarget(kind string) (key string, result readmodel.ResultKind) {
 	switch kind {
 	case outbox.KindUpdateStory, outbox.KindDeleteStory:
 		return "story", readmodel.ResultStory

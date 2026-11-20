@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
@@ -26,8 +26,8 @@ import (
 // The job is waited for (GET /jobs/{gid}) up to jobWait. If it is still running, what is
 // there is stored and the result says so (Pending): the rest arrives with the next sync.
 //
-// A 402 is recorded for the workspace (readmodel.PlanKey, plan.go), so the TUI stops
-// offering the feature there for readmodel.PlanRecheckAfter; a list that works again
+// A 402 is recorded for the workspace (store.RecordPlanUnavailable, plan.go), so the TUI stops
+// offering the feature there for plan.RecheckAfter; a list that works again
 // forgets it.
 
 // Made is what a template or a duplicate made.
@@ -69,7 +69,7 @@ func (s *Syncer) TaskTemplates(ctx context.Context, projectGID string) ([]model.
 		return nil, ErrOffline
 	}
 	list, err := s.API.TaskTemplates(ctx, projectGID)
-	if err := s.noteTemplatePlan(ctx, readmodel.PlanTaskTemplates, s.projectWorkspace(ctx, projectGID), err); err != nil {
+	if err := s.noteTemplatePlan(ctx, plan.TaskTemplates, s.projectWorkspace(ctx, projectGID), err); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -94,7 +94,7 @@ func (s *Syncer) ProjectTemplates(ctx context.Context, teamGID string) ([]model.
 		// requires_workspace_received_organization): those of each team I am in.
 		list, err = s.teamProjectTemplates(ctx, ws)
 	}
-	if err := s.noteTemplatePlan(ctx, readmodel.PlanProjectTemplates, ws, err); err != nil {
+	if err := s.noteTemplatePlan(ctx, plan.ProjectTemplates, ws, err); err != nil {
 		return nil, err
 	}
 	for i := range list {
@@ -187,8 +187,8 @@ type TemplatePlanError struct {
 
 func (e *TemplatePlanError) Error() string {
 	what := map[string]string{
-		readmodel.PlanTaskTemplates:    "タスクテンプレート",
-		readmodel.PlanProjectTemplates: "プロジェクトテンプレート",
+		plan.TaskTemplates:    "タスクテンプレート",
+		plan.ProjectTemplates: "プロジェクトテンプレート",
 	}[e.Feature]
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました)"
 }
@@ -251,7 +251,7 @@ func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, n
 		if tmpl.Project != nil {
 			ws = s.projectWorkspace(ctx, tmpl.Project.GID)
 		}
-		err = s.noteTemplatePlan(ctx, readmodel.PlanTaskTemplates, ws, err)
+		err = s.noteTemplatePlan(ctx, plan.TaskTemplates, ws, err)
 		var pe *TemplatePlanError
 		if errors.As(err, &pe) || tmpl.Project == nil {
 			return nil, err
@@ -353,7 +353,7 @@ func (s *Syncer) InstantiateProject(ctx context.Context, tmpl model.ProjectTempl
 	if err != nil {
 		return nil, err
 	}
-	return s.makeProject(ctx, in.Name, readmodel.PlanProjectTemplates, func() (*model.Job, error) {
+	return s.makeProject(ctx, in.Name, plan.ProjectTemplates, func() (*model.Job, error) {
 		return s.API.InstantiateProject(ctx, tmpl.GID, model.ProjectFromTemplate{
 			Name: in.Name, TeamGID: in.TeamGID, Public: in.Public, Dates: dates, Roles: roles})
 	})

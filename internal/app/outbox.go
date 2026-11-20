@@ -8,6 +8,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Resolving outbox entries (changes that could not be sent) is shared by the TUI, the CLI
@@ -58,7 +59,7 @@ func (e *StateError) Error() string {
 	if e.Action == Retry {
 		want = "送信に失敗した変更"
 	}
-	return fmt.Sprintf("#%d は%sではありません（状態: %s）。%s は%sにだけ使えます", e.ID, want, readmodel.OpStateLabel(e.State), e.Action, want)
+	return fmt.Sprintf("#%d は%sではありません（状態: %s）。%s は%sにだけ使えます", e.ID, want, format.OpStateLabel(e.State), e.Action, want)
 }
 
 func (e *StateError) Is(target error) bool { return target == ErrWrongState }

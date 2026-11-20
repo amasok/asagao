@@ -19,9 +19,6 @@ import (
 // OpMoveMySection moves a task to another section of My Tasks (outbox.KindMoveMySection).
 const OpMoveMySection = outbox.KindMoveMySection
 
-// KeyUserTaskList + workspace gid: the gid of my My Tasks list there.
-const KeyUserTaskList = readmodel.KeyUserTaskList
-
 // ReplaceMyTaskSections replaces the sections of my My Tasks list in a workspace, in
 // Asana's order. Sections only known from tasks (assignee_section) are kept after them.
 func (s *Store) ReplaceMyTaskSections(ctx context.Context, workspaceGID string, secs []model.Section) error {
@@ -30,7 +27,7 @@ func (s *Store) ReplaceMyTaskSections(ctx context.Context, workspaceGID string, 
 		// the name the tasks told (after the list's).
 		if _, err := tx.ExecContext(ctx, `DELETE FROM my_task_sections WHERE workspace_gid = ? AND gid NOT IN (
 			SELECT t.assignee_section_gid FROM tasks t WHERE t.workspace_gid = ?
-			AND t.assignee_gid = (SELECT value FROM sync_state WHERE key = ?))`, workspaceGID, workspaceGID, KeyMeGID); err != nil {
+			AND t.assignee_gid = (SELECT value FROM sync_state WHERE key = ?))`, workspaceGID, workspaceGID, keyMeGID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE my_task_sections SET position = ? WHERE workspace_gid = ?", len(secs), workspaceGID); err != nil {
@@ -101,7 +98,7 @@ func (s *Store) MoveMySectionLocal(ctx context.Context, gid, sectionGID string, 
 		if err != nil {
 			return notFound(err, "task "+gid)
 		}
-		_ = tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", KeyMeGID).Scan(&me)
+		_ = tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", keyMeGID).Scan(&me)
 		if me == "" || assignee != me {
 			return ErrNotMine
 		}
@@ -150,7 +147,7 @@ func upsertAssigneeSection(ctx context.Context, tx *sql.Tx, t model.Task, worksp
 		return err
 	}
 	var me string
-	_ = tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", KeyMeGID).Scan(&me)
+	_ = tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", keyMeGID).Scan(&me)
 	if gid != "" && workspace != "" && t.Assignee != nil && t.Assignee.GID == me {
 		// A section of my list only known from the task (its name, if the list was not read).
 		if _, err := tx.ExecContext(ctx, `INSERT INTO my_task_sections(gid, workspace_gid, name, position) VALUES(?, ?, ?, 1 << 30)

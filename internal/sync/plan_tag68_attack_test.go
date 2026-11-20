@@ -10,7 +10,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -59,12 +59,12 @@ func TestUnusedTagsMultiWorkspaceRenameColorDeleteAndUndo402Attack(t *testing.T)
 	tags := &app.Tags{Store: st, Clock: func() time.Time { return at }}
 	checkOnlyW1Marked := func(step string) {
 		t.Helper()
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != at.Format(time.RFC3339) {
-			t.Fatalf("%s: w1 mark = %q, want %q", step, v, at.Format(time.RFC3339))
+		if got, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w1"); !ok || !got.Equal(at) {
+			t.Fatalf("%s: w1 mark = (%v, %v), want %v", step, got, ok, at)
 		}
 		for _, ws := range []string{"w0", "w2", ""} {
-			if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, ws)); v != "" {
-				t.Fatalf("%s: workspace %q wrongly marked = %q", step, ws, v)
+			if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, ws); ok {
+				t.Fatalf("%s: workspace %q wrongly marked", step, ws)
 			}
 		}
 	}
@@ -96,7 +96,7 @@ func TestUnusedTagsMultiWorkspaceRenameColorDeleteAndUndo402Attack(t *testing.T)
 	checkOnlyW1Marked("after g_w2 Rename")
 
 	// 2. Clear w1 mark, test SetColor on unused tag in w1 -> 402 -> w1 only; w2 SetColor works.
-	must(st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), ""))
+	must(st.ClearPlanRefusal(ctx, plan.Tags, "w1"))
 	must(tags.SetColor(ctx, "g_w1", "dark-green"))
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("push color g_w1 = %+v, %v", res, err)
@@ -114,7 +114,7 @@ func TestUnusedTagsMultiWorkspaceRenameColorDeleteAndUndo402Attack(t *testing.T)
 
 	// 3. Clear w1 mark, test Delete on unused tag in w1 -> 402 -> w1 only; DiscardOp (undoTagOp)
 	// restores g_w1 WITH workspace_gid='w1'.
-	must(st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), ""))
+	must(st.ClearPlanRefusal(ctx, plan.Tags, "w1"))
 	must(tags.Delete(ctx, "g_w1"))
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("push delete g_w1 = %+v, %v", res, err)
@@ -147,7 +147,7 @@ func TestUnusedTagsMultiWorkspaceRenameColorDeleteAndUndo402Attack(t *testing.T)
 	checkOnlyW1Marked("after g_w2 Delete")
 
 	// 4. After 24h, deleting the restored g_w1 again still sends workspace='w1' on 402.
-	at = at.Add(readmodel.PlanRecheckAfter)
+	at = at.Add(plan.RecheckAfter)
 	must(tags.Delete(ctx, "g_w1"))
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("second push delete g_w1 = %+v, %v", res, err)
@@ -211,8 +211,8 @@ func TestTagsErrorResponsesKeepWorkspaceAndNoPlanMarkAttack(t *testing.T) {
 				t.Errorf("after %s /tags: TagWorkspace(g1) = %q, %v; want w1", tc.name, ws, err)
 			}
 			for _, ws := range []string{"w0", "w1", ""} {
-				if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, ws)); v != "" {
-					t.Errorf("after %s /tags: wrongly marked %q = %q", tc.name, ws, v)
+				if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, ws); ok {
+					t.Errorf("after %s /tags: wrongly marked %q", tc.name, ws)
 				}
 			}
 		})

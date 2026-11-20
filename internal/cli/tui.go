@@ -46,7 +46,7 @@ func (a *app) runTUI(ctx context.Context) error {
 		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
 		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys,
 		CacheDir: filepath.Join(xdg.CacheDir(), "attachments"), BackupDir: backupDir(), AuthScopes: a.cfg.Auth.Scopes,
-		Searches: wiring.Searches}
+		Searches: a.wiring.Searches}
 	if !a.offline {
 		deps.NewSyncer = func(ctx context.Context) (*sync.Syncer, error) {
 			api, err := a.apiClient(ctx)

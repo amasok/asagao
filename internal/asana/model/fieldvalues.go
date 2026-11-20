@@ -1,21 +1,17 @@
-package readmodel
+package model
 
-import (
-	"slices"
-
-	"github.com/amasok/asagao/internal/asana/model"
-)
+import "slices"
 
 // Values of a task's fields in the form the local cache stores them and the outbox sends
 // them, taken from a task Asana returned. The store keeps them for its tasks and
 // set_custom_field entries; sync compares them with what Asana has now (conflict checks)
-// and sends them (e1: moved from the store, which keeps aliases).
+// and sends them.
 //
 // Custom field values: text: string, number: float64, enum: option gid, multi_enum /
 // people: sorted []string of gids, date: "YYYY-MM-DD"; nil when empty.
 
 // TaskFieldValues extracts update_task fields from an API task (for conflict checks).
-func TaskFieldValues(t *model.Task) map[string]any {
+func TaskFieldValues(t *Task) map[string]any {
 	assignee := ""
 	if t.Assignee != nil {
 		assignee = t.Assignee.GID
@@ -41,7 +37,7 @@ func TaskFieldValues(t *model.Task) map[string]any {
 }
 
 // CustomFieldValue returns the value of a custom field from Asana in the stored form.
-func CustomFieldValue(f model.CustomField) any {
+func CustomFieldValue(f CustomField) any {
 	switch f.Subtype() {
 	case CFText:
 		if f.TextValue != nil && *f.TextValue != "" {
@@ -128,7 +124,7 @@ func CustomFieldAPIValue(fieldType string, v any) any {
 
 // ServerCustomField finds a field on a task fetched from Asana: its value (stored form)
 // and display text. found is false if the task does not have the field (any more).
-func ServerCustomField(t *model.Task, fieldGID string) (value any, display string, found bool) {
+func ServerCustomField(t *Task, fieldGID string) (value any, display string, found bool) {
 	for _, f := range t.CustomFields {
 		if f.GID == fieldGID {
 			display := ""

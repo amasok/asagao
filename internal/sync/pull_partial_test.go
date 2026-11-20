@@ -54,7 +54,7 @@ func TestFullSyncFailingWhileWritingTasksKeepsTheCache(t *testing.T) {
 	if _, err := s.Run(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{store.KeyLastSync, keyLastFullSync, keyLastPoll, store.KeyEvents + "p1"}
+	keys := []string{"last_sync", "last_full_sync", "last_poll", "events:p1"}
 	state := func() map[string]string {
 		m := map[string]string{}
 		for _, k := range keys {
@@ -67,7 +67,7 @@ func TestFullSyncFailingWhileWritingTasksKeepsTheCache(t *testing.T) {
 		return m
 	}
 	before := state()
-	if before[store.KeyLastSync] == "" || before[keyLastFullSync] == "" {
+	if before["last_sync"] == "" || before["last_full_sync"] == "" {
 		t.Fatalf("first sync recorded %v", before)
 	}
 
@@ -133,7 +133,7 @@ func TestFullSyncFailingWhileWritingTasksKeepsTheCache(t *testing.T) {
 			t.Errorf("t%d after the sync that succeeded: %q, want %q", i, got, want)
 		}
 	}
-	if got := state(); got[store.KeyLastSync] != now.Format(time.RFC3339) || got[keyLastFullSync] != now.Format(time.RFC3339) {
+	if got := state(); got["last_sync"] != now.Format(time.RFC3339) || got["last_full_sync"] != now.Format(time.RFC3339) {
 		t.Fatalf("after the sync that succeeded: %v", got)
 	}
 }

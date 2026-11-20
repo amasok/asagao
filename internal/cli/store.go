@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	usecase "github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/mcpserver"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/tui"
@@ -15,6 +16,7 @@ import (
 type Store interface {
 	tui.Store
 	mcpserver.Store
+	usecase.CustomIDStore
 
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
 	// AddCommentOnceLocal is for `git scan` (usecase.GitLinkStore).

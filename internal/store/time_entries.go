@@ -28,9 +28,6 @@ const (
 	OpAddTimeEntry    = outbox.KindAddTimeEntry
 	OpUpdateTimeEntry = outbox.KindUpdateTimeEntry
 	OpDeleteTimeEntry = outbox.KindDeleteTimeEntry
-
-	// ResultTimeEntry maps a local entry to the one Asana created (readmodel's).
-	ResultTimeEntry = readmodel.ResultTimeEntry
 )
 
 // timeEntryColumns are the columns of time_entries after gid, as kept in a
@@ -219,7 +216,7 @@ func (s *Store) TimeEntryTask(ctx context.Context, gid string) (string, error) {
 // TimeEntries returns a task's time tracking entries in the cache, newest day first.
 func (s *Store) TimeEntries(ctx context.Context, taskGID string) (readmodel.TimeEntries, error) {
 	out := readmodel.TimeEntries{TaskGID: taskGID, Entries: []readmodel.TimeEntryView{}}
-	pending := resolvedSQL("entry", ResultTimeEntry)
+	pending := resolvedSQL("entry", resultPrefixTimeEntry)
 	rows, err := s.db.QueryContext(ctx, `SELECT gid, duration_minutes, entered_on, assignee_gid, assignee_name,
 		created_by_gid, created_by_name, project_name, categories,
 		gid LIKE 'local:%' OR EXISTS (SELECT 1 FROM outbox o WHERE o.kind IN (?, ?) AND `+pending+` = time_entries.gid)
@@ -251,7 +248,7 @@ func (s *Store) TimeEntries(ctx context.Context, taskGID string) (readmodel.Time
 		return out, err
 	}
 	out.Total = timetrack.Format(out.TotalMinutes)
-	out.FetchedAt, err = s.SyncState(ctx, readmodel.KeyTimeEntries+taskGID)
+	out.FetchedAt, err = s.SyncState(ctx, keyTimeEntries+taskGID)
 	return out, err
 }
 
@@ -308,7 +305,7 @@ func (s *Store) ReplaceTimeEntries(ctx context.Context, taskGID string, entries 
 			return err
 		}
 		_, err := tx.ExecContext(ctx, "INSERT OR REPLACE INTO sync_state(key, value) VALUES(?, ?)",
-			readmodel.KeyTimeEntries+taskGID, formatTime(fetchedAt))
+			keyTimeEntries+taskGID, formatTime(fetchedAt))
 		return err
 	})
 }
@@ -329,7 +326,7 @@ func (s *Store) CompleteTimeEntry(ctx context.Context, id int64, localGID, taskG
 				return err
 			}
 		}
-		if err := recordResult(ctx, tx, ResultTimeEntry, localGID, e.GID); err != nil {
+		if err := recordResult(ctx, tx, resultPrefixTimeEntry, localGID, e.GID); err != nil {
 			return err
 		}
 		return reapplyTimeEntryOps(ctx, tx, taskGID) // edits or a delete queued while it was being sent
@@ -359,7 +356,7 @@ func (s *Store) ApplyTimeEntry(ctx context.Context, e model.TimeEntry) error {
 // (after they were replaced by what Asana returned). A failed one is not: Asana's values
 // are shown, as for a failed task update.
 func reapplyTimeEntryOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
-	gid := resolvedSQL("entry", ResultTimeEntry)
+	gid := resolvedSQL("entry", resultPrefixTimeEntry)
 	latest := func(field string) string {
 		return `(SELECT json_extract(o.payload, '$.` + field + `') FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed' AND ` +
 			gid + ` = time_entries.gid ORDER BY o.id DESC LIMIT 1)`
@@ -387,7 +384,7 @@ func undoTimeEntryOp(ctx context.Context, tx *sql.Tx, op *Op) error {
 		}
 		return dropChangesOf(ctx, tx, "entry", local, OpUpdateTimeEntry, OpDeleteTimeEntry)
 	}
-	gid, err := resolveResult(ctx, tx, ResultTimeEntry, local)
+	gid, err := resolveResult(ctx, tx, resultPrefixTimeEntry, local)
 	if err != nil {
 		return err
 	}

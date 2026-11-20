@@ -26,7 +26,7 @@ func newTestStore(t *testing.T) *Store {
 			t.Fatal(err)
 		}
 	}
-	must(s.SetSyncState(ctx, KeyMeGID, "me"))
+	must(s.SetSyncState(ctx, keyMeGID, "me"))
 	must(s.UpsertProjects(ctx, "w1", []asana.Project{
 		{GID: "p1", Name: "[家族]新居プロジェクト", Members: []asana.Ref{{GID: "me"}}},
 		{GID: "p2", Name: "[家族]事務/雑務", Members: []asana.Ref{{GID: "me"}}},

@@ -140,7 +140,7 @@ func TestTUIPassingByFetchesNothing(t *testing.T) {
 func TestTUIFetchesCompletedAfterSync(t *testing.T) {
 	st := lazyFixture(t)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, readmodel.KeyMyTasks+"w1", readmodel.TasksOpen); err != nil {
+	if err := st.SetMyTaskState(ctx, "w1", readmodel.TasksOpen); err != nil {
 		t.Fatal(err)
 	}
 	h := newHarnessWith(t, st)
@@ -152,7 +152,7 @@ func TestTUIFetchesCompletedAfterSync(t *testing.T) {
 	if h.m.syncing {
 		t.Fatal("still syncing")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyMyTasks+"w1"); v != readmodel.TasksAll {
+	if v, _ := st.MyTaskState(ctx, "w1"); v != readmodel.TasksAll {
 		t.Fatalf("my tasks state %q", v)
 	}
 }

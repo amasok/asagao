@@ -12,6 +12,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -168,7 +169,7 @@ func TestMySectionsPaymentRequired(t *testing.T) {
 	if _, err := s.Run(ctx, false); err != nil {
 		t.Fatalf("a 404 for the list fails the sync: %v", err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w1")); v != "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w1"); ok {
 		t.Fatal("a 404 hid the feature")
 	}
 	f.listStatus = http.StatusPaymentRequired

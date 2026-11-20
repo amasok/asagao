@@ -25,6 +25,7 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 const instructions = `Asana tasks from a local cache that asagao keeps in sync.
@@ -767,7 +768,7 @@ func (s *Server) accountChangedNote(ctx context.Context) string {
 		"(%d unsent change(s) from the previous account). Tell the user, and let them choose: log in again with the previous "+
 		"account (`asagao auth login`) to send the changes, or reset the local data to use the new account "+
 		"(`asagao reset`, or \"ローカルデータを初期化\" in the TUI menu; unsent changes are backed up to a JSON file first). "+
-		"This MCP server cannot reset. (%s)", n, readmodel.AccountChangedHelp(n, "asagao reset"))
+		"This MCP server cannot reset. (%s)", n, format.AccountChangedHelp(n, "asagao reset"))
 }
 
 // push sends the outbox now. A failure is reported in the output, not as a tool error:

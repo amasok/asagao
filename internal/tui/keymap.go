@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	localgid "github.com/amasok/asagao/internal/domain/gid"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // Keys are organised in three layers:
@@ -58,7 +58,7 @@ type action struct {
 	needTask    bool                // needs a selected (or shown) task
 	needProject bool                // needs a project to be open
 	needInbox   bool                // only in the inbox (notifications)
-	plan        string              // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
+	plan        string              // a feature the workspace's plan may lack (plan.*): hidden without it
 	bulk        bool                // also acts on the marked tasks (bulk.go), so usable with them and no selection
 	ready       func(m *Model) bool // offered only when it returns true (nil: always)
 	run         func(m *Model) tea.Cmd
@@ -83,7 +83,7 @@ func (m *Model) actions() []action {
 		{id: "due", key: "d", group: groupTask, label: "期日を変更", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkDue, (*Model).openDuePicker)},
 		{id: "assignee", key: "u", shortcut: []string{"@"}, group: groupTask, label: "担当者を変更", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkAssignee, (*Model).openAssigneePicker)},
 		{id: "tags", key: "t", group: groupTask, label: "タグを付ける / 外す", ctx: ctxTask, needTask: true, run: (*Model).openTagEditor},
-		{id: "manage_tags", key: "y", group: groupTask, label: "タグの名前・色を変える / 削除", ctx: ctxAll, plan: readmodel.PlanTags, run: (*Model).openTagManager},
+		{id: "manage_tags", key: "y", group: groupTask, label: "タグの名前・色を変える / 削除", ctx: ctxAll, plan: plan.Tags, run: (*Model).openTagManager},
 		{id: "move", key: "m", shortcut: []string{"m"}, group: groupTask, label: "セクションを移動", ctx: ctxTask, needTask: true, bulk: true, run: orMarked((*Model).bulkMove, func(m *Model) tea.Cmd { m.openSectionPicker(); return nil })},
 		{id: "comment", key: "c", shortcut: []string{"c"}, group: groupTask, label: "コメント（1 行）", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("c") }},
 		{id: "comment_editor", key: "C", shortcut: []string{"C"}, group: groupTask, label: "コメントをエディタで書く", ctx: ctxTask, needTask: true, run: func(m *Model) tea.Cmd { return m.writeKey("C") }},
@@ -93,7 +93,7 @@ func (m *Model) actions() []action {
 		{id: "duplicate", key: "D", group: groupTask, label: "複製", ctx: ctxTask, needTask: true, run: (*Model).startDuplicate},
 		{id: "set_parent", key: "p", group: groupTask, label: "親タスクを付け替える", ctx: ctxTask, needTask: true, run: (*Model).openParentPicker},
 		{id: "delete_task", key: "Z", group: groupTask, label: "タスクを削除（確認あり）", ctx: ctxTask, needTask: true, run: (*Model).confirmDeleteTask},
-		{id: "time", key: "h", group: groupTask, label: "作業時間を見る / 記録する", ctx: ctxTask, needTask: true, plan: readmodel.PlanTimeTracking, run: (*Model).openTimeEntries},
+		{id: "time", key: "h", group: groupTask, label: "作業時間を見る / 記録する", ctx: ctxTask, needTask: true, plan: plan.TimeTracking, run: (*Model).openTimeEntries},
 		{id: "attach", key: "A", group: groupTask, label: "ファイルを添付", ctx: ctxTask, needTask: true, run: (*Model).startAttach},
 		{id: "images", key: "i", shortcut: []string{"i"}, group: groupTask, label: "画像を全画面で見る", ctx: ctxTask, needTask: true, run: (*Model).viewImages},
 		{id: "browser", key: "o", shortcut: []string{"o"}, group: groupTask, label: "ブラウザで開く", ctx: ctxTask, needTask: true, run: (*Model).openInBrowser},
@@ -117,21 +117,21 @@ func (m *Model) actions() []action {
 		{id: "inbox_read_all", key: "Y", group: groupView, label: "通知をすべて既読にする", ctx: ctxList, needInbox: true, run: (*Model).markAllNotificationsRead},
 		// project
 		{id: "rename_section", key: "E", shortcut: []string{"E"}, group: groupProject, label: "セクション名を変更", ctx: ctxList | ctxBoard | ctxDetail, run: (*Model).startRenameSection},
-		{id: "new_section", key: "n", group: groupProject, label: "セクションを追加（このセクションの後）", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).startNewSection},
-		{id: "section_up", key: "K", group: groupProject, label: "セクションを上（左）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(-1) }},
-		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
-		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: readmodel.PlanSections, run: (*Model).confirmDeleteSection},
+		{id: "new_section", key: "n", group: groupProject, label: "セクションを追加（このセクションの後）", ctx: ctxList | ctxBoard, needProject: true, plan: plan.Sections, run: (*Model).startNewSection},
+		{id: "section_up", key: "K", group: groupProject, label: "セクションを上（左）へ", ctx: ctxList | ctxBoard, needProject: true, plan: plan.Sections, run: func(m *Model) tea.Cmd { return m.moveSection(-1) }},
+		{id: "section_down", key: "J", group: groupProject, label: "セクションを下（右）へ", ctx: ctxList | ctxBoard, needProject: true, plan: plan.Sections, run: func(m *Model) tea.Cmd { return m.moveSection(+1) }},
+		{id: "delete_section", key: "H", group: groupProject, label: "空のセクションを削除", ctx: ctxList | ctxBoard, needProject: true, plan: plan.Sections, run: (*Model).confirmDeleteSection},
 		{id: "new_project", key: "N", group: groupProject, label: "新しいプロジェクト（オンライン）", ctx: ctxAll, run: (*Model).startNewProject},
 		{id: "task_from_template", key: "G", group: groupProject, label: "テンプレートからタスクを作る（オンライン）", ctx: ctxList | ctxBoard, needProject: true, ready: (*Model).hasTaskTemplates, run: (*Model).startTaskFromTemplate},
-		{id: "project_from_template", key: "B", group: groupProject, label: "テンプレートからプロジェクトを作る（オンライン）", ctx: ctxAll, plan: readmodel.PlanProjectTemplates, ready: (*Model).hasProjectTemplates, run: (*Model).startProjectFromTemplate},
+		{id: "project_from_template", key: "B", group: groupProject, label: "テンプレートからプロジェクトを作る（オンライン）", ctx: ctxAll, plan: plan.ProjectTemplates, ready: (*Model).hasProjectTemplates, run: (*Model).startProjectFromTemplate},
 		{id: "duplicate_project", key: "S", group: groupProject, label: "このプロジェクトを複製（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).startDuplicateProject},
 		{id: "overview", key: "O", group: groupProject, label: "プロジェクトの概要（説明・期日・進み具合）/ 編集", ctx: ctxAll, needProject: true, run: (*Model).openOverview},
 		{id: "statuses", key: "U", group: groupProject, label: "ステータス更新を見る", ctx: ctxAll, needProject: true, run: (*Model).openStatuses},
 		{id: "write_status", key: "W", group: groupProject, label: "ステータスを書く（エディタ）", ctx: ctxAll, needProject: true, run: (*Model).writeStatus},
-		{id: "project_fields", key: "#", group: groupProject, label: "カスタムフィールドを追加 / 外す", ctx: ctxAll, needProject: true, plan: readmodel.PlanCustomFields, run: (*Model).openProjectFields},
+		{id: "project_fields", key: "#", group: groupProject, label: "カスタムフィールドを追加 / 外す", ctx: ctxAll, needProject: true, plan: plan.CustomFields, run: (*Model).openProjectFields},
 		{id: "members", key: "M", group: groupProject, label: "メンバーを追加 / 外す（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).openMembers},
-		{id: "goals", key: "Q", group: groupProject, label: "ゴール（期間・進み具合）", ctx: ctxAll, plan: readmodel.PlanGoals, run: (*Model).openGoals},
-		{id: "portfolios", key: "l", group: groupProject, label: "ポートフォリオ（自分がオーナーのもの）", ctx: ctxAll, plan: readmodel.PlanPortfolios, run: (*Model).openPortfolios},
+		{id: "goals", key: "Q", group: groupProject, label: "ゴール（期間・進み具合）", ctx: ctxAll, plan: plan.Goals, run: (*Model).openGoals},
+		{id: "portfolios", key: "l", group: groupProject, label: "ポートフォリオ（自分がオーナーのもの）", ctx: ctxAll, plan: plan.Portfolios, run: (*Model).openPortfolios},
 		{id: "archive", key: "X", group: groupProject, label: "プロジェクトをアーカイブ（オンライン）", ctx: ctxAll, needProject: true, run: (*Model).confirmArchive},
 		// other
 		{id: "sync", key: "r", shortcut: []string{"r"}, group: groupOther, label: "今すぐ同期", ctx: ctxAll, run: (*Model).syncNow},

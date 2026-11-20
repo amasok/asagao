@@ -12,11 +12,11 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // #50: the 402s of sections, tags, My Tasks' sections, search, typeahead and custom IDs
-// are recorded per workspace (readmodel.PlanKey) and tried again after a day, like the
+// are recorded per workspace and tried again after a day, like the
 // other features: a free workspace's 402 does not hide them in a paid organization.
 
 func (f *myTasksAsana) listsIn(ws string) int {
@@ -36,12 +36,11 @@ func TestMySectionsPlanPerWorkspace(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	key := readmodel.PlanKey(readmodel.PlanMySection, "w1")
-	if v, _ := st.SyncState(ctx, key); v != now.Format(time.RFC3339) {
-		t.Fatalf("402 in w1 recorded = %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w1"); !ok || !at.Equal(*now) {
+		t.Fatalf("402 in w1 recorded = (%v, %v)", at, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w2")); v != "" {
-		t.Fatalf("w2 recorded = %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w2"); ok {
+		t.Fatal("w2 recorded unexpected")
 	}
 	sections := &app.Sections{Store: st, Clock: func() time.Time { return *now }}
 	if secs, err := sections.MySections(ctx, "w2"); err != nil || len(secs) != 2 {
@@ -52,7 +51,7 @@ func TestMySectionsPlanPerWorkspace(t *testing.T) {
 	}
 
 	// Within the day w1 is not asked again.
-	*now = now.Add(readmodel.PlanRecheckAfter - time.Minute)
+	*now = now.Add(plan.RecheckAfter - time.Minute)
 	if err := s.syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +69,8 @@ func TestMySectionsPlanPerWorkspace(t *testing.T) {
 	if n := f.listsIn("w1"); n != 2 {
 		t.Fatalf("w1 asked %d times after the day", n)
 	}
-	if v, _ := st.SyncState(ctx, key); v != "" {
-		t.Fatalf("402 not forgotten after an answer: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w1"); ok {
+		t.Fatal("402 not forgotten after an answer")
 	}
 	if secs, err := sections.MySections(ctx, "w1"); err != nil || len(secs) != 2 {
 		t.Fatalf("w1's sections after the answer = %v, %v", secs, err)
@@ -84,7 +83,7 @@ func TestMySectionsOldGlobalRecordIgnored(t *testing.T) {
 	f := &myTasksAsana{section: "m2"}
 	s, st, _ := setupMyTasks(t, f)
 	ctx := context.Background()
-	if err := st.SetSyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanMySection, "2026-01-01T00:00:00Z"); err != nil {
+	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.MySection, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.syncMySections(ctx, "w1"); err != nil {
@@ -114,10 +113,10 @@ func TestPushMoveMySection402PerWorkspace(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanMySection, "w1")); v != now.Format(time.RFC3339) {
-		t.Fatalf("recorded for w1 = %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, "w1"); !ok || !at.Equal(*now) {
+		t.Fatalf("recorded for w1 = (%v, %v)", at, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanMySection); v != "" {
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.MySection); v != "" {
 		t.Fatalf("recorded for every workspace = %q", v)
 	}
 }
@@ -164,14 +163,14 @@ func TestPushSectionsAndTags402PerWorkspace(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 2 {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
-	for _, feature := range []string{readmodel.PlanSections, readmodel.PlanTags} {
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(feature, "w1")); v != at.Format(time.RFC3339) {
-			t.Errorf("%s: recorded for w1 = %q", feature, v)
+	for _, feature := range []string{plan.Sections, plan.Tags} {
+		if got, ok, _ := st.PlanRefusedAt(ctx, feature, "w1"); !ok || !got.Equal(at) {
+			t.Errorf("%s: recorded for w1 = (%v, %v)", feature, got, ok)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(feature, "w2")); v != "" {
-			t.Errorf("%s: recorded for w2 = %q", feature, v)
+		if _, ok, _ := st.PlanRefusedAt(ctx, feature, "w2"); ok {
+			t.Errorf("%s: recorded for w2", feature)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+feature); v != "" {
+		if v, _ := st.SyncState(ctx, "plan_unavailable:"+feature); v != "" {
 			t.Errorf("%s: recorded for every workspace = %q", feature, v)
 		}
 	}
@@ -194,14 +193,14 @@ func TestPushSectionsAndTags402PerWorkspace(t *testing.T) {
 	must(discardQueued(ctx, st)) // the w2 changes are not for this fake
 
 	// A day later they are offered in w1 again; an accepted change forgets the 402.
-	at = at.Add(readmodel.PlanRecheckAfter)
+	at = at.Add(plan.RecheckAfter)
 	refuse = false
 	must(tags.UpdateHere(ctx, "g1", map[string]any{"name": "至急"}))
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 {
 		t.Fatalf("push a day later = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != "" {
-		t.Errorf("tags' 402 not forgotten after an answer: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w1"); ok {
+		t.Error("tags' 402 not forgotten after an answer")
 	}
 }
 
@@ -231,10 +230,11 @@ func TestSearchPlanPerWorkspaceAndRecheck(t *testing.T) {
 	s, st := setupSearch(t, f)
 	at := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return at }
-	for _, k := range []string{readmodel.PlanKey(readmodel.PlanSearch, "w2"), readmodel.PlanKey(readmodel.PlanTypeahead, "w2"),
-		readmodel.PlanKey(readmodel.PlanCustomID, "w2"), readmodel.KeyPlanUnavailable + readmodel.PlanSearch,
-		readmodel.KeyPlanUnavailable + readmodel.PlanTypeahead, readmodel.KeyPlanUnavailable + readmodel.PlanCustomID} {
-		if err := st.SetSyncState(ctx, k, at.Format(time.RFC3339)); err != nil {
+	for _, f := range []string{plan.Search, plan.Typeahead, plan.CustomID} {
+		if err := st.RecordPlanRefusal(ctx, f, "w2", at); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetSyncState(ctx, "plan_unavailable:"+f, at.Format(time.RFC3339)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -252,11 +252,10 @@ func TestSearchPlanPerWorkspaceAndRecheck(t *testing.T) {
 	if res, err := s.SearchTasks(ctx, "x", nil, 10); err != nil || !res.ByName {
 		t.Fatalf("search after a 402 = %+v, %v", res, err)
 	}
-	key := readmodel.PlanKey(readmodel.PlanSearch, "w1")
-	if v, _ := st.SyncState(ctx, key); v != at.Format(time.RFC3339) {
-		t.Fatalf("recorded for w1 = %q", v)
+	if got, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); !ok || !got.Equal(at) {
+		t.Fatalf("recorded for w1 = (%v, %v)", got, ok)
 	}
-	at = at.Add(readmodel.PlanRecheckAfter - time.Second)
+	at = at.Add(plan.RecheckAfter - time.Second)
 	if _, err := s.SearchTasks(ctx, "x", nil, 10); err != nil || f.searchCalls != 2 {
 		t.Fatalf("within the day: %v, %d calls", err, f.searchCalls)
 	}
@@ -265,8 +264,8 @@ func TestSearchPlanPerWorkspaceAndRecheck(t *testing.T) {
 	if res, err := s.SearchTasks(ctx, "x", nil, 10); err != nil || res.ByName || f.searchCalls != 3 {
 		t.Fatalf("a day later = %+v, %v, %d calls", res, err, f.searchCalls)
 	}
-	if v, _ := st.SyncState(ctx, key); v != "" {
-		t.Fatalf("402 not forgotten after an answer: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); ok {
+		t.Fatal("402 not forgotten after an answer")
 	}
 }
 
@@ -303,25 +302,25 @@ func TestPushCreateSectionAndDeleteTag402PerWorkspace(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 2 {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
-	for _, feature := range []string{readmodel.PlanSections, readmodel.PlanTags} {
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(feature, "w1")); v != at.Format(time.RFC3339) {
-			t.Errorf("%s: recorded for w1 = %q", feature, v)
+	for _, feature := range []string{plan.Sections, plan.Tags} {
+		if got, ok, _ := st.PlanRefusedAt(ctx, feature, "w1"); !ok || !got.Equal(at) {
+			t.Errorf("%s: recorded for w1 = (%v, %v)", feature, got, ok)
 		}
-		if v, _ := st.SyncState(ctx, readmodel.PlanKey(feature, "w0")); v != "" {
-			t.Errorf("%s: recorded for the default workspace = %q", feature, v)
+		if _, ok, _ := st.PlanRefusedAt(ctx, feature, "w0"); ok {
+			t.Errorf("%s: recorded for the default workspace", feature)
 		}
 	}
 	must(discardQueued(ctx, st))
 
 	// A delete of a section: its project's workspace too.
-	at = at.Add(readmodel.PlanRecheckAfter)
-	must(st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1"), ""))
+	at = at.Add(plan.RecheckAfter)
+	must(st.ClearPlanRefusal(ctx, plan.Sections, "w1"))
 	must(sections.DeleteHere(ctx, "s2"))
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("push of the delete = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1")); v != at.Format(time.RFC3339) {
-		t.Errorf("delete: recorded for w1 = %q", v)
+	if got, ok, _ := st.PlanRefusedAt(ctx, plan.Sections, "w1"); !ok || !got.Equal(at) {
+		t.Errorf("delete: recorded for w1 = (%v, %v)", got, ok)
 	}
 }
 
@@ -389,11 +388,11 @@ func TestUnusedTagWorkspaceAnd402PerWorkspace(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("push update unused tag = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != at.Format(time.RFC3339) {
-		t.Errorf("update unused tag: w1 = %q, want %q", v, at.Format(time.RFC3339))
+	if got, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w1"); !ok || !got.Equal(at) {
+		t.Errorf("update unused tag: w1 = (%v, %v), want %v", got, ok, at)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w0")); v != "" {
-		t.Errorf("update unused tag: default w0 wrongly marked = %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w0"); ok {
+		t.Error("update unused tag: default w0 wrongly marked")
 	}
 	// g_unused (w1) is refused; g0 (w0) is still allowed.
 	if err := tags.UpdateHere(ctx, "g_unused", map[string]any{"name": "別名"}); !app.IsPlanUnavailable(err) {
@@ -405,16 +404,16 @@ func TestUnusedTagWorkspaceAnd402PerWorkspace(t *testing.T) {
 	must(discardQueued(ctx, st))
 
 	// Deleting an unused tag in w1 gets a 402 -> still recorded for w1 only, not default w0.
-	must(st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), ""))
+	must(st.ClearPlanRefusal(ctx, plan.Tags, "w1"))
 	must(tags.DeleteHere(ctx, "g_unused"))
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("push delete unused tag = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != at.Format(time.RFC3339) {
-		t.Errorf("delete unused tag: w1 = %q, want %q", v, at.Format(time.RFC3339))
+	if got, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w1"); !ok || !got.Equal(at) {
+		t.Errorf("delete unused tag: w1 = (%v, %v), want %v", got, ok, at)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w0")); v != "" {
-		t.Errorf("delete unused tag: default w0 wrongly marked = %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w0"); ok {
+		t.Error("delete unused tag: default w0 wrongly marked")
 	}
 }
 
@@ -478,11 +477,11 @@ func TestOfflineTagUpdate402AndClearPerWorkspace(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 1 {
 		t.Fatalf("push with 402 = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w2")); v != at.Format(time.RFC3339) {
-		t.Errorf("402 recorded for w2 = %q, want %q", v, at.Format(time.RFC3339))
+	if got, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w2"); !ok || !got.Equal(at) {
+		t.Errorf("402 recorded for w2 = (%v, %v), want %v", got, ok, at)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != "" {
-		t.Errorf("402 wrongly recorded for default w1 = %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w1"); ok {
+		t.Error("402 wrongly recorded for default w1")
 	}
 
 	// When the failed update_tag (still carrying localGID) is retried and succeeds,
@@ -492,10 +491,10 @@ func TestOfflineTagUpdate402AndClearPerWorkspace(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Sent != 1 || res.Failed != 0 {
 		t.Fatalf("retry push = %+v, %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w2")); v != "" {
-		t.Errorf("402 for w2 not cleared after success: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w2"); ok {
+		t.Error("402 for w2 not cleared after success")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1")); v != "" {
-		t.Errorf("default w1 unexpectedly marked: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.Tags, "w1"); ok {
+		t.Error("default w1 unexpectedly marked")
 	}
 }

@@ -30,13 +30,13 @@ import (
 // have none: nothing is shown and nothing fails.
 
 const (
-	// The types of custom fields are readmodel's.
-	CFText      = readmodel.CFText
-	CFNumber    = readmodel.CFNumber
-	CFEnum      = readmodel.CFEnum
-	CFMultiEnum = readmodel.CFMultiEnum
-	CFDate      = readmodel.CFDate
-	CFPeople    = readmodel.CFPeople
+	// The types of custom fields are model's.
+	CFText      = model.CFText
+	CFNumber    = model.CFNumber
+	CFEnum      = model.CFEnum
+	CFMultiEnum = model.CFMultiEnum
+	CFDate      = model.CFDate
+	CFPeople    = model.CFPeople
 
 	// OpSetCustomField sets one custom field of a task (outbox.KindSetCustomField).
 	OpSetCustomField = outbox.KindSetCustomField
@@ -91,22 +91,22 @@ func (d fieldDef) enabledOptions(current any) []EnumOptionView {
 
 // --- values ---
 
-// The stored form of values from Asana is readmodel's (e1), so that sync can use it
+// The stored form of values from Asana is model's, so that sync can use it
 // without importing the store.
 var (
 	// CustomFieldValue returns the value of a custom field from Asana in the stored form.
-	CustomFieldValue = readmodel.CustomFieldValue
+	CustomFieldValue = model.CustomFieldValue
 	// CustomFieldAPIValue is a stored value as PUT /tasks sends it.
-	CustomFieldAPIValue = readmodel.CustomFieldAPIValue
+	CustomFieldAPIValue = model.CustomFieldAPIValue
 	// ServerCustomField finds a field on a task fetched from Asana.
-	ServerCustomField = readmodel.ServerCustomField
+	ServerCustomField = model.ServerCustomField
 )
 
 // gidList sorts gids; nil when there are none.
-func gidList(gids []string) any { return readmodel.GIDList(gids) }
+func gidList(gids []string) any { return model.GIDList(gids) }
 
 // normalizeCFValue turns a value decoded from JSON into the stored form.
-func normalizeCFValue(v any) any { return readmodel.NormalizeCustomFieldValue(v) }
+func normalizeCFValue(v any) any { return model.NormalizeCustomFieldValue(v) }
 
 // formatNumber formats a number field value with the field's precision.
 func formatNumber(v float64, precision int) string {
@@ -426,8 +426,8 @@ func (s *Store) taskCustomFields(ctx context.Context, gid string) ([]CustomField
 // for this field before (403). Whether the workspace's plan has it (402) is the use
 // case's to say (app.FieldOptions.Addable).
 func (s *Store) optionsAddable(ctx context.Context, fieldGID string) (bool, error) {
-	v, err := s.SyncState(ctx, readmodel.KeyFieldOptionsLocked+fieldGID)
-	return v == "", err
+	locked, err := s.FieldOptionsLocked(ctx, fieldGID)
+	return !locked, err
 }
 
 // ResolveCustomField finds a custom field of a task by gid or name (exact, ignoring case,

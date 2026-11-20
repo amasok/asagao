@@ -89,7 +89,7 @@ func TestAttackEditRefusals(t *testing.T) {
 			t.Errorf("blank %q accepted", text)
 		}
 	}
-	must(t, s.SetSyncState(ctx, KeyMeGID, ""))
+	must(t, s.SetSyncState(ctx, keyMeGID, ""))
 	if err := s.EditCommentLocal(ctx, "c-me", "x", "", testNow); err == nil {
 		t.Error("edit with me unset")
 	}

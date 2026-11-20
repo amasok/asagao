@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -16,7 +17,7 @@ import (
 // sections 家具 (s1) and 完了 (s2); task t1 is in it.
 type sectionStore struct {
 	relationStore
-	marks map[string]string // sync_state: the 402s recorded (readmodel.PlanKey), and older ones
+	marks map[string]string // feature+":"+ws -> RFC3339 timestamp
 }
 
 // refuse records a 402 for feature in workspace ws at at, as the sync engine does.
@@ -24,7 +25,7 @@ func (f *sectionStore) refuse(feature, ws string, at time.Time) {
 	if f.marks == nil {
 		f.marks = map[string]string{}
 	}
-	f.marks[readmodel.PlanKey(feature, ws)] = at.UTC().Format(time.RFC3339)
+	f.marks[feature+":"+ws] = at.UTC().Format(time.RFC3339)
 }
 
 // p1, its sections and task t1 are in workspace w1 (relationStore); the cache also knows w2.
@@ -150,8 +151,16 @@ func (f *sectionStore) MoveSectionLocal(_ context.Context, sectionGID, before, a
 	return f.write("MoveSectionLocal", "%s before=%s after=%s at=%s", sectionGID, before, after, now.Format(time.TimeOnly))
 }
 
-func (f *sectionStore) SyncState(_ context.Context, key string) (string, error) {
-	return f.marks[key], nil
+func (f *sectionStore) PlanRefusedAt(_ context.Context, feature, workspaceGID string) (time.Time, bool, error) {
+	v := f.marks[feature+":"+workspaceGID]
+	if v == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, false, nil
+	}
+	return at, true, nil
 }
 
 func (f *sectionStore) SectionName(_ context.Context, gid string) (string, error) {
@@ -200,7 +209,7 @@ func TestSectionsPlanUnavailable(t *testing.T) {
 	st := &sectionStore{}
 	clock := ticking()
 	now := clock()
-	st.refuse(readmodel.PlanSections, "w1", now)
+	st.refuse(plan.Sections, "w1", now)
 	s := &Sections{Store: st, Clock: clock}
 	ctx := context.Background()
 	for name, f := range map[string]func() error{
@@ -226,7 +235,7 @@ func TestSectionsPlanUnavailable(t *testing.T) {
 	if !s.Available(ctx) {
 		t.Error("Available = false with a 402 in w1 only")
 	}
-	st.refuse(readmodel.PlanSections, "w2", now)
+	st.refuse(plan.Sections, "w2", now)
 	if s.Available(ctx) {
 		t.Error("Available = true with a 402 in every workspace")
 	}
@@ -236,12 +245,12 @@ func TestSectionsPlanUnavailable(t *testing.T) {
 }
 
 // #50: a 402 in another workspace (a free one) does not hide sections in this one (a paid
-// organization), and a 402 is tried again after readmodel.PlanRecheckAfter.
+// organization), and a 402 is tried again after plan.RecheckAfter.
 func TestSectionsPlanPerWorkspace(t *testing.T) {
 	ctx := context.Background()
 	st := &sectionStore{}
 	clock := ticking()
-	st.refuse(readmodel.PlanSections, "w2", clock())
+	st.refuse(plan.Sections, "w2", clock())
 	s := &Sections{Store: st, Clock: clock}
 	if _, err := s.Create(ctx, "新居", "保留", SectionPlace{}); err != nil {
 		t.Errorf("Create with a 402 in w2 only: %v", err)
@@ -252,13 +261,13 @@ func TestSectionsPlanPerWorkspace(t *testing.T) {
 
 	st = &sectionStore{}
 	start := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
-	st.refuse(readmodel.PlanSections, "w1", start)
-	at := start.Add(readmodel.PlanRecheckAfter - time.Second)
+	st.refuse(plan.Sections, "w1", start)
+	at := start.Add(plan.RecheckAfter - time.Second)
 	s = &Sections{Store: st, Clock: func() time.Time { return at }}
 	if _, err := s.CreateHere(ctx, "p1", "x", "", ""); !IsPlanUnavailable(err) {
 		t.Errorf("CreateHere just before a day: err = %v", err)
 	}
-	at = start.Add(readmodel.PlanRecheckAfter)
+	at = start.Add(plan.RecheckAfter)
 	if _, err := s.CreateHere(ctx, "p1", "x", "", ""); err != nil {
 		t.Errorf("CreateHere a day after the 402: %v", err)
 	}
@@ -269,8 +278,8 @@ func TestSectionsPlanPerWorkspace(t *testing.T) {
 func TestSectionsOldGlobalPlanRecordIgnored(t *testing.T) {
 	ctx := context.Background()
 	st := &sectionStore{marks: map[string]string{
-		readmodel.KeyPlanUnavailable + readmodel.PlanSections:  "2026-11-17T09:59:00Z",
-		readmodel.KeyPlanUnavailable + readmodel.PlanMySection: "2026-11-17T09:59:00Z",
+		"plan_unavailable:" + plan.Sections:  "2026-11-17T09:59:00Z",
+		"plan_unavailable:" + plan.MySection: "2026-11-17T09:59:00Z",
 	}}
 	s := &Sections{Store: st, Clock: ticking()}
 	if !s.Available(ctx) {
@@ -320,7 +329,7 @@ func TestSectionsMoveMine(t *testing.T) {
 		t.Errorf("MySections = %v", secs)
 	}
 	// A 402 in another workspace hides nothing here.
-	st.refuse(readmodel.PlanMySection, "w2", time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC))
+	st.refuse(plan.MySection, "w2", time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC))
 	if secs, err := s.MySections(ctx, "w1"); err != nil || len(secs) != 2 {
 		t.Errorf("MySections(w1) after a 402 in w2 = %v, %v", secs, err)
 	}
@@ -331,7 +340,7 @@ func TestSectionsMoveMine(t *testing.T) {
 		t.Errorf("MySections(w2) after a 402 there = %v, %v", secs, err)
 	}
 	// Not on this plan in the task's (and the default) workspace: nothing is offered.
-	st.refuse(readmodel.PlanMySection, "w1", time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC))
+	st.refuse(plan.MySection, "w1", time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC))
 	if secs, err := s.MySections(ctx, ""); err != nil || len(secs) != 0 {
 		t.Errorf("MySections after a 402 = %v, %v", secs, err)
 	}

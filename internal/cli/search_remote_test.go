@@ -65,7 +65,7 @@ func findCLIEnv(t *testing.T, f *fakeFindAsana) (string, func(args ...string) (s
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	return path, func(args ...string) (string, string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
