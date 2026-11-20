@@ -14,9 +14,9 @@ import (
 )
 
 func init() {
-	register(outbox.KindMarkNotification, opHandler{
-		send: func(s *Pusher, ctx context.Context, op outbox.Op) (outcome, error) {
-			out, _, err := s.pushMarkNotification(ctx, op)
+	registerOf(outbox.KindMarkNotification, handlerOf[outbox.MarkNotification]{
+		send: func(s *Pusher, ctx context.Context, op outbox.Op, p outbox.MarkNotification) (outcome, error) {
+			out, _, err := s.pushMarkNotification(ctx, op, p)
 			return out, err
 		},
 		sendAlong: (*Pusher).pushMarkNotification,
@@ -178,9 +178,8 @@ func (s *Puller) fetchNotificationTargets(ctx context.Context, keep map[string]b
 // what the user asks for is tried again). A change Asana accepts, or logging in again,
 // clears it. batched is how many other
 // entries were sent along.
-func (s *Pusher) pushMarkNotification(ctx context.Context, op outbox.Op) (out outcome, batched int, err error) {
-	ws, _ := op.Payload["workspace"].(string)
-	read, _ := op.Payload["read"].(bool)
+func (s *Pusher) pushMarkNotification(ctx context.Context, op outbox.Op, mark outbox.MarkNotification) (out outcome, batched int, err error) {
+	ws, read := mark.Workspace, mark.Read
 	peers, err := s.Store.PendingNotificationMarks(ctx, op, model.MaxNotificationGIDs-1)
 	if err != nil {
 		return sent, batched, err

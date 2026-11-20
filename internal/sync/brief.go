@@ -20,7 +20,7 @@ import (
 // (plan.go); a 403 makes this one project's brief unavailable (briefRefusal).
 
 func init() {
-	register(outbox.KindUpdateProjectBrief, opHandler{send: (*Pusher).pushUpdateBrief})
+	registerOf(outbox.KindUpdateProjectBrief, handlerOf[outbox.UpdateProjectBrief]{send: (*Pusher).pushUpdateBrief})
 }
 
 // briefs is what Pusher and Details share to read a project's brief and to record that
@@ -78,7 +78,7 @@ func sameBriefText(a, b string) bool {
 // here and one deleted there while it was changed here (a delete conflicts with any change
 // there). A change Asana already has (it was sent before and its answer lost, or someone
 // made the same change) is done without sending it again.
-func (s *Pusher) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdateBrief(ctx context.Context, op outbox.Op, b outbox.UpdateProjectBrief) (outcome, error) {
 	p, err := s.API.Project(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err // a 404: the project was deleted (dropGone)
@@ -88,10 +88,10 @@ func (s *Pusher) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 		return sent, s.briefs().briefRefusal(ctx, op.TaskGID, err)
 	}
 	str := func(m map[string]any, k string) string { v, _ := m[k].(string); return v }
-	del := op.Payload["delete"] == true
-	title, hasTitle := op.Payload["title"].(string)
-	htmlText, hasBody := op.Payload["html_text"].(string)
-	text := str(op.Payload, "text")
+	del := b.Delete
+	title, hasTitle := outbox.Str(b.Title), b.Title != nil
+	htmlText, hasBody := outbox.Str(b.HTMLText), b.HTMLText != nil
+	text := outbox.Str(b.Text)
 	baseState := str(op.Base, "state")
 	baseTitle, baseText := str(op.Base, "title"), str(op.Base, "text")
 	conflict := false

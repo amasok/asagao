@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/plan"
 )
@@ -41,14 +40,19 @@ func TestHandlersAgreeWithSpecs(t *testing.T) {
 			t.Errorf("%s creates something but has no find", k)
 		}
 		// A comment, attachment or time entry edited before it was created waits for it.
-		if h.local.key != "" && (h.local.result == "" || spec.Subject != outbox.SubjectTask) {
-			t.Errorf("%s: local %+v", k, h.local)
+		if h.local != nil {
+			if _, result, ok := h.local(outbox.Op{Kind: k}); !ok || result == "" || spec.Subject != outbox.SubjectTask {
+				t.Errorf("%s: local %q, %v", k, result, ok)
+			}
 		}
 		// Only entries of a feature recorded per workspace need its workspace.
-		if f := plan.FeatureOf(k); h.planWorkspace != nil && f != plan.Sections && f != plan.Tags && f != plan.MySection {
+		perWorkspace := func(f string) bool {
+			return f == plan.Sections || f == plan.Tags || f == plan.MySection || f == plan.CustomFields
+		}
+		if f := plan.FeatureOf(k); h.planWorkspace != nil && !perWorkspace(f) {
 			t.Errorf("%s has a plan workspace but its feature (%q) is not recorded so", k, f)
 		}
-		if f := plan.FeatureOf(k); h.planWorkspace == nil && (f == plan.Sections || f == plan.Tags || f == plan.MySection) {
+		if f := plan.FeatureOf(k); h.planWorkspace == nil && perWorkspace(f) {
 			t.Errorf("%s (%s) has no plan workspace", k, f)
 		}
 		// Batched entries change an existing task (batchEntryFor needs its gid).
@@ -68,16 +72,23 @@ func TestHandlersAgreeWithSpecs(t *testing.T) {
 }
 
 func TestRegisterRefusesMistakes(t *testing.T) {
-	noop := func(*Pusher, context.Context, outbox.Op) (outcome, error) { return sent, nil }
+	noop := func(*Pusher, context.Context, outbox.Op, outbox.UpdateTask) (outcome, error) { return sent, nil }
+	other := func(*Pusher, context.Context, outbox.Op, outbox.Follower) (outcome, error) { return sent, nil }
+	saved := handlers[outbox.KindAddTag]
 	for _, tc := range []struct {
-		name string
-		kind outbox.Kind
-		h    opHandler
+		name     string
+		register func()
 	}{
-		{"twice", outbox.KindUpdateTask, opHandler{send: noop}},
-		{"unknown kind", "made_up", opHandler{send: noop}},
-		{"empty kind", "", opHandler{send: noop}},
-		{"without send", outbox.KindUpdateTask, opHandler{}},
+		{"twice", func() { registerOf(outbox.KindUpdateTask, handlerOf[outbox.UpdateTask]{send: noop}) }},
+		{"unknown kind", func() { registerOf("made_up", handlerOf[outbox.UpdateTask]{send: noop}) }},
+		{"empty kind", func() { registerOf("", handlerOf[outbox.UpdateTask]{send: noop}) }},
+		{"without send", func() { registerOf(outbox.KindUpdateTask, handlerOf[outbox.UpdateTask]{}) }},
+		{"another kind's payload", func() { registerOf(outbox.KindAddTag, handlerOf[outbox.Follower]{send: other}) }},
+		{"another kind's payload, kind not registered", func() {
+			delete(handlers, outbox.KindAddTag)
+			defer func() { handlers[outbox.KindAddTag] = saved }()
+			registerOf(outbox.KindAddTag, handlerOf[outbox.Follower]{send: other})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := len(handlers)
@@ -89,19 +100,19 @@ func TestRegisterRefusesMistakes(t *testing.T) {
 					t.Errorf("handlers changed: %d → %d", before, len(handlers))
 				}
 			}()
-			register(tc.kind, tc.h)
+			tc.register()
 		})
 	}
 }
 
-// An entry of a kind this version does not know (written by a newer one) is refused like
-// a 400, without a request, and has nothing to look for.
-func TestUnknownKindIsRefused(t *testing.T) {
+// An entry of a kind this version does not know (written by a newer one) is not sent
+// (held, see unreadable.go), without a request, and has nothing to look for.
+func TestUnknownKindIsNotSent(t *testing.T) {
 	s := &Syncer{}
 	op := outbox.Op{Kind: "from_the_future", TaskGID: "t1"}
 	out, err := s.Pusher().sendOp(context.Background(), op)
-	var apiErr *model.Error
-	if out != sent || !errors.As(err, &apiErr) || apiErr.Status != 400 {
+	var u *unreadableError
+	if out != sent || !errors.As(err, &u) || !errors.Is(err, outbox.ErrUnknownKind) {
 		t.Fatalf("sendOp = %v, %v", out, err)
 	}
 	out, m, err := s.Pusher().find(context.Background(), op, s.clock())

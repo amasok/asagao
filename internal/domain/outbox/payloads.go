@@ -314,3 +314,34 @@ type FieldSetting struct {
 	FieldName string `json:"field_name"`
 	Workspace string `json:"workspace"`
 }
+
+// sectionRefs are the payloads that name sections (under SectionRefKeys).
+type sectionRefs interface{ sectionRefs() []string }
+
+func (p CreateTask) sectionRefs() []string        { return []string{Str(p.Section)} }
+func (p MoveTask) sectionRefs() []string          { return []string{p.Section} }
+func (p ProjectMembership) sectionRefs() []string { return []string{Str(p.Section)} }
+func (p CreateSection) sectionRefs() []string     { return []string{p.Before, p.After} }
+func (p InsertSection) sectionRefs() []string     { return []string{p.Before, p.After} }
+func (p MoveMySection) sectionRefs() []string     { return []string{p.Section} }
+
+// SectionRefs returns the sections the payload of op names (under SectionRefKeys: the
+// section a task goes to, the section another one is put next to), which may have been
+// created offline. An unreadable payload names none.
+func SectionRefs(op Op) []string {
+	p, err := DecodePayload(op)
+	if err != nil {
+		return nil
+	}
+	r, ok := p.(sectionRefs)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, g := range r.sectionRefs() {
+		if g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
+}

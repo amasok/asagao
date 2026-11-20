@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -26,6 +27,8 @@ func oldPlanWorkspace(ctx context.Context, s *Syncer, op outbox.Op) string {
 		}
 	case outbox.KindUpdateTag:
 		ws, _ = s.Store.TagWorkspace(ctx, op.TaskGID)
+	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
+		ws = str("workspace") // main read it in send (#86: planWorkspace)
 	case outbox.KindDeleteTag:
 		if ws = str("workspace"); ws == "" {
 			tasks, _ := op.Payload["tasks"].([]any)
@@ -44,6 +47,20 @@ func oldPlanWorkspace(ctx context.Context, s *Syncer, op outbox.Op) string {
 	return ws
 }
 
+// asStored returns op as the store reads it back: its payload through JSON.
+func asStored(t *testing.T, op outbox.Op) outbox.Op {
+	t.Helper()
+	b, err := json.Marshal(op.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op.Payload = nil
+	if err := json.Unmarshal(b, &op.Payload); err != nil {
+		t.Fatal(err)
+	}
+	return op
+}
+
 func attackWorld(t *testing.T) (*Syncer, *store.Store) {
 	t.Helper()
 	_, _, s, st := setupPush(t)
@@ -60,8 +77,9 @@ func attackWorld(t *testing.T) (*Syncer, *store.Store) {
 	return s, st
 }
 
-// Every kind answers planWorkspace as main did, for payloads that give, miss or garble
-// the keys it reads.
+// Every kind answers planWorkspace as main did, for payloads that give or miss the keys
+// it reads. A payload that does not read as its kind's struct (#86) is held before it is
+// sent: its workspace is the default one.
 func TestAttackPlanWorkspaceEveryKind(t *testing.T) {
 	s, _ := attackWorld(t)
 	ctx := context.Background()
@@ -77,14 +95,18 @@ func TestAttackPlanWorkspaceEveryKind(t *testing.T) {
 		{"tasks": []any{"t2"}},
 		{"tasks": []any{"", "t2", "t1"}},
 		{"tasks": []any{5.0, "t1"}},
-		{"tasks": []string{"t2"}}, // not what JSON gives: ignored by both
+		{"tasks": []string{"t2"}}, // not what JSON gives: read as the store would read it back
 		{"tasks": "t2"},
 	}
 	for _, k := range outbox.AllKinds() {
 		for _, gid := range []string{"", "t1", "t2", "g2", "p2", "local:zz"} {
 			for _, p := range payloads {
 				op := outbox.Op{Kind: k, TaskGID: gid, Payload: p}
-				if got, want := s.Pusher().planWorkspace(ctx, op), oldPlanWorkspace(ctx, s, op); got != want {
+				want := oldPlanWorkspace(ctx, s, asStored(t, op))
+				if outbox.Readable(op) != nil {
+					want, _ = s.Store.DefaultWorkspace(ctx)
+				}
+				if got := s.Pusher().planWorkspace(ctx, op); got != want {
 					t.Errorf("%s gid=%q payload=%v: %q, want %q", k, gid, p, got, want)
 				}
 			}
@@ -203,7 +225,8 @@ func oldBatchable(ctx context.Context, s *Syncer, op outbox.Op) (bool, error) {
 }
 
 // Which entries can go out in a batch is what main decided, for every kind and for
-// payloads at the edges.
+// payloads at the edges. One whose payload does not read as its kind's struct (#86) is
+// never batched: sent on its own, it is held.
 func TestAttackBatchableEveryKind(t *testing.T) {
 	s, _ := attackWorld(t)
 	ctx := context.Background()
@@ -230,6 +253,9 @@ func TestAttackBatchableEveryKind(t *testing.T) {
 			for _, p := range payloads {
 				op := outbox.Op{ID: 1, Kind: k, TaskGID: gid, Payload: p}
 				want, werr := oldBatchable(ctx, s, op)
+				if outbox.Readable(op) != nil {
+					want, werr = false, nil
+				}
 				e, got, err := s.Pusher().batchEntryFor(ctx, op)
 				if (err != nil) != (werr != nil) || got != want {
 					t.Errorf("%s gid=%q payload=%v: batch = %v (%v), want %v (%v)", k, gid, p, got, err, want, werr)
@@ -256,8 +282,8 @@ func TestAttackBatchableEveryKind(t *testing.T) {
 func TestAttackHandlerFlagsMatchMain(t *testing.T) {
 	for _, k := range outbox.AllKinds() {
 		h := handlers[k]
-		if h.startOn != (k == outbox.KindUpdateTask || k == outbox.KindCreateTask) {
-			t.Errorf("%s startOn = %v", k, h.startOn)
+		if (h.startOn != nil) != (k == outbox.KindUpdateTask || k == outbox.KindCreateTask) {
+			t.Errorf("%s startOn set = %v", k, h.startOn != nil)
 		}
 		if (h.sendAlong != nil) != (k == outbox.KindMarkNotification) {
 			t.Errorf("%s sendAlong set = %v", k, h.sendAlong != nil)

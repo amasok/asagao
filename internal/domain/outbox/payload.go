@@ -102,7 +102,7 @@ func EncodePayload(k Kind, p any) (map[string]any, error) {
 		return nil, fmt.Errorf("outbox: %T is not the payload of kind %q (%v)", p, k, t)
 	}
 	b, err := json.Marshal(p)
-	if err != nil {
+	if err != nil { // e.g. a NaN custom field value
 		return nil, &PayloadError{Kind: k, Err: err}
 	}
 	var m map[string]any
@@ -129,4 +129,28 @@ func decodePayload(m map[string]any, dst any) error {
 func Readable(op Op) error {
 	_, err := DecodePayload(op)
 	return err
+}
+
+// Fields returns the fields the update sets, in the stored form (key → value).
+func (p UpdateTask) Fields() map[string]any { return fieldsOf(p) }
+
+// Fields returns the fields of the create in the stored form (key → value), with where
+// the task goes (workspace, parent, project, section) and custom_fields.
+func (p CreateTask) Fields() map[string]any { return fieldsOf(p) }
+
+// Fields returns the fields the update sets, in the stored form (key → value).
+func (p UpdateProject) Fields() map[string]any { return fieldsOf(p) }
+
+// fieldsOf returns the struct v as the stored form reads back (a JSON object decoded into
+// a map). The payload structs always encode.
+func fieldsOf(v any) map[string]any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("outbox: %T does not encode: %v", v, err))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		panic(fmt.Sprintf("outbox: %T does not decode: %v", v, err))
+	}
+	return m
 }

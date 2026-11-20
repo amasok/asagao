@@ -17,17 +17,17 @@ import (
 // added to or removed from a project.
 
 func init() {
-	register(outbox.KindSetCustomField, opHandler{send: (*Pusher).pushCustomField, batch: batchCustomField,
-		fieldValues: func(op outbox.Op) map[string]any {
-			return map[string]any{payloadString(op, "field"): op.Payload["value"]}
-		}})
-	register(outbox.KindCreateEnumOption, opHandler{send: (*Pusher).pushCreateEnumOption, forbidden: enumOptionForbidden,
-		find: func(s *Pusher, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
-			m, err := s.findEnumOption(ctx, op)
+	registerOf(outbox.KindSetCustomField, handlerOf[outbox.SetCustomField]{send: (*Pusher).pushCustomField, batch: batchCustomField,
+		fieldValues: func(p outbox.SetCustomField) map[string]any { return map[string]any{p.Field: p.Value} }})
+	registerOf(outbox.KindCreateEnumOption, handlerOf[outbox.CreateEnumOption]{send: (*Pusher).pushCreateEnumOption, forbidden: enumOptionForbidden,
+		find: func(s *Pusher, ctx context.Context, op outbox.Op, p outbox.CreateEnumOption, _ finder) (outcome, match, error) {
+			m, err := s.findEnumOption(ctx, op, p)
 			return sent, m, err
-		}})
-	register(outbox.KindAddFieldSetting, opHandler{send: sends((*Pusher).pushFieldSetting), forbidden: fieldSettingForbidden})
-	register(outbox.KindRemoveFieldSetting, opHandler{send: sends((*Pusher).pushFieldSetting), forbidden: fieldSettingForbidden})
+		},
+		planWorkspace: func(_ *Pusher, _ context.Context, _ outbox.Op, p outbox.CreateEnumOption) string { return p.Workspace }})
+	settingWorkspace := func(_ *Pusher, _ context.Context, _ outbox.Op, p outbox.FieldSetting) string { return p.Workspace }
+	registerOf(outbox.KindAddFieldSetting, handlerOf[outbox.FieldSetting]{send: sends((*Pusher).pushFieldSetting), forbidden: fieldSettingForbidden, planWorkspace: settingWorkspace})
+	registerOf(outbox.KindRemoveFieldSetting, handlerOf[outbox.FieldSetting]{send: sends((*Pusher).pushFieldSetting), forbidden: fieldSettingForbidden, planWorkspace: settingWorkspace})
 }
 
 // waitsForField reports whether a value of a custom field (set_custom_field, or a create
@@ -77,17 +77,15 @@ func optionGIDs(v any) []string {
 // pushCreateEnumOption adds an option to a field. An enabled option with the name that
 // Asana already has (added by someone else meanwhile, or by an earlier request of ours
 // whose answer was lost) is taken instead of creating a second one.
-func (s *Pusher) pushCreateEnumOption(ctx context.Context, op outbox.Op) (outcome, error) {
-	if m, err := s.findEnumOption(ctx, op); err != nil || m == matched {
+func (s *Pusher) pushCreateEnumOption(ctx context.Context, op outbox.Op, p outbox.CreateEnumOption) (outcome, error) {
+	if m, err := s.findEnumOption(ctx, op, p); err != nil || m == matched {
 		return sent, err
 	}
-	field, _ := op.Payload["field"].(string)
-	name, _ := op.Payload["name"].(string)
-	created, err := s.API.CreateEnumOption(ctx, field, name)
+	created, err := s.API.CreateEnumOption(ctx, p.Field, p.Name)
 	if isRefusedAsIs(err) {
 		// e.g. "An enum option already exists with the name" (someone added it meanwhile):
 		// take that one.
-		if m, ferr := s.findEnumOption(ctx, op); ferr == nil && m == matched {
+		if m, ferr := s.findEnumOption(ctx, op, p); ferr == nil && m == matched {
 			return sent, nil
 		}
 	}
@@ -103,10 +101,9 @@ func (s *Pusher) pushCreateEnumOption(ctx context.Context, op outbox.Op) (outcom
 // findEnumOption looks in Asana for an enabled option of the field with the entry's name
 // that no other local entry took (the first, if there are several: they are the same
 // choice to the user). matched: it was recorded as the entry's result.
-func (s *Pusher) findEnumOption(ctx context.Context, op outbox.Op) (match, error) {
-	field, _ := op.Payload["field"].(string)
-	name, _ := op.Payload["name"].(string)
-	f, err := s.API.CustomField(ctx, field)
+func (s *Pusher) findEnumOption(ctx context.Context, op outbox.Op, p outbox.CreateEnumOption) (match, error) {
+	name := p.Name
+	f, err := s.API.CustomField(ctx, p.Field)
 	if err != nil {
 		return notFound, err
 	}
@@ -125,9 +122,9 @@ func (s *Pusher) findEnumOption(ctx context.Context, op outbox.Op) (match, error
 // pushFieldSetting adds a field to a project or removes it. If Asana refuses because the
 // project already is as wanted (someone else did it, or an earlier request whose answer
 // was lost), it is done. The project's fields are then fetched again.
-func (s *Pusher) pushFieldSetting(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushFieldSetting(ctx context.Context, op outbox.Op, p outbox.FieldSetting) error {
 	project, add := op.TaskGID, op.Kind == outbox.KindAddFieldSetting
-	field, _ := op.Payload["field"].(string)
+	field := p.Field
 	var err error
 	if add {
 		err = s.API.AddCustomFieldSetting(ctx, project, field)
@@ -184,15 +181,15 @@ func hasField(settings []model.CustomFieldSetting, field string) bool {
 
 // enumOptionForbidden records that Asana refused (403) to add an option to a field, so
 // that adding one is not offered again for that field, and says why.
-func enumOptionForbidden(s *Pusher, ctx context.Context, op outbox.Op, cause error) error {
-	_ = s.Store.SetFieldOptionsLocked(ctx, payloadString(op, "field"), s.clock())
+func enumOptionForbidden(s *Pusher, ctx context.Context, _ outbox.Op, p outbox.CreateEnumOption, cause error) error {
+	_ = s.Store.SetFieldOptionsLocked(ctx, p.Field, s.clock())
 	return fmt.Errorf("Asana がこのフィールドへの選択肢の追加を許可しませんでした (選択肢の編集が制限されているか、権限がありません): %w", cause)
 }
 
 // fieldSettingForbidden records that Asana refused (403) to add a custom field to a
 // project or remove one from it, so that it is not offered again for that project, and
 // says why.
-func fieldSettingForbidden(s *Pusher, ctx context.Context, op outbox.Op, cause error) error {
+func fieldSettingForbidden(s *Pusher, ctx context.Context, op outbox.Op, _ outbox.FieldSetting, cause error) error {
 	_ = s.Store.SetProjectFieldsLocked(ctx, op.TaskGID, s.clock())
 	return fmt.Errorf("Asana がこのプロジェクトのカスタムフィールドの変更を許可しませんでした (権限がありません): %w", cause)
 }
@@ -237,7 +234,7 @@ func (s *Puller) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 // pushCustomField sets one custom field, after checking that nobody changed it in Asana
 // since it was edited here. A field the task no longer has is treated like a 404 (the
 // change is dropped and the user told).
-func (s *Pusher) pushCustomField(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushCustomField(ctx context.Context, op outbox.Op, p outbox.SetCustomField) (outcome, error) {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -249,16 +246,16 @@ func (s *Pusher) pushCustomField(ctx context.Context, op outbox.Op) (outcome, er
 	if err != nil {
 		return sent, err
 	}
-	if conflicts, err := customFieldConflict(op, server); err != nil {
+	if conflicts, err := customFieldConflict(op, p, server); err != nil {
 		return sent, err
 	} else if conflicts != nil {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
-	t, err := s.API.UpdateTask(ctx, task, customFieldUpdate(op))
+	t, err := s.API.UpdateTask(ctx, task, customFieldUpdate(p))
 	var apiErr *model.Error
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
 		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
-		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
+		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", p.FieldName, err)
 	}
 	if err != nil {
 		return sent, err
@@ -273,26 +270,23 @@ func (s *Pusher) pushCustomField(ctx context.Context, op outbox.Op) (outcome, er
 // customFieldConflict compares a custom field change with the task in Asana: the server's
 // value if it was changed there too (nil if not), or a 404 if the task no longer has the
 // field.
-func customFieldConflict(op outbox.Op, server *model.Task) (map[string]any, error) {
+func customFieldConflict(op outbox.Op, p outbox.SetCustomField, server *model.Task) (map[string]any, error) {
 	if server.Partial { // Asana gave no custom fields to compare with: just send
 		return nil, nil
 	}
-	field, _ := op.Payload["field"].(string)
-	sv, display, found := model.ServerCustomField(server, field)
+	sv, display, found := model.ServerCustomField(server, p.Field)
 	if !found {
 		return nil, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
 	}
-	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(op.Payload["value"])) {
+	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(p.Value)) {
 		return map[string]any{"value": sv, "display": display}, nil
 	}
 	return nil, nil
 }
 
 // customFieldUpdate is the task update that sets a custom field change.
-func customFieldUpdate(op outbox.Op) map[string]any {
-	field, _ := op.Payload["field"].(string)
-	fieldType, _ := op.Payload["type"].(string)
-	return map[string]any{"custom_fields": map[string]any{field: model.CustomFieldAPIValue(fieldType, op.Payload["value"])}}
+func customFieldUpdate(p outbox.SetCustomField) map[string]any {
+	return map[string]any{"custom_fields": map[string]any{p.Field: model.CustomFieldAPIValue(p.Type, p.Value)}}
 }
 
 // normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
@@ -311,16 +305,17 @@ func normalize(v any) any {
 }
 
 // batchCustomField is the batch request for a set_custom_field, checked against the task in Asana first.
-func batchCustomField(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
-	str := func(k string) string { return payloadString(op, k) }
+func batchCustomField(s *Pusher, ctx context.Context, op outbox.Op, p outbox.SetCustomField, e *batchEntry) (bool, error) {
 	task := e.task
-	if str("field") == "" {
+	if p.Field == "" {
 		return false, nil
 	}
 	if wait, err := s.waitsForField(ctx, op); err != nil || wait {
 		return false, err // an option or a field of the project is created first
 	}
-	e.write = model.BatchUpdateTask(task, customFieldUpdate(op))
-	e.check = customFieldConflict
+	e.write = model.BatchUpdateTask(task, customFieldUpdate(p))
+	e.check = func(op outbox.Op, server *model.Task) (map[string]any, error) {
+		return customFieldConflict(op, p, server)
+	}
 	return true, nil
 }

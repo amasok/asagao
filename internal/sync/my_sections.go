@@ -12,10 +12,10 @@ import (
 // The sections of My Tasks (#35).
 
 func init() {
-	register(outbox.KindMoveMySection, opHandler{send: sends((*Pusher).pushMoveMySection),
-		planWorkspace: func(s *Pusher, ctx context.Context, op outbox.Op) string {
-			if ws := payloadString(op, "workspace"); ws != "" {
-				return ws
+	registerOf(outbox.KindMoveMySection, handlerOf[outbox.MoveMySection]{send: sends((*Pusher).pushMoveMySection),
+		planWorkspace: func(s *Pusher, ctx context.Context, op outbox.Op, p outbox.MoveMySection) string {
+			if p.Workspace != "" {
+				return p.Workspace
 			}
 			ws, _ := s.Store.TaskWorkspace(ctx, op.TaskGID)
 			return ws
@@ -56,7 +56,7 @@ func (s *Puller) syncMySections(ctx context.Context, workspaceGID string) error 
 }
 
 // pushMoveMySection moves a task to another section of My Tasks (harmless to repeat).
-func (s *Pusher) pushMoveMySection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushMoveMySection(ctx context.Context, op outbox.Op, p outbox.MoveMySection) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -64,8 +64,7 @@ func (s *Pusher) pushMoveMySection(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(task) {
 		return &model.Error{Status: 404} // its create failed
 	}
-	section, _ := op.Payload["section"].(string)
-	if err := s.API.AddTaskToSection(ctx, section, task); err != nil {
+	if err := s.API.AddTaskToSection(ctx, p.Section, task); err != nil {
 		return err
 	}
 	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
