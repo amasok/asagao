@@ -15,8 +15,8 @@ import (
 )
 
 func init() {
-	registerUndo(OpUpdateTag, undoTagOp)
-	registerUndo(OpDeleteTag, undoTagOp)
+	registerUndo(OpUpdateTag, undoUpdateTag)
+	registerUndo(OpDeleteTag, undoDeleteTag)
 }
 
 // Operations on tags themselves (outbox.KindUpdateTag, outbox.KindDeleteTag).
@@ -274,29 +274,25 @@ func reapplyTagEdits(ctx context.Context, tx *sql.Tx, gids ...string) error {
 }
 
 // undoTagOp undoes the local change of a tag entry that is discarded.
-func undoTagOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	switch op.Kind {
-	case OpUpdateTag:
-		for _, k := range []string{"name", "color"} {
-			if v, ok := op.Base[k].(string); ok {
-				if _, err := tx.ExecContext(ctx, "UPDATE tags SET "+k+" = ? WHERE gid = ?", v, op.TaskGID); err != nil {
-					return err
-				}
-			}
-		}
-	case OpDeleteTag:
-		name, _ := op.Payload["name"].(string)
-		color, _ := op.Payload["color"].(string)
-		workspace, _ := op.Payload["workspace"].(string)
-		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO tags(gid, name, color, workspace_gid) VALUES(?, ?, ?, ?)", op.TaskGID, name, color, workspace); err != nil {
-			return err
-		}
-		tasks, _ := op.Payload["tasks"].([]any)
-		for _, t := range tasks {
-			g, _ := t.(string)
-			if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) SELECT gid, ? FROM tasks WHERE gid = ?", op.TaskGID, g); err != nil {
+func undoUpdateTag(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.UpdateTag) error {
+	for _, k := range []string{"name", "color"} {
+		if v, ok := op.Base[k].(string); ok {
+			if _, err := tx.ExecContext(ctx, "UPDATE tags SET "+k+" = ? WHERE gid = ?", v, op.TaskGID); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// undoDeleteTag puts back a tag whose delete is discarded, on the tasks it was on.
+func undoDeleteTag(ctx context.Context, tx *sql.Tx, op *Op, p outbox.DeleteTag) error {
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO tags(gid, name, color, workspace_gid) VALUES(?, ?, ?, ?)", op.TaskGID, p.Name, p.Color, p.Workspace); err != nil {
+		return err
+	}
+	for _, g := range p.Tasks {
+		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) SELECT gid, ? FROM tasks WHERE gid = ?", op.TaskGID, g); err != nil {
+			return err
 		}
 	}
 	return nil

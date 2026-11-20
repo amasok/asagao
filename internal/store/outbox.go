@@ -23,18 +23,18 @@ import (
 )
 
 func init() {
-	registerUndo(OpCreateTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpCreateTask, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.CreateTask) error {
 		return discardLocalTask(ctx, tx, op.TaskGID, true)
 	})
-	registerUndo(OpDuplicateTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpDuplicateTask, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.DuplicateTask) error {
 		return discardLocalTask(ctx, tx, op.TaskGID, false)
 	})
 	// Restore the values from before the local edit.
-	registerUndo(OpUpdateTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpUpdateTask, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.UpdateTask) error {
 		return applyFields(ctx, tx, op.TaskGID, op.Base, time.Time{})
 	})
-	registerUndo(OpMoveTask, func(ctx context.Context, tx *sql.Tx, op *Op) error {
-		project, _ := op.Payload["project"].(string)
+	registerUndo(OpMoveTask, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.MoveTask) error {
+		project := p.Project
 		section, _ := op.Base["section"].(string)
 		if err := setSection(ctx, tx, op.TaskGID, project, section); err != nil {
 			return err
@@ -43,7 +43,7 @@ func init() {
 	})
 	// The task stays in the store, hidden while its delete is queued: dropping the entry
 	// shows it again.
-	registerUndo(OpDeleteTask, nothingToUndo)
+	registerUndo(OpDeleteTask, nothingToUndo[outbox.DeleteTask])
 }
 
 // Offline editing: every write is applied to the local tables immediately and recorded in

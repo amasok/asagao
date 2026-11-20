@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	registerUndo(OpSetCustomField, undoWith(applyCustomFieldOp))
+	registerUndo(OpSetCustomField, undoWith[outbox.SetCustomField](applyCustomFieldOp))
 }
 
 // Custom fields. Values are kept in the form Asana accepts when setting them (PUT
@@ -765,13 +765,13 @@ func applyCustomField(ctx context.Context, tx *sql.Tx, taskGID, fieldGID string,
 
 // applyCustomFieldOp writes the value of a set_custom_field entry (or, with undo, its base).
 func applyCustomFieldOp(ctx context.Context, tx *sql.Tx, op Op, undo bool) error {
-	field, _ := op.Payload["field"].(string)
-	src := op.Payload
+	p, _ := outbox.BestEffortPayload[outbox.SetCustomField](op)
+	value, display := p.Value, p.Display
 	if undo {
-		src = op.Base
+		display, _ = op.Base["display"].(string)
+		value = op.Base["value"]
 	}
-	display, _ := src["display"].(string)
-	return applyCustomField(ctx, tx, op.TaskGID, field, src["value"], display)
+	return applyCustomField(ctx, tx, op.TaskGID, p.Field, value, display)
 }
 
 // findCustomFieldOp returns the pending or conflicted entry setting field of task.

@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	registerUndo(OpRenameSection, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpRenameSection, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.RenameSection) error {
 		name, ok := op.Base["name"].(string)
 		if !ok {
 			return nil

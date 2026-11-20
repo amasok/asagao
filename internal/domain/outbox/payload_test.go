@@ -329,3 +329,44 @@ func TestEncodePayload(t *testing.T) {
 		t.Errorf("create_section = %s, want %s", got, want)
 	}
 }
+
+// An unreadable payload still reads as far as it can: the fields of the right type.
+func TestBestEffortPayload(t *testing.T) {
+	op := Op{Kind: KindMoveTask, Payload: stored(t, `{"project":"p1","section":5,"section_name":"s","from_the_future":true}`)}
+	p, err := BestEffortPayload[MoveTask](op)
+	var pe *PayloadError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v", err)
+	}
+	if p != (MoveTask{Project: "p1", SectionName: "s"}) {
+		t.Fatalf("payload = %+v", p)
+	}
+	p, err = BestEffortPayload[MoveTask](Op{Kind: KindMoveTask, Payload: stored(t, `{"project":"p1","section":"s1","section_name":"s"}`)})
+	if err != nil || p != (MoveTask{Project: "p1", Section: "s1", SectionName: "s"}) {
+		t.Fatalf("readable = %+v, %v", p, err)
+	}
+	if p, err := BestEffortPayload[MoveTask](Op{Kind: "something_new", Payload: map[string]any{"project": "p1"}}); !errors.Is(err, ErrUnknownKind) || p != (MoveTask{}) {
+		t.Fatalf("unknown kind = %+v, %v", p, err)
+	}
+	if p, err := BestEffortPayload[Dependency](op); err == nil || p != (Dependency{}) {
+		t.Fatalf("another kind's struct = %+v, %v", p, err)
+	}
+}
+
+// SectionRefs names what the store replaces under SectionRefKeys, for every stored form.
+func TestSectionRefs(t *testing.T) {
+	for k, payloads := range storedPayloads {
+		for _, s := range payloads {
+			op := Op{Kind: k, Payload: stored(t, s)}
+			var want []string
+			for _, key := range SectionRefKeys {
+				if g, _ := op.Payload[key].(string); g != "" {
+					want = append(want, g)
+				}
+			}
+			if got := SectionRefs(op); !reflect.DeepEqual(got, want) {
+				t.Errorf("%s %s: SectionRefs = %v, want %v", k, s, got, want)
+			}
+		}
+	}
+}

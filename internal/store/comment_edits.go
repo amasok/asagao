@@ -15,8 +15,8 @@ import (
 )
 
 func init() {
-	registerUndo(OpAddComment, func(ctx context.Context, tx *sql.Tx, op *Op) error {
-		gid, _ := op.Payload["story_gid"].(string)
+	registerUndo(OpAddComment, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.AddComment) error {
+		gid := p.StoryGID
 		if gid == "" {
 			return nil
 		}
@@ -25,10 +25,14 @@ func init() {
 		}
 		return dropChangesOf(ctx, tx, "story", gid, OpUpdateStory, OpDeleteStory)
 	})
-	registerUndo(OpUpdateStory, undoStoryOp)
-	registerUndo(OpDeleteStory, undoStoryOp)
-	registerUndo(OpUploadAttachment, func(ctx context.Context, tx *sql.Tx, op *Op) error {
-		gid, _ := op.Payload["attachment"].(string)
+	registerUndo(OpUpdateStory, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.UpdateStory) error {
+		return undoStoryOp(ctx, tx, op, p.Story)
+	})
+	registerUndo(OpDeleteStory, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.DeleteStory) error {
+		return undoStoryOp(ctx, tx, op, p.Story)
+	})
+	registerUndo(OpUploadAttachment, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.UploadAttachment) error {
+		gid := p.Attachment
 		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
 			return err
 		}
@@ -346,8 +350,7 @@ func resolveResult(ctx context.Context, tx *sql.Tx, prefix, gid string) (string,
 }
 
 // undoStoryOp puts back what a discarded update_story or delete_story changed locally.
-func undoStoryOp(ctx context.Context, tx *sql.Tx, op *Op) error {
-	gid, _ := op.Payload["story"].(string)
+func undoStoryOp(ctx context.Context, tx *sql.Tx, op *Op, gid string) error {
 	gid, err := resolveResult(ctx, tx, resultPrefixStory, gid)
 	if err != nil {
 		return err
@@ -372,9 +375,8 @@ func undoStoryOp(ctx context.Context, tx *sql.Tx, op *Op) error {
 }
 
 // undoAttachmentDelete puts back an attachment whose delete is discarded.
-func undoAttachmentDelete(ctx context.Context, tx *sql.Tx, op *Op) error {
-	gid, _ := op.Payload["attachment"].(string)
-	gid, err := resolveResult(ctx, tx, resultPrefixAttachment, gid)
+func undoAttachmentDelete(ctx context.Context, tx *sql.Tx, op *Op, p outbox.DeleteAttachment) error {
+	gid, err := resolveResult(ctx, tx, resultPrefixAttachment, p.Attachment)
 	if err != nil {
 		return err
 	}

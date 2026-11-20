@@ -15,8 +15,8 @@ import (
 )
 
 func init() {
-	registerUndo(OpCreateStatus, func(ctx context.Context, tx *sql.Tx, op *Op) error {
-		gid, _ := op.Payload["status"].(string)
+	registerUndo(OpCreateStatus, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.CreateStatus) error {
+		gid := p.Status
 		_, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid)
 		return err
 	})

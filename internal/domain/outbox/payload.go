@@ -77,6 +77,24 @@ func PayloadOf[P any](op Op) (P, error) {
 	return p, nil
 }
 
+// BestEffortPayload returns the payload of op as P as far as it reads, for what is still
+// done with an entry whatever this version can send of it (undoing its local change when
+// it is discarded, saying what it is): a key P does not know is left out, a value of
+// another type leaves its field zero. err is PayloadOf's (nil: it read entirely); P not
+// being op's kind's struct gives a zero P.
+func BestEffortPayload[P any](op Op) (P, error) {
+	p, err := PayloadOf[P](op)
+	var pe *PayloadError
+	if !errors.As(err, &pe) {
+		return p, err
+	}
+	var q P
+	if b, merr := json.Marshal(op.Payload); merr == nil {
+		_ = json.Unmarshal(b, &q) // fills in every field that reads
+	}
+	return q, err
+}
+
 // DecodePayload returns the payload of op as its kind's struct (a value of PayloadType),
 // with the errors of PayloadOf.
 func DecodePayload(op Op) (any, error) {
