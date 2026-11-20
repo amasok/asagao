@@ -17,6 +17,15 @@ cd "$root"
 
 die() { echo "land: $*" >&2; exit 1; }
 
+LAND_PR_INITIAL_WAIT=${LAND_PR_INITIAL_WAIT:-10}
+LAND_PR_RECHECK_WAIT=${LAND_PR_RECHECK_WAIT:-20}
+
+has_no_checks() {
+	local out
+	out=$(gh pr checks "$1" 2>&1 || true)
+	[[ "$out" == *"no checks reported"* ]]
+}
+
 check() {
 	echo "== build / vet"
 	go build ./... && go vet ./...
@@ -63,14 +72,19 @@ pr)
 	git push -q origin "main:refs/heads/$1"
 	url=$(gh pr create --base main --head "$1" --title "$2" --body-file "$3")
 	echo "$url"
-	sleep 10
+	sleep "$LAND_PR_INITIAL_WAIT"
 	# 文書だけの PR では CI が回らない (ci.yml の paths)。そのときは待たない。
 	# 作った直後はまだ登録されていないことがあるので、少し待って確かめ直す。
-	if gh pr checks "$url" 2>&1 | grep -q 'no checks reported' && sleep 20 &&
-		gh pr checks "$url" 2>&1 | grep -q 'no checks reported'; then
+	if has_no_checks "$url" && sleep "$LAND_PR_RECHECK_WAIT" && has_no_checks "$url"; then
 		echo "CI: none (文書だけの変更)"
 	else
-		gh pr checks "$url" --watch --fail-fast >/dev/null 2>&1 && echo "CI: pass" || { gh pr checks "$url" | grep -v pass; die "CI が失敗しました"; }
+		if gh pr checks "$url" --watch --fail-fast >/dev/null 2>&1; then
+			echo "CI: pass"
+		else
+			summary=$(gh pr checks "$url" 2>&1 || true)
+			printf '%s\n' "$summary" | grep -v 'pass' || true
+			die "CI が失敗しました"
+		fi
 	fi
 	;;
 *)
