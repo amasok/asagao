@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // This file holds the v0.2 views: the board (sections as columns), the zoomed detail view,
@@ -200,7 +201,7 @@ func (m *Model) cardLine(t *readmodel.TaskSummary, w int, today string, selected
 	}
 	due := shortDue(t.DueOn, m.deps.Now())
 	name := t.Name + fieldBadges(t)
-	if badges := readmodel.TaskBadges(*t); badges != "" {
+	if badges := format.TaskBadges(*t); badges != "" {
 		name = t.Name + " " + badges + fieldBadges(t)
 	}
 	if t.Pending {

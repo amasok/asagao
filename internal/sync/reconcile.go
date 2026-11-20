@@ -87,14 +87,14 @@ func (s *Syncer) reconcile(ctx context.Context, op outbox.Op) (outcome, match, e
 }
 
 func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outcome, match, error) {
-	me, err := s.Store.SyncState(ctx, readmodel.KeyMeGID) // "" before the first sync: not filtered
+	me, err := s.Store.SyncedMeGID(ctx) // "" before the first sync: not filtered
 	if err != nil {
 		return sent, notFound, err
 	}
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	byMe := func(r *model.Ref) bool { return r == nil || me == "" || r.GID == me }
 	recent := func(t time.Time) bool { return !t.Before(since) }
-	taken := func(prefix string) (map[string]bool, error) { return s.Store.RecordedResults(ctx, prefix) }
+	taken := func(kind readmodel.ResultKind) (map[string]bool, error) { return s.Store.RecordedResults(ctx, kind) }
 
 	switch op.Kind {
 	case outbox.KindCreateSection:

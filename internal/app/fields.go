@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -23,7 +24,8 @@ type FieldOptionStore interface {
 	SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID string, value any, now time.Time) (string, error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+	FieldOptionsLocked(ctx context.Context, fieldGID string) (bool, error)
 }
 
 // ProjectFieldStore is the part of the local cache that adding a field to a project
@@ -34,7 +36,8 @@ type ProjectFieldStore interface {
 	ResolveProjectField(ctx context.Context, projectGID, arg string) (readmodel.ProjectFieldView, error)
 	SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID string, add bool, now time.Time) error
 	ProjectWorkspace(ctx context.Context, projectGID string) (string, error)
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+	ProjectFieldsLocked(ctx context.Context, projectGID string) (bool, error)
 }
 
 // ErrFieldLocked is returned for a change to a custom field itself that Asana refused
@@ -49,18 +52,18 @@ func (e *ErrFieldLocked) Error() string {
 }
 
 // refused says, as an error, whether Asana refused custom field changes in workspace
-// workspaceGID (402, less than PlanRecheck ago) or under lockedKey (403).
+// workspaceGID (402, less than plan.RecheckAfter ago) or whether locked reports a 403.
 func refused(ctx context.Context, st interface {
-	SyncState(ctx context.Context, key string) (string, error)
-}, workspaceGID, lockedKey string, project bool, now time.Time) error {
-	if err := planOffered(ctx, st, readmodel.PlanCustomFields, workspaceGID, now); err != nil {
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+}, workspaceGID string, isLocked func() (bool, error), project bool, now time.Time) error {
+	if err := planOffered(ctx, st, plan.CustomFields, workspaceGID, now); err != nil {
 		return err
 	}
-	v, err := st.SyncState(ctx, lockedKey)
+	locked, err := isLocked()
 	if err != nil {
 		return err
 	}
-	if v != "" {
+	if locked {
 		return &ErrFieldLocked{Project: project}
 	}
 	return nil
@@ -89,7 +92,7 @@ func (u *FieldOptions) Addable(ctx context.Context, taskGID string, f readmodel.
 	if err != nil {
 		return err
 	}
-	return refused(ctx, u.Store, ws, readmodel.KeyFieldOptionsLocked+f.GID, false, u.Clock())
+	return refused(ctx, u.Store, ws, func() (bool, error) { return u.Store.FieldOptionsLocked(ctx, f.GID) }, false, u.Clock())
 }
 
 // ParseAdding reads input as options of the enum / multi_enum field f of task taskGID (a name or gid;
@@ -202,9 +205,9 @@ type ProjectFields struct {
 
 // Available reports whether adding fields to projects and options to fields can be
 // offered in a workspace (the plan has it, unless Asana refused it there with a 402 less
-// than readmodel.PlanRecheckAfter ago).
+// than plan.RecheckAfter ago).
 func (u *ProjectFields) Available(ctx context.Context, workspaceGID string) bool {
-	return planOffered(ctx, u.Store, readmodel.PlanCustomFields, workspaceGID, u.Clock()) == nil
+	return planOffered(ctx, u.Store, plan.CustomFields, workspaceGID, u.Clock()) == nil
 }
 
 // Changeable says (nil) whether the fields of project projectGID can be changed, else why not.
@@ -213,7 +216,7 @@ func (u *ProjectFields) Changeable(ctx context.Context, projectGID string) error
 	if err != nil {
 		return err
 	}
-	return refused(ctx, u.Store, ws, readmodel.KeyProjectFieldsLocked+projectGID, true, u.Clock())
+	return refused(ctx, u.Store, ws, func() (bool, error) { return u.Store.ProjectFieldsLocked(ctx, projectGID) }, true, u.Clock())
 }
 
 // List returns the fields of the project named (or with the gid) project, then (all) the

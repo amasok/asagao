@@ -12,7 +12,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -106,7 +106,7 @@ func TestGoalToolsOffline(t *testing.T) {
 func TestGoalToolsHiddenByPlan(t *testing.T) {
 	ctx := context.Background()
 	st := seed(t)
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1"), testNow.Add(-time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.Goals, "w1", testNow.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	cs := connect(t, &Server{Store: st})

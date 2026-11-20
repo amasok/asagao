@@ -27,7 +27,7 @@ func resolveStore(t *testing.T) *store.Store {
 			t.Fatal(err)
 		}
 	}
-	must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
+	must(st.SetMeGID(ctx, "me"))
 	must(st.UpsertUser(ctx, asana.User{GID: "me", Name: "Me"}))
 	must(st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "WS"}}))
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "新居", Members: []asana.Ref{{GID: "me"}}}}, "me"))

@@ -13,7 +13,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -35,12 +35,12 @@ func TestSearchOnlyA402IsRemembered(t *testing.T) {
 			if _, err := s.SearchTasks(ctx, "x", nil, 10); err == nil {
 				t.Fatal("typeahead failure swallowed")
 			}
-			for _, feat := range []string{readmodel.PlanSearch + "", readmodel.PlanTypeahead} {
-				v, _ := st.SyncState(ctx, readmodel.PlanKey(feat, "w1"))
-				if feat == readmodel.PlanSearch && v == "" {
+			for _, feat := range []string{plan.Search, plan.Typeahead} {
+				_, ok, _ := st.PlanRefusedAt(ctx, feat, "w1")
+				if feat == plan.Search && !ok {
 					t.Error("search 402 not remembered")
 				}
-				if feat == readmodel.PlanTypeahead && v != "" {
+				if feat == plan.Typeahead && ok {
 					t.Errorf("typeahead %d remembered as a plan limit", status)
 				}
 			}
@@ -222,7 +222,7 @@ func TestTaskByCustomID402Remembered(t *testing.T) {
 			t.Fatalf("%d: %v", i, err)
 		}
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomID, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); !ok {
 		t.Fatal("402 not remembered")
 	}
 	f.customStatus = 0
@@ -240,7 +240,7 @@ func TestTaskByCustomID402Remembered(t *testing.T) {
 		if _, err := s2.TaskByCustomID(ctx, "ENG-123"); err == nil || errors.Is(err, ErrCustomIDUnavailable) {
 			t.Fatalf("%d: %v", status, err)
 		}
-		if v, _ := st2.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomID, "w1")); v != "" {
+		if _, ok, _ := st2.PlanRefusedAt(ctx, plan.CustomID, "w1"); ok {
 			t.Fatalf("%d remembered as a plan limit", status)
 		}
 	}

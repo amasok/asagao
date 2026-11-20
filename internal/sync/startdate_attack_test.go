@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -79,8 +79,8 @@ func TestPushStartOnAttack402Scope(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Push(ctx)
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanStartOn, "w1")); v != "" {
-		t.Fatalf("a rename's 402 hid start dates: %q", v)
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1"); ok {
+		t.Fatal("a rename's 402 hid start dates")
 	}
 }
 
@@ -99,8 +99,7 @@ func TestPushStartOnAttackCreate402(t *testing.T) {
 		t.Fatalf("a create refused for its start date should be sent without it: %+v", res)
 	}
 	ws, _ := st.TaskWorkspace(ctx, "t1")
-	key := readmodel.PlanKey(readmodel.PlanStartOn, "w1")
-	if v, _ := st.SyncState(ctx, key); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1"); !ok {
 		t.Fatalf("402 on create not recorded for w1 (t1's workspace %q)", ws)
 	}
 }

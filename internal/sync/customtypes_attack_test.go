@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -197,7 +197,7 @@ func TestAttackTransientErrorsRetry(t *testing.T) {
 			if len(ops) != 1 || ops[0].State == "failed" {
 				t.Fatalf("after %d: %+v", code, ops)
 			}
-			if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v != "" {
+			if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); ok {
 				t.Fatalf("%d recorded as the plan's", code)
 			}
 			f.fail("PUT /tasks/t9", code, 0)
@@ -314,10 +314,10 @@ func TestAttackPaymentRequiredPerWorkspace(t *testing.T) {
 	}
 	f.fail("PUT /tasks/t9", 402, 100)
 	_, _ = s.Push(ctx)
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); !ok {
 		t.Fatal("w1 not recorded")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanCustomTypes, "w2")); v != "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w2"); ok {
 		t.Fatal("w2 recorded by w1's 402")
 	}
 	if n := len(readmodelHidden(t, st, "w2")); n != 0 {
@@ -327,11 +327,11 @@ func TestAttackPaymentRequiredPerWorkspace(t *testing.T) {
 
 func readmodelHidden(t *testing.T, st *store.Store, ws string) []string {
 	t.Helper()
-	v, _ := st.SyncState(context.Background(), readmodel.PlanKey(readmodel.PlanCustomTypes, ws))
-	if v == "" {
+	at, ok, _ := st.PlanRefusedAt(context.Background(), plan.CustomTypes, ws)
+	if !ok {
 		return nil
 	}
-	return []string{v}
+	return []string{at.Format(time.RFC3339)}
 }
 
 // Two pushes at once send the change once.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -72,9 +73,12 @@ func TestCreateStartOn(t *testing.T) {
 }
 
 // planStore is the sync_state and workspaces StartDateOffered reads.
-type planStore map[string]string
+type planStore map[string]time.Time
 
-func (p planStore) SyncState(_ context.Context, key string) (string, error) { return p[key], nil }
+func (p planStore) PlanRefusedAt(_ context.Context, feature, workspaceGID string) (time.Time, bool, error) {
+	at, ok := p[feature+":"+workspaceGID]
+	return at, ok, nil
+}
 func (p planStore) TaskWorkspace(_ context.Context, gid string) (string, error) {
 	if gid == "gone" {
 		return "", readmodel.ErrNotFound
@@ -84,15 +88,15 @@ func (p planStore) TaskWorkspace(_ context.Context, gid string) (string, error) 
 
 func TestStartDateOffered(t *testing.T) {
 	ctx := context.Background()
-	st := planStore{readmodel.PlanKey(readmodel.PlanStartOn, "w1"): now.Add(-time.Hour).Format(time.RFC3339)}
+	st := planStore{plan.StartOn + ":w1": now.Add(-time.Hour)}
 	if StartDateOffered(ctx, st, "t-w1", now) {
 		t.Error("offered in w1 after a 402")
 	}
 	if !StartDateOffered(ctx, st, "t-w2", now) {
 		t.Error("w1's 402 hid it in w2")
 	}
-	if !StartDateOffered(ctx, st, "t-w1", now.Add(readmodel.PlanRecheckAfter)) {
-		t.Error("not offered again after PlanRecheckAfter")
+	if !StartDateOffered(ctx, st, "t-w1", now.Add(plan.RecheckAfter)) {
+		t.Error("not offered again after plan.RecheckAfter")
 	}
 	if !StartDateOffered(ctx, st, "gone", now) {
 		t.Error("a task without a known workspace is not offered it")

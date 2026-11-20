@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Timeline view (Issue #58): the project's list rows (sections, tasks and the subtasks
@@ -279,7 +280,7 @@ func (m *Model) tlNameCell(t *readmodel.TaskSummary, depth, w int, selected, foc
 	s := mark + " " + t.Name
 	// The list's marks (an approval's status, a custom type and its status, what it waits
 	// for), but the milestone's ◆, which is the mark here.
-	if badges := strings.TrimSpace(strings.TrimPrefix(readmodel.TaskBadges(*t), "◆")); badges != "" {
+	if badges := strings.TrimSpace(strings.TrimPrefix(format.TaskBadges(*t), "◆")); badges != "" {
 		s += " " + badges
 	}
 	if t.NumSubtasks > 0 {

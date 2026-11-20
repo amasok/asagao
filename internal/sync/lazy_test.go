@@ -190,9 +190,18 @@ func (e *lazyEnv) cached(t *testing.T, gid string) bool {
 	return err == nil
 }
 
-func (e *lazyEnv) state(t *testing.T, key string) string {
+func (e *lazyEnv) projectState(t *testing.T, projectGID string) string {
 	t.Helper()
-	v, err := e.st.SyncState(context.Background(), key)
+	states, err := e.st.StoredProjectTaskStates(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return states[projectGID]
+}
+
+func (e *lazyEnv) myState(t *testing.T, wsGID string) string {
+	t.Helper()
+	v, err := e.st.MyTaskState(context.Background(), wsGID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,10 +296,10 @@ func TestLazyFetchesIncompleteFirst(t *testing.T) {
 	if subs != 2 { // b1's with b1, b2's with b2: b1's is not fetched again
 		t.Errorf("%d subtask requests, want 2", subs)
 	}
-	if got := e.state(t, readmodel.KeyMyTasks+"w1"); got != readmodel.TasksAll {
+	if got := e.myState(t, "w1"); got != readmodel.TasksAll {
 		t.Errorf("my tasks state %q", got)
 	}
-	if got := e.state(t, readmodel.KeyProjectTasks+"p2"); got != readmodel.TasksAll {
+	if got := e.projectState(t, "p2"); got != readmodel.TasksAll {
 		t.Errorf("p2 state %q", got)
 	}
 
@@ -374,7 +383,7 @@ func TestOpenProjectFetchesAndTracks(t *testing.T) {
 	if !e.cached(t, "a1") || e.cached(t, "a2") {
 		t.Fatal("open: want the incomplete a1 only")
 	}
-	if got := e.state(t, readmodel.KeyEvents+"p1"); got != "T-p1" {
+	if got, _ := e.st.EventsToken(ctx, "p1"); got != "T-p1" {
 		t.Errorf("events token %q", got)
 	}
 	if ps, _ := e.st.ListProjects(ctx, true); ps[slices.IndexFunc(ps, func(p readmodel.ProjectView) bool { return p.GID == "p1" })].Unfetched {
@@ -389,7 +398,7 @@ func TestOpenProjectFetchesAndTracks(t *testing.T) {
 	if !slices.Contains(log, "GET /events resource=p1 sync=T-p1") {
 		t.Errorf("p1's events not read: %v", touches(log, "p1"))
 	}
-	if !e.cached(t, "a2") || e.state(t, readmodel.KeyProjectTasks+"p1") != readmodel.TasksAll {
+	if !e.cached(t, "a2") || e.projectState(t, "p1") != readmodel.TasksAll {
 		t.Fatal("the sync after the open did not fetch p1's completed tasks")
 	}
 	if got := touches(log, "p3"); len(got) > 0 {
@@ -438,7 +447,7 @@ func TestOpenProjectWhileBusy(t *testing.T) {
 	if got := touches(e.fake.requests(), "p1"); len(got) > 0 {
 		t.Errorf("busy open sent %v", got)
 	}
-	if got := e.state(t, readmodel.KeyProjectTasks+"p1"); got != readmodel.TasksWanted {
+	if got := e.projectState(t, "p1"); got != readmodel.TasksWanted {
 		t.Fatalf("state %q, want wanted", got)
 	}
 	e.now = e.now.Add(10 * time.Minute)
@@ -487,7 +496,7 @@ func TestLazyCompletedDaysZero(t *testing.T) {
 			t.Errorf("query %s", q)
 		}
 	}
-	if got := e.state(t, readmodel.KeyProjectTasks+"p2"); got != readmodel.TasksAll {
+	if got := e.projectState(t, "p2"); got != readmodel.TasksAll {
 		t.Errorf("p2 state %q", got)
 	}
 	// A negative number is 0, not a completed_since in the future.

@@ -101,7 +101,7 @@ func TestCreateTaskInEmptyProjectGoesToFirstSection(t *testing.T) {
 // writes nothing.
 func TestCreateTaskWithoutMeWritesNothing(t *testing.T) {
 	st := fixtureStore(t)
-	if err := st.SetSyncState(context.Background(), store.KeyMeGID, ""); err != nil {
+	if err := st.SetMeGID(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	h := myTasksHarness(t, st)

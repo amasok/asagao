@@ -11,6 +11,7 @@ import (
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Dependencies, task types and approvals in the detail view: the tasks a task waits for
@@ -213,7 +214,7 @@ func (m *Model) showDependencyTargets(msg depCandidatesMsg) {
 	p.items = append(p.items, pickerItem{label: "＋ タスク名で検索…", value: "?"})
 	for _, c := range msg.tasks {
 		label := c.Name
-		if b := readmodel.TaskBadges(c); b != "" {
+		if b := format.TaskBadges(c); b != "" {
 			label += " " + b
 		}
 		item := pickerItem{label: label, value: c.GID}

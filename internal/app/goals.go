@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -16,7 +18,9 @@ import (
 
 // GoalStore is the part of the local cache that goals and portfolios read.
 type GoalStore interface {
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+	GoalsFetchedAt(ctx context.Context, workspaceGID string) (string, error)
+	PortfoliosFetchedAt(ctx context.Context, workspaceGID string) (string, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
 	ListGoals(ctx context.Context, workspaceGID string) ([]readmodel.GoalView, error)
 	GoalDetail(ctx context.Context, gid string) (*readmodel.GoalDetail, error)
@@ -48,18 +52,18 @@ func (g *Goals) plan(ctx context.Context, feature string) error {
 }
 
 // Available reports whether goals can be offered.
-func (g *Goals) Available(ctx context.Context) bool { return g.plan(ctx, readmodel.PlanGoals) == nil }
+func (g *Goals) Available(ctx context.Context) bool { return g.plan(ctx, plan.Goals) == nil }
 
 // PortfoliosAvailable reports whether portfolios can be offered.
 func (g *Goals) PortfoliosAvailable(ctx context.Context) bool {
-	return g.plan(ctx, readmodel.PlanPortfolios) == nil
+	return g.plan(ctx, plan.Portfolios) == nil
 }
 
 // List returns the cached goals, narrowed to a period: "" for all, PeriodCurrent for the
 // periods that include today, or a period's name or gid (its goals and those of the
 // periods within it, e.g. a year's quarters).
 func (g *Goals) List(ctx context.Context, period string) (*readmodel.GoalList, error) {
-	if err := g.plan(ctx, readmodel.PlanGoals); err != nil {
+	if err := g.plan(ctx, plan.Goals); err != nil {
 		return nil, err
 	}
 	ws, _ := g.Store.DefaultWorkspace(ctx) // none yet: nothing is cached
@@ -73,7 +77,7 @@ func (g *Goals) List(ctx context.Context, period string) (*readmodel.GoalList, e
 	}
 	out := &readmodel.GoalList{Goals: goals, Periods: periods}
 	if ws != "" {
-		if out.FetchedAt, err = g.Store.SyncState(ctx, readmodel.KeyGoals+ws); err != nil {
+		if out.FetchedAt, err = g.Store.GoalsFetchedAt(ctx, ws); err != nil {
 			return nil, err
 		}
 	}
@@ -141,7 +145,7 @@ func findPeriod(periods []readmodel.TimePeriodView, goals []readmodel.GoalView, 
 
 // Get returns a cached goal (a gid, its name, or a unique part of it) and what supports it.
 func (g *Goals) Get(ctx context.Context, arg string) (*readmodel.GoalDetail, error) {
-	if err := g.plan(ctx, readmodel.PlanGoals); err != nil {
+	if err := g.plan(ctx, plan.Goals); err != nil {
 		return nil, err
 	}
 	gid, err := g.Store.ResolveGoal(ctx, arg)
@@ -158,7 +162,7 @@ func (g *Goals) ResolveGoal(ctx context.Context, arg string) (string, error) {
 
 // Portfolios returns my cached portfolios.
 func (g *Goals) Portfolios(ctx context.Context) ([]readmodel.PortfolioView, error) {
-	if err := g.plan(ctx, readmodel.PlanPortfolios); err != nil {
+	if err := g.plan(ctx, plan.Portfolios); err != nil {
 		return nil, err
 	}
 	ws, _ := g.Store.DefaultWorkspace(ctx)
@@ -171,13 +175,13 @@ func (g *Goals) PortfoliosFetchedAt(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", nil
 	}
-	return g.Store.SyncState(ctx, readmodel.KeyPortfolios+ws)
+	return g.Store.PortfoliosFetchedAt(ctx, ws)
 }
 
 // Portfolio returns a cached portfolio (a gid, its name, or a unique part of the name of
 // one of mine) and its items.
 func (g *Goals) Portfolio(ctx context.Context, arg string) (*readmodel.PortfolioDetail, error) {
-	if err := g.plan(ctx, readmodel.PlanPortfolios); err != nil {
+	if err := g.plan(ctx, plan.Portfolios); err != nil {
 		return nil, err
 	}
 	gid, err := g.Store.ResolvePortfolio(ctx, arg)

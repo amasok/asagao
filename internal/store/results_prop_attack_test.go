@@ -40,7 +40,7 @@ func TestPruneResultsNeverDropsAGIDThatSubstringMatches(t *testing.T) {
 			if !seen[g] {
 				seen[g] = true
 				gids = append(gids, g)
-				mustSet(t, st, ResultTask+g, "1")
+				mustSet(t, st, resultPrefixTask+g, "1")
 			}
 		}
 		var texts []string
@@ -87,7 +87,7 @@ func TestPruneResultsNeverDropsAGIDThatSubstringMatches(t *testing.T) {
 					named = true
 				}
 			}
-			if named && syncStateOf(t, st, ResultTask+g) == "" {
+			if named && syncStateOf(t, st, resultPrefixTask+g) == "" {
 				t.Fatalf("iter %d: %q is in an outbox entry but its mapping was deleted\nentries: %s", iter, g, fmt.Sprint(texts))
 			}
 		}

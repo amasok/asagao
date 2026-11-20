@@ -226,10 +226,11 @@ func TestPullOrderFailsLater(t *testing.T) {
 	}
 	e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t3", "t2", "t1")
 	e.wantSubtasks(t, "t1", "c2", "c1")
-	for _, k := range []string{store.KeyTaskOrder + "p1", store.KeySubtaskOrder} {
-		if v, _ := e.st.SyncState(context.Background(), k); v == "" {
-			t.Fatalf("%s not kept for the next sync", k)
-		}
+	if v, _ := e.st.PendingSectionOrders(context.Background(), "p1"); v == "" {
+		t.Fatal("task_order:p1 not kept for the next sync")
+	}
+	if v, _ := e.st.PendingSubtaskOrders(context.Background()); v == "" {
+		t.Fatal("subtask_order not kept for the next sync")
 	}
 
 	// The next sync lists them again, with no events.
@@ -241,10 +242,11 @@ func TestPullOrderFailsLater(t *testing.T) {
 	}
 	e.wantOrder(t, store.TaskFilter{SectionGID: "s1"}, "t1", "t2", "t3")
 	e.wantSubtasks(t, "t1", "c1", "c2")
-	for _, k := range []string{store.KeyTaskOrder + "p1", store.KeySubtaskOrder} {
-		if v, _ := e.st.SyncState(context.Background(), k); v != "" {
-			t.Fatalf("%s = %q after listing it", k, v)
-		}
+	if v, _ := e.st.PendingSectionOrders(context.Background(), "p1"); v != "" {
+		t.Fatalf("task_order:p1 = %q after listing it", v)
+	}
+	if v, _ := e.st.PendingSubtaskOrders(context.Background()); v != "" {
+		t.Fatalf("subtask_order = %q after listing it", v)
 	}
 	of.take(e)
 	e.run(t, 5*60e9)

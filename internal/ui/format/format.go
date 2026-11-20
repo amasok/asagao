@@ -1,4 +1,7 @@
-package readmodel
+// Package format holds human-readable (Japanese) UI labels and descriptions of outbox
+// entries, dropped changes, status updates, and task badges, shared by the TUI, CLI,
+// and MCP server.
+package format
 
 import (
 	"fmt"
@@ -11,21 +14,8 @@ import (
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/domain/timetrack"
+	"github.com/amasok/asagao/internal/readmodel"
 )
-
-// Discard is a local change dropped because its target was deleted in Asana.
-type Discard struct {
-	ID          int64  `json:"id"`
-	Kind        string `json:"kind"`
-	TaskGID     string `json:"task_gid,omitempty"`
-	TaskName    string `json:"task_name,omitempty"`
-	Summary     string `json:"summary"` // what the change was, e.g. 「名前を「…」に変更」
-	Reason      string `json:"reason,omitempty"`
-	DiscardedAt string `json:"discarded_at"`
-	// Payload is the dropped change as it was queued (e.g. the full comment text, the new
-	// notes, the path of the attachment's local copy, which is kept), to recover it.
-	Payload map[string]any `json:"payload,omitempty"`
-}
 
 // ResetReason is the reason recorded for unsent changes deleted by Reset.
 const ResetReason = "ローカルのデータを初期化したため、送らずに破棄しました"
@@ -45,14 +35,31 @@ func StatusLabel(t string) string {
 	return t
 }
 
-// Human-readable (Japanese) descriptions of outbox entries, shared by the TUI and the CLI.
-
 // VerifyNote tells the user that an entry being checked against Asana needs nothing from them.
 const VerifyNote = "操作は不要です。次の同期で自動的に確認します"
 
 // AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
 // has several candidates for what it created.
 const AmbiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
+
+// BriefForbiddenMessage says that Asana does not let us read or change one project's
+// brief (it answered 403; BriefUnavailable).
+const BriefForbiddenMessage = "このプロジェクトのブリーフは、Asana が読み書きを許していません (403。権限がないか、API がプレビューのため)。概要を開き直すと、もう一度確かめます"
+
+// OpStateLabel is the Japanese name of an outbox entry's state.
+func OpStateLabel(state string) string {
+	switch state {
+	case outbox.StatePending:
+		return "未送信"
+	case outbox.StateConflict:
+		return "競合"
+	case outbox.StateFailed:
+		return "失敗"
+	case outbox.StateSending:
+		return "送信中"
+	}
+	return state
+}
 
 // OpLabel is OpStateLabel, except that a queued entry Asana may already have applied
 // (Verify: Push checks Asana by itself before sending it again) is "自動確認中".
@@ -89,7 +96,7 @@ const DiscardNotice = "Asana で削除されたものへの変更を破棄しま
 
 // DiscardLine describes one dropped change: 「task」: what it changed (and, for an unsent
 // change deleted by a reset, that it was).
-func DiscardLine(d Discard) string {
+func DiscardLine(d readmodel.Discard) string {
 	s := d.Summary
 	if d.TaskName != "" {
 		s = "「" + d.TaskName + "」: " + s
@@ -102,7 +109,7 @@ func DiscardLine(d Discard) string {
 
 // IsResetDiscard reports whether d was an unsent change deleted by Reset (which the user
 // confirmed), rather than a change to something deleted in Asana.
-func IsResetDiscard(d Discard) bool { return d.Reason == ResetReason }
+func IsResetDiscard(d readmodel.Discard) bool { return d.Reason == ResetReason }
 
 // DiscardDetail is a piece of a dropped change worth keeping in full, e.g. a comment.
 type DiscardDetail struct {
@@ -115,7 +122,7 @@ type DiscardDetail struct {
 // be recovered. Rich text is given as Markdown, which keeps the formatting when pasted back
 // (the editors and the MCP tools take Markdown): toMarkdown converts it, and is
 // richtext.ToEditableMarkdown in the callers (the store does not convert rich text).
-func DiscardDetails(d Discard, toMarkdown func(html string) string) []DiscardDetail {
+func DiscardDetails(d readmodel.Discard, toMarkdown func(html string) string) []DiscardDetail {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return v }
 	var out []DiscardDetail
 	add := func(label, key string) {
@@ -330,7 +337,7 @@ func DescribeChange(op outbox.Op) string {
 		if op.Payload["delete"] == true {
 			return "ブリーフの削除"
 		}
-		if state, _ := op.Base["state"].(string); state != BriefAvailable {
+		if state, _ := op.Base["state"].(string); state != readmodel.BriefAvailable {
 			return fmt.Sprintf("ブリーフ「%s」の作成", clip(str("title"), 40))
 		}
 		if _, ok := op.Payload["title"]; !ok { // the body only
@@ -430,10 +437,40 @@ func dependencyName(op outbox.Op) string {
 	return dep
 }
 
+// KindLabel is a task's type as it is shown: the name of its custom type, if it has one,
+// else the Japanese name of its resource_subtype.
+func KindLabel(t readmodel.TaskSummary) string {
+	if t.ResourceSubtype == "custom" && t.CustomType != nil && t.CustomType.Name != "" {
+		return t.CustomType.Name
+	}
+	return task.SubtypeLabel(t.ResourceSubtype)
+}
+
+// ReactionsLine shows a comment's reactions in one line, e.g. "👍 2  🎉 1" ("" for none).
+// The emoji the user reacted with is marked with "*".
+func ReactionsLine(rs []readmodel.Reaction) string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if r.Count <= 0 {
+			continue
+		}
+		emoji := r.Variant
+		if emoji == "" {
+			emoji = r.EmojiBase
+		}
+		mark := ""
+		if r.Reacted {
+			mark = "*"
+		}
+		parts = append(parts, fmt.Sprintf("%s%s %d", emoji, mark, r.Count))
+	}
+	return strings.Join(parts, "  ")
+}
+
 // TaskBadges are short marks for a task in a list: ◆ for a milestone, the approval status
 // of an approval task, the custom type and status of a custom one, and how many incomplete
 // tasks it waits for.
-func TaskBadges(t TaskSummary) string {
+func TaskBadges(t readmodel.TaskSummary) string {
 	var parts []string
 	switch t.ResourceSubtype {
 	case "milestone":
@@ -490,7 +527,7 @@ func BriefConflictLines(op outbox.Op) []string {
 		}
 		return clip(str(op.Payload, k), 60)
 	}
-	if str(op.Conflict, "state") != BriefAvailable {
+	if str(op.Conflict, "state") != readmodel.BriefAvailable {
 		return []string{"ブリーフ: こちら=" + local("title") + " / Asana=（ブリーフがありません。削除されています）"}
 	}
 	var lines []string

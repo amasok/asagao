@@ -5,7 +5,6 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
-	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Incremental sync from Asana's events (#27).
@@ -46,7 +45,7 @@ type projectEvents struct {
 // turn if Asana cannot be reached.
 func (s *Syncer) readEvents(ctx context.Context, projectGID string) (projectEvents, error) {
 	ev := projectEvents{tasks: map[string]bool{}}
-	token, err := s.Store.SyncState(ctx, readmodel.KeyEvents+projectGID)
+	token, err := s.Store.EventsToken(ctx, projectGID)
 	if err != nil {
 		return ev, err
 	}

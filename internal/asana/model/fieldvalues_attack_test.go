@@ -1,11 +1,9 @@
-package readmodel
+package model
 
 import (
 	"reflect"
 	"slices"
 	"testing"
-
-	"github.com/amasok/asagao/internal/asana/model"
 )
 
 // refGIDList / refNormalize / refAPIValue are copies of the store's implementation on
@@ -93,7 +91,7 @@ func TestMovedValuesMatchOldStore(t *testing.T) {
 }
 
 func TestTaskFieldValuesAttack(t *testing.T) {
-	tk := &model.Task{Name: "n", Notes: "o", Completed: true, Liked: true, DueOn: "2024-01-01", StartOn: "2023-12-25", ApprovalStatus: "approved", ResourceSubtype: "approval", Assignee: &model.Ref{GID: "9"}}
+	tk := &Task{Name: "n", Notes: "o", Completed: true, Liked: true, DueOn: "2024-01-01", StartOn: "2023-12-25", ApprovalStatus: "approved", ResourceSubtype: "approval", Assignee: &Ref{GID: "9"}}
 	v := TaskFieldValues(tk)
 	if v["approval_status"] != "approved" || v["assignee"] != "9" || v["completed"] != true || v["due_on"] != "2024-01-01" || v["start_on"] != "2023-12-25" || len(v) != 12 || v["custom_type"] != "" {
 		t.Errorf("%v", v)
@@ -105,31 +103,45 @@ func TestTaskFieldValuesAttack(t *testing.T) {
 	}
 }
 
+// A task read without its custom type is not compared on it (a conflict check).
+func TestTaskFieldValuesWithoutCustomType(t *testing.T) {
+	v := TaskFieldValues(&Task{ResourceSubtype: "custom", NoCustomType: true})
+	if _, ok := v["custom_type"]; ok {
+		t.Errorf("custom_type compared: %v", v)
+	}
+	if _, ok := v["custom_type_status_option"]; ok {
+		t.Errorf("status compared: %v", v)
+	}
+	if _, ok := v["resource_subtype"]; !ok {
+		t.Error("resource_subtype is fetched")
+	}
+}
+
 func TestCustomFieldValueAndServer(t *testing.T) {
 	s := func(x string) *string { return &x }
 	f := func(x float64) *float64 { return &x }
 	for _, tc := range []struct {
-		f    model.CustomField
+		f    CustomField
 		want any
 	}{
-		{model.CustomField{Type: "text", TextValue: s("")}, nil},
-		{model.CustomField{Type: "text", TextValue: s("a")}, "a"},
-		{model.CustomField{Type: "number", NumberValue: f(0)}, float64(0)},
-		{model.CustomField{Type: "number"}, nil},
-		{model.CustomField{Type: "enum", EnumValue: &model.EnumOption{GID: ""}}, nil},
-		{model.CustomField{Type: "enum", EnumValue: &model.EnumOption{GID: "e"}}, "e"},
-		{model.CustomField{Type: "multi_enum", MultiEnumValues: []model.EnumOption{{GID: "b"}, {GID: "a"}, {GID: "b"}}}, []string{"a", "b"}},
-		{model.CustomField{Type: "multi_enum"}, nil},
-		{model.CustomField{Type: "people", PeopleValue: []model.Ref{{GID: "2"}, {GID: "1"}}}, []string{"1", "2"}},
-		{model.CustomField{Type: "date", DateValue: &model.DateValue{Date: "2024-02-03"}}, "2024-02-03"},
-		{model.CustomField{Type: "date", DateValue: &model.DateValue{}}, nil},
-		{model.CustomField{Type: "unknown"}, nil},
+		{CustomField{Type: "text", TextValue: s("")}, nil},
+		{CustomField{Type: "text", TextValue: s("a")}, "a"},
+		{CustomField{Type: "number", NumberValue: f(0)}, float64(0)},
+		{CustomField{Type: "number"}, nil},
+		{CustomField{Type: "enum", EnumValue: &EnumOption{GID: ""}}, nil},
+		{CustomField{Type: "enum", EnumValue: &EnumOption{GID: "e"}}, "e"},
+		{CustomField{Type: "multi_enum", MultiEnumValues: []EnumOption{{GID: "b"}, {GID: "a"}, {GID: "b"}}}, []string{"a", "b"}},
+		{CustomField{Type: "multi_enum"}, nil},
+		{CustomField{Type: "people", PeopleValue: []Ref{{GID: "2"}, {GID: "1"}}}, []string{"1", "2"}},
+		{CustomField{Type: "date", DateValue: &DateValue{Date: "2024-02-03"}}, "2024-02-03"},
+		{CustomField{Type: "date", DateValue: &DateValue{}}, nil},
+		{CustomField{Type: "unknown"}, nil},
 	} {
 		if got := CustomFieldValue(tc.f); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: %#v, want %#v", tc.f.Type, got, tc.want)
 		}
 	}
-	tk := &model.Task{CustomFields: []model.CustomField{{GID: "1", Type: "text", TextValue: s("a"), DisplayValue: s("disp")}, {GID: "2", Type: "number"}}}
+	tk := &Task{CustomFields: []CustomField{{GID: "1", Type: "text", TextValue: s("a"), DisplayValue: s("disp")}, {GID: "2", Type: "number"}}}
 	if v, d, ok := ServerCustomField(tk, "1"); v != "a" || d != "disp" || !ok {
 		t.Errorf("%v %v %v", v, d, ok)
 	}
@@ -138,12 +150,5 @@ func TestCustomFieldValueAndServer(t *testing.T) {
 	}
 	if _, _, ok := ServerCustomField(tk, "3"); ok {
 		t.Error("found")
-	}
-}
-
-func TestAmbiguousMessageText(t *testing.T) {
-	const want = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
-	if AmbiguousMessage != want {
-		t.Errorf("%q", AmbiguousMessage)
 	}
 }

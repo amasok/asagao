@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -26,10 +26,11 @@ func TestBriefAttack403ThisProjectOnly(t *testing.T) {
 	if err != nil || res.Failed != 1 {
 		t.Fatalf("%+v %v", res, err)
 	}
-	for _, k := range []string{readmodel.PlanKey(readmodel.PlanProjectBrief, "w1"), readmodel.KeyPlanUnavailable + readmodel.PlanProjectBrief} {
-		if v, _ := st.SyncState(ctx, k); v != "" {
-			t.Fatalf("%s marked: %q", k, v)
-		}
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); ok {
+		t.Fatalf("w1 marked: %v", at)
+	}
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.ProjectBrief); v != "" {
+		t.Fatalf("legacy global key marked: %q", v)
 	}
 	if hidden, _ := s.briefHidden(ctx, "p1"); hidden {
 		t.Fatal("workspace hidden by a 403")
@@ -83,13 +84,13 @@ func TestBriefAttack402WorkspaceKey(t *testing.T) {
 	if res, err := s.Push(ctx); err != nil || res.Failed != 1 {
 		t.Fatalf("%+v %v", res, err)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1")); !readmodel.PlanOffFor(v, now) {
-		t.Fatalf("w1 not marked: %q", v)
+	if at, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w1"); !ok || !plan.OffAt(at, now) {
+		t.Fatalf("w1 not marked: (%v, %v)", at, ok)
 	}
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w2")); v != "" {
-		t.Fatalf("w2 marked")
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.ProjectBrief, "w2"); ok {
+		t.Fatal("w2 marked")
 	}
-	if v, _ := st.SyncState(ctx, readmodel.KeyPlanUnavailable+readmodel.PlanProjectBrief); v != "" {
+	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.ProjectBrief); v != "" {
 		t.Fatalf("global key marked")
 	}
 }

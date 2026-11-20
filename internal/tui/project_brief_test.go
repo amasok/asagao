@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -135,7 +135,7 @@ func TestBriefDeleteInOverview(t *testing.T) {
 // While Asana refuses the brief in the workspace, b says so and opens no editor.
 func TestBriefRefusedInWorkspace(t *testing.T) {
 	st := briefStoreWith(t, nil)
-	if err := st.SetSyncState(context.Background(), readmodel.PlanKey(readmodel.PlanProjectBrief, "w1"), testNow.UTC().Format("2006-01-02T15:04:05Z07:00")); err != nil {
+	if err := st.RecordPlanRefusal(context.Background(), plan.ProjectBrief, "w1", testNow); err != nil {
 		t.Fatal(err)
 	}
 	opened := false

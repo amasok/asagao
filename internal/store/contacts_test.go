@@ -21,7 +21,7 @@ func TestListUserContacts(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSyncState(ctx, KeyMeGID, "u1"); err != nil {
+	if err := s.SetSyncState(ctx, keyMeGID, "u1"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.ListUserContacts(ctx)

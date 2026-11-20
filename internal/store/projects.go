@@ -11,16 +11,17 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // OpCreateStatus posts a project status update (outbox.KindCreateStatus).
 const OpCreateStatus = outbox.KindCreateStatus
 
-// StatusTypes is readmodel.StatusTypes.
-var StatusTypes = readmodel.StatusTypes
+// StatusTypes is format.StatusTypes.
+var StatusTypes = format.StatusTypes
 
-// StatusLabel is readmodel.StatusLabel.
-func StatusLabel(t string) string { return readmodel.StatusLabel(t) }
+// StatusLabel is format.StatusLabel.
+func StatusLabel(t string) string { return format.StatusLabel(t) }
 
 // StatusUpdateView is readmodel.StatusUpdateView.
 type StatusUpdateView = readmodel.StatusUpdateView
@@ -107,7 +108,7 @@ func replaceLocalStatus(ctx context.Context, tx *sql.Tx, local string, u model.S
 	if _, err := tx.ExecContext(ctx, "UPDATE status_updates SET gid = ?, created_at = ? WHERE gid = ?", u.GID, formatTime(u.CreatedAt), local); err != nil {
 		return err
 	}
-	return recordResult(ctx, tx, ResultStatus, local, u.GID)
+	return recordResult(ctx, tx, resultPrefixStatus, local, u.GID)
 }
 
 // ProjectMembers returns a project's members.

@@ -117,7 +117,7 @@ func TestCompleteCreateEnumOption(t *testing.T) {
 		t.Fatal("create left")
 	}
 	// the mapping is kept while something still names the local gid
-	for _, q := range resultTables[ResultEnumOption] {
+	for _, q := range resultTables[resultPrefixEnumOption] {
 		var n int
 		must(t, s.db.QueryRowContext(ctx, "SELECT count(*) FROM ("+q+")").Scan(&n))
 		if n != 0 {
@@ -137,7 +137,7 @@ func TestLocalOptionGIDsFoundForPrune(t *testing.T) {
 	_, err = s.SetCustomFieldLocal(ctx, "t1", "cf4", []string{"m1", local2}, testNow)
 	must(t, err)
 	found := map[string]int{}
-	for _, q := range resultTables[ResultEnumOption] {
+	for _, q := range resultTables[resultPrefixEnumOption] {
 		rows, err := s.db.QueryContext(ctx, q)
 		must(t, err)
 		for rows.Next() {

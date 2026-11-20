@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -37,7 +37,7 @@ func TestUpdateTaskAddMissingOptions(t *testing.T) {
 		t.Fatalf("ops = %v", kinds)
 	}
 	// refused before (403): an error, nothing written
-	if err := st.SetSyncState(context.Background(), readmodel.KeyFieldOptionsLocked+"cf1", "x"); err != nil {
+	if err := st.SetFieldOptionsLocked(context.Background(), "cf1", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if res := call(t, cs, "update_task", map[string]any{"gid": "t1", "add_missing_options": true,

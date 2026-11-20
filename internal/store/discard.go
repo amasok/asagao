@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Changes to things deleted in Asana are dropped automatically (Asana answered 404), and
@@ -143,7 +144,7 @@ func recordDiscard(ctx context.Context, tx *sql.Tx, op *Op, reason string, now t
 	if name == "" {
 		name, _ = op.Payload["name"].(string)
 	}
-	d := Discard{Kind: op.Kind, TaskGID: op.TaskGID, TaskName: name, Summary: DescribeChange(*op), Reason: reason,
+	d := Discard{Kind: op.Kind, TaskGID: op.TaskGID, TaskName: name, Summary: format.DescribeChange(*op), Reason: reason,
 		DiscardedAt: formatTime(now), Payload: op.Payload}
 	payload, err := json.Marshal(nonNil(op.Payload))
 	if err != nil {

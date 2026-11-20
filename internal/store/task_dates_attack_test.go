@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 func plan402(t *testing.T, s *Store, ws string, at time.Time) {
 	t.Helper()
-	if err := s.SetSyncState(context.Background(), readmodel.PlanKey(readmodel.PlanStartOn, ws), at.UTC().Format(time.RFC3339)); err != nil {
+	if err := s.RecordPlanRefusal(context.Background(), plan.StartOn, ws, at); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -158,7 +158,7 @@ func TestStartOnAttackStampEdges(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	now := time.Now()
-	key := readmodel.PlanKey(readmodel.PlanStartOn, "w1")
+	key := planKey(plan.StartOn, "w1")
 	for _, v := range []string{"garbage", "", "0001-01-01T00:00:00Z"} {
 		if err := s.SetSyncState(ctx, key, v); err != nil {
 			t.Fatal(err)

@@ -56,6 +56,7 @@ var layers = map[string]layer{
 
 	"internal/asana/model": layerShared,
 	"internal/readmodel":   layerShared,
+	"internal/ui/format":   layerShared,
 	"internal/settings":    layerShared,
 	"internal/repoctx":     layerShared,
 

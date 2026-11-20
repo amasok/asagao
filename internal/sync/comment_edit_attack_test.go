@@ -101,7 +101,7 @@ func TestAttackAttachmentRedownloadsAfterUndo(t *testing.T) {
 	if err := st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "x.png", Host: "asana"}}); err != nil {
 		t.Fatal(err)
 	}
-	if st.SetSyncState(ctx, store.KeyMeGID, "me") != nil {
+	if st.SetMeGID(ctx, "me") != nil {
 		t.Fatal("me")
 	}
 	p, err := s.DownloadAttachment(ctx, "t1", "a1")

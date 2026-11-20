@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -79,7 +79,7 @@ func TestProjectBriefToolRefuses(t *testing.T) {
 			t.Errorf("%v: %q, want %q", tc.args, msg, tc.want)
 		}
 	}
-	_ = st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, "w1"), testNow.UTC().Format(time.RFC3339))
+	_ = st.RecordPlanRefusal(ctx, plan.ProjectBrief, "w1", testNow)
 	if msg := toolError(call(t, cs, "update_project_brief", map[string]any{"project": "新居", "title": "x"}, nil)); !strings.Contains(msg, "プロジェクトブリーフ") {
 		t.Errorf("refused workspace: %q", msg)
 	}

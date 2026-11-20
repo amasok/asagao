@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -261,7 +262,7 @@ func (m *Model) handleGoalKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		other := !g.portfolios
-		if (other && !m.planOK(readmodel.PlanPortfolios)) || (!other && !m.planOK(readmodel.PlanGoals)) {
+		if (other && !m.planOK(plan.Portfolios)) || (!other && !m.planOK(plan.Goals)) {
 			return m, nil
 		}
 		return m, m.openGoalScreen(other)
@@ -461,7 +462,7 @@ func (m *Model) renderGoals(w, h int) string {
 	case g.portfolios:
 		title = "ポートフォリオ（自分がオーナーのもの）"
 		help := "j/k 選ぶ  enter 開く  r 取り直す  esc 閉じる"
-		if m.planOK(readmodel.PlanGoals) {
+		if m.planOK(plan.Goals) {
 			help = "j/k 選ぶ  enter 開く  tab ゴール  r 取り直す  esc 閉じる"
 		}
 		lines = append(lines, m.st.dim.Render(help), "")
@@ -489,7 +490,7 @@ func (m *Model) renderGoals(w, h int) string {
 			title = "ゴール（今日を含む期間）"
 		}
 		help := "j/k 選ぶ  enter 開く  c 今の期間だけ / すべて  r 取り直す  esc 閉じる"
-		if m.planOK(readmodel.PlanPortfolios) {
+		if m.planOK(plan.Portfolios) {
 			help = "j/k 選ぶ  enter 開く  c 今の期間だけ / すべて  tab ポートフォリオ  r 取り直す  esc 閉じる"
 		}
 		lines = append(lines, m.st.dim.Render(help), "")

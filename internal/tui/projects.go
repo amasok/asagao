@@ -11,6 +11,7 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Project-level actions: status updates (view / write in the editor, offline too),
@@ -104,7 +105,7 @@ func (m *Model) renderStatuses(w, h int) string {
 }
 
 func (m *Model) statusBadge(t string) string {
-	label := "[" + readmodel.StatusLabel(t) + "]"
+	label := "[" + format.StatusLabel(t) + "]"
 	switch t {
 	case "on_track", "complete":
 		return m.st.tag.Render(label)
@@ -246,7 +247,7 @@ func (m *Model) applyStatus(msg statusEditDoneMsg) tea.Cmd {
 		if _, err := statuses.CreateHere(m.ctx, in); err != nil {
 			return writeDoneMsg{err: err}
 		}
-		return writeDoneMsg{status: "ステータスを投稿しました（" + readmodel.StatusLabel(status) + "）"}
+		return writeDoneMsg{status: "ステータスを投稿しました（" + format.StatusLabel(status) + "）"}
 	}
 }
 

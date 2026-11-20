@@ -32,7 +32,7 @@ func createStoreAt(t *testing.T, path string) *store.Store {
 			t.Fatal(err)
 		}
 	}
-	must(st.SetSyncState(ctx, store.KeyMeGID, "me"))
+	must(st.SetMeGID(ctx, "me"))
 	must(st.UpsertUsers(ctx, []asana.User{{GID: "me", Name: "Me"}, {GID: "u2", Name: "Partner"}}))
 	must(st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "WS"}}))
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "新居", Members: []asana.Ref{{GID: "me"}}}}, "me"))

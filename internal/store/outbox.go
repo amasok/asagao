@@ -880,7 +880,7 @@ func (s *Store) RealGID(ctx context.Context, gid string) (string, error) {
 	if !IsLocalGID(gid) {
 		return gid, nil
 	}
-	v, err := s.SyncState(ctx, "gid:"+gid)
+	v, err := s.SyncState(ctx, resultPrefixTask+gid)
 	if err != nil || v == "" {
 		return gid, err
 	}
@@ -907,20 +907,11 @@ func replaceLocalStory(ctx context.Context, tx *sql.Tx, localGID, taskGID string
 		reactionsJSON(st.ReactionSummary)); err != nil {
 		return err
 	}
-	if err := recordResult(ctx, tx, ResultStory, localGID, st.GID); err != nil {
+	if err := recordResult(ctx, tx, resultPrefixStory, localGID, st.GID); err != nil {
 		return err
 	}
 	return reapplyStoryOps(ctx, tx, taskGID) // edits or a delete queued while it was being sent
 }
-
-// Prefixes of the sync_state keys that map a local gid to what Asana created for it
-// (readmodel's, e1).
-const (
-	ResultTask       = readmodel.ResultTask
-	ResultStory      = readmodel.ResultStory
-	ResultAttachment = readmodel.ResultAttachment
-	ResultStatus     = readmodel.ResultStatus
-)
 
 func recordResult(ctx context.Context, tx *sql.Tx, prefix, local, real string) error {
 	if local == "" {
@@ -931,8 +922,12 @@ func recordResult(ctx context.Context, tx *sql.Tx, prefix, local, real string) e
 }
 
 // RecordedResults returns the gids already recorded as the result of some local entry
-// (prefix is one of the Result* constants), so they are not taken for another one.
-func (s *Store) RecordedResults(ctx context.Context, prefix string) (map[string]bool, error) {
+// (for kind, one of readmodel.Result*), so they are not taken for another one.
+func (s *Store) RecordedResults(ctx context.Context, kind readmodel.ResultKind) (map[string]bool, error) {
+	prefix, err := resultPrefix(kind)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, "SELECT value FROM sync_state WHERE substr(key, 1, ?) = ?", len(prefix), prefix)
 	if err != nil {
 		return nil, err
@@ -958,8 +953,8 @@ var (
 )
 
 // TaskFieldValues extracts update_task fields from an API task (for conflict checks;
-// readmodel's, e1).
-var TaskFieldValues = readmodel.TaskFieldValues
+// model's).
+var TaskFieldValues = model.TaskFieldValues
 
 func currentFields(ctx context.Context, tx *sql.Tx, gid string) (map[string]any, string, error) {
 	var completed, liked bool

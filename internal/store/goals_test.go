@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana/model"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // Control characters from Asana do not reach the screen through the JSON columns (metric,
@@ -134,9 +134,9 @@ func TestGoalsGoWithTheirWorkspaceAndReset(t *testing.T) {
 	must(t, s.ReplaceTimePeriods(ctx, "w1", []model.TimePeriod{{GID: "tp"}}))
 	must(t, s.ReplacePortfolios(ctx, "w1", []model.Portfolio{{GID: "pf"}}))
 	must(t, s.SavePortfolio(ctx, model.Portfolio{GID: "pf"}, []model.PortfolioItem{{GID: "p1", ResourceType: "project"}}, testNow))
-	must(t, s.SetSyncState(ctx, readmodel.KeyGoals+"w1", "x"))
-	must(t, s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w1"), "x"))
-	must(t, s.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanGoals, "w11"), "kept"))
+	must(t, s.SetSyncState(ctx, keyGoals+"w1", "x"))
+	must(t, s.SetSyncState(ctx, planKey(plan.Goals, "w1"), "x"))
+	must(t, s.SetSyncState(ctx, planKey(plan.Goals, "w11"), "kept"))
 	must(t, s.UpsertWorkspaces(ctx, []model.Workspace{{GID: "w2", Name: "別"}}))
 	must(t, s.PruneWorkspaces(ctx, []model.Workspace{{GID: "w2"}}))
 	count := func() int {
@@ -148,8 +148,8 @@ func TestGoalsGoWithTheirWorkspaceAndReset(t *testing.T) {
 	if n := count(); n != 0 {
 		t.Fatalf("%d rows of a pruned workspace", n)
 	}
-	for key, want := range map[string]string{readmodel.KeyGoals + "w1": "", readmodel.PlanKey(readmodel.PlanGoals, "w1"): "",
-		readmodel.PlanKey(readmodel.PlanGoals, "w11"): "kept"} {
+	for key, want := range map[string]string{keyGoals + "w1": "", planKey(plan.Goals, "w1"): "",
+		planKey(plan.Goals, "w11"): "kept"} {
 		if v, _ := s.SyncState(ctx, key); v != want {
 			t.Fatalf("%s after pruning w1: %q", key, v)
 		}

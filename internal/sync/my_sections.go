@@ -6,18 +6,18 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 )
 
 // The sections of My Tasks (#35).
 
 // syncMySections fetches the sections of my My Tasks list in a workspace (with the poll:
 // they change rarely). Asana answering 402 hides the feature in that workspace for
-// readmodel.PlanRecheckAfter (it is then asked again); an answer forgets an earlier 402.
+// plan.RecheckAfter (it is then asked again); an answer forgets an earlier 402.
 // Any other failure keeps what is cached (the sections tasks are in are still known from
 // the tasks) and is tried again with the next poll. Only an error of the store is returned.
 func (s *Syncer) syncMySections(ctx context.Context, workspaceGID string) error {
-	const feature = readmodel.PlanMySection
+	const feature = plan.MySection
 	if hidden, err := s.planHidden(ctx, feature, workspaceGID); err != nil || hidden {
 		return err
 	}
@@ -38,7 +38,7 @@ func (s *Syncer) syncMySections(ctx context.Context, workspaceGID string) error 
 	if err := s.clearPlanRefusal(ctx, feature, workspaceGID); err != nil {
 		return err
 	}
-	if err := s.Store.SetSyncState(ctx, readmodel.KeyUserTaskList+workspaceGID, list.GID); err != nil {
+	if err := s.Store.SetUserTaskListGID(ctx, workspaceGID, list.GID); err != nil {
 		return err
 	}
 	return s.Store.ReplaceMyTaskSections(ctx, workspaceGID, secs)

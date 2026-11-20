@@ -99,7 +99,7 @@ func TestTaskListUnfetchedProjectOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = st.SetSyncState(context.Background(), store.KeyProjectTasks+"p1", readmodel.TasksAll) // p1 synced
+	err = st.SetProjectTaskState(context.Background(), "p1", readmodel.TasksAll) // p1 synced
 	st.Close()
 	if err != nil {
 		t.Fatal(err)

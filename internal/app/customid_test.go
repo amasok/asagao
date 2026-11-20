@@ -38,7 +38,9 @@ func TestGitLinkByCustomID(t *testing.T) {
 
 type customIDState map[string]string
 
-func (s customIDState) SyncState(_ context.Context, key string) (string, error) { return s[key], nil }
+func (s customIDState) CustomIDTaskGID(_ context.Context, id string) (string, error) {
+	return s[id], nil
+}
 
 type fakeCustomIDs struct {
 	gids  map[string]string
@@ -59,7 +61,7 @@ func (f *fakeCustomIDs) TaskByCustomID(_ context.Context, id string) (string, er
 
 func TestResolveCustomIDs(t *testing.T) {
 	ctx := context.Background()
-	remembered := customIDState{readmodel.KeyCustomID + "ENG-2": "t2", readmodel.KeyCustomID + "ENG-3": "t3-old"}
+	remembered := customIDState{"ENG-2": "t2", "ENG-3": "t3-old"}
 	ids := []string{"ENG-1", "ENG-2", "ENG-3"}
 
 	// online: Asana's answer; an ID it does not know is left out even if remembered
@@ -95,7 +97,7 @@ func TestCustomIDsOfCommits(t *testing.T) {
 // resolved as found before.
 func TestResolveCustomIDsStopsAskingAfterAFailure(t *testing.T) {
 	ctx := context.Background()
-	remembered := customIDState{readmodel.KeyCustomID + "ENG-1": "t1", readmodel.KeyCustomID + "ENG-2": "t2"}
+	remembered := customIDState{"ENG-1": "t1", "ENG-2": "t2"}
 	f := &fakeCustomIDs{err: context.DeadlineExceeded}
 	got, err := ResolveCustomIDs(ctx, remembered, f, []string{"ENG-1", "ENG-2"})
 	if !errors.Is(err, context.DeadlineExceeded) || !maps.Equal(got, map[string]string{"ENG-1": "t1", "ENG-2": "t2"}) {
@@ -111,7 +113,7 @@ func TestResolveCustomIDsStopsAskingAfterAFailure(t *testing.T) {
 func TestResolveCustomIDsGoesOnAfterAnAnswer(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeCustomIDs{gids: map[string]string{"ENG-2": "t2"}, err: &model.Error{Status: 500}}
-	got, err := ResolveCustomIDs(ctx, customIDState{readmodel.KeyCustomID + "TEST-1": "t1"}, f, []string{"TEST-1", "ENG-2"})
+	got, err := ResolveCustomIDs(ctx, customIDState{"TEST-1": "t1"}, f, []string{"TEST-1", "ENG-2"})
 	if err == nil || !maps.Equal(got, map[string]string{"TEST-1": "t1", "ENG-2": "t2"}) || !slices.Equal(f.calls, []string{"TEST-1", "ENG-2"}) {
 		t.Fatalf("got %v %v calls %v", got, err, f.calls)
 	}

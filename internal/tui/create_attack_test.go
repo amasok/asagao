@@ -73,7 +73,7 @@ func attackStore(t *testing.T, workspace, me bool) *store.Store {
 		}
 	}
 	if !me {
-		if err := st.SetSyncState(ctx, store.KeyMeGID, ""); err != nil {
+		if err := st.SetMeGID(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -172,7 +172,7 @@ func (s *Store) DeleteTagLocal(ctx context.Context, tagGID string, now time.Time
 		}
 		if IsLocalGID(tagGID) && unsure == 0 {
 			var real string
-			_ = tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", ResultTag+tagGID).Scan(&real)
+			_ = tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", resultPrefixTag+tagGID).Scan(&real)
 			if real == "" {
 				return nil // Asana never had it
 			}

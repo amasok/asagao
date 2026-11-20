@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // ErrUnsentChanges is readmodel.ErrUnsentChanges.
 var ErrUnsentChanges = readmodel.ErrUnsentChanges
 
-// ResetReason is readmodel.ResetReason.
-const ResetReason = readmodel.ResetReason
+// ResetReason is format.ResetReason.
+const ResetReason = format.ResetReason
 
 // Reset deletes all local data: tasks, projects, comments, attachments, the outbox, the
 // record of dropped changes and sync state including the account (KeyMeGID), so the store

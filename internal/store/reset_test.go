@@ -42,7 +42,7 @@ func TestResetRefusesWithUnsentChanges(t *testing.T) {
 			if rowCount(t, s, "tasks") == 0 || rowCount(t, s, "outbox") != 1 {
 				t.Fatal("nothing may be deleted without force")
 			}
-			if me, _ := s.SyncState(ctx, KeyMeGID); me != "me" {
+			if me, _ := s.SyncState(ctx, keyMeGID); me != "me" {
 				t.Fatalf("account = %q", me)
 			}
 		})

@@ -2,6 +2,27 @@ package readmodel
 
 import "time"
 
+// States of project_tasks / my_tasks cache coverage. Stored, so they must not change.
+const (
+	// TasksWanted: the project was opened (or is a favorite) but its tasks are not fetched
+	// yet; the next sync, or the open itself when online, fetches them.
+	TasksWanted = "wanted"
+	// TasksOpen: the incomplete tasks are fetched; the completed ones (sync.completed_days)
+	// are fetched next.
+	TasksOpen = "open"
+	// TasksAll: the tasks are fetched as a sync keeps them (incomplete, and completed within
+	// sync.completed_days).
+	TasksAll = "all"
+)
+
+// States of a project's brief in the local cache (project_overviews.brief_state; "" is not
+// fetched yet). Stored, so they must not change.
+const (
+	BriefNone        = "none"        // the project has no brief
+	BriefUnavailable = "unavailable" // Asana does not give it (plan, preview API)
+	BriefAvailable   = "available"
+)
+
 type SectionView struct {
 	GID  string `json:"gid"`
 	Name string `json:"name"`

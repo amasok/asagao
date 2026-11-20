@@ -4,17 +4,18 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // A project's brief (#60) is created, changed and deleted through the outbox
 // (update_project_brief). It is a preview API: a 402 for it is recorded per workspace
-// (readmodel.PlanProjectBrief) and hides it for a while, as a 402 hides other features
+// (plan.ProjectBrief) and hides it for a while, as a 402 hides other features
 // (plan.go); a 403 makes this one project's brief unavailable (briefRefusal).
 
 // serverBrief returns the brief project p has in Asana (nil: none).
@@ -170,16 +171,16 @@ func (s *Syncer) briefRefusal(ctx context.Context, projectGID string, err error)
 	case model.IsPaymentRequired(err):
 		ws, wsErr := s.Store.ProjectWorkspace(ctx, projectGID)
 		if wsErr == nil && ws != "" {
-			if serr := s.Store.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectBrief, ws), s.clock().UTC().Format(time.RFC3339)); serr != nil {
+			if serr := s.Store.RecordPlanRefusal(ctx, plan.ProjectBrief, ws, s.clock()); serr != nil {
 				return serr
 			}
 		}
-		return fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(readmodel.PlanProjectBrief), err)
+		return fmt.Errorf("%s: %w", plan.UnavailableMessage(plan.ProjectBrief), err)
 	case isForbidden(err):
 		if serr := s.Store.SaveProjectOverview(ctx, projectGID, nil, readmodel.BriefUnavailable, nil, s.clock()); serr != nil {
 			return serr
 		}
-		return fmt.Errorf("%s: %w", readmodel.BriefForbiddenMessage, err)
+		return fmt.Errorf("%s: %w", format.BriefForbiddenMessage, err)
 	}
 	return err
 }
@@ -191,7 +192,7 @@ func (s *Syncer) clearBriefRefusal(ctx context.Context, projectGID string) error
 	if err != nil || ws == "" {
 		return nil
 	}
-	return s.clearPlanRefusal(ctx, readmodel.PlanProjectBrief, ws)
+	return s.clearPlanRefusal(ctx, plan.ProjectBrief, ws)
 }
 
 // briefHidden reports whether a recent refusal hides the brief in the project's workspace.
@@ -200,5 +201,5 @@ func (s *Syncer) briefHidden(ctx context.Context, projectGID string) (bool, erro
 	if err != nil || ws == "" {
 		return false, nil
 	}
-	return s.planHidden(ctx, readmodel.PlanProjectBrief, ws)
+	return s.planHidden(ctx, plan.ProjectBrief, ws)
 }

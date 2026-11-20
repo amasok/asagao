@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // #27 (tester): a second project p2 next to the fake's p1. p1's events fail in various
@@ -77,7 +76,7 @@ func TestEventsFailureFallsBackOnlyThatProject(t *testing.T) {
 				t.Fatalf("setup: p2 fetched %d times", first)
 			}
 			ctx := context.Background()
-			if v, _ := e.st.SyncState(ctx, store.KeyEvents+"p2"); v != "Q0" {
+			if v, _ := e.st.EventsToken(ctx, "p2"); v != "Q0" {
 				t.Fatalf("setup: p2 token %q", v)
 			}
 			e.fake.mu.Lock()
@@ -106,10 +105,10 @@ func TestEventsFailureFallsBackOnlyThatProject(t *testing.T) {
 			if p2Token != "Q0" {
 				t.Errorf("p2 events read with token %q", p2Token)
 			}
-			if v, _ := e.st.SyncState(ctx, store.KeyEvents+"p2"); v != "Q1" {
+			if v, _ := e.st.EventsToken(ctx, "p2"); v != "Q1" {
 				t.Errorf("p2 token = %q, want Q1", v)
 			}
-			p1, _ := e.st.SyncState(ctx, store.KeyEvents+"p1")
+			p1, _ := e.st.EventsToken(ctx, "p1")
 			switch tc.name {
 			case "expired":
 				if p1 != "P1NEW" {

@@ -7,6 +7,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -16,7 +17,7 @@ import (
 // feature, and it is not offered (nor asked for) from then on.
 
 // FetchTimeEntries refreshes a task's time tracking entries. It returns a
-// *readmodel.PlanUnavailableError, without asking Asana, while a 402 in the task's
+// *plan.UnavailableError, without asking Asana, while a 402 in the task's
 // workspace still hides time tracking (plan.go); after that it asks again, and a list read
 // forgets the 402.
 func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
@@ -27,8 +28,8 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	unavailable := &readmodel.PlanUnavailableError{Feature: readmodel.PlanTimeTracking}
-	if hidden, err := s.planHidden(ctx, readmodel.PlanTimeTracking, ws); err != nil || hidden {
+	unavailable := &plan.UnavailableError{Feature: plan.TimeTracking}
+	if hidden, err := s.planHidden(ctx, plan.TimeTracking, ws); err != nil || hidden {
 		if err != nil {
 			return err
 		}
@@ -40,7 +41,7 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	// Entries Asana creates after this (an add sent meanwhile) are newer than the list.
 	from := s.serverNow().Add(-clockSkew)
 	entries, err := s.API.TimeEntries(ctx, taskGID)
-	if refused, recErr := s.recordPlanRefusal(ctx, readmodel.PlanTimeTracking, ws, err); refused || recErr != nil {
+	if refused, recErr := s.recordPlanRefusal(ctx, plan.TimeTracking, ws, err); refused || recErr != nil {
 		if recErr != nil {
 			return recErr
 		}
@@ -49,7 +50,7 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.clearPlanRefusal(ctx, readmodel.PlanTimeTracking, ws); err != nil {
+	if err := s.clearPlanRefusal(ctx, plan.TimeTracking, ws); err != nil {
 		return err
 	}
 	return s.Store.ReplaceTimeEntries(ctx, taskGID, entries, from)

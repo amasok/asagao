@@ -23,7 +23,7 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
   adapter   │  store (SQLite)  asana (HTTP)  auth  tokenstore   │
             │  richtext (goldmark)  config (TOML)  imageview  browser│
             └──────────────────────────────────────────┘
-  どこからでも: termsafe・xdg (標準ライブラリだけ)、asana/model と readmodel (型だけ)
+  どこからでも: termsafe・xdg (標準ライブラリだけ)、asana/model と readmodel (型だけ)、ui/format (表示の整形)
 ```
 
 依存してよい向きは、上から下、adapter から domain と asana/model だけ。
@@ -36,13 +36,15 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 | `internal/domain/task` | ドメイン | (store の `NewTask`・`TagEdit`・`TagRef`、`validateFields` ほか) | なし | 作るタスクの内容 (`NewTask`)、解決済みのタグの変更 (`TagEdit`)、タスクの欄の検証、承認の状態の決まり |
 | `internal/domain/outbox` | ドメイン | (store の `Op`、`safeToResend`、`UpdateTaskLocal` の後半、sync の `sameTaskFields`) | なし | 操作の種類・状態、畳み込み、再送してよいか、照合で同じとみなす条件 |
 | `internal/domain/rich` | ドメイン | (richtext の `Target`、`layout()`、入れ子の決まり) | なし | 送り先と、送り先ごとに許すタグ |
+| `internal/domain/plan` | ドメイン | (#73 で `readmodel` から分離) | なし | 402 プラン制限の機能定数、有効期間判定 (`OffAt`・`Window`)、`FeatureOf`、`UnavailableMessage`、`UnavailableError` |
 | `internal/dates` | ドメイン | 同じ | なし | 期日の解釈 (今も外部依存なし。場所は変えない) |
 | `internal/app` | アプリ | **ない** | なし | ユースケース (タスク作成・更新・コメント・status update・タグ・…)、ポート |
 | `internal/sync` | アプリ | 同じ | なし (x/oauth2 は d2 で外した) | 同期のユースケース (push・照合・pull)。Asana とキャッシュはポート経由 |
-| `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクションだけ |
+| `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクション、`sync_state` 生キー規約・`resultPrefix` の隠蔽と型付きアクセサ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
-| `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error` |
-| `internal/readmodel` | 共有の型 | (c2 までは `internal/store` の中にあった。a4・a6 で `UserRef`・`CustomFieldView`・`EnumOptionView`、c2 でタスク・プロジェクト・通知の表示の型、一覧の条件、エラーの値、表示の文言を移した。d4b・e1 で、入り口と sync が使うキャッシュの名前 (sync_state のキー、送った記録の接頭辞 `Result*`、`AmbiguousMessage`) と、Asana のタスクから保存の形の値を取る関数 (`TaskFieldValues`・`CustomFieldValue`・`CustomFieldAPIValue`・`ServerCustomField`) を移した。store には別名が残る) | なし | 表示用の読み取りの型 (`TaskSummary`・`TaskDetail`・`CustomFieldView` など)、表示の文言 (`StatusLabel`・`ConflictLines` など)、入り口と sync が判定に使うエラーの値 (`ErrNotFound`・`ErrPushBusy` など)、キャッシュの名前 (sync_state のキー)、カスタムフィールドの値の保存の形。共有の型 `asana/model` を import する |
+| `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名。#73 で PUT 値変換とタスク/CF 抽出を移した) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error`、`CF*` 定数、`TaskFieldValues`・`CustomFieldValue`・`CustomFieldAPIValue`・`ServerCustomField` |
+| `internal/readmodel` | 共有の型 | (#73 で非 DTO 責務を `domain/plan`・`asana/model`・`store`・`ui/format` に分離し、純粋な DTO 層へ整理) | なし | 表示・問い合わせ用の読み取り DTO (`TaskSummary`・`TaskDetail`・`CustomFieldView`・`FilterSpec`・`Discard` など)、型付き `ResultKind`、共通エラー値 (`ErrNotFound`・`ErrPushBusy` など)。`asana/model` のみを import する |
+| `internal/ui/format` | 共通 | (#73 で `readmodel` から分離) | なし | TUI・CLI・MCP・sync が使う日本語の表示フォーマット (`StatusLabel`・`ConflictLines`・`DescribeOp`・`OpLabel`・`DiscardLine`・`TaskBadges`・`AccountChangedHelp` など) |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
 | `internal/richtext` | adapter | 同じ | goldmark、x/net/html | Markdown ⇔ rich text の変換。決まりは `domain/rich` を読む |
@@ -88,7 +90,7 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 | store → dates・termsafe | 期日のフィルター、文字の除去 | 許す | — |
 | store → asana | なし (型は `asana/model` から) | 直した | d1 (済み) |
 | store → richtext | なし。`FitQueuedRichText` は変換を関数で受け (sync のポート `RichText`、`richtext.Converter.Fit`)、送り先は `domain/rich` で決める。`ToEditableMarkdown` は c1 で呼ぶ側に移した | 直した | d3 (済み) |
-| sync → store | なし。ストアは d3 で sync のポート `LocalStore` にした (型は domain/outbox・readmodel・asana/model)。名前は e1 で、操作の種類と状態・`Op`・`MoveTarget` を `domain/outbox`、ローカル gid の判定を `domain/gid`、sync_state のキー・送った記録の接頭辞・エラー (`ErrNotFound`・`ErrPushBusy`)・受信箱の状態・`Discard`・`AmbiguousMessage`・`TaskFieldValues`・`CustomFieldAPIValue`・`ServerCustomField` を readmodel から取るようにした | 直した | d3・e1 (済み) |
+| sync → store | なし。ストアは d3 で sync のポート `LocalStore` にした (型は domain/outbox・readmodel・asana/model)。#73 で、402 プラン判定を `domain/plan`、日本語整形を `ui/format`、PUT/CF 変換を `asana/model`、`sync_state` 生キーを `store` 内の型付きアクセサへ分離し、`readmodel` からは読み取り DTO・`ResultKind`・共通エラー値のみを使う | 直した | d3・e1・#73 (済み) |
 | sync → asana | なし。クライアントは sync のポート `AsanaAPI` (ports.go) で受け、型は `asana/model` で呼ぶ | 直した | d3 (済み) |
 | sync → auth | なし。送る前の失敗は、auth が `*auth.TokenError` で包み、sync は `RequestNotSent()` のメソッドで見分ける (push.go の `requestNotSent`) | 直した | d2 (済み) |
 | sync → config | なし。`SyncConfig` は `sync.Config` に、`CacheDir` の既定値は `xdg.CacheDir()` に (d3) | 直した | d3 (済み) |
@@ -114,9 +116,8 @@ e1 で「直す」の行がなくなり、依存の向きのテストの許可�
 
 ## 読み取りの扱い
 
-- (c2・d4b で済んだ。今は入り口は `app.Query` を通して読み、`store` を import しない。以下は決めたときの記録。)
+- (c2・d4b・#73 で済んだ。今は入り口は `app.Query` を通して読み、`store` を import しない。以下は決めたときの経緯と現在の整理。)
 - 読み取り (一覧、検索、詳細) は、段階 a では今のまま入り口から `store` を呼んでよい。書き込みと違って、同じ手順が入り口ごとに重なっている量が少なく、振る舞いの違いの原因にもなっていない。
 - 入り口が読む型は、`asana/model` の型ではなく、**store が定義した表示用の型** (`store.TaskSummary`・`store.TaskDetail`・`store.CustomFieldView`・`store.ProjectView` など) と、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp`・`AccountChangedHelp` など) と、エラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など)。tui だけで約 50 種類ある。
-- 段階 c2 で、これらを標準ライブラリだけの `internal/readmodel` に移す。store は readmodel の型を作って返し、エラーも readmodel の値を返す。store には型の別名をしばらく残し、入り口を少しずつ移す。そのあと `app` に読み取りのユースケース `Query` とポート `QueryStore` を置き (ADR 0009)、入り口は `app` を通して読む。これで入り口から `store` の import がなくなる。
-- readmodel には、表示の型のほかに、キャッシュの名前 (sync_state のキー) と、Asana のタスクから保存の形の値を取る関数 (`TaskFieldValues`・`CustomFieldAPIValue` など。競合の確かめと PUT の形に使い、表示のためではない) も置く (d4b・e1)。sync と store の両方が使い、`asana/model` の型を受けるのでドメインには置けないため。そのために readmodel は `asana/model` を import する (共有の型どうし)。
-- `asana/model` の型 (ADR 0005) は、キャッシュと同期が Asana の応答を扱うための型で、入り口の表示には readmodel を使う。
+- 段階 c2 でこれらを `internal/readmodel` に移し、段階 e1 を経て、`app` に読み取りのユースケース `Query` とポート `QueryStore` を置いた (ADR 0009)。さらに #73 で非 DTO 責務（プラン判定 `domain/plan`・日本語表示整形 `ui/format`・Asana 値変換 `asana/model`・`sync_state` 生キー隠蔽 `internal/store`）を分離し、`readmodel` は純粋な表示・問い合わせ DTO と `ResultKind`・エラー値のみを持つ。
+- `asana/model` の型 (ADR 0005) は、キャッシュと同期が Asana の応答を扱うための型で、入り口の表示には `readmodel`、日本語文言の整形には `ui/format` を使う。

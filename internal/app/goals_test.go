@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -84,8 +85,7 @@ func TestGoalsPlanUnavailable(t *testing.T) {
 	st := goalStore(t)
 	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
 	uc := &app.Goals{Store: st, Clock: func() time.Time { return now }}
-	key := readmodel.PlanKey(readmodel.PlanGoals, "w1")
-	if err := st.SetSyncState(ctx, key, now.Add(-time.Hour).Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.Goals, "w1", now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if uc.Available(ctx) || !uc.PortfoliosAvailable(ctx) {
@@ -94,8 +94,8 @@ func TestGoalsPlanUnavailable(t *testing.T) {
 	if _, err := uc.Get(ctx, "秋"); !app.IsPlanUnavailable(err) || !strings.Contains(err.Error(), "ゴール") {
 		t.Fatalf("get: %v", err)
 	}
-	for _, v := range []string{"", "yes", now.Add(-readmodel.PlanRecheckAfter).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)} {
-		if err := st.SetSyncState(ctx, key, v); err != nil {
+	for _, v := range []string{"", "yes", now.Add(-plan.RecheckAfter).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)} {
+		if err := st.SetSyncState(ctx, "plan_unavailable:goals:w1", v); err != nil {
 			t.Fatal(err)
 		}
 		if !uc.Available(ctx) {

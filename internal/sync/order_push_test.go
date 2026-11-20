@@ -105,7 +105,7 @@ func TestPushMoveSectionOrderFailureQueuesPendingOrIgnores404(t *testing.T) {
 			if err != nil || res.Sent != 1 || res.Failed != 0 {
 				t.Fatalf("push = %+v, %v", res, err)
 			}
-			pending, _ := e.st.SyncState(ctx, store.KeyTaskOrder+"p1")
+			pending, _ := e.st.PendingSectionOrders(ctx, "p1")
 			if status == http.StatusInternalServerError {
 				if pending != "s1" {
 					t.Fatalf("pending = %q, want s1", pending)

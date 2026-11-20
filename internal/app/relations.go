@@ -29,7 +29,8 @@ type RelationStore interface {
 	AddEnumOptionLocal(ctx context.Context, fieldGID, name string, now time.Time) (gid string, created bool, err error)
 	TaskWorkspace(ctx context.Context, taskGID string) (string, error)
 	DefaultWorkspace(ctx context.Context) (string, error)
-	SyncState(ctx context.Context, key string) (string, error)
+	PlanRefusedAt(ctx context.Context, feature, workspaceGID string) (time.Time, bool, error)
+	FieldOptionsLocked(ctx context.Context, fieldGID string) (bool, error)
 }
 
 // Relations is the use cases on a task's relations: its tags, followers, other projects,

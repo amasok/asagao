@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -77,7 +78,7 @@ func fieldInput(f readmodel.CustomFieldView) string {
 
 // showFieldPicker opens the chooser of an enum field (multi_enum: toggles, stays open).
 func (m *Model) showFieldPicker(t readmodel.TaskSummary, f readmodel.CustomFieldView) {
-	if len(f.Options) == 0 && !(f.CanAddOption && m.planOK(readmodel.PlanCustomFields)) {
+	if len(f.Options) == 0 && !(f.CanAddOption && m.planOK(plan.CustomFields)) {
 		m.status = fmt.Sprintf("「%s」の選択肢がまだ取得されていません（同期すると選べます）", f.Name)
 		return
 	}
@@ -109,7 +110,7 @@ func (m *Model) showFieldPicker(t readmodel.TaskSummary, f readmodel.CustomField
 		}
 		p.items = append(p.items, item)
 	}
-	if f.CanAddOption && m.planOK(readmodel.PlanCustomFields) {
+	if f.CanAddOption && m.planOK(plan.CustomFields) {
 		p.items = append(p.items, pickerItem{label: "＋ 選択肢を足して設定する…", value: newOptionValue})
 	}
 	if !multi {

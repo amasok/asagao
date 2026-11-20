@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/task"
-	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // A task's start date (start_on) needs a due date and does not come after it (Asana's
 // rules, task.CheckDates), and a workspace whose plan lacks start dates (a recent 402,
-// readmodel.PlanStartOn) is not given one. Both are checked before an edit is queued, so
+// plan.StartOn) is not given one. Both are checked before an edit is queued, so
 // an entry Asana would refuse is never made.
 
 // checkTaskDates checks the dates of task gid after changes (cur: its values now). It
@@ -67,16 +67,16 @@ func dueAtDay(ctx context.Context, q dbQuerier, gid string) (string, error) {
 	return t.Local().Format(time.DateOnly), nil
 }
 
-// startOnOffered returns a *readmodel.PlanUnavailableError while a recent 402 hides start
+// startOnOffered returns a *plan.UnavailableError while a recent 402 hides start
 // dates in workspace ws.
 func startOnOffered(ctx context.Context, q dbQuerier, ws string, now time.Time) error {
 	var v string
-	err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", readmodel.PlanKey(readmodel.PlanStartOn, ws)).Scan(&v)
+	err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", planKey(plan.StartOn, ws)).Scan(&v)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if readmodel.PlanOffFor(v, now) {
-		return &readmodel.PlanUnavailableError{Feature: readmodel.PlanStartOn}
+	if plan.OffFor(v, now) {
+		return &plan.UnavailableError{Feature: plan.StartOn}
 	}
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	usecase "github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Goals, portfolios and time periods (#7): read only. Online, they are fetched from Asana
@@ -345,7 +346,7 @@ func supportLabel(t string) string {
 func portfolioLine(name string, st *readmodel.StatusBrief, owner *readmodel.UserRef, due string) string {
 	parts := []string{name}
 	if st != nil {
-		parts[0] = "[" + readmodel.StatusLabel(st.StatusType) + "] " + name
+		parts[0] = "[" + format.StatusLabel(st.StatusType) + "] " + name
 	}
 	if due != "" {
 		parts = append(parts, "期日 "+due)

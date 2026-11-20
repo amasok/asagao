@@ -60,7 +60,7 @@ func TestAttackCompletedFetchFailsThenRecovers(t *testing.T) {
 	if _, err := e.s.Run(context.Background(), false); err == nil {
 		t.Fatal("want the failure of the completed fetch")
 	}
-	if got := e.state(t, readmodel.KeyProjectTasks+"p2"); got != readmodel.TasksOpen {
+	if got := e.projectState(t, "p2"); got != readmodel.TasksOpen {
 		t.Fatalf("p2 state %q, want open", got)
 	}
 	if !e.cached(t, "b1") || e.cached(t, "b2") {
@@ -69,7 +69,7 @@ func TestAttackCompletedFetchFailsThenRecovers(t *testing.T) {
 	failing.Store(false)
 	e.now = e.now.Add(10 * time.Minute)
 	e.run(t)
-	if !e.cached(t, "b2") || e.state(t, readmodel.KeyProjectTasks+"p2") != readmodel.TasksAll {
+	if !e.cached(t, "b2") || e.projectState(t, "p2") != readmodel.TasksAll {
 		t.Fatal("the next sync did not fetch p2's completed tasks")
 	}
 }
@@ -87,11 +87,11 @@ func TestAttackCancelDuringCompleted(t *testing.T) {
 		t.Fatal("want an error after the cancel")
 	}
 	for _, k := range []string{"p2", "p1"} {
-		if got := e.state(t, readmodel.KeyProjectTasks+k); got == readmodel.TasksAll {
+		if got := e.projectState(t, k); got == readmodel.TasksAll {
 			t.Errorf("%s marked all after a cancelled fetch", k)
 		}
 	}
-	if got := e.state(t, readmodel.KeyMyTasks+"w1"); got == readmodel.TasksAll {
+	if got := e.myState(t, "w1"); got == readmodel.TasksAll {
 		t.Errorf("my tasks marked all after a cancelled fetch")
 	}
 }
@@ -160,7 +160,7 @@ func TestAttackEventsTokenExpiredOnOpenedProject(t *testing.T) {
 	if _, err := e.s.OpenProject(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.st.SetSyncState(ctx, readmodel.KeyEvents+"p1", ""); err != nil { // token lost: 412 path
+	if err := e.st.SetEventsToken(ctx, "p1", ""); err != nil { // token lost: 412 path
 		t.Fatal(err)
 	}
 	e.now = e.now.Add(10 * time.Minute)
@@ -168,7 +168,7 @@ func TestAttackEventsTokenExpiredOnOpenedProject(t *testing.T) {
 	if !e.cached(t, "a1") || !e.cached(t, "a2") {
 		t.Fatal("tasks lost after a token reset")
 	}
-	if got := e.state(t, readmodel.KeyProjectTasks+"p1"); got != readmodel.TasksAll {
+	if got := e.projectState(t, "p1"); got != readmodel.TasksAll {
 		t.Fatalf("state %q", got)
 	}
 }
@@ -268,7 +268,7 @@ func TestAttackOpenOffline(t *testing.T) {
 	if _, err := e.s.OpenProject(context.Background(), "p1", true); err == nil {
 		t.Fatal("want an error offline")
 	}
-	if got := e.state(t, readmodel.KeyProjectTasks+"p1"); got != readmodel.TasksWanted {
+	if got := e.projectState(t, "p1"); got != readmodel.TasksWanted {
 		t.Fatalf("state %q, want wanted", got)
 	}
 	if e.cached(t, "a1") {

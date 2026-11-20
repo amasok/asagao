@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
 
@@ -66,7 +65,7 @@ func TestGitScanByCustomID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gid, _ := st.SyncState(context.Background(), readmodel.KeyCustomID+"ENG-1")
+	gid, _ := st.CustomIDTaskGID(context.Background(), "ENG-1")
 	_ = st.Close()
 	if gid != gitA {
 		t.Fatalf("gid not remembered: %q", gid)
@@ -95,7 +94,7 @@ func TestGitScanHookCustomIDSlowAsana(t *testing.T) {
 		t.Fatal(err)
 	}
 	for id, gid := range map[string]string{"ENG-1": gitA, "ENG-2": gitB} {
-		if err := st.SetSyncState(context.Background(), readmodel.KeyCustomID+id, gid); err != nil {
+		if err := st.SetCustomIDTaskGID(context.Background(), id, gid); err != nil {
 			t.Fatal(err)
 		}
 	}

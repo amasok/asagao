@@ -12,6 +12,7 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
@@ -19,7 +20,7 @@ import (
 
 // #68 attack: exact 24h boundary (23h59m59s, 24h-1ns, 24h, 24h+1s) and exact start boundary
 // (recordedAt-1ns, recordedAt) for all 7 plan-gated features, comparing TUI planOK against
-// readmodel.PlanOffFor and app use cases without any write or manual loadPlan.
+// plan.OffAt and app use cases without any write or manual loadPlan.
 func TestTUIPlanRecheckExactBoundariesAttack(t *testing.T) {
 	ctx := context.Background()
 	st := fixtureStore(t)
@@ -27,18 +28,17 @@ func TestTUIPlanRecheckExactBoundariesAttack(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordedAt := testNow
-	recStr := recordedAt.UTC().Format(time.RFC3339)
 	allFeatures := []string{
-		readmodel.PlanSections,
-		readmodel.PlanTags,
-		readmodel.PlanTimeTracking,
-		readmodel.PlanGoals,
-		readmodel.PlanPortfolios,
-		readmodel.PlanProjectTemplates,
-		readmodel.PlanCustomFields,
+		plan.Sections,
+		plan.Tags,
+		plan.TimeTracking,
+		plan.Goals,
+		plan.Portfolios,
+		plan.ProjectTemplates,
+		plan.CustomFields,
 	}
 	for _, f := range allFeatures {
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(f, "w1"), recStr); err != nil {
+		if err := st.RecordPlanRefusal(ctx, f, "w1", recordedAt); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -52,19 +52,19 @@ func TestTUIPlanRecheckExactBoundariesAttack(t *testing.T) {
 	appAvail := func(feature string, at time.Time) bool {
 		clk := func() time.Time { return at }
 		switch feature {
-		case readmodel.PlanSections:
+		case plan.Sections:
 			return (&app.Sections{Store: st, Clock: clk}).Available(ctx)
-		case readmodel.PlanTags:
+		case plan.Tags:
 			return (&app.Tags{Store: st, Clock: clk}).Available(ctx)
-		case readmodel.PlanTimeTracking:
+		case plan.TimeTracking:
 			return (&app.TimeTracking{Store: st, Clock: clk}).Available(ctx)
-		case readmodel.PlanGoals:
+		case plan.Goals:
 			return (&app.Goals{Store: st, Clock: clk}).Available(ctx)
-		case readmodel.PlanPortfolios:
+		case plan.Portfolios:
 			return (&app.Goals{Store: st, Clock: clk}).PortfoliosAvailable(ctx)
-		case readmodel.PlanProjectTemplates:
-			return app.TemplatesOffered(ctx, st, readmodel.PlanProjectTemplates, "w1", at)
-		case readmodel.PlanCustomFields:
+		case plan.ProjectTemplates:
+			return app.TemplatesOffered(ctx, st, plan.ProjectTemplates, "w1", at)
+		case plan.CustomFields:
 			return (&app.ProjectFields{Store: st, Clock: clk}).Available(ctx, "w1")
 		default:
 			t.Fatalf("unexpected feature %q", feature)
@@ -80,17 +80,17 @@ func TestTUIPlanRecheckExactBoundariesAttack(t *testing.T) {
 		{"before_recorded_1h", recordedAt.Add(-time.Hour), true},
 		{"before_recorded_1ns", recordedAt.Add(-time.Nanosecond), true},
 		{"at_recorded_exact", recordedAt, false},
-		{"before_24h_1s", recordedAt.Add(readmodel.PlanRecheckAfter - time.Second), false},
-		{"before_24h_1ns", recordedAt.Add(readmodel.PlanRecheckAfter - time.Nanosecond), false},
-		{"at_24h_exact", recordedAt.Add(readmodel.PlanRecheckAfter), true},
-		{"after_24h_1s", recordedAt.Add(readmodel.PlanRecheckAfter + time.Second), true},
+		{"before_24h_1s", recordedAt.Add(plan.RecheckAfter - time.Second), false},
+		{"before_24h_1ns", recordedAt.Add(plan.RecheckAfter - time.Nanosecond), false},
+		{"at_24h_exact", recordedAt.Add(plan.RecheckAfter), true},
+		{"after_24h_1s", recordedAt.Add(plan.RecheckAfter + time.Second), true},
 	}
 
 	// First check dynamically WITHOUT reloading planOff from DB (planWindow.off(now)).
 	for _, tc := range cases {
 		now = tc.at
 		for _, f := range allFeatures {
-			wantByReadmodel := !readmodel.PlanOffFor(recStr, tc.at)
+			wantByReadmodel := !plan.OffAt(recordedAt, tc.at)
 			wantByApp := appAvail(f, tc.at)
 			gotTUI := h.m.planOK(f)
 			if wantByReadmodel != tc.wantOffer || wantByApp != tc.wantOffer || gotTUI != tc.wantOffer {
@@ -121,7 +121,7 @@ func TestTUIPlanRecheckExactBoundariesAttack(t *testing.T) {
 //   - T+24h-1ns: both still active -> hidden
 //   - T+24h and T+24h+1s: ws1 expired, ws2 still active -> offered (TUI == app == true)
 //   - T+5h (clock jumps backward before ws2's 402!): ws2's mark is in the future so
-//     readmodel.PlanOffFor(ws2, T+5h) is false -> offered, and TUI planOK MUST agree with
+//     plan.OffAt(ws2, T+5h) is false -> offered, and TUI planOK MUST agree with
 //     app.planAnywhere (both before and after loadPlan)!
 func TestTUIPlanMultiWorkspaceTimelineAndClockRollbackAttack(t *testing.T) {
 	isolateDirs(t)
@@ -144,12 +144,12 @@ func TestTUIPlanMultiWorkspaceTimelineAndClockRollbackAttack(t *testing.T) {
 	base := testNow
 	tWS1 := base
 	tWS2 := base.Add(10 * time.Hour)
-	multiFeatures := []string{readmodel.PlanSections, readmodel.PlanTags, readmodel.PlanTimeTracking}
+	multiFeatures := []string{plan.Sections, plan.Tags, plan.TimeTracking}
 	for _, f := range multiFeatures {
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(f, "ws1"), tWS1.UTC().Format(time.RFC3339)); err != nil {
+		if err := st.RecordPlanRefusal(ctx, f, "ws1", tWS1); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.SetSyncState(ctx, readmodel.PlanKey(f, "ws2"), tWS2.UTC().Format(time.RFC3339)); err != nil {
+		if err := st.RecordPlanRefusal(ctx, f, "ws2", tWS2); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -164,11 +164,11 @@ func TestTUIPlanMultiWorkspaceTimelineAndClockRollbackAttack(t *testing.T) {
 	appAvail := func(feature string, at time.Time) bool {
 		clk := func() time.Time { return at }
 		switch feature {
-		case readmodel.PlanSections:
+		case plan.Sections:
 			return (&app.Sections{Store: st, Clock: clk}).Available(ctx)
-		case readmodel.PlanTags:
+		case plan.Tags:
 			return (&app.Tags{Store: st, Clock: clk}).Available(ctx)
-		case readmodel.PlanTimeTracking:
+		case plan.TimeTracking:
 			return (&app.TimeTracking{Store: st, Clock: clk}).Available(ctx)
 		default:
 			t.Fatalf("unexpected feature %q", feature)
@@ -182,10 +182,10 @@ func TestTUIPlanMultiWorkspaceTimelineAndClockRollbackAttack(t *testing.T) {
 		wantOffer bool
 	}{
 		{"T+12h_both_active", base.Add(12 * time.Hour), false},
-		{"T+24h-1s_both_active", base.Add(readmodel.PlanRecheckAfter - time.Second), false},
-		{"T+24h-1ns_both_active", base.Add(readmodel.PlanRecheckAfter - time.Nanosecond), false},
-		{"T+24h_ws1_expired", base.Add(readmodel.PlanRecheckAfter), true},
-		{"T+24h+1s_ws1_expired_ws2_active", base.Add(readmodel.PlanRecheckAfter + time.Second), true},
+		{"T+24h-1s_both_active", base.Add(plan.RecheckAfter - time.Second), false},
+		{"T+24h-1ns_both_active", base.Add(plan.RecheckAfter - time.Nanosecond), false},
+		{"T+24h_ws1_expired", base.Add(plan.RecheckAfter), true},
+		{"T+24h+1s_ws1_expired_ws2_active", base.Add(plan.RecheckAfter + time.Second), true},
 		{"T+5h_clock_rollback_before_ws2", base.Add(5 * time.Hour), true},
 		{"T+10h-1ns_clock_rollback_just_before_ws2", base.Add(10*time.Hour - time.Nanosecond), true},
 		{"T+10h_exact_both_active", base.Add(10 * time.Hour), false},
@@ -223,33 +223,33 @@ func TestTUIPlanMultiWorkspaceTimelineAndClockRollbackAttack(t *testing.T) {
 
 	// Phase 3: non-overlapping 402 windows (ws1 at T+0h, ws2 at T+30h) and corrupt value
 	// must never hide the feature, matching app.Available.
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "ws2"), base.Add(30*time.Hour).UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.Tags, "ws2", base.Add(30*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	for _, at := range []time.Time{base.Add(12 * time.Hour), base.Add(25 * time.Hour), base.Add(35 * time.Hour)} {
 		now = at
 		h.run(h.m.loadPlan())
-		if !h.m.planOK(readmodel.PlanTags) || !appAvail(readmodel.PlanTags, at) {
-			t.Errorf("non-overlapping at %v: TUI=%v app=%v, want true", at, h.m.planOK(readmodel.PlanTags), appAvail(readmodel.PlanTags, at))
+		if !h.m.planOK(plan.Tags) || !appAvail(plan.Tags, at) {
+			t.Errorf("non-overlapping at %v: TUI=%v app=%v, want true", at, h.m.planOK(plan.Tags), appAvail(plan.Tags, at))
 		}
 	}
 
 	// Timezone-offset RFC3339 (+09:00) and garbage string.
 	jst := time.FixedZone("JST", 9*3600)
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "ws2"), base.Add(2*time.Hour).In(jst).Format(time.RFC3339)); err != nil {
+	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.Tags+":ws2", base.Add(2*time.Hour).In(jst).Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	now = base.Add(3 * time.Hour)
 	h.run(h.m.loadPlan())
-	if h.m.planOK(readmodel.PlanTags) || appAvail(readmodel.PlanTags, now) {
-		t.Errorf("RFC3339 +09:00 at T+3h: TUI=%v app=%v, want false", h.m.planOK(readmodel.PlanTags), appAvail(readmodel.PlanTags, now))
+	if h.m.planOK(plan.Tags) || appAvail(plan.Tags, now) {
+		t.Errorf("RFC3339 +09:00 at T+3h: TUI=%v app=%v, want false", h.m.planOK(plan.Tags), appAvail(plan.Tags, now))
 	}
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "ws2"), "not-a-timestamp"); err != nil {
+	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.Tags+":ws2", "not-a-timestamp"); err != nil {
 		t.Fatal(err)
 	}
 	h.run(h.m.loadPlan())
-	if !h.m.planOK(readmodel.PlanTags) || !appAvail(readmodel.PlanTags, now) {
-		t.Errorf("garbage sync_state: TUI=%v app=%v, want true", h.m.planOK(readmodel.PlanTags), appAvail(readmodel.PlanTags, now))
+	if !h.m.planOK(plan.Tags) || !appAvail(plan.Tags, now) {
+		t.Errorf("garbage sync_state: TUI=%v app=%v, want true", h.m.planOK(plan.Tags), appAvail(plan.Tags, now))
 	}
 }
 
@@ -273,10 +273,10 @@ func TestTUISpaceReloadsPlanFromOtherProcessAttack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(st1.SetSyncState(ctx, store.KeyMeGID, "me"))
+	must(st1.SetMeGID(ctx, "me"))
 	must(st1.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "W1"}}))
 	must(st1.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P1", Members: []asana.Ref{{GID: "me"}}}}, "me"))
-	must(st1.SetSyncState(ctx, store.KeyProjectTasks+"p1", "all"))
+	must(st1.SetProjectTaskState(ctx, "p1", readmodel.TasksAll))
 	must(st1.ReplaceSections(ctx, "p1", []asana.Section{{GID: "s1", Name: "S1"}}))
 	must(st1.UpsertTasks(ctx, []asana.Task{{
 		GID: "t1", Name: "T1", Workspace: &asana.Ref{GID: "w1"},
@@ -310,28 +310,27 @@ func TestTUISpaceReloadsPlanFromOtherProcessAttack(t *testing.T) {
 	}
 
 	// Other process writes 402 marks into sync_state.
-	mark := now.UTC().Format(time.RFC3339)
-	must(st2.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1"), mark))
-	must(st2.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), mark))
+	must(st2.RecordPlanRefusal(ctx, plan.Sections, "w1", now))
+	must(st2.RecordPlanRefusal(ctx, plan.Tags, "w1", now))
 
 	// Pressing space reloads plan from DB -> items disappear.
 	if s := menuText(); strings.Contains(s, "セクションを追加") || strings.Contains(s, "タグの名前・色") {
 		t.Fatalf("after other process wrote 402, space menu still offered them:\n%s", s)
 	}
-	if h.m.planOK(readmodel.PlanSections) || h.m.planOK(readmodel.PlanTags) {
+	if h.m.planOK(plan.Sections) || h.m.planOK(plan.Tags) {
 		t.Fatal("planOK still true after other process wrote 402 and space was pressed")
 	}
 
 	// Other process clears 402 marks (well before 24h!).
 	now = now.Add(5 * time.Minute)
-	must(st2.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanSections, "w1"), ""))
-	must(st2.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), ""))
+	must(st2.ClearPlanRefusal(ctx, plan.Sections, "w1"))
+	must(st2.ClearPlanRefusal(ctx, plan.Tags, "w1"))
 
 	// Pressing space reloads plan from DB -> items reappear!
 	if s := menuText(); !strings.Contains(s, "セクションを追加") || !strings.Contains(s, "タグの名前・色") {
 		t.Fatalf("after other process cleared 402, space menu still hid them:\n%s", s)
 	}
-	if !h.m.planOK(readmodel.PlanSections) || !h.m.planOK(readmodel.PlanTags) {
+	if !h.m.planOK(plan.Sections) || !h.m.planOK(plan.Tags) {
 		t.Fatal("planOK still false after other process cleared 402 and space was pressed")
 	}
 }
@@ -353,13 +352,13 @@ func TestTUIPlanSeqDropsStaleOutOfOrderAndTemplateRaceAttack(t *testing.T) {
 
 	// 1. Out-of-order loadPlan cmds: cmd1 reads 402 (seq N), DB is cleared, cmd2 reads clear
 	// (seq N+1), msg2 arrives BEFORE msg1.
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), now.UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.Tags, "w1", now); err != nil {
 		t.Fatal(err)
 	}
 	cmd1 := h.m.loadPlan()
 	msg1 := cmd1() // snapshot with 402, older seq
 
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), ""); err != nil {
+	if err := st.ClearPlanRefusal(ctx, plan.Tags, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	cmd2 := h.m.loadPlan()
@@ -367,11 +366,11 @@ func TestTUIPlanSeqDropsStaleOutOfOrderAndTemplateRaceAttack(t *testing.T) {
 
 	// Deliver newer first, then older.
 	h.send(msg2)
-	if !h.m.planOK(readmodel.PlanTags) {
+	if !h.m.planOK(plan.Tags) {
 		t.Fatal("after newer msg2 (cleared), PlanTags should be offered")
 	}
 	h.send(msg1)
-	if !h.m.planOK(readmodel.PlanTags) {
+	if !h.m.planOK(plan.Tags) {
 		t.Fatal("stale msg1 overwrote newer cleared planOff")
 	}
 
@@ -379,10 +378,10 @@ func TestTUIPlanSeqDropsStaleOutOfOrderAndTemplateRaceAttack(t *testing.T) {
 	h.send(planLoadedMsg{
 		seq: h.m.planSeq + 1,
 		off: map[string]planWindow{
-			readmodel.PlanTags: {from: now, until: now.Add(readmodel.PlanRecheckAfter)},
+			plan.Tags: {from: now, until: now.Add(plan.RecheckAfter)},
 		},
 	})
-	if !h.m.planOK(readmodel.PlanTags) {
+	if !h.m.planOK(plan.Tags) {
 		t.Fatal("rogue future seq overwrote current planOff")
 	}
 
@@ -393,23 +392,23 @@ func TestTUIPlanSeqDropsStaleOutOfOrderAndTemplateRaceAttack(t *testing.T) {
 	cmdBefore := h.m.loadPlan()
 	msgBefore := cmdBefore() // snapshot from BEFORE the 402!
 
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanProjectTemplates, "w1"), now.UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.ProjectTemplates, "w1", now); err != nil {
 		t.Fatal(err)
 	}
 	// Deliver projectTemplatesMsg 402 -> templateError hides it AND returns a fresh loadPlan()
 	// (bumping planSeq!).
-	nextCmd := h.sendCmd(projectTemplatesMsg{err: &sync.TemplatePlanError{Feature: readmodel.PlanProjectTemplates}})
-	if h.m.planOK(readmodel.PlanProjectTemplates) {
+	nextCmd := h.sendCmd(projectTemplatesMsg{err: &sync.TemplatePlanError{Feature: plan.ProjectTemplates}})
+	if h.m.planOK(plan.ProjectTemplates) {
 		t.Fatal("PlanProjectTemplates offered right after TemplatePlanError")
 	}
 	// Now the stale cmdBefore arrives -> must be dropped!
 	h.send(msgBefore)
-	if h.m.planOK(readmodel.PlanProjectTemplates) {
+	if h.m.planOK(plan.ProjectTemplates) {
 		t.Fatal("stale pre-402 planLoadedMsg un-hid PlanProjectTemplates after TemplatePlanError")
 	}
 	// Running the follow-up loadPlan keeps it hidden.
 	h.run(nextCmd)
-	if h.m.planOK(readmodel.PlanProjectTemplates) {
+	if h.m.planOK(plan.ProjectTemplates) {
 		t.Fatal("follow-up loadPlan un-hid PlanProjectTemplates")
 	}
 }
@@ -460,14 +459,14 @@ func TestTUIPlanLoadConcurrentAttack(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		mark := testNow.UTC().Format(time.RFC3339)
 		for i := 0; i < 8; i++ {
-			v := mark
 			if i%2 == 1 {
-				v = ""
+				_ = st2.ClearPlanRefusal(ctx, plan.Tags, "w1")
+				_ = st2.ClearPlanRefusal(ctx, plan.Tags, "w2")
+			} else {
+				_ = st2.RecordPlanRefusal(ctx, plan.Tags, "w1", testNow)
+				_ = st2.RecordPlanRefusal(ctx, plan.Tags, "w2", testNow)
 			}
-			_ = st2.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w1"), v)
-			_ = st2.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTags, "w2"), v)
 		}
 	}()
 	wg.Wait()

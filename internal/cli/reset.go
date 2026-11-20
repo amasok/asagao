@@ -11,6 +11,7 @@ import (
 
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 	"github.com/amasok/asagao/internal/xdg"
 )
 
@@ -72,5 +73,5 @@ func (a *app) resetCmd() *cobra.Command {
 // accountChanged explains sync.ErrAccountChanged with the number of unsent changes.
 func accountChanged(ctx context.Context, st Store) error {
 	n, _ := query(st).UnsentCount(ctx)
-	return fmt.Errorf("%s: %w", readmodel.AccountChangedHelp(n, "asagao reset"), sync.ErrAccountChanged)
+	return fmt.Errorf("%s: %w", format.AccountChangedHelp(n, "asagao reset"), sync.ErrAccountChanged)
 }

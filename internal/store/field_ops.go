@@ -27,9 +27,6 @@ const (
 	OpCreateEnumOption   = outbox.KindCreateEnumOption
 	OpAddFieldSetting    = outbox.KindAddFieldSetting
 	OpRemoveFieldSetting = outbox.KindRemoveFieldSetting
-
-	// ResultEnumOption maps an option created offline to the option Asana created.
-	ResultEnumOption = readmodel.ResultEnumOption
 )
 
 // ProjectFieldView is readmodel's.
@@ -152,7 +149,7 @@ func (s *Store) RealEnumOptionGID(ctx context.Context, gid string) (string, erro
 	if !IsLocalGID(gid) {
 		return gid, nil
 	}
-	v, err := s.SyncState(ctx, ResultEnumOption+gid)
+	v, err := s.SyncState(ctx, resultPrefixEnumOption+gid)
 	if err != nil || v == "" {
 		return gid, err
 	}
@@ -168,7 +165,7 @@ func realOptions(ctx context.Context, tx *sql.Tx, v any) (any, error) {
 			return g
 		}
 		var real string
-		switch e := tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", ResultEnumOption+g).Scan(&real); {
+		switch e := tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", resultPrefixEnumOption+g).Scan(&real); {
 		case e == nil && real != "":
 			return real
 		case e != nil && !errors.Is(e, sql.ErrNoRows):
@@ -230,7 +227,7 @@ func replaceLocalOption(ctx context.Context, tx *sql.Tx, id int64, local string,
 		WHERE id <> ?3 AND (instr(payload, ?1) > 0 OR instr(base, ?1) > 0)`, quoted(local), quoted(real.GID), id); err != nil {
 		return err
 	}
-	return recordResult(ctx, tx, ResultEnumOption, local, real.GID)
+	return recordResult(ctx, tx, resultPrefixEnumOption, local, real.GID)
 }
 
 // mapOption applies f to the option gids of a value in the stored form (multi_enum: sorted again).

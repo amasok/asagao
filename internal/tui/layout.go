@@ -13,8 +13,6 @@ const defaultDetailRatio = 40
 
 var detailRatios = []int{30, 40, 50, 60, 70, 80}
 
-const layoutStateKey = "ui:layout"
-
 type layoutState struct {
 	DetailRatio int  `json:"detail_ratio"`
 	HideSidebar bool `json:"hide_sidebar"`
@@ -26,7 +24,7 @@ func (m *Model) loadLayout() tea.Cmd {
 	st := m.deps.Store
 	return func() tea.Msg {
 		var l layoutState
-		if v, err := st.SyncState(m.ctx, layoutStateKey); err == nil && v != "" {
+		if v, err := st.LayoutState(m.ctx); err == nil && v != "" {
 			_ = json.Unmarshal([]byte(v), &l)
 		}
 		return layoutLoadedMsg(l)
@@ -44,7 +42,7 @@ func (m *Model) saveLayout() tea.Cmd {
 	b, _ := json.Marshal(layoutState{DetailRatio: m.detailRatio, HideSidebar: m.hideSidebar})
 	st := m.deps.Store
 	return func() tea.Msg {
-		_ = st.SetSyncState(m.ctx, layoutStateKey, string(b))
+		_ = st.SetLayoutState(m.ctx, string(b))
 		return nil
 	}
 }

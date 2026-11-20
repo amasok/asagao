@@ -62,7 +62,7 @@ func (s *Store) ResetWithBackup(ctx context.Context, backupDir string, upTo int6
 		return res, err
 	}
 	if len(ops)+len(discarded) > 0 {
-		account, _ := s.SyncState(ctx, KeyMeGID)
+		account, _ := s.SyncState(ctx, keyMeGID)
 		path, err := writeResetBackup(backupDir, ResetBackup{CreatedAt: formatTime(now), Account: account, Outbox: ops, Discarded: discarded}, now)
 		if err != nil {
 			return res, fmt.Errorf("バックアップを書き出せなかったため、初期化をやめました: %w", err)

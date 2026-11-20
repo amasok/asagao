@@ -25,7 +25,7 @@ func TestRecoverInterruptedOpsVerifyDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the tag "created" now has a real gid recorded
-	if _, err := s.db.ExecContext(ctx, "INSERT INTO sync_state(key, value) VALUES(?, ?)", ResultTag+createdTag, "999"); err != nil {
+	if _, err := s.db.ExecContext(ctx, "INSERT INTO sync_state(key, value) VALUES(?, ?)", resultPrefixTag+createdTag, "999"); err != nil {
 		t.Fatal(err)
 	}
 	ops, err := s.ListOps(ctx)

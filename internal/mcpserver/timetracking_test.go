@@ -10,10 +10,9 @@ import (
 	"strings"
 	stdsync "sync"
 	"testing"
-	"time"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -109,11 +108,11 @@ func TestTimeEntryToolsPaymentRequired(t *testing.T) {
 		t.Fatalf("list after 402: %+v", res)
 	}
 	ctx := context.Background()
-	if v, _ := st.SyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1")); v == "" {
+	if _, ok, _ := st.PlanRefusedAt(ctx, plan.TimeTracking, "w1"); !ok {
 		t.Fatal("402 not recorded")
 	}
 	// The syncer recorded it by the real clock; the server below runs at testNow.
-	if err := st.SetSyncState(ctx, readmodel.PlanKey(readmodel.PlanTimeTracking, "w1"), testNow.UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", testNow); err != nil {
 		t.Fatal(err)
 	}
 	cs = connect(t, &Server{Store: st})

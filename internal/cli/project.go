@@ -15,6 +15,7 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 func (a *app) projectCmd() *cobra.Command {
@@ -172,7 +173,7 @@ func printProjectOverview(out io.Writer, o *readmodel.ProjectOverview) {
 		line("進み具合", progress)
 	}
 	if o.Status != nil {
-		line("最新のステータス", strings.TrimSpace("["+readmodel.StatusLabel(o.Status.StatusType)+"] "+o.Status.Title+"  "+o.Status.CreatedAt))
+		line("最新のステータス", strings.TrimSpace("["+format.StatusLabel(o.Status.StatusType)+"] "+o.Status.Title+"  "+o.Status.CreatedAt))
 	}
 	if o.Pending {
 		line("未送信", "説明などの変更がまだ Asana に送られていません")
@@ -273,7 +274,7 @@ func (a *app) projectStatusCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "ステータス更新はまだありません")
 			}
 			for _, u := range updates {
-				fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s  %s %s\n%s\n\n", readmodel.StatusLabel(u.StatusType), u.Title, u.Author, u.CreatedAt, indent(u.Text))
+				fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s  %s %s\n%s\n\n", format.StatusLabel(u.StatusType), u.Title, u.Author, u.CreatedAt, indent(u.Text))
 			}
 			return nil
 		},

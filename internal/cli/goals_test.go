@@ -14,6 +14,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
+	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
 )
@@ -46,7 +47,7 @@ func goalsCLIEnv(t *testing.T) string {
 		[]model.GoalRelationship{{SupportingResource: &model.SupportingWork{GID: "p1", ResourceType: "project", Name: "新居"}}},
 		time.Now()))
 	must(st.ReplaceTimePeriods(ctx, "w1", []model.TimePeriod{*q, *old}))
-	must(st.SetSyncState(ctx, readmodel.KeyGoals+"w1", time.Now().UTC().Format(time.RFC3339)))
+	must(st.SetGoalsFetchedAt(ctx, "w1", time.Now()))
 	must(st.ReplacePortfolios(ctx, "w1", []model.Portfolio{{GID: "pf1", Name: "今期の施策", CurrentStatusUpdate: &model.StatusBrief{StatusType: "at_risk"}}}))
 	return path
 }
@@ -105,7 +106,7 @@ func TestGoalCommandsPlanUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSyncState(context.Background(), readmodel.PlanKey(readmodel.PlanGoals, "w1"), time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := st.RecordPlanRefusal(context.Background(), plan.Goals, "w1", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

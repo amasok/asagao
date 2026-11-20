@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // storyText returns a stored comment's text and html_text ("", "", false if it is not there).
@@ -108,7 +109,7 @@ func TestEditCommentNeedsMe(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	seedComments(t, s)
-	must(t, s.SetSyncState(ctx, KeyMeGID, ""))
+	must(t, s.SetSyncState(ctx, keyMeGID, ""))
 	if err := s.EditCommentLocal(ctx, "c-me", "x", "", testNow); err == nil {
 		t.Error("edited without knowing who I am")
 	}
@@ -214,7 +215,7 @@ func TestEditCommentBeingSent(t *testing.T) {
 	if got.Payload["text"] != "送信中" {
 		t.Errorf("the add_comment being sent was rewritten: %+v", got.Payload)
 	}
-	if real, waiting, err := s.LocalResult(ctx, ResultStory, gid); real != "" || !waiting || err != nil {
+	if real, waiting, err := s.LocalResult(ctx, readmodel.ResultStory, gid); real != "" || !waiting || err != nil {
 		t.Errorf("LocalResult = %q, %v, %v; want it to wait", real, waiting, err)
 	}
 
@@ -223,7 +224,7 @@ func TestEditCommentBeingSent(t *testing.T) {
 	if text, _, _ := storyText(t, s, "c-real"); text != "送信中に直した" {
 		t.Errorf("Asana's comment shows %q, want the queued edit", text)
 	}
-	if real, waiting, err := s.LocalResult(ctx, ResultStory, gid); real != "c-real" || waiting || err != nil {
+	if real, waiting, err := s.LocalResult(ctx, readmodel.ResultStory, gid); real != "c-real" || waiting || err != nil {
 		t.Errorf("LocalResult = %q, %v, %v", real, waiting, err)
 	}
 	ops := opsOfKind(t, s, OpUpdateStory)
@@ -390,7 +391,7 @@ func TestDeleteAttachmentBeingUploaded(t *testing.T) {
 	if _, err := s.GetAttachment(ctx, "a-real"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a refresh brought it back: %v", err)
 	}
-	if real, waiting, _ := s.LocalResult(ctx, ResultAttachment, local); real != "a-real" || waiting {
+	if real, waiting, _ := s.LocalResult(ctx, readmodel.ResultAttachment, local); real != "a-real" || waiting {
 		t.Errorf("LocalResult = %q, %v", real, waiting)
 	}
 }
