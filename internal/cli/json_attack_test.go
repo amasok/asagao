@@ -31,7 +31,7 @@ func TestJSONOutputFromAsanaErrorHasNoRawControls(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	cmd := newRoot(&app{baseURL: srv.URL})
+	cmd := newTestRoot(srv.URL)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
@@ -66,7 +66,7 @@ func jsonRunner(t *testing.T, h http.Handler) func(args ...string) (string, stri
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return func(args ...string) (string, string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)

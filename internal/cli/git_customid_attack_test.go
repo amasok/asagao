@@ -14,7 +14,7 @@ import (
 )
 
 func customRun(baseURL string, args ...string) (string, string, error) {
-	cmd := newRoot(&app{baseURL: baseURL})
+	cmd := newTestRoot(baseURL)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)

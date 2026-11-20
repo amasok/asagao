@@ -80,7 +80,7 @@ func removeOnSignal(dir string) (unwatch func()) {
 }
 
 // openDryRun copies st (which it closes) to a private temporary folder and opens the copy.
-func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
+func (a *app) openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	defer func() { err = errors.Join(err, st.Close()) }()
 	removeStaleDryRuns(time.Now())
 	dir, err := os.MkdirTemp("", dryRunPrefix) // 0700
@@ -96,7 +96,7 @@ func openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 	if err := st.CopyTo(ctx, path); err != nil {
 		return fail(err)
 	}
-	cp, err := wiring.OpenStore(ctx, path)
+	cp, err := a.wiring.OpenStore(ctx, path)
 	if err != nil {
 		return fail(err)
 	}

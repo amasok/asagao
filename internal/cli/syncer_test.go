@@ -9,7 +9,7 @@ import (
 )
 
 func TestSyncerKeepsOfflineAndSettings(t *testing.T) {
-	a := &app{cfg: config.Config{Sync: config.SyncConfig{CompletedDays: 30, AllProjects: true}}}
+	a := &app{wiring: testWiring(), cfg: config.Config{Sync: config.SyncConfig{CompletedDays: 30, AllProjects: true}}}
 	if s := a.syncer(nil, nil); s.API != nil {
 		t.Fatalf("a nil client must leave the Syncer offline: %#v", s.API)
 	}

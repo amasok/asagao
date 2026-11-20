@@ -35,7 +35,7 @@ func attackEnv(t *testing.T, failStatus int) (func(args ...string) (string, stri
 	}))
 	t.Cleanup(srv.Close)
 	return func(args ...string) (string, string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)

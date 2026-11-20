@@ -50,7 +50,7 @@ func TestAttackTimeAddJSONGidsAreDistinctAndReal(t *testing.T) {
 // new `time add` still gives its own real gid.
 func TestAttackTimeAddJSONNotSentKeepsLocalGid(t *testing.T) {
 	path, _, _ := timeCLIEnv(t)
-	cmd := newRoot(&app{baseURL: "http://127.0.0.1:1"}) // Asana can not be reached
+	cmd := newTestRoot("http://127.0.0.1:1") // Asana can not be reached
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
@@ -127,7 +127,7 @@ func TestAttackTimeAddJSONTaskGone(t *testing.T) {
 		fake.ServeHTTP(w, r)
 	}))
 	t.Cleanup(gone.Close)
-	cmd := newRoot(&app{baseURL: gone.URL})
+	cmd := newTestRoot(gone.URL)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)

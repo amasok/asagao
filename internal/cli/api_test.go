@@ -128,7 +128,7 @@ func runAPICLI(t *testing.T, f *fakeRawAsana, stdin string, args ...string) (std
 	t.Setenv(auth.EnvToken, "test-pat")
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	cmd := newRoot(&app{baseURL: srv.URL})
+	cmd := newTestRoot(srv.URL)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
@@ -289,7 +289,7 @@ func TestAPICommandNotLoggedIn(t *testing.T) {
 	srv := httptest.NewServer(f)
 	defer srv.Close()
 	t.Setenv(auth.EnvToken, "")
-	cmd := newRoot(&app{baseURL: srv.URL})
+	cmd := newTestRoot(srv.URL)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"api", "/users/me"})
