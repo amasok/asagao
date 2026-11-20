@@ -25,7 +25,7 @@ func openAttackStore(t *testing.T) *store.Store {
 func TestBatchAttackEntryForIntentAndResolvedGIDs(t *testing.T) {
 	ctx := context.Background()
 	st := openAttackStore(t)
-	if err := st.SetSyncState(ctx, store.ResultTag+"local:tag1", "real-tag-1"); err != nil {
+	if err := st.ReplaceLocalTagGID(ctx, "local:tag1", "real-tag-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetSyncState(ctx, "gid:local:dep1", "real-dep-1"); err != nil {
