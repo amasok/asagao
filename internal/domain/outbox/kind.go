@@ -112,16 +112,19 @@ func (k Kind) OnTask() bool { return specs[k].Subject == SubjectTask }
 // a new parent, or the parent a task is created under. A task created offline among them
 // makes the entry wait for that create.
 func TaskDeps(op Op) []string {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	switch SubjectOf(op.Kind) {
 	case SubjectTask:
-		if op.Kind == KindSetParent && str("parent") != "" {
-			return []string{str("parent"), op.TaskGID}
+		if op.Kind == KindSetParent {
+			if p, err := PayloadOf[SetParent](op); err == nil && p.Parent != "" {
+				return []string{p.Parent, op.TaskGID}
+			}
 		}
 		return []string{op.TaskGID}
 	case SubjectNewTask:
-		if op.Kind == KindCreateTask && str("parent") != "" {
-			return []string{str("parent")}
+		if op.Kind == KindCreateTask {
+			if p, err := PayloadOf[CreateTask](op); err == nil && p.Parent != "" {
+				return []string{p.Parent}
+			}
 		}
 	}
 	return nil
