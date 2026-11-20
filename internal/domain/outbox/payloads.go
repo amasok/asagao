@@ -66,7 +66,7 @@ type UpdateTask struct {
 }
 
 // CreateTask is the payload of create_task. The edits of the task made before the create
-// is sent are folded in (store: maps.Copy of the changes), so it may hold any field of an
+// is sent are folded in (store: MergeFields of the changes), so it may hold any field of an
 // update too. parent, project and section say where the task is created; custom_fields
 // holds the custom field values in Asana's form (field gid → value).
 type CreateTask struct {

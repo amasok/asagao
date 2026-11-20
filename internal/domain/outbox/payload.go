@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 )
 
 // The payload of an entry is stored as a JSON object (the outbox payload column), and Op
 // keeps it as it was read (Op.Payload). The code that sends, undoes or describes an entry
-// reads it as its kind's struct (payloadTypes) through PayloadOf, and builds one with
-// EncodePayload: this file is the only place that converts between the two.
+// reads it as its kind's struct (payloadTypes) through PayloadOf, and the code that queues
+// or changes one writes it from the struct with SetPayload, EditPayload or MergeFields
+// (over EncodePayload): this file is the only place that converts between the two
+// (archtest: TestOutboxPayloadsAreBuiltFromTheirStructs).
 //
 // The stored form does not change: each struct reads every key the entries of its kind
 // have been written with, and writes them back the same (TestPayloadRoundTrip). A key it
@@ -171,4 +174,108 @@ func fieldsOf(v any) map[string]any {
 		panic(fmt.Sprintf("outbox: %T does not decode: %v", v, err))
 	}
 	return m
+}
+
+// SetPayload sets the payload of op to p, its kind's struct, in the stored form
+// (EncodePayload). It replaces the whole payload: an entry joined by a change that keeps
+// some of what it holds uses EditPayload.
+func SetPayload[P any](op *Op, p P) error {
+	m, err := EncodePayload(op.Kind, p)
+	if err != nil {
+		return err
+	}
+	op.Payload = m
+	return nil
+}
+
+// EditPayload changes the payload of op through its kind's struct P: f gets it as it reads
+// (BestEffortPayload), and only the keys whose value f changes are written back (a field
+// f leaves out of the stored form, a pointer set to nil or a zero value it omits, is
+// taken out). Every other key stays as stored, one P does not know among them, so an
+// entry this version cannot read (written by a newer one) takes the change all the same:
+// it is held with it, and the version that reads it sends them together.
+func EditPayload[P any](op *Op, f func(*P)) error {
+	if t, ok := payloadTypes[op.Kind]; !ok {
+		return fmt.Errorf("%q: %w", op.Kind, ErrUnknownKind)
+	} else if t != reflect.TypeFor[P]() {
+		return fmt.Errorf("outbox: %v is not the payload of kind %q (%v)", reflect.TypeFor[P](), op.Kind, t)
+	}
+	p, err := BestEffortPayload[P](*op)
+	var pe *PayloadError
+	if err != nil && !errors.As(err, &pe) {
+		return err
+	}
+	before, err := EncodePayload(op.Kind, p)
+	if err != nil {
+		return err
+	}
+	f(&p)
+	after, err := EncodePayload(op.Kind, p)
+	if err != nil {
+		return err
+	}
+	out := maps.Clone(op.Payload)
+	if out == nil {
+		out = map[string]any{}
+	}
+	for k, v := range after {
+		_, stored := out[k] // (a key of the stored form a new payload does not have yet)
+		if old, ok := before[k]; !ok || !stored || !reflect.DeepEqual(old, v) {
+			out[k] = v
+		}
+	}
+	for k := range before {
+		if _, ok := after[k]; !ok {
+			delete(out, k)
+		}
+	}
+	op.Payload = out
+	return nil
+}
+
+// CheckFields reports whether fields, the changes of an entry of kind k merged into its
+// payload key by key, read as k's struct (nil when they do): the error is EncodePayload's
+// for an unknown kind, or a *PayloadError for a key it does not have or a value of
+// another type.
+func CheckFields(k Kind, fields map[string]any) error {
+	t, ok := payloadTypes[k]
+	if !ok {
+		return fmt.Errorf("%q: %w", k, ErrUnknownKind)
+	}
+	if err := decodePayload(fields, reflect.New(t).Interface()); err != nil {
+		return &PayloadError{Kind: k, Err: err}
+	}
+	return nil
+}
+
+// PayloadFields returns the payload of op as its kind's struct reads it, in the stored form
+// (key → value), for what shows it key by key (the fields of a conflict): as
+// BestEffortPayload, a key the struct does not know is left out, and a value of another
+// type reads as its field's zero value. It is nil for a kind this version does not know.
+func PayloadFields(op Op) map[string]any {
+	t, ok := payloadTypes[op.Kind]
+	if !ok {
+		return nil
+	}
+	p := reflect.New(t)
+	if b, err := json.Marshal(op.Payload); err == nil {
+		_ = json.Unmarshal(b, p.Interface()) // fills in every field that reads
+	}
+	return fieldsOf(p.Elem().Interface())
+}
+
+// MergeFields merges fields, the changes of a task (an edit's fields, of UpdateTask), into
+// the payload of op key by key: a create not sent yet is sent with them (see CreateTask).
+// They must read as the payload struct of op's kind (CheckFields); the keys of the payload
+// they do not change stay as they are, so an entry this version cannot read takes them
+// all the same (held with them).
+func MergeFields(op *Op, fields map[string]any) error {
+	if err := CheckFields(op.Kind, fields); err != nil {
+		return err
+	}
+	if op.Payload == nil {
+		op.Payload = map[string]any{}
+	}
+	maps.Copy(op.Payload, fields)
+	return nil
 }

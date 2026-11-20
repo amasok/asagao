@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
@@ -106,19 +107,30 @@ func (s *Store) WithdrawStartOn(ctx context.Context, id int64, reason string, no
 		if err != nil {
 			return err
 		}
-		v, ok := op.Payload["start_on"]
-		if !ok {
+		var startOn *string // the start date the entry sends, taken out of it
+		take := func(f **string) { startOn, *f = *f, nil }
+		switch op.Kind {
+		case OpUpdateTask:
+			err = outbox.EditPayload(op, func(p *outbox.UpdateTask) { take(&p.StartOn) })
+		case OpCreateTask:
+			err = outbox.EditPayload(op, func(p *outbox.CreateTask) { take(&p.StartOn) })
+		}
+		if err != nil {
+			return err
+		}
+		if startOn == nil {
 			_, err := tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending' WHERE id = ? AND state = 'sending'", id)
 			rest = op
 			return err
 		}
-		start := Op{ID: op.ID, Kind: OpUpdateTask, TaskGID: op.TaskGID, Payload: map[string]any{"start_on": v},
-			Base: map[string]any{"start_on": op.Base["start_on"]}}
+		start := Op{ID: op.ID, Kind: OpUpdateTask, TaskGID: op.TaskGID, Base: map[string]any{"start_on": op.Base["start_on"]}}
+		if err := outbox.SetPayload(&start, outbox.UpdateTask{StartOn: startOn}); err != nil {
+			return err
+		}
 		if d, err = s.recordDiscard(ctx, tx, &start, reason, now); err != nil {
 			return err
 		}
 		was, _ := op.Base["start_on"].(string) // a create had none
-		delete(op.Payload, "start_on")
 		delete(op.Base, "start_on")
 		if op.Kind == OpUpdateTask && len(op.Payload) == 0 {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", id); err != nil {

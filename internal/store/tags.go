@@ -124,8 +124,8 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 		} else if n > 0 {
 			return nil
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpAddTag, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"tag": tagGID, "tag_name": tagName, "workspace": workspace}})
+		return savePayload(ctx, tx, &Op{Kind: OpAddTag, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.AddTag{Tag: tagGID, TagName: tagName, Workspace: workspace})
 	})
 	return tagGID, err
 }
@@ -146,8 +146,8 @@ func (s *Store) RemoveTagLocal(ctx context.Context, taskGID, tagGID string, now 
 		} else if n > 0 {
 			return nil // it was never sent
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpRemoveTag, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"tag": tagGID, "tag_name": name}})
+		return savePayload(ctx, tx, &Op{Kind: OpRemoveTag, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.RemoveTag{Tag: tagGID, TagName: name})
 	})
 }
 

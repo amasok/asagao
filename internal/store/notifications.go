@@ -326,9 +326,10 @@ func (s *Store) MarkNotificationsLocal(ctx context.Context, gids []string, read 
 			if op != nil && (op.Verify || op.SentAt != "") {
 				op = nil // it may have reached Asana: the change back must be sent too
 			}
-			if op == nil {
-				op = &Op{Kind: OpMarkNotification, TaskGID: gid, Payload: map[string]any{"workspace": ws, "name": name},
-					Base: map[string]any{"read": cur}, State: OpPending, CreatedAt: formatTime(now)}
+			fresh := op == nil
+			if fresh {
+				op = &Op{Kind: OpMarkNotification, TaskGID: gid, Base: map[string]any{"read": cur},
+					State: OpPending, CreatedAt: formatTime(now)}
 			}
 			if base, ok := op.Base["read"].(bool); ok && base == read && op.ID != 0 { // back to the original
 				if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID); err != nil {
@@ -336,7 +337,14 @@ func (s *Store) MarkNotificationsLocal(ctx context.Context, gids []string, read 
 				}
 				continue
 			}
-			op.Payload["read"] = read
+			if err := outbox.EditPayload(op, func(p *outbox.MarkNotification) {
+				if fresh {
+					p.Workspace, p.Name = ws, name
+				}
+				p.Read = read
+			}); err != nil {
+				return err
+			}
 			if err := saveOp(ctx, tx, op); err != nil {
 				return err
 			}

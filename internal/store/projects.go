@@ -91,8 +91,8 @@ func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, t
 			VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, gid, projectGID, statusType, title, text, htmlText, author.Name, ts); err != nil {
 			return err
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpCreateStatus, TaskGID: projectGID, State: OpPending, CreatedAt: ts,
-			Payload: map[string]any{"status": gid, "status_type": statusType, "title": title, "text": text, "html_text": htmlText}})
+		return savePayload(ctx, tx, &Op{Kind: OpCreateStatus, TaskGID: projectGID, State: OpPending, CreatedAt: ts},
+			outbox.CreateStatus{Status: gid, StatusType: statusType, Title: title, Text: text, HTMLText: htmlText})
 	})
 	return gid, err
 }

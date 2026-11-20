@@ -78,8 +78,8 @@ func (s *Store) AddEnumOptionLocal(ctx context.Context, fieldGID, name string, n
 		if err != nil {
 			return err
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpCreateEnumOption, TaskGID: gid, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"field": fieldGID, "field_name": d.Name, "name": name, "workspace": ws}})
+		return savePayload(ctx, tx, &Op{Kind: OpCreateEnumOption, TaskGID: gid, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.CreateEnumOption{Field: fieldGID, FieldName: d.Name, Name: name, Workspace: ws})
 	})
 	if err != nil {
 		return "", false, err
@@ -299,7 +299,10 @@ func rewriteFieldValues(ctx context.Context, tx *sql.Tx, local string, f func(an
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range []map[string]any{op.Payload, op.Base, op.Conflict} {
+		if err := outbox.EditPayload(op, func(p *outbox.SetCustomField) { p.Value = f(normalizeCFValue(p.Value)) }); err != nil {
+			return nil, err
+		}
+		for _, m := range []map[string]any{op.Base, op.Conflict} {
 			if v, ok := m["value"]; ok {
 				m["value"] = f(normalizeCFValue(v))
 			}
@@ -371,7 +374,11 @@ func undoCreateEnumOption(ctx context.Context, tx *sql.Tx, op *Op, p outbox.Crea
 			continue
 		}
 		if known {
-			o.Payload["display"] = valueDisplay(ctx, tx, d, normalizeCFValue(o.Payload["value"]))
+			if err := outbox.EditPayload(o, func(p *outbox.SetCustomField) {
+				p.Display = valueDisplay(ctx, tx, d, normalizeCFValue(p.Value))
+			}); err != nil {
+				return err
+			}
 			if err := saveOp(ctx, tx, o); err != nil {
 				return err
 			}
@@ -390,16 +397,16 @@ func undoCreateEnumOption(ctx context.Context, tx *sql.Tx, op *Op, p outbox.Crea
 		if err != nil {
 			return err
 		}
-		cfs, _ := o.Payload["custom_fields"].(map[string]any)
-		for k, v := range cfs {
-			if nv := drop(normalizeCFValue(v)); nv == nil {
-				delete(cfs, k)
-			} else {
-				cfs[k] = nv
+		if err := outbox.EditPayload(o, func(p *outbox.CreateTask) {
+			for k, v := range p.CustomFields {
+				if nv := drop(normalizeCFValue(v)); nv == nil {
+					delete(p.CustomFields, k)
+				} else {
+					p.CustomFields[k] = nv
+				}
 			}
-		}
-		if len(cfs) == 0 {
-			delete(o.Payload, "custom_fields")
+		}); err != nil {
+			return err
 		}
 		if err := saveOp(ctx, tx, o); err != nil {
 			return err
@@ -454,8 +461,7 @@ func (s *Store) SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID s
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		op := &Op{Kind: other, TaskGID: projectGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"field": fieldGID, "field_name": d.Name, "workspace": ws}}
+		op := &Op{Kind: other, TaskGID: projectGID, State: OpPending, CreatedAt: formatTime(now)}
 		if add {
 			err = attachField(ctx, tx, projectGID, fieldGID, -1, false)
 		} else {
@@ -465,7 +471,7 @@ func (s *Store) SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID s
 		if err != nil {
 			return err
 		}
-		return saveOp(ctx, tx, op)
+		return savePayload(ctx, tx, op, outbox.FieldSetting{Field: fieldGID, FieldName: d.Name, Workspace: ws})
 	})
 }
 
