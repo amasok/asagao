@@ -44,7 +44,7 @@ func TestAttackPushClearDates(t *testing.T) {
 	ps, s, st := setupProject(t)
 	ps.startOn = "2026-12-01"
 	p, _ := s.API.Project(ctx, "p1")
-	_ = s.saveProject(ctx, p)
+	_ = saveProject(ctx, s.Store, p)
 	if err := st.UpdateProjectLocal(ctx, "p1", map[string]any{"start_on": "", "due_on": ""}, now); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAttackStartWithoutDueRejectedLocally(t *testing.T) {
 	ps, s, st := setupProject(t)
 	ps.dueOn = ""
 	p, _ := s.API.Project(ctx, "p1")
-	_ = s.saveProject(ctx, p)
+	_ = saveProject(ctx, s.Store, p)
 	if err := st.UpdateProjectLocal(ctx, "p1", map[string]any{"start_on": "2026-12-01"}, now); err == nil {
 		t.Fatal("start without due accepted")
 	}

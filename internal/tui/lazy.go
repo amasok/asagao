@@ -55,7 +55,7 @@ func (m *Model) openProjectLater() tea.Cmd {
 // completed ones too, after the incomplete ones were shown).
 func (m *Model) openProject(gid string, completed bool) tea.Cmd {
 	m.opening = gid
-	st, syncer := m.deps.Store, m.syncer
+	st, syncer := m.deps.App, m.syncer
 	if m.syncState.running || syncer == nil {
 		// The sync running (or the next one, once online) fetches it.
 		syncing := m.syncState.running

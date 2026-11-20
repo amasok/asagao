@@ -17,7 +17,7 @@ import (
 // openProjectList opens 新居プロジェクト (p1) as a list, on t1 (家具).
 func openProjectList(t *testing.T, st *store.Store) *harness {
 	t.Helper()
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -34,8 +34,8 @@ func typeText(h *harness, s string) {
 	}
 }
 
-func opKindsOf(h *harness) []string {
-	var out []string
+func opKindsOf(h *harness) []store.Kind {
+	var out []store.Kind
 	for _, op := range h.ops() {
 		out = append(out, op.Kind)
 	}
@@ -51,7 +51,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 	h.key("space", "n")
 	typeText(h, "保留")
 	h.key("enter")
-	if got := opKindsOf(h); !slices.Equal(got, []string{store.OpCreateSection}) {
+	if got := opKindsOf(h); !slices.Equal(got, []store.Kind{store.OpCreateSection}) {
 		t.Fatalf("ops = %v (status %q)", got, h.m.status)
 	}
 	s := h.screen()
@@ -131,7 +131,7 @@ func TestTUITagManager(t *testing.T) {
 	if _, err := st.GetTag(ctx, "g1"); err == nil {
 		t.Fatal("tag not deleted")
 	}
-	if got := opKindsOf(h); !slices.Equal(got, []string{store.OpDeleteTag}) {
+	if got := opKindsOf(h); !slices.Equal(got, []store.Kind{store.OpDeleteTag}) {
 		t.Errorf("ops = %v (the unsent color change goes with the tag)", got)
 	}
 }
@@ -211,7 +211,7 @@ func TestTUIPlanMenuReappearsAfterRecheckWithoutWrites(t *testing.T) {
 		}
 	}
 
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -279,7 +279,7 @@ func TestTUIPlanMultiWorkspaceRecheckAndStaleMsg(t *testing.T) {
 	if err := st.RecordPlanRefusal(ctx, plan.Tags, "w2", now); err != nil {
 		t.Fatal(err)
 	}
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

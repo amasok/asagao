@@ -179,7 +179,7 @@ func TestPlanOffAtAndOffForExtended(t *testing.T) {
 
 func TestPlanFeatureOfNonGated(t *testing.T) {
 	// FeatureOf edge cases: all plan-gated kinds and non-gated/empty/unknown kinds.
-	nonGated := []string{
+	nonGated := []outbox.Kind{
 		"", "unknown", outbox.KindCreateTask, outbox.KindUpdateTask, outbox.KindDeleteTask,
 		outbox.KindAddComment, outbox.KindMoveTask, outbox.KindRenameSection,
 		outbox.KindAddTag, outbox.KindRemoveTag, outbox.KindSetCustomField,

@@ -240,7 +240,7 @@ func TestAttackPullBetweenCreateAndValue(t *testing.T) {
 	local, _, _ := st.AddEnumOptionLocal(ctx, "cf2", "C", now)
 	_, _ = st.SetCustomFieldLocal(ctx, "t1", "cf2", []string{local, "m2", "m1"}, now)
 	for i := 0; i < 2; i++ {
-		if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+		if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 			t.Fatal(err)
 		}
 		task, _ := s.API.Task(ctx, "t1")
@@ -341,7 +341,7 @@ func TestAttackFieldSettingSurvivesPull(t *testing.T) {
 	ctx := context.Background()
 	_ = st.SetProjectFieldLocal(ctx, "p1", "cf3", true, now)
 	_ = st.SetProjectFieldLocal(ctx, "p1", "cf1", false, now)
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
 	fields, _ := st.ProjectFields(ctx, "p1")
@@ -403,7 +403,7 @@ func TestAttackWorkspaceFieldsErrors(t *testing.T) {
 		f, s, st := setupOptions(t)
 		ctx := context.Background()
 		f.status["GET /workspaces/w1/custom_fields"] = code
-		if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
+		if err := s.Puller().syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 			t.Fatalf("%d: %v", code, err)
 		}
 		fields, _ := st.ProjectFields(ctx, "p1")
@@ -457,7 +457,7 @@ func TestAttackProjectFieldOrderAndUndo(t *testing.T) {
 	f, s, st := setupOptions(t)
 	ctx := context.Background()
 	f.project = []string{"cf2", "cf3", "cf1"}
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"cf2", "cf3", "cf1"}
@@ -487,7 +487,7 @@ func TestAttackNoDuplicateOptionAfterPull(t *testing.T) {
 	_, _ = st.SetCustomFieldLocal(ctx, "t1", "cf1", local, now)
 	yes := true
 	f.fields["cf1"].EnumOptions = append(f.fields["cf1"].EnumOptions, asana.EnumOption{GID: "o9", Name: "低", Enabled: &yes})
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Push(ctx); err != nil {

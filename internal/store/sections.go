@@ -12,6 +12,17 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpRenameSection, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		name, ok := op.Base["name"].(string)
+		if !ok {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, op.TaskGID)
+		return err
+	})
+}
+
 // OpRenameSection renames a section (outbox.KindRenameSection).
 const OpRenameSection = outbox.KindRenameSection
 

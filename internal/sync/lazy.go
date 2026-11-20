@@ -59,9 +59,9 @@ type pullMode struct {
 	window time.Time
 }
 
-func (s *Syncer) newMode(stamp time.Time) pullMode {
-	days := max(s.Cfg.CompletedDays, 0) // a negative number would ask for a time to come
-	return pullMode{stamp: stamp, window: stamp.AddDate(0, 0, -days), split: s.Cfg.LazyProjects}
+func (c Config) newMode(stamp time.Time) pullMode {
+	days := max(c.CompletedDays, 0) // a negative number would ask for a time to come
+	return pullMode{stamp: stamp, window: stamp.AddDate(0, 0, -days), split: c.LazyProjects}
 }
 
 // fetchedState is the state a first fetch with completed_since = stamp leaves: the
@@ -73,7 +73,7 @@ func (m pullMode) fetchedState() string {
 	return readmodel.TasksOpen
 }
 
-func (s *Syncer) upsert(ctx context.Context, pl *pull, tasks []model.Task) error {
+func (s *Puller) upsert(ctx context.Context, pl *pull, tasks []model.Task) error {
 	for _, t := range tasks {
 		pl.keep[t.GID] = true
 		if t.NumSubtasks > 0 {
@@ -87,7 +87,7 @@ func (s *Syncer) upsert(ctx context.Context, pl *pull, tasks []model.Task) error
 // fetchSubtasks fetches the subtasks of the tasks queued in pl. Subtasks are not returned
 // by GET /tasks?project=, so they are fetched per parent; upsert queues subtasks that have
 // subtasks of their own, so nested levels are fetched too.
-func (s *Syncer) fetchSubtasks(ctx context.Context, pl *pull) error {
+func (s *Puller) fetchSubtasks(ctx context.Context, pl *pull) error {
 	for i := 0; i < len(pl.withSubtasks); i++ {
 		gid := pl.withSubtasks[i]
 		if pl.subsFetched[gid] {
@@ -108,7 +108,7 @@ func (s *Syncer) fetchSubtasks(ctx context.Context, pl *pull) error {
 
 // storeSubtasks stores the subtasks of parent, all of them as Asana lists them, and
 // their order (#51).
-func (s *Syncer) storeSubtasks(ctx context.Context, pl *pull, parent string, subs []model.Task) error {
+func (s *Puller) storeSubtasks(ctx context.Context, pl *pull, parent string, subs []model.Task) error {
 	if err := s.upsert(ctx, pl, subs); err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (s *Syncer) storeSubtasks(ctx context.Context, pl *pull, parent string, sub
 // refreshParents lists the subtasks of the parents of subtasks the events named, and of
 // those a previous sync could not list: their order may have changed, which only the
 // parent's list shows (#51). The subtasks themselves were fetched already.
-func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
+func (s *Puller) refreshParents(ctx context.Context, pl *pull) error {
 	pending, err := s.Store.PendingSubtaskOrders(ctx)
 	if err != nil {
 		return err
@@ -152,7 +152,7 @@ func (s *Syncer) refreshParents(ctx context.Context, pl *pull) error {
 // refreshSections lists the order of the sections of project (#51) whose tasks changed
 // without a listing of the whole project (listed: there was one): a task moved, added or
 // reordered there. Sections a previous sync could not list are listed too.
-func (s *Syncer) refreshSections(ctx context.Context, pl *pull, project string, sections []string,
+func (s *Puller) refreshSections(ctx context.Context, pl *pull, project string, sections []string,
 	completedSince time.Time, listed bool) error {
 	pending, err := s.Store.PendingSectionOrders(ctx, project)
 	if err != nil {
@@ -190,7 +190,7 @@ func (s *Syncer) refreshSections(ctx context.Context, pl *pull, project string, 
 // Offline, or without a valid token, the sync fails as any other fetch. Otherwise (a 5xx
 // or 429 that outlasted the retries, a 400, ...) the order is only how tasks are shown:
 // the sync goes on, and the next one lists it again.
-func (s *Syncer) orderFailed(err error, what string) (ok bool, _ error) {
+func (s *Puller) orderFailed(err error, what string) (ok bool, _ error) {
 	switch {
 	case err == nil, isNotFound(err), isForbidden(err):
 		return true, nil
@@ -242,7 +242,7 @@ func taskGIDs(tasks []model.Task) []string {
 // finishPull fetches the subtasks still queued, then saves the events tokens and the tasks
 // states: only now, after the subtasks of the tasks the events reported, so that if
 // anything failed, the next sync reads the same events again.
-func (s *Syncer) finishPull(ctx context.Context, pl *pull) error {
+func (s *Puller) finishPull(ctx context.Context, pl *pull) error {
 	if err := s.refreshParents(ctx, pl); err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ func (s *Syncer) finishPull(ctx context.Context, pl *pull) error {
 
 // toSync reports whether Run fetches a project's tasks (see the top of this file). states
 // is Store.ProjectTaskStates.
-func (s *Syncer) toSync(p model.Project, meGID string, states map[string]string) bool {
+func (s *Puller) toSync(p model.Project, meGID string, states map[string]string) bool {
 	if _, ok := states[p.GID]; ok || s.Cfg.AllProjects {
 		return true
 	}
@@ -285,7 +285,7 @@ type projectRef struct{ gid, name, workspace string }
 // pullProject brings a project's tasks up to date: from its events, or by fetching it
 // (on a poll, when the events cannot be used, and the first time). state is the project's
 // tasks state (readmodel.Tasks*, or "" if never fetched).
-func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state string, mode pullMode) error {
+func (s *Puller) pullProject(ctx context.Context, pl *pull, p projectRef, state string, mode pullMode) error {
 	ev, err := s.readEvents(ctx, p.gid)
 	if err != nil {
 		return err
@@ -414,7 +414,7 @@ func (s *Syncer) pullProject(ctx context.Context, pl *pull, p projectRef, state 
 // sync (one request, only what changed). The first time, only the incomplete tasks are
 // asked for (the completed ones come with pullCompleted). firstSync: no sync finished
 // before (otherwise My Tasks without a state was fetched in full before #54).
-func (s *Syncer) pullMyTasks(ctx context.Context, pl *pull, w model.Workspace, mode pullMode, firstSync bool) error {
+func (s *Puller) pullMyTasks(ctx context.Context, pl *pull, w model.Workspace, mode pullMode, firstSync bool) error {
 	state, err := s.Store.MyTaskState(ctx, w.GID)
 	if err != nil {
 		return err
@@ -442,7 +442,7 @@ func (s *Syncer) pullMyTasks(ctx context.Context, pl *pull, w model.Workspace, m
 // projects whose incomplete tasks only are cached (TasksOpen), with the subtasks of the
 // completed ones, and records each TasksAll. only, if not "", limits it to that project.
 // It is called after finishPull (the states it reads are saved).
-func (s *Syncer) pullCompleted(ctx context.Context, pl *pull, mode pullMode, only string) error {
+func (s *Puller) pullCompleted(ctx context.Context, pl *pull, mode pullMode, only string) error {
 	type scope struct {
 		ws, project, name string
 		q                 model.TaskQuery
@@ -531,7 +531,7 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // completedPending reports whether some completed tasks are still to fetch (pullCompleted).
-func (s *Syncer) completedPending(ctx context.Context) (bool, error) {
+func (s *Puller) completedPending(ctx context.Context) (bool, error) {
 	my, err := s.Store.MyTaskStates(ctx)
 	if err != nil {
 		return false, err
@@ -571,7 +571,7 @@ type OpenResult struct {
 // to FetchCompleted or the next sync. It only fetches: queued local changes stay queued
 // (and are not overwritten). It takes the push lock: while another sync runs it returns
 // readmodel.ErrPushBusy, and that sync, or the next, fetches the project.
-func (s *Syncer) OpenProject(ctx context.Context, projectGID string, withCompleted bool) (out OpenResult, err error) {
+func (s *Puller) OpenProject(ctx context.Context, projectGID string, withCompleted bool) (out OpenResult, err error) {
 	if localgid.IsLocal(projectGID) {
 		out.State = readmodel.TasksAll // created offline: nothing on the server yet
 		return out, nil
@@ -591,12 +591,12 @@ func (s *Syncer) OpenProject(ctx context.Context, projectGID string, withComplet
 	n := s.requests()
 	defer func() { out.Requests = s.requests() - n }()
 	var res Result
-	unlock, err := s.lock(ctx, &res.Push)
+	unlock, err := s.Pusher.lock(ctx, &res.Push)
 	if err != nil {
 		return out, err
 	}
 	defer unlock()
-	if err := s.checkPushAccount(ctx); err != nil {
+	if err := s.Pusher.checkPushAccount(ctx); err != nil {
 		return out, err
 	}
 	// Another process may have fetched it meanwhile.
@@ -604,7 +604,7 @@ func (s *Syncer) OpenProject(ctx context.Context, projectGID string, withComplet
 		return out, err
 	}
 	pl := newPull(&res)
-	mode := s.newMode(s.serverNow())
+	mode := s.Cfg.newMode(s.serverNow())
 	if st != readmodel.TasksOpen && st != readmodel.TasksAll {
 		s.progress("プロジェクト %s", ref.Name)
 		if err := s.pullProject(ctx, pl, projectRef{ref.GID, ref.Name, ref.WorkspaceGID}, st, mode); err != nil {
@@ -630,26 +630,26 @@ func (s *Syncer) OpenProject(ctx context.Context, projectGID string, withComplet
 // FetchCompleted fetches the completed tasks that Run left (Syncer.DeferCompleted,
 // Result.CompletedPending): those of My Tasks and the projects fetched for the first time.
 // Like OpenProject, it only fetches, under the push lock.
-func (s *Syncer) FetchCompleted(ctx context.Context) (res Result, err error) {
+func (s *Puller) FetchCompleted(ctx context.Context) (res Result, err error) {
 	started := s.clock()
 	n := s.requests()
 	defer func() { res.Requests = s.requests() - n }()
-	unlock, err := s.lock(ctx, &res.Push)
+	unlock, err := s.Pusher.lock(ctx, &res.Push)
 	if err != nil {
 		return res, err
 	}
 	defer unlock()
-	if err := s.checkPushAccount(ctx); err != nil {
+	if err := s.Pusher.checkPushAccount(ctx); err != nil {
 		return res, err
 	}
 	pl := newPull(&res)
-	err = s.pullCompleted(ctx, pl, s.newMode(s.serverNow()), "")
+	err = s.pullCompleted(ctx, pl, s.Cfg.newMode(s.serverNow()), "")
 	res.Duration = s.clock().Sub(started)
 	return res, err
 }
 
 // requests is how many HTTP requests the API client has sent so far, if it counts them.
-func (s *Syncer) requests() int64 {
+func (s *Puller) requests() int64 {
 	if c, ok := s.API.(interface{ Requests() int64 }); ok {
 		return c.Requests()
 	}

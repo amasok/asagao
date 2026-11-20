@@ -60,7 +60,7 @@ func TestResetCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := createStoreAt(t, filepath.Join(config.DataDir(), "store.db"))
-	if _, err := createTask(ctx, st, createOpts{name: "牛乳を買う", notes: "低脂肪"}, now); err != nil {
+	if _, err := createTask(ctx, localFor(st), createOpts{name: "牛乳を買う", notes: "低脂肪"}, now); err != nil {
 		t.Fatal(err)
 	}
 	_ = st.Close()
@@ -101,9 +101,9 @@ func TestResetCommand(t *testing.T) {
 func TestAccountChangedMessage(t *testing.T) {
 	ctx := context.Background()
 	st := createStore(t)
-	_, _ = createTask(ctx, st, createOpts{name: "a"}, time.Now())
-	_, _ = createTask(ctx, st, createOpts{name: "b"}, time.Now())
-	err := accountChanged(ctx, st)
+	_, _ = createTask(ctx, localFor(st), createOpts{name: "a"}, time.Now())
+	_, _ = createTask(ctx, localFor(st), createOpts{name: "b"}, time.Now())
+	err := accountChanged(ctx, localFor(st))
 	if !errors.Is(err, sync.ErrAccountChanged) || !strings.Contains(err.Error(), "2 件") || !strings.Contains(err.Error(), "asagao reset") {
 		t.Fatalf("err = %v", err)
 	}

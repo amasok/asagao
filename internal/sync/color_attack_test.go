@@ -75,7 +75,7 @@ func TestAttackProjectColorSameNewName(t *testing.T) {
 			ps, s, st := setupProject(t)
 			ps.color = c.stored
 			p, _ := s.API.Project(ctx, "p1")
-			if err := s.saveProject(ctx, p); err != nil {
+			if err := saveProject(ctx, s.Store, p); err != nil {
 				t.Fatal(err)
 			}
 			ps.color = c.asana

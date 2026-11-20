@@ -125,20 +125,19 @@ func (h *isolatedHarness) wiring() Wiring {
 			c.BaseURL = "http://localhost/api/1.0"
 			return c, nil
 		},
-		Syncer: func(api sync.AsanaAPI, st sync.LocalStore, cfg settings.Config) *sync.Syncer {
-			h.syncerCalls.Add(1)
-			if cfg.Sync.CompletedDays != h.completedDays {
-				h.recordMismatch(fmt.Sprintf("Syncer got CompletedDays=%d, want %d", cfg.Sync.CompletedDays, h.completedDays))
-			}
-			return wire.Syncer(api, st, cfg)
-		},
-		OpenStore: func(ctx context.Context, path string) (Store, error) {
+		OpenStore: func(ctx context.Context, path string) (*Local, error) {
 			h.openStoreCalls.Add(1)
 			// Redirect store.db to this harness's isolated DB, while letting --dry-run copy paths pass through.
 			if !strings.Contains(path, dryRunPrefix) {
 				path = h.dbPath
 			}
-			return StoreOpener(store.Open)(ctx, path)
+			return StoreOpener(store.Open, wire.UseCases, func(api sync.AsanaAPI, st *store.Store, cfg settings.Config) *sync.Syncer {
+				h.syncerCalls.Add(1)
+				if cfg.Sync.CompletedDays != h.completedDays {
+					h.recordMismatch(fmt.Sprintf("Syncer got CompletedDays=%d, want %d", cfg.Sync.CompletedDays, h.completedDays))
+				}
+				return wire.Syncer(api, st, cfg)
+			})(ctx, path)
 		},
 		CheckPAT: func(_ context.Context, token, _ string, _ time.Duration, _ func(int, time.Duration)) (*model.User, error) {
 			h.checkPATCalls.Add(1)

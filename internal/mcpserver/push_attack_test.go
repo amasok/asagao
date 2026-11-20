@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,7 +25,7 @@ func TestPushSyncerNotMadeWithTimeoutContext(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	var hadDeadline []bool
-	cs := connect(t, &Server{Store: st, NewSyncer: func(ctx context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(ctx context.Context) (*sync.Syncer, error) {
 		_, ok := ctx.Deadline()
 		hadDeadline = append(hadDeadline, ok)
 		api := asana.NewClient(srv.Client())

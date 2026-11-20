@@ -88,10 +88,9 @@ type Wiring struct {
 	LoadSettings func() (settings.Config, error)
 	// APIClient is the Asana client for the login of cfg; baseURL overrides Asana's URL.
 	APIClient func(ctx context.Context, cfg settings.Config, baseURL string) (sync.AsanaAPI, error)
-	// Syncer is the Syncer for api (nil: offline) and st, with the settings of cfg.
-	Syncer func(api sync.AsanaAPI, st sync.LocalStore, cfg settings.Config) *sync.Syncer
-	// OpenStore opens the local store at path (a nil Store with the error).
-	OpenStore func(ctx context.Context, path string) (Store, error)
+	// OpenStore opens the local store at path, with the use cases and the syncer over it
+	// (StoreOpener; nil with the error).
+	OpenStore func(ctx context.Context, path string) (*Local, error)
 	// CheckPAT asks Asana whose a Personal Access Token is, retrying once after retryDelay.
 	CheckPAT func(ctx context.Context, token, baseURL string, retryDelay time.Duration, onRetry func(status int, wait time.Duration)) (*model.User, error)
 	// Searches is searches.toml, the saved searches (config.SearchFile).
@@ -112,14 +111,14 @@ func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {
 	return a.wiring.APIClient(ctx, a.cfg, a.baseURL)
 }
 
-// syncer is the Syncer for api and st (wire.Syncer).
-func (a *app) syncer(api sync.AsanaAPI, st Store) *sync.Syncer {
-	return a.wiring.Syncer(api, st, a.cfg)
+// syncer is the Syncer for api (nil: offline) over st, with the settings of the config.
+func (a *app) syncer(api sync.AsanaAPI, st *Local) *sync.Syncer {
+	return st.Syncer(api, a.cfg)
 }
 
 func (a *app) storePath() string { return filepath.Join(xdg.DataDir(), "store.db") }
 
-func (a *app) openStore(ctx context.Context) (Store, error) {
+func (a *app) openStore(ctx context.Context) (*Local, error) {
 	st, err := a.wiring.OpenStore(ctx, a.storePath())
 	if err != nil || !a.dryRun {
 		return st, err

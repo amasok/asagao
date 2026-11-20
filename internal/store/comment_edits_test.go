@@ -21,7 +21,7 @@ func storyText(t *testing.T, s *Store, gid string) (text, html string, ok bool) 
 	return text, html, true
 }
 
-func opsOfKind(t *testing.T, s *Store, kind string) []Op {
+func opsOfKind(t *testing.T, s *Store, kind Kind) []Op {
 	t.Helper()
 	ops, err := s.ListOps(context.Background())
 	must(t, err)

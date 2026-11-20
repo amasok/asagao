@@ -18,7 +18,7 @@ func (m *Model) openMySectionPicker(t readmodel.TaskSummary) bool {
 	if err != nil || len(secs) == 0 {
 		return false
 	}
-	me, _ := queryOf(m.deps.Store).MeGID(m.ctx)
+	me, _ := m.deps.App.Query().MeGID(m.ctx)
 	if t.Assignee == nil || t.Assignee.GID != me {
 		return false
 	}

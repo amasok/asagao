@@ -202,9 +202,9 @@ func (m *Model) submitField(input string) tea.Cmd {
 
 // reopenFieldPicker shows the multi_enum chooser again with the stored values.
 func (m *Model) reopenFieldPicker(t readmodel.TaskSummary, fieldGID string) tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		d, err := queryOf(st).GetTask(m.ctx, t.GID)
+		d, err := st.Query().GetTask(m.ctx, t.GID)
 		if err != nil {
 			return fieldPickerMsg{err: err}
 		}
@@ -231,9 +231,9 @@ type fieldOptionsMsg struct {
 }
 
 func (m *Model) openFieldFilterPicker() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		opts, err := queryOf(st).ListFieldOptions(m.ctx)
+		opts, err := st.Query().ListFieldOptions(m.ctx)
 		return fieldOptionsMsg{options: opts, err: err}
 	}
 }

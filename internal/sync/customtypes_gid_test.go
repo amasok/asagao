@@ -41,7 +41,7 @@ func fetchT1(t *testing.T, s *Syncer) {
 func TestCustomTypeReadWithGid(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 		t.Fatal(err)
 	}
 	f.subtype, f.typ, f.status = "custom", "ct1", "cs-doing"

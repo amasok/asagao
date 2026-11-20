@@ -29,7 +29,7 @@ func setupFieldOps(t *testing.T) *Store {
 	return s
 }
 
-func fieldOpsOfKind(t *testing.T, s *Store, kind string) []Op {
+func fieldOpsOfKind(t *testing.T, s *Store, kind Kind) []Op {
 	t.Helper()
 	ops, err := s.ListOps(context.Background())
 	must(t, err)

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"slices"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func opList(t *testing.T, st *store.Store) []string {
 	}
 	var out []string
 	for _, op := range ops {
-		out = append(out, op.Kind+":"+op.TaskGID)
+		out = append(out, string(op.Kind)+":"+op.TaskGID)
 	}
 	return out
 }
@@ -32,7 +33,7 @@ func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
 	_ = st.UpsertUsers(ctx, []asana.User{{GID: "u2", Name: "Partner"}})
 	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
 	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	res := call(t, cs, "update_task", map[string]any{
 		"gid": "t1", "add_projects": []string{"家計"}, "add_followers": []string{"Partner"},
@@ -42,8 +43,8 @@ func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
 	if res.IsError {
 		t.Fatal(toolError(res))
 	}
-	want := []string{store.OpAddTag + ":t1", store.OpSetCustomField + ":t1", store.OpSetCustomField + ":t1",
-		store.OpAddDependency + ":t1", store.OpAddDependency + ":t3", store.OpAddFollower + ":t1", store.OpAddProject + ":t1"}
+	want := []string{string(store.OpAddTag) + ":t1", string(store.OpSetCustomField) + ":t1", string(store.OpSetCustomField) + ":t1",
+		string(store.OpAddDependency) + ":t1", string(store.OpAddDependency) + ":t3", string(store.OpAddFollower) + ":t1", string(store.OpAddProject) + ":t1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -66,7 +67,7 @@ func TestUpdateTaskRelationsNameTheArgument(t *testing.T) {
 	for _, arg := range []string{"add_dependencies", "remove_dependencies", "add_dependents", "remove_dependents"} {
 		t.Run(arg, func(t *testing.T) {
 			st := seed(t)
-			cs := connect(t, &Server{Store: st})
+			cs := connect(t, &Server{App: wire.UseCases(st)})
 			res := call(t, cs, "update_task", map[string]any{"gid": "t1", "name": "新しい名前", "add_tags": []string{"急ぎ"},
 				"add_followers": []string{"me"}, arg: []string{"t2", "no-such-task"}}, nil)
 			if msg := toolError(res); !strings.HasPrefix(msg, arg+": ") {

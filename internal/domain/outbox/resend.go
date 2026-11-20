@@ -10,11 +10,10 @@ import "github.com/amasok/asagao/internal/domain/gid"
 // (harmless) adding remains, so it depends on tagCreated, which reports whether the local
 // tag has a real gid now. tagCreated is called only for such an entry.
 func SafeToResend(op Op, tagCreated func(localTag string) (bool, error)) (bool, error) {
-	switch op.Kind {
-	case KindCreateTask, KindDuplicateTask, KindAddComment, KindUploadAttachment, KindCreateStatus, KindCreateSection, KindAddTimeEntry,
-		KindCreateEnumOption:
+	if specs[op.Kind].Creates {
 		return false, nil
-	case KindAddTag:
+	}
+	if op.Kind == KindAddTag {
 		tag, _ := op.Payload["tag"].(string)
 		if !gid.IsLocal(tag) {
 			return true, nil

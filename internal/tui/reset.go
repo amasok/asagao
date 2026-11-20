@@ -27,9 +27,9 @@ type (
 )
 
 func (m *Model) startReset() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		n, newest, err := queryOf(st).UnsentState(m.ctx)
+		n, newest, err := st.Query().UnsentState(m.ctx)
 		return resetAskMsg{unsent: n, newest: newest, err: err}
 	}
 }
@@ -57,9 +57,9 @@ func (m *Model) reset(value string) tea.Cmd {
 	if err != nil {
 		return nil
 	}
-	st, dir, now := m.deps.Store, m.deps.BackupDir, m.deps.Now()
+	st, dir, now := m.deps.App, m.deps.BackupDir, m.deps.Now()
 	return func() tea.Msg {
-		res, err := st.ResetWithBackup(m.ctx, dir, upTo, now)
+		res, err := st.Reset(m.ctx, dir, upTo, now)
 		return resetDoneMsg{res: res, err: err}
 	}
 }

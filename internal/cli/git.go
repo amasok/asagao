@@ -17,7 +17,6 @@ import (
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -161,7 +160,7 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, ho
 			res.Warnings = append(res.Warnings, warn)
 		}
 	}
-	link := usecase.GitLink{Store: st, Text: richtext.Converter{}, Clock: time.Now, CustomIDs: custom}
+	link := st.App.GitLink(time.Now, custom)
 	wrote := false
 	for _, c := range commits {
 		acts, err := link.Apply(ctx, c, false) // a dry run writes to its copy
@@ -180,7 +179,7 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, ho
 		res.Commits = append(res.Commits, gitScanCommit{SHA: c.SHA, Subject: c.Subject(), Actions: acts})
 	}
 
-	if d, ok := st.(*dryRunStore); ok {
+	if d, ok := st.Store.(*dryRunStore); ok {
 		if res.Planned, _, err = d.queuedChanges(ctx); err != nil {
 			return err
 		}
@@ -244,7 +243,7 @@ var hookPushTimeout = 3 * time.Second
 // resolveCustomIDs finds the gids of the tasks with the custom IDs (app.ResolveCustomIDs):
 // in Asana unless offline (the hook waits for it at most hookPushTimeout), else as found
 // before. It returns a warning when Asana could not be asked.
-func (a *app) resolveCustomIDs(ctx context.Context, st Store, ids []string, offline, hook bool) (map[string]string, string) {
+func (a *app) resolveCustomIDs(ctx context.Context, st *Local, ids []string, offline, hook bool) (map[string]string, string) {
 	if len(ids) == 0 {
 		return nil, ""
 	}
@@ -266,7 +265,7 @@ func (a *app) resolveCustomIDs(ctx context.Context, st Store, ids []string, offl
 			find = deadlineFinder{a.syncer(api, st), deadline}
 		}
 	}
-	custom, err := usecase.ResolveCustomIDs(ctx, st, find, ids)
+	custom, err := st.App.ResolveCustomIDs(find)(ctx, ids)
 	if err == nil {
 		err = problem
 	}
@@ -290,7 +289,7 @@ func (d deadlineFinder) TaskByCustomID(ctx context.Context, id string) (string, 
 
 // refreshTasks fetches the tasks gids from Asana. It returns a warning when that could not
 // be done, for the commands to go on with the cache.
-func (a *app) refreshTasks(ctx context.Context, st Store, gids []string) string {
+func (a *app) refreshTasks(ctx context.Context, st *Local, gids []string) string {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	api, err := a.apiClient(ctx)

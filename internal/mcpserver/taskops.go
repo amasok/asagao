@@ -5,7 +5,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -44,7 +43,7 @@ type SetParentInput struct {
 }
 
 func (s *Server) deleteTask(ctx context.Context, _ *mcp.CallToolRequest, in DeleteTaskInput) (*mcp.CallToolResult, DeleteTaskOutput, error) {
-	ops := app.TaskOps{Store: s.Store, Clock: s.Now}
+	ops := s.App.TaskOps(s.Now)
 	if in.DryRun {
 		plan, err := ops.PlanDelete(ctx, in.GID)
 		if err != nil {
@@ -64,7 +63,7 @@ func (s *Server) deleteTask(ctx context.Context, _ *mcp.CallToolRequest, in Dele
 }
 
 func (s *Server) setParent(ctx context.Context, _ *mcp.CallToolRequest, in SetParentInput) (*mcp.CallToolResult, WriteOutput, error) {
-	ops := app.TaskOps{Store: s.Store, Clock: s.Now}
+	ops := s.App.TaskOps(s.Now)
 	if err := ops.SetParent(ctx, in.GID, in.Parent, model.Position{Before: in.InsertBefore, After: in.InsertAfter}); err != nil {
 		return nil, WriteOutput{}, err
 	}

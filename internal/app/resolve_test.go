@@ -39,7 +39,7 @@ func resolveStore(t *testing.T) *store.Store {
 }
 
 // queue makes one outbox entry of the given kind and returns its id.
-func queue(t *testing.T, st *store.Store, kind string) int64 {
+func queue(t *testing.T, st *store.Store, kind store.Kind) int64 {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
@@ -152,7 +152,7 @@ func TestResolveStateRules(t *testing.T) {
 
 func TestResolveRefreshTarget(t *testing.T) {
 	for _, tc := range []struct {
-		kind string
+		kind store.Kind
 		want string
 	}{
 		{store.OpUpdateTask, "t1"},
@@ -163,7 +163,7 @@ func TestResolveRefreshTarget(t *testing.T) {
 		{store.OpRenameSection, ""}, // task_gid is a section
 		{store.OpCreateStatus, ""},  // task_gid is a project
 	} {
-		t.Run(tc.kind, func(t *testing.T) {
+		t.Run(string(tc.kind), func(t *testing.T) {
 			st := resolveStore(t)
 			id := queue(t, st, tc.kind)
 			r, err := (&app.Outbox{Store: st}).Resolve(context.Background(), id, app.Discard)

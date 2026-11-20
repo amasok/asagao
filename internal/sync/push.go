@@ -8,10 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
-	"strings"
-	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
@@ -84,7 +81,7 @@ func sentNotSaved(err error) error {
 //
 // Changes to tasks that already exist in Asana, next to each other in the queue, go out
 // up to 10 per request (POST /batch); each is then handled as if sent alone (batch.go).
-func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
+func (s *Pusher) Push(ctx context.Context) (res PushResult, err error) {
 	if s.PullOnly {
 		return res, ErrPullOnly
 	}
@@ -106,8 +103,8 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 // another (after a login as someone else). Run checks this itself at its start. Before the
 // first sync there is no account to compare with. Once confirmed, it is not asked again
 // for this Syncer: its token source never switches to another user (auth.ErrLoginReplaced).
-func (s *Syncer) checkPushAccount(ctx context.Context) error {
-	if s.accountOK.Load() {
+func (s *Pusher) checkPushAccount(ctx context.Context) error {
+	if s.accountConfirmed() {
 		return nil
 	}
 	want, err := s.Store.SyncedMeGID(ctx)
@@ -121,12 +118,12 @@ func (s *Syncer) checkPushAccount(ctx context.Context) error {
 	if me.GID != want {
 		return fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	}
-	s.accountOK.Store(true)
+	s.confirmAccount()
 	return nil
 }
 
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
-func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
+func (s *Pusher) lock(ctx context.Context, res *PushResult) (func(), error) {
 	unlock, err := s.Store.TryLockPush()
 	if errors.Is(err, readmodel.ErrPushBusy) {
 		res.Busy = true
@@ -141,7 +138,7 @@ func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
 //
 // drops is shared by every pass under the same lock (one per Push, one per Run), so the
 // account is checked once and maxDroppedTasks bounds the whole push or sync.
-func (s *Syncer) pushLocked(ctx context.Context, drops *dropState) (res PushResult, last int64, err error) {
+func (s *Pusher) pushLocked(ctx context.Context, drops *dropState) (res PushResult, last int64, err error) {
 	if res, last, err = s.pushPass(ctx, 0, drops); err != nil {
 		return res, last, err
 	}
@@ -149,7 +146,7 @@ func (s *Syncer) pushLocked(ctx context.Context, drops *dropState) (res PushResu
 }
 
 // catchUp sends entries queued after entry last (one more pass) and adds its result.
-func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops *dropState) (PushResult, int64, error) {
+func (s *Pusher) catchUp(ctx context.Context, res PushResult, last int64, drops *dropState) (PushResult, int64, error) {
 	more, last, err := s.pushPass(ctx, last, drops)
 	res.Sent += more.Sent
 	res.Conflicts += more.Conflicts
@@ -161,7 +158,7 @@ func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops 
 }
 
 // pushPass sends the pending entries newer than entry after, in order.
-func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (res PushResult, last int64, err error) {
+func (s *Pusher) pushPass(ctx context.Context, after int64, drops *dropState) (res PushResult, last int64, err error) {
 	last = after
 	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
 		return res, last, err
@@ -228,7 +225,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 
 // pushEntry handles one entry (snapshot as listed when the pass began), from step first
 // on (a step already taken by pushBatch counts). An error stops the push.
-func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, verified map[int64]bool, res *PushResult, drops *dropState) error {
+func (s *Pusher) pushEntry(ctx context.Context, snapshot outbox.Op, first int, verified map[int64]bool, res *PushResult, drops *dropState) error {
 	// An entry is handled a bounded number of times per push, whatever happens: send,
 	// check + send again, the follow-up move of a create, and that move's retry. What is
 	// left over waits for the next push.
@@ -322,9 +319,9 @@ func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 			return err
 		}
 		op.Attempts++
-		if op.Kind == outbox.KindMarkNotification {
+		if h := handlers[op.Kind]; h.sendAlong != nil {
 			var batched int // entries sent along with this one, whatever happened to it
-			out, batched, err = s.pushMarkNotification(ctx, *op)
+			out, batched, err = h.sendAlong(s, ctx, *op)
 			res.Sent += batched
 		} else {
 			out, err = s.send(ctx, *op)
@@ -340,7 +337,7 @@ func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 // error err. again: handle the entry once more right away (a follow-up, or a check of
 // Asana). An error stops the push (offline, logged out, the store failing); op has been
 // put back in the queue as it should then.
-func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, err error, wasFollowUp bool, res *PushResult, drops *dropState) (again bool, stop error) {
+func (s *Pusher) handleOutcome(ctx context.Context, op outbox.Op, out outcome, err error, wasFollowUp bool, res *PushResult, drops *dropState) (again bool, stop error) {
 	switch {
 	case err == nil:
 		switch {
@@ -387,10 +384,11 @@ const maxStepsPerEntry = 4
 // waits instead of failing, and goes out once the create is sent (or is discarded with
 // it). An edit or delete of a comment or attachment not created in Asana yet waits for
 // its create too.
-func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
-	if key, prefix := storyTarget(op.Kind); key != "" {
-		g, _ := op.Payload[key].(string)
-		if _, waiting, err := s.Store.LocalResult(ctx, prefix, g); err != nil || waiting {
+func (s *Pusher) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
+	h := handlers[op.Kind]
+	if h.local.key != "" {
+		g := payloadString(op, h.local.key)
+		if _, waiting, err := s.Store.LocalResult(ctx, h.local.result, g); err != nil || waiting {
 			return waiting, err
 		}
 	}
@@ -400,34 +398,22 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	if wait, err := s.waitsForField(ctx, op); err != nil || wait {
 		return wait, err
 	}
-	if op.Kind == outbox.KindDeleteSection { // Asana deletes only an empty section
-		if wait, err := s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID); err != nil || wait {
+	if h.waits != nil {
+		if wait, err := h.waits(s, ctx, op); err != nil || wait {
 			return wait, err
 		}
 	}
-	gid := op.TaskGID
-	switch op.Kind {
-	case outbox.KindCreateTask:
-		gid, _ = op.Payload["parent"].(string)
-	case outbox.KindSetParent: // the task, and the new parent
-		if parent, _ := op.Payload["parent"].(string); parent != "" {
-			if wait, err := s.createQueued(ctx, parent); err != nil || wait {
-				return wait, err
-			}
+	for _, gid := range outbox.TaskDeps(op) {
+		if wait, err := s.createQueued(ctx, gid); err != nil || wait {
+			return wait, err
 		}
-	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
-		return false, nil
-	case outbox.KindUpdateTag, outbox.KindDeleteTag:
-		return s.waitsForTag(ctx, op.TaskGID)
 	}
-	return s.createQueued(ctx, gid)
+	return false, nil
 }
 
 // createQueued reports whether gid is a task created offline whose create (or duplicate)
 // is still in the outbox, in any state.
-func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
+func (s *Pusher) createQueued(ctx context.Context, gid string) (bool, error) {
 	if !localgid.IsLocal(gid) {
 		return false, nil
 	}
@@ -441,9 +427,9 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
 // workspace's plan lacks the feature (402) also hides that feature in the workspace for
 // plan.RecheckAfter.
-func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
-	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)
+	withStart = withStart && handlers[op.Kind].startOn
 	var startWS string
 	if withStart {
 		// before sending: a create gives the task its Asana gid
@@ -453,8 +439,8 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 	}
 	out, err := s.sendOp(ctx, op)
-	if isForbidden(err) {
-		err = s.fieldForbidden(ctx, op, err)
+	if h := handlers[op.Kind]; isForbidden(err) && h.forbidden != nil {
+		err = h.forbidden(s, ctx, op, err)
 	}
 	if feature := plan.FeatureOf(op.Kind); feature == plan.CustomFields { // recorded per workspace
 		ws, _ := op.Payload["workspace"].(string)
@@ -462,9 +448,9 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 			ws, _ = s.Store.DefaultWorkspace(ctx)
 		}
 		if err == nil {
-			return out, s.clearPlanRefusal(ctx, feature, ws)
+			return out, s.Store.ClearPlanRefusal(ctx, feature, ws)
 		}
-		if refused, rerr := s.recordPlanRefusal(ctx, feature, ws, err); rerr != nil {
+		if refused, rerr := recordPlanRefusal(ctx, s.Store, s.clock(), feature, ws, err); rerr != nil {
 			return out, rerr
 		} else if refused {
 			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
@@ -480,16 +466,16 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	case plan.TimeTracking:
 		if model.IsPaymentRequired(err) {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
-				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
+				_, _ = recordPlanRefusal(ctx, s.Store, s.clock(), feature, ws, err) // per workspace, for a while (plan.go)
 			}
 		}
 	case plan.Sections, plan.Tags, plan.MySection: // per workspace, for a while (#50)
 		switch {
 		case err == nil && out != conflicted:
 			// Asana took it: a failure to forget the 402 only hides the feature until it expires.
-			_ = s.clearPlanRefusal(ctx, feature, s.planWorkspace(ctx, op))
+			_ = s.Store.ClearPlanRefusal(ctx, feature, s.planWorkspace(ctx, op))
 		case model.IsPaymentRequired(err):
-			_, _ = s.recordPlanRefusal(ctx, feature, s.planWorkspace(ctx, op), err)
+			_, _ = recordPlanRefusal(ctx, s.Store, s.clock(), feature, s.planWorkspace(ctx, op), err)
 		}
 	}
 	// (the brief's 402 is recorded per workspace by brief.go)
@@ -500,15 +486,15 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 // start_on) to workspace ws said about its plan: a 402 hides start dates there for a while
 // (plan.StartOn), and the error says why; an answer that set one forgets an
 // earlier 402. err is returned, wrapped when it is a 402.
-func (s *Syncer) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
+func (s *Pusher) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
 	if err == nil {
 		if v, _ := op.Payload["start_on"].(string); v != "" && out != conflicted {
 			// Sent: a failure to forget the 402 only hides start dates until it expires.
-			_ = s.clearPlanRefusal(ctx, plan.StartOn, ws)
+			_ = s.Store.ClearPlanRefusal(ctx, plan.StartOn, ws)
 		}
 		return nil
 	}
-	if refused, rerr := s.recordPlanRefusal(ctx, plan.StartOn, ws, err); rerr != nil {
+	if refused, rerr := recordPlanRefusal(ctx, s.Store, s.clock(), plan.StartOn, ws, err); rerr != nil {
 		return errors.Join(err, rerr)
 	} else if refused {
 		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.StartOn), err: err}
@@ -536,7 +522,7 @@ func (e *startOnWithdrawn) Unwrap() error { return e.err }
 // decide: the start date is dropped (and reported in res.Discarded, with the reason), and
 // the rest of the entry, if any, is sent again right away. Asana did not apply the
 // request (a 402, or it was not sent), so sending the rest again repeats nothing.
-func (s *Syncer) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
+func (s *Pusher) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
 	rest, d, err := s.Store.WithdrawStartOn(ctx, op.ID, w.reason, s.clock())
 	if err != nil {
 		return false, err
@@ -545,81 +531,19 @@ func (s *Syncer) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWi
 	return rest != nil, nil
 }
 
-func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
-	var err error
-	switch op.Kind {
-	case outbox.KindUpdateTask:
-		return s.pushUpdate(ctx, op)
-	case outbox.KindSetCustomField:
-		return s.pushCustomField(ctx, op)
-	case outbox.KindRenameSection:
-		return s.pushRenameSection(ctx, op)
-	case outbox.KindCreateSection:
-		return s.pushCreateSection(ctx, op)
-	case outbox.KindDeleteSection:
-		err = s.pushDeleteSection(ctx, op)
-	case outbox.KindInsertSection:
-		err = s.pushInsertSection(ctx, op)
-	case outbox.KindUpdateTag:
-		return s.pushUpdateTag(ctx, op)
-	case outbox.KindDeleteTag:
-		err = s.pushDeleteTag(ctx, op)
-	case outbox.KindMoveMySection:
-		err = s.pushMoveMySection(ctx, op)
-	case outbox.KindUpdateProject:
-		return s.pushUpdateProject(ctx, op)
-	case outbox.KindUpdateProjectBrief:
-		return s.pushUpdateBrief(ctx, op)
-	case outbox.KindCreateEnumOption:
-		return s.pushCreateEnumOption(ctx, op)
-	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
-		err = s.pushFieldSetting(ctx, op)
-	case outbox.KindCreateTask:
-		return s.pushCreate(ctx, op)
-	case outbox.KindAddComment:
-		err = s.pushComment(ctx, op)
-	case outbox.KindMoveTask:
-		err = s.pushMove(ctx, op)
-	case outbox.KindAddTag, outbox.KindRemoveTag:
-		err = s.pushTag(ctx, op)
-	case outbox.KindAddFollower, outbox.KindRemoveFollower, outbox.KindAddProject, outbox.KindRemoveProject:
-		err = s.pushRelation(ctx, op)
-	case outbox.KindAddDependency, outbox.KindRemoveDependency:
-		err = s.pushDependency(ctx, op)
-	case outbox.KindDeleteTask:
-		err = s.pushDelete(ctx, op)
-	case outbox.KindSetParent:
-		err = s.pushSetParent(ctx, op)
-	case outbox.KindDuplicateTask:
-		err = s.pushDuplicate(ctx, op)
-	case outbox.KindUploadAttachment:
-		err = s.pushUpload(ctx, op)
-	case outbox.KindUpdateStory:
-		err = s.pushUpdateStory(ctx, op)
-	case outbox.KindDeleteStory, outbox.KindDeleteAttachment:
-		err = s.pushDeleteItem(ctx, op)
-	case outbox.KindAddTimeEntry:
-		err = s.pushAddTimeEntry(ctx, op)
-	case outbox.KindUpdateTimeEntry:
-		err = s.pushUpdateTimeEntry(ctx, op)
-	case outbox.KindDeleteTimeEntry:
-		err = s.pushDeleteTimeEntry(ctx, op)
-	case outbox.KindCreateStatus:
-		err = s.pushStatus(ctx, op)
-	case outbox.KindMarkNotification:
-		out, _, err := s.pushMarkNotification(ctx, op)
-		return out, err
-	default:
-		err = &model.Error{Status: 400}
+func (s *Pusher) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
+	h, ok := handlers[op.Kind]
+	if !ok { // an entry of a newer version: Asana cannot be asked for it
+		return sent, &model.Error{Status: 400}
 	}
-	return sent, err
+	return h.send(s, ctx, op)
 }
 
 // holdBack handles a network error while sending op: it goes back in the queue, to be
 // verified first if Asana may have received it and sending it twice would duplicate it.
 // A 429 or a 401 (the token is rejected, e.g. an expired PAT) was not processed: the entry
 // waits, unchanged, for the next push (after the user logs in again).
-func (s *Syncer) holdBack(ctx context.Context, op outbox.Op, cause error) error {
+func (s *Pusher) holdBack(ctx context.Context, op outbox.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
 	if requestNotSent(cause) || isRateLimited(cause) || model.IsUnauthorized(cause) {
 		return s.Store.ReleaseNotSent(ctx, op.ID)
@@ -638,7 +562,7 @@ func (s *Syncer) holdBack(ctx context.Context, op outbox.Op, cause error) error 
 // change) or a broken response to a harmless entry marks it failed. A 5xx or a broken
 // response to a create, or a change Asana accepted but we could not save, may have been
 // applied: the entry is verified (verify = true).
-func (s *Syncer) handleError(ctx context.Context, op outbox.Op, cause error) (verify bool, err error) {
+func (s *Pusher) handleError(ctx context.Context, op outbox.Op, cause error) (verify bool, err error) {
 	var apiErr *model.Error
 	var notSaved *sentNotSavedError
 	switch {
@@ -678,7 +602,7 @@ func isNotFound(err error) bool {
 // otherwise only this change is (its section, project, tag, ... is gone). A create is
 // dropped with its local task (its parent or project is gone). Dropped changes are
 // recorded for the user and listed in res.Discarded.
-func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dropState) error {
+func (s *Pusher) dropGone(ctx context.Context, op outbox.Op, cause error, st *dropState) error {
 	res := st.res
 	// Asana also answers 404 when the logged-in account cannot see the object (another
 	// account or organization than the one the store was synced with). Make sure it is
@@ -710,14 +634,13 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		discards, err = s.Store.DiscardDeletedTask(ctx, gid, reason, now)
 		return nil
 	}
-	switch op.Kind {
-	case outbox.KindCreateTask, outbox.KindDuplicateTask:
+	subject := outbox.SubjectOf(op.Kind)
+	switch {
+	case subject == outbox.SubjectNewTask: // its parent or project is gone
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
+	case subject != outbox.SubjectTask && op.Kind.Known(): // a section, project, tag, ... is gone
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}
@@ -748,14 +671,10 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 				return ferr
 			}
 		} else {
-			switch op.Kind { // the other task is missing, or private to someone else
-			case outbox.KindAddDependency, outbox.KindRemoveDependency:
-				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
-			case outbox.KindSetParent:
-				reason = "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
-			case outbox.KindMoveTask:
-				if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
-					reason = "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			// Something else it names is missing, or private to someone else.
+			if f := handlers[op.Kind].goneReason; f != nil {
+				if r := f(op, cause); r != "" {
+					reason = r
 				}
 			}
 			var d readmodel.Discard
@@ -788,11 +707,11 @@ var ErrAccountChanged = readmodel.ErrAccountChanged
 
 // checkAccount makes sure (once per push) that the API acts as the user the store was
 // synced with.
-func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
+func (s *Pusher) checkAccount(ctx context.Context, st *dropState) error {
 	if st.checked {
 		return st.account
 	}
-	if s.accountOK.Load() { // confirmed by this Syncer already (Push or Run)
+	if s.accountConfirmed() { // confirmed by this Syncer already (Push or Run)
 		st.checked = true
 		return nil
 	}
@@ -861,618 +780,6 @@ func requestNotSent(err error) bool {
 	}
 	var dnsErr *net.DNSError
 	return errors.As(err, &dnsErr)
-}
-
-func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) {
-	if localgid.IsLocal(op.TaskGID) {
-		return sent, &model.Error{Status: 404} // its create failed
-	}
-	server, err := s.API.Task(ctx, op.TaskGID)
-	if err != nil {
-		return sent, err
-	}
-	if conflicts := updateConflicts(op, server); conflicts != nil {
-		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
-	}
-	if reason := startOnBlocked(op.Payload, server); reason != "" {
-		return sent, &startOnWithdrawn{reason: reason}
-	}
-	fields := withDue(taskUpdateFields(op), server)
-	if len(fields) == 0 { // only cleared a start date Asana does not have
-		if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-			return sent, sentNotSaved(err)
-		}
-		return sent, nil
-	}
-	t, err := s.API.UpdateTask(ctx, op.TaskGID, fields)
-	if err != nil {
-		return sent, s.customTypeRefused(ctx, op, err)
-	}
-	if err := customTypeApplied(op, t); err != nil {
-		s.refresh(ctx, *t) // the rest was applied: show Asana's task
-		return sent, err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sent, sentNotSaved(err)
-	}
-	s.refresh(ctx, *t)
-	return sent, nil
-}
-
-// pushCustomField sets one custom field, after checking that nobody changed it in Asana
-// since it was edited here. A field the task no longer has is treated like a 404 (the
-// change is dropped and the user told).
-func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, error) {
-	task, err := s.Store.RealGID(ctx, op.TaskGID)
-	if err != nil {
-		return sent, err
-	}
-	if localgid.IsLocal(task) {
-		return sent, &model.Error{Status: 404} // its create failed
-	}
-	server, err := s.API.Task(ctx, task)
-	if err != nil {
-		return sent, err
-	}
-	if conflicts, err := customFieldConflict(op, server); err != nil {
-		return sent, err
-	} else if conflicts != nil {
-		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
-	}
-	t, err := s.API.UpdateTask(ctx, task, customFieldUpdate(op))
-	var apiErr *model.Error
-	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
-		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
-		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
-	}
-	if err != nil {
-		return sent, err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sent, sentNotSaved(err)
-	}
-	s.refresh(ctx, *t)
-	return sent, nil
-}
-
-// serverDueDay is the day a task is due in Asana: due_on, or the local day of due_at.
-func serverDueDay(t *model.Task) string {
-	if t.DueOn != "" {
-		return t.DueOn
-	}
-	if t.DueAt != nil && !t.DueAt.IsZero() {
-		return t.DueAt.Local().Format(time.DateOnly)
-	}
-	return ""
-}
-
-// startOnBlocked says why an update's start date cannot be sent when it keeps the due
-// date and the due date in Asana no longer allows it (removed, or moved before the start
-// date since the edit): Asana would refuse it with a 400. "" when it can be sent.
-func startOnBlocked(payload map[string]any, server *model.Task) string {
-	start, _ := payload["start_on"].(string)
-	if _, due := payload["due_on"]; start == "" || due {
-		return ""
-	}
-	switch due := serverDueDay(server); {
-	case due == "":
-		return fmt.Sprintf("Asana でこのタスクの期日が外されたため、開始日 (%s) を付けられませんでした", start)
-	case start > due:
-		return fmt.Sprintf("Asana でこのタスクの期日が %s になり、開始日 (%s) が期日より後になるため付けられませんでした", due, start)
-	}
-	return ""
-}
-
-// withDue adds the task's due date in Asana to an update that sets or clears the start
-// date without changing the due date: Asana requires one of due_on / due_at in such a
-// request. The server's value is sent as it is, so the due date does not change.
-func withDue(fields map[string]any, server *model.Task) map[string]any {
-	if _, ok := fields["start_on"]; !ok {
-		return fields
-	}
-	if _, ok := fields["due_on"]; ok {
-		return fields
-	}
-	if _, ok := fields["due_at"]; ok {
-		return fields
-	}
-	switch {
-	case server.DueAt != nil && !server.DueAt.IsZero():
-		fields["due_at"] = server.DueAt.UTC().Format(time.RFC3339)
-	case server.DueOn != "":
-		fields["due_on"] = server.DueOn
-	case fields["start_on"] == nil && server.StartOn == "":
-		delete(fields, "start_on") // clearing a start date Asana does not have: nothing to send
-	default:
-		fields["due_on"] = nil
-	}
-	return fields
-}
-
-// updateConflicts compares an update with the task in Asana: the server's values of the
-// fields that were changed there too (nil if none).
-func updateConflicts(op outbox.Op, server *model.Task) map[string]any {
-	current := model.TaskFieldValues(server)
-	conflicts := map[string]any{}
-	for k, local := range op.Payload {
-		if k == "html_notes" {
-			continue // the server normalizes HTML; "notes" (plain) is compared instead
-		}
-		sv, known := current[k]
-		if !known {
-			continue // not fetched (Task.Partial): nothing to compare with
-		}
-		if !same(sv, op.Base[k]) && !same(sv, local) {
-			conflicts[k] = sv
-		}
-	}
-	if len(conflicts) == 0 {
-		return nil
-	}
-	return conflicts
-}
-
-// customFieldConflict compares a custom field change with the task in Asana: the server's
-// value if it was changed there too (nil if not), or a 404 if the task no longer has the
-// field.
-func customFieldConflict(op outbox.Op, server *model.Task) (map[string]any, error) {
-	if server.Partial { // Asana gave no custom fields to compare with: just send
-		return nil, nil
-	}
-	field, _ := op.Payload["field"].(string)
-	sv, display, found := model.ServerCustomField(server, field)
-	if !found {
-		return nil, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
-	}
-	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(op.Payload["value"])) {
-		return map[string]any{"value": sv, "display": display}, nil
-	}
-	return nil, nil
-}
-
-// customFieldUpdate is the task update that sets a custom field change.
-func customFieldUpdate(op outbox.Op) map[string]any {
-	field, _ := op.Payload["field"].(string)
-	fieldType, _ := op.Payload["type"].(string)
-	return map[string]any{"custom_fields": map[string]any{field: model.CustomFieldAPIValue(fieldType, op.Payload["value"])}}
-}
-
-// normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
-func normalize(v any) any {
-	if l, ok := v.([]any); ok {
-		out := make([]string, 0, len(l))
-		for _, e := range l {
-			out = append(out, fmt.Sprint(e))
-		}
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	}
-	return v
-}
-
-// refresh stores a task as Asana returned it after a change. The change is already
-// recorded, so a failure here only leaves the cache stale until the next sync.
-func (s *Syncer) refresh(ctx context.Context, t model.Task) {
-	_ = s.Store.UpsertTasks(ctx, []model.Task{t})
-}
-
-func (s *Syncer) pushCreate(ctx context.Context, op outbox.Op) (outcome, error) {
-	fields := apiFields(op.Payload)
-	section, _ := fields["section"].(string)
-	project, _ := fields["project"].(string)
-	parent, _ := fields["parent"].(string)
-	delete(fields, "section")
-	delete(fields, "project")
-	delete(fields, "parent")
-	if fields["start_on"] == nil {
-		delete(fields, "start_on") // cleared before it was sent: nothing to unset, and Asana wants a due date with it
-	}
-	if project != "" {
-		fields["projects"] = []string{project}
-	}
-	var t *model.Task
-	var err error
-	if parent != "" {
-		// The parent may have been created offline too; it has been sent before us.
-		if parent, err = s.Store.RealGID(ctx, parent); err != nil {
-			return sent, err
-		}
-		if localgid.IsLocal(parent) {
-			return sent, &model.Error{Status: 404} // the parent's create failed
-		}
-		delete(fields, "workspace")
-		t, err = s.API.CreateSubtask(ctx, parent, fields)
-	} else {
-		t, err = s.API.CreateTask(ctx, fields)
-	}
-	if err != nil {
-		return sent, err
-	}
-	// Moving the task into its section is a separate request: the entry becomes a move,
-	// sent right after (and retried later if it fails), so the create is never repeated.
-	var move *outbox.MoveTarget
-	if section != "" {
-		move = &outbox.MoveTarget{Project: project, Section: section, From: sectionIn(t, project)}
-	}
-	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, move); err != nil {
-		return sent, sentNotSaved(err)
-	}
-	s.refresh(ctx, *t)
-	if move != nil {
-		return followUp, nil
-	}
-	return sent, nil
-}
-
-// sectionIn returns the section t is in within project ("" if unknown).
-func sectionIn(t *model.Task, project string) string {
-	for _, m := range t.Memberships {
-		if m.Project != nil && m.Project.GID == project && m.Section != nil {
-			return m.Section.GID
-		}
-	}
-	return ""
-}
-
-func (s *Syncer) pushComment(ctx context.Context, op outbox.Op) error {
-	if localgid.IsLocal(op.TaskGID) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	text, _ := op.Payload["text"].(string)
-	htmlText, _ := op.Payload["html_text"].(string)
-	localGID, _ := op.Payload["story_gid"].(string)
-	st, err := s.API.AddComment(ctx, op.TaskGID, text, htmlText)
-	if err != nil {
-		return err
-	}
-	return sentNotSaved(s.Store.CompleteComment(ctx, op.ID, localGID, op.TaskGID, *st))
-}
-
-func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
-	if localgid.IsLocal(op.TaskGID) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	section, _ := op.Payload["section"].(string)
-	section, err := s.realSection(ctx, section)
-	if err != nil {
-		return err
-	}
-	pos, err := s.position(ctx, op)
-	if err != nil {
-		return err
-	}
-	if err := s.API.InsertTaskInSection(ctx, section, op.TaskGID, pos); err != nil {
-		return err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sentNotSaved(err)
-	}
-	if t, err := s.API.Task(ctx, op.TaskGID); err == nil { // else the next sync refreshes it
-		s.refresh(ctx, *t)
-	}
-	project, _ := op.Payload["project"].(string)
-	s.refreshSectionOrderAfterMove(ctx, project, section)
-	return nil
-}
-
-// refreshSectionOrderAfterMove fetches Asana's order for section right after pushing a
-// move into it (#69: Asana emits no Events on intra-section reorders, so an external
-// reorder before our push would otherwise leave the cache out of order). Transient
-// failures queue section in PendingSectionOrders so the next sync retries it.
-func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, section string) {
-	if section == "" || localgid.IsLocal(section) {
-		return
-	}
-	completedSince := s.newMode(s.serverNow()).window
-	gids, err := s.API.SectionTaskOrder(ctx, section, completedSince)
-	if err == nil {
-		if gids != nil {
-			_ = s.Store.SetSectionTaskOrder(ctx, section, gids)
-		}
-		return
-	}
-	if isNotFound(err) || isForbidden(err) || project == "" || localgid.IsLocal(project) {
-		return
-	}
-	pending, perr := s.Store.PendingSectionOrders(ctx, project)
-	if perr != nil {
-		return
-	}
-	_ = setPendingOrders(pending, addNew(strings.Fields(pending), section), func(v string) error {
-		return s.Store.SetPendingSectionOrders(ctx, project, v)
-	})
-}
-
-// position is where op puts its task (insert_before / insert_after), with the real gid of
-// a task created offline. One whose create has not gone out (it failed) is left out:
-// the task still goes to its section or parent.
-func (s *Syncer) position(ctx context.Context, op outbox.Op) (model.Position, error) {
-	var pos model.Position
-	for _, p := range []struct {
-		key string
-		to  *string
-	}{{"insert_before", &pos.Before}, {"insert_after", &pos.After}} {
-		gid, _ := op.Payload[p.key].(string)
-		if gid == "" {
-			continue
-		}
-		real, err := s.Store.RealGID(ctx, gid)
-		if err != nil {
-			return pos, err
-		}
-		if !localgid.IsLocal(real) {
-			*p.to = real
-		}
-	}
-	return pos, nil
-}
-
-// pushDelete deletes a task in Asana. A 404 means it is gone already (deleted by this
-// entry sent before, or by someone else): done either way. Push has checked that the
-// account is the one the store belongs to (checkPushAccount), so the 404 is not another
-// account's view.
-func (s *Syncer) pushDelete(ctx context.Context, op outbox.Op) error {
-	if localgid.IsLocal(op.TaskGID) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	if err := s.API.DeleteTask(ctx, op.TaskGID); err != nil && !isNotFound(err) {
-		return err
-	}
-	return sentNotSaved(s.Store.CompleteDelete(ctx, op.ID, op.TaskGID))
-}
-
-// pushSetParent sends a parent change. Repeating it is harmless.
-func (s *Syncer) pushSetParent(ctx context.Context, op outbox.Op) error {
-	task, err := s.Store.RealGID(ctx, op.TaskGID)
-	if err != nil {
-		return err
-	}
-	parent, _ := op.Payload["parent"].(string)
-	if parent, err = s.Store.RealGID(ctx, parent); err != nil {
-		return err
-	}
-	if localgid.IsLocal(task) || localgid.IsLocal(parent) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	pos, err := s.position(ctx, op)
-	if err != nil {
-		return err
-	}
-	if err := s.API.SetParent(ctx, task, parent, pos); err != nil {
-		return err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sentNotSaved(err)
-	}
-	if t, err := s.API.Task(ctx, task); err == nil { // else the next sync refreshes it
-		s.refresh(ctx, *t)
-	}
-	return nil
-}
-
-func (s *Syncer) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
-	gid, err := s.realSection(ctx, op.TaskGID)
-	if err != nil {
-		return sent, err
-	}
-	op.TaskGID = gid
-	server, err := s.API.Section(ctx, op.TaskGID)
-	if err != nil {
-		return sent, err
-	}
-	name, _ := op.Payload["name"].(string)
-	if !same(server.Name, op.Base["name"]) && !same(server.Name, name) {
-		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"name": server.Name})
-	}
-	updated, err := s.API.UpdateSection(ctx, op.TaskGID, name)
-	if err != nil {
-		return sent, err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sent, sentNotSaved(err)
-	}
-	_ = s.Store.ApplySectionName(ctx, op.TaskGID, updated.Name) // the next sync fixes a failure
-	return sent, nil
-}
-
-func (s *Syncer) pushTag(ctx context.Context, op outbox.Op) error {
-	if localgid.IsLocal(op.TaskGID) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	tag, _ := op.Payload["tag"].(string)
-	tag, err := s.Store.RealTagGID(ctx, tag)
-	if err != nil {
-		return err
-	}
-	if op.Kind == outbox.KindRemoveTag {
-		if err := s.API.RemoveTag(ctx, op.TaskGID, tag); err != nil {
-			return err
-		}
-		return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
-	}
-	if localgid.IsLocal(tag) { // created offline: create it in Asana first
-		name, _ := op.Payload["tag_name"].(string)
-		workspace, _ := op.Payload["workspace"].(string)
-		created, err := s.API.CreateTag(ctx, workspace, name)
-		if err != nil {
-			return err
-		}
-		if err := s.Store.ReplaceLocalTagGID(ctx, tag, created.GID); err != nil {
-			return sentNotSaved(err)
-		}
-		tag = created.GID
-	}
-	if err := s.API.AddTag(ctx, op.TaskGID, tag); err != nil {
-		return err
-	}
-	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
-}
-
-func (s *Syncer) pushRelation(ctx context.Context, op outbox.Op) error {
-	task, err := s.Store.RealGID(ctx, op.TaskGID)
-	if err != nil {
-		return err
-	}
-	if localgid.IsLocal(task) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	user, _ := op.Payload["user"].(string)
-	project, _ := op.Payload["project"].(string)
-	section, _ := op.Payload["section"].(string)
-	if section != "" {
-		if section, err = s.realSection(ctx, section); isNotFound(err) {
-			section = "" // created offline and discarded: the project's first section
-		} else if err != nil {
-			return err
-		}
-	}
-	switch op.Kind {
-	case outbox.KindAddFollower:
-		err = s.API.AddFollowers(ctx, task, []string{user})
-	case outbox.KindRemoveFollower:
-		err = s.API.RemoveFollowers(ctx, task, []string{user})
-	case outbox.KindAddProject:
-		err = s.API.AddProject(ctx, task, project, section)
-	case outbox.KindRemoveProject:
-		err = s.API.RemoveProject(ctx, task, project)
-	}
-	if err != nil {
-		return err
-	}
-	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
-}
-
-// pushDependency adds or removes a dependency. Both are harmless to repeat: Asana adds only
-// tasks that are not dependencies yet.
-func (s *Syncer) pushDependency(ctx context.Context, op outbox.Op) error {
-	task, err := s.Store.RealGID(ctx, op.TaskGID)
-	if err != nil {
-		return err
-	}
-	dep, _ := op.Payload["dependency"].(string)
-	if dep, err = s.Store.RealGID(ctx, dep); err != nil {
-		return err
-	}
-	if localgid.IsLocal(task) || localgid.IsLocal(dep) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	if op.Kind == outbox.KindAddDependency {
-		err = s.API.AddDependencies(ctx, task, []string{dep})
-	} else {
-		err = s.API.RemoveDependencies(ctx, task, []string{dep})
-	}
-	if err != nil {
-		return err
-	}
-	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
-}
-
-func (s *Syncer) pushDuplicate(ctx context.Context, op outbox.Op) error {
-	source, _ := op.Payload["source"].(string)
-	name, _ := op.Payload["name"].(string)
-	created, err := s.API.DuplicateTask(ctx, source, name)
-	if err != nil {
-		return err
-	}
-	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, created.GID, nil); err != nil {
-		return sentNotSaved(err)
-	}
-	if t, err := s.API.Task(ctx, created.GID); err == nil { // subtasks etc. follow on the next sync
-		s.refresh(ctx, *t)
-	}
-	return nil
-}
-
-func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
-	task, err := s.Store.RealGID(ctx, op.TaskGID)
-	if err != nil {
-		return err
-	}
-	if localgid.IsLocal(task) {
-		return &model.Error{Status: 404} // its create failed
-	}
-	local, _ := op.Payload["attachment"].(string)
-	name, _ := op.Payload["name"].(string)
-	path, _ := op.Payload["path"].(string)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return &model.Error{Status: 400} // the copied file is gone: cannot be retried
-	}
-	att, err := s.API.UploadAttachment(ctx, task, name, data)
-	if err != nil {
-		return err
-	}
-	return sentNotSaved(s.Store.CompleteUpload(ctx, op.ID, local, att.GID, att.ViewURL))
-}
-
-// storyTarget returns, for an edit or a delete of a comment, attachment or time entry, the payload key
-// of its gid and the ResultKind under which a local one's result is recorded ("" otherwise).
-func storyTarget(kind string) (key string, result readmodel.ResultKind) {
-	switch kind {
-	case outbox.KindUpdateStory, outbox.KindDeleteStory:
-		return "story", readmodel.ResultStory
-	case outbox.KindDeleteAttachment:
-		return "attachment", readmodel.ResultAttachment
-	case outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
-		return "entry", readmodel.ResultTimeEntry
-	}
-	return "", ""
-}
-
-// pushUpdateStory edits a comment; sending it twice is harmless (PUT). A comment deleted
-// in Asana answers 404: the edit is dropped (dropGone).
-func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
-	gid, _ := op.Payload["story"].(string)
-	real, _, err := s.Store.LocalResult(ctx, readmodel.ResultStory, gid)
-	if err != nil {
-		return err
-	}
-	if real == "" {
-		return &model.Error{Status: 404} // its add_comment was dropped
-	}
-	text, _ := op.Payload["text"].(string)
-	htmlText, _ := op.Payload["html_text"].(string)
-	st, err := s.API.UpdateStory(ctx, real, text, htmlText)
-	if err != nil {
-		return err
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sentNotSaved(err)
-	}
-	_ = s.Store.ApplyStory(ctx, real, st.Text, st.HTMLText) // the next fetch fixes a failure
-	return nil
-}
-
-// pushDeleteItem deletes a comment or an attachment. Sending it twice is harmless: a 404 means
-// it is gone already (deleted elsewhere, or by an earlier request whose answer was lost),
-// which is what was asked.
-func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
-	key, prefix := storyTarget(op.Kind)
-	gid, _ := op.Payload[key].(string)
-	real, _, err := s.Store.LocalResult(ctx, prefix, gid)
-	if err != nil {
-		return err
-	}
-	if real != "" { // "": its create was dropped, so there is nothing in Asana to delete
-		if op.Kind == outbox.KindDeleteStory {
-			err = s.API.DeleteStory(ctx, real)
-		} else {
-			err = s.API.DeleteAttachment(ctx, real)
-		}
-		if err != nil && !isNotFound(err) {
-			return err
-		}
-	}
-	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
-		return sentNotSaved(err)
-	}
-	// The copy an upload kept until it was sent (store.DeleteAttachmentLocal): no longer needed.
-	if path, _ := op.Payload["path"].(string); path != "" {
-		_ = s.Store.RemoveAttachmentFile(path) // only inside the attachments folder
-	}
-	return nil
 }
 
 // apiFields converts outbox values to Asana's: "" clears due_on / start_on / assignee.

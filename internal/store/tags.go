@@ -12,6 +12,22 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
+func init() {
+	registerUndo(OpAddTag, undoTaskTag)
+	registerUndo(OpRemoveTag, undoTaskTag)
+}
+
+// undoTaskTag takes a tag added locally off the task again, or puts one removed back.
+func undoTaskTag(ctx context.Context, tx *sql.Tx, op *Op) error {
+	tag, _ := op.Payload["tag"].(string)
+	q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
+	if op.Kind == OpRemoveTag {
+		q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
+	}
+	_, err := tx.ExecContext(ctx, q, op.TaskGID, tag)
+	return err
+}
+
 // Tag operations (outbox.KindAddTag, outbox.KindRemoveTag).
 const (
 	OpAddTag    = outbox.KindAddTag
@@ -167,7 +183,10 @@ func reapplyTagOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	type op struct{ kind, tag string }
+	type op struct {
+		kind Kind
+		tag  string
+	}
 	var ops []op
 	for rows.Next() {
 		var o op

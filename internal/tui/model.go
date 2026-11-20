@@ -23,7 +23,12 @@ import (
 
 // Deps are the TUI's external dependencies (swapped out in tests).
 type Deps struct {
-	Store Store
+	// App is the use cases over the local cache (internal/wire builds them): the TUI reads
+	// and writes the cache through them, never the store itself.
+	App *app.UseCases
+	// LocalSyncer makes a syncer without an Asana client, over the same cache: attachments
+	// downloaded before, while offline. nil: none are shown offline.
+	LocalSyncer func() *sync.Syncer
 	// NewSyncer creates a syncer with an authenticated API client. It is called lazily in the
 	// background so the UI never waits for authentication (e.g. a 1Password unlock).
 	// nil means offline-only.
@@ -292,15 +297,15 @@ func (m *Model) Init() tea.Cmd {
 // --- commands ---
 
 func (m *Model) loadScopes() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		ps, err := queryOf(st).ListProjects(m.ctx, true)
+		ps, err := st.Query().ListProjects(m.ctx, true)
 		msg := scopesLoadedMsg{projects: ps, err: err}
 		if err == nil {
-			msg.inbox, msg.err = queryOf(st).InboxState(m.ctx)
+			msg.inbox, msg.err = st.Query().InboxState(m.ctx)
 		}
 		if msg.err == nil {
-			msg.unread, msg.err = queryOf(st).UnreadNotifications(m.ctx)
+			msg.unread, msg.err = st.Query().UnreadNotifications(m.ctx)
 		}
 		return msg
 	}
@@ -314,7 +319,7 @@ func (m *Model) loadList() tea.Cmd {
 	m.list.seq++
 	seq, sc, query, filter, tag, field, saved := m.list.seq, m.currentScope(), m.search.query, m.list.filter, m.list.tagFilter, m.list.fieldFilter, m.list.saved
 	found := m.search.remote.foundFor(query)
-	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
+	st, now, scopeKey := m.deps.App, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.list.collapsedScope
 	expanded := make(map[string]bool, len(m.list.expanded))
 	for k, v := range m.list.expanded {
@@ -348,11 +353,11 @@ func (m *Model) loadList() tea.Cmd {
 }
 
 func (m *Model) loadDetail(gid string) tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		d, err := queryOf(st).GetTask(m.ctx, gid)
-		me, _ := queryOf(st).MeGID(m.ctx) // whose comments can be changed
-		offered := err == nil && app.StartDateOffered(m.ctx, st, gid, m.deps.Now())
+		d, err := st.Query().GetTask(m.ctx, gid)
+		me, _ := st.Query().MeGID(m.ctx) // whose comments can be changed
+		offered := err == nil && st.Query().StartDateOffered(m.ctx, gid, m.deps.Now())
 		return detailLoadedMsg{gid: gid, d: d, me: me, startOffered: offered, err: err}
 	}
 }

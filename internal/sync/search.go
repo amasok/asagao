@@ -42,18 +42,18 @@ const customIDSearchLimit = 100
 // planAnswer records what Asana answered to feature in workspace ws (err): a 402 hides it
 // there for a while, an answer forgets an earlier one. It reports whether err is a 402. A
 // failure to record it is not returned: the feature is then only asked again.
-func (s *Syncer) planAnswer(ctx context.Context, feature, ws string, err error) bool {
+func (s *Search) planAnswer(ctx context.Context, feature, ws string, err error) bool {
 	if err == nil {
-		_ = s.clearPlanRefusal(ctx, feature, ws)
+		_ = s.Store.ClearPlanRefusal(ctx, feature, ws)
 		return false
 	}
-	refused, _ := s.recordPlanRefusal(ctx, feature, ws, err)
+	refused, _ := recordPlanRefusal(ctx, s.Store, s.clock(), feature, ws, err)
 	return refused || model.IsPaymentRequired(err)
 }
 
 // SearchTasks searches Asana for tasks by text and caches what it finds. completed nil
 // means open and completed tasks; limit is at most 100 (Asana's limit).
-func (s *Syncer) SearchTasks(ctx context.Context, text string, completed *bool, limit int) (SearchResult, error) {
+func (s *Search) SearchTasks(ctx context.Context, text string, completed *bool, limit int) (SearchResult, error) {
 	var res SearchResult
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -99,8 +99,8 @@ func (s *Syncer) SearchTasks(ctx context.Context, text string, completed *bool, 
 }
 
 // searchRefs asks the search API, or typeahead when the plan lacks it (byName).
-func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *bool, limit int) (refs []model.Ref, byName bool, err error) {
-	if no, err := s.planHidden(ctx, plan.Search, ws); err != nil {
+func (s *Search) searchRefs(ctx context.Context, ws, text string, completed *bool, limit int) (refs []model.Ref, byName bool, err error) {
+	if no, err := planHidden(ctx, s.Store, s.clock(), plan.Search, ws); err != nil {
 		return nil, false, err
 	} else if !no {
 		refs, err := s.API.SearchTasks(ctx, ws, text, completed, limit)
@@ -108,7 +108,7 @@ func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *boo
 			return refs, false, err
 		}
 	}
-	if no, err := s.planHidden(ctx, plan.Typeahead, ws); err != nil {
+	if no, err := planHidden(ctx, s.Store, s.clock(), plan.Typeahead, ws); err != nil {
 		return nil, true, err
 	} else if no {
 		return nil, true, ErrRemoteSearchUnavailable
@@ -123,14 +123,14 @@ func (s *Syncer) searchRefs(ctx context.Context, ws, text string, completed *boo
 // FindUsers looks users up in Asana by the start of their name or email (typeahead) and
 // caches the ones the cache does not have. It returns how many it added: 0 also when the
 // plan lacks typeahead (then nothing is asked).
-func (s *Syncer) FindUsers(ctx context.Context, query string) (int, error) {
+func (s *Search) FindUsers(ctx context.Context, query string) (int, error) {
 	return findNames(ctx, s, query, s.API.TypeaheadUsers, func(ctx context.Context, _ string, found []model.User) (int, error) {
 		return s.Store.AddUsers(ctx, found)
 	})
 }
 
 // FindTags is FindUsers for tags.
-func (s *Syncer) FindTags(ctx context.Context, query string) (int, error) {
+func (s *Search) FindTags(ctx context.Context, query string) (int, error) {
 	return findNames(ctx, s, query, s.API.TypeaheadTags, func(ctx context.Context, ws string, found []model.Tag) (int, error) {
 		for i := range found {
 			if found[i].Workspace == nil || found[i].Workspace.GID == "" {
@@ -141,7 +141,7 @@ func (s *Syncer) FindTags(ctx context.Context, query string) (int, error) {
 	})
 }
 
-func findNames[T any](ctx context.Context, s *Syncer, query string,
+func findNames[T any](ctx context.Context, s *Search, query string,
 	find func(ctx context.Context, ws, query string, count int) ([]T, error),
 	add func(ctx context.Context, ws string, found []T) (int, error)) (int, error) {
 	query = strings.TrimSpace(query)
@@ -152,7 +152,7 @@ func findNames[T any](ctx context.Context, s *Syncer, query string,
 	if err != nil {
 		return 0, err
 	}
-	if no, err := s.planHidden(ctx, plan.Typeahead, ws); err != nil || no {
+	if no, err := planHidden(ctx, s.Store, s.clock(), plan.Typeahead, ws); err != nil || no {
 		return 0, err
 	}
 	found, err := find(ctx, ws, query, typeaheadNames)
@@ -177,12 +177,12 @@ var ErrCustomIDUnavailable = errors.New(readmodel.PlanUnavailableMessage(plan.Cu
 // When GET /tasks/custom_id/{id} answers 500 (Issue #65: real Asana workspaces return 500
 // even for existing custom IDs), TaskByCustomID falls back to the search API (text=<ID>),
 // reads candidate tasks in full and adopts only a task whose ID custom field equals customID.
-func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, error) {
+func (s *Search) TaskByCustomID(ctx context.Context, customID string) (string, error) {
 	ws, err := s.Store.DefaultWorkspace(ctx)
 	if err != nil {
 		return "", err
 	}
-	if no, err := s.planHidden(ctx, plan.CustomID, ws); err != nil {
+	if no, err := planHidden(ctx, s.Store, s.clock(), plan.CustomID, ws); err != nil {
 		return "", err
 	} else if no {
 		return "", ErrCustomIDUnavailable
@@ -206,7 +206,7 @@ func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, e
 		if err != nil {
 			return "", err
 		}
-		_ = s.clearPlanRefusal(ctx, plan.CustomID, ws)
+		_ = s.Store.ClearPlanRefusal(ctx, plan.CustomID, ws)
 		if t == nil || t.GID == "" {
 			_ = s.Store.SetCustomIDTaskGID(ctx, customID, "")
 			return "", fmt.Errorf("タスクの ID %q: %w", customID, readmodel.ErrNotFound)
@@ -230,8 +230,8 @@ func (s *Syncer) TaskByCustomID(ctx context.Context, customID string) (string, e
 // usual, plan.CustomID is left untouched, and origErr is returned. When no match is found
 // and the search hit customIDSearchLimit (truncated) or any candidate was Partial (custom
 // fields omitted), existence cannot be ruled out, so origErr is returned.
-func (s *Syncer) taskByCustomIDFromSearch(ctx context.Context, ws, customID string, origErr error) (*model.Task, error) {
-	if no, err := s.planHidden(ctx, plan.Search, ws); err != nil {
+func (s *Search) taskByCustomIDFromSearch(ctx context.Context, ws, customID string, origErr error) (*model.Task, error) {
+	if no, err := planHidden(ctx, s.Store, s.clock(), plan.Search, ws); err != nil {
 		return nil, err
 	} else if no {
 		return nil, origErr

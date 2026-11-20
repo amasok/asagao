@@ -180,7 +180,7 @@ Asana にもうあるタスクだけを変える操作 (更新・カスタムフ
 
 ### Requirement: 消した添付のファイルは残さない
 添付を削除したら、ダウンロード済みのファイルと、まだ送っていない添付のコピーを、送る前でもすぐに消す (MUST, #34)。利用者が選んだ元のファイルには触らない。送信中・確認中の添付のコピーだけは、送り直しに要るので残し、削除を送れたあとに消す。削除を破棄して添付を元に戻したときは、ファイルなしで戻し、開くときにもう一度ダウンロードする。
-根拠: store/comment_edits.go (DeleteAttachmentLocal); sync/push.go (pushDeleteItem); TestDeleteAttachmentLocal, TestDeleteAttachmentBeingUploaded, TestPushDeleteRemovesUploadCopy
+根拠: store/comment_edits.go (DeleteAttachmentLocal); sync/push_comments.go (pushDeleteItem); TestDeleteAttachmentLocal, TestDeleteAttachmentBeingUploaded, TestPushDeleteRemovesUploadCopy
 
 #### Scenario: ダウンロードした添付を消す
 - **WHEN** 開いたことのある (ダウンロード済みの) 添付を、オフラインで削除する
@@ -188,7 +188,7 @@ Asana にもうあるタスクだけを変える操作 (更新・カスタムフ
 
 ### Requirement: コメントと添付の変更の送り方
 編集 (PUT /stories) と削除 (DELETE) は何度送っても同じなので、届いたか分からなければ照合せずに再送する (MUST, #34)。削除の 404 は「もう消えている」ので、済んだものとして消し、捨てた変更としては記録しない。編集の 404 は、ほかの操作と同じく捨てて記録する。
-根拠: sync/push.go (pushUpdateStory, pushDeleteItem); TestPushEditAndDeleteComment, TestPushDeleteGoneIsDone, TestStoryEditsSafeToResend
+根拠: sync/push_comments.go (pushUpdateStory, pushDeleteItem); TestPushEditAndDeleteComment, TestPushDeleteGoneIsDone, TestStoryEditsSafeToResend
 
 #### Scenario: もう消えているコメントを削除する
 - **WHEN** `delete_story` を送って 404 が返る
@@ -284,7 +284,7 @@ TUI・CLI・MCP の解決は `app.Outbox.Resolve` を通す (MUST)。`keep_local
 
 ### Requirement: タスクの削除の送信
 `delete_task` が送れたら、タスク・サブタスク・それらに積んであった変更をキャッシュから消す (MUST)。`DELETE /tasks/{gid}` が 404 なら、もう消えているとして済んだ扱いにし、捨てた変更として記録しない。
-根拠: store/taskops.go (CompleteDelete); sync/push.go (pushDelete); TestCompleteDeleteRemovesTheTree, TestPushDeleteTask, TestPushDeleteTaskAfterA5xx
+根拠: store/taskops.go (CompleteDelete); sync/push_tasks.go (pushDelete); TestCompleteDeleteRemovesTheTree, TestPushDeleteTask, TestPushDeleteTaskAfterA5xx
 
 #### Scenario: 消えていたタスクの削除
 - **WHEN** `delete_task` を送ったら Asana が 404 を返す
@@ -292,7 +292,7 @@ TUI・CLI・MCP の解決は `app.Outbox.Resolve` を通す (MUST)。`keep_local
 
 ### Requirement: 親タスクの付け替え
 親タスクの付け替えは `set_parent` を積む (MUST)。payload に `parent` (空なら親から外す)・`parent_name`、任意で `insert_before` / `insert_after` (新しい親のほかのサブタスク) を、base に元の親を持つ。同じタスクの続けての付け替えは 1 つにまとめ、元の親に位置なしで戻したら操作を消す。自分自身と自分のサブタスクの下には移さない。送るまでは、取り込みで親が上書きされても積んだ親に戻す。取り消すと元の親に戻す。
-根拠: store/taskops.go (SetParentLocal, reapplySetParent); store/outbox.go (discardOpTx); sync/push.go (pushSetParent); TestSetParentLocal, TestSetParentLocalRefuses, TestPushSetParent
+根拠: store/taskops.go (SetParentLocal, reapplySetParent); store/outbox.go (discardOpTx); sync/push_tasks.go (pushSetParent); TestSetParentLocal, TestSetParentLocalRefuses, TestPushSetParent
 
 #### Scenario: 親を変えて取り込む
 - **WHEN** サブタスクを別の親に移し、送る前に古い親のままの内容を取り込む
@@ -308,7 +308,7 @@ TUI・CLI・MCP の解決は `app.Outbox.Resolve` を通す (MUST)。`keep_local
 
 ### Requirement: セクションの中の位置
 `move_task` は任意で `insert_before` / `insert_after` (移す先のセクションにあるほかのタスク) を持ち、`addTask` にそのまま渡す (MUST)。位置があれば、今と同じセクションへの移動でも積む。位置付きの移動は、それまでの同じタスクの移動をまとめたうえで列の末尾に積み直し、batch に入れず 1 件ずつ送る。ローカルの gid の目印は送るときに本物の gid に引き、引けなければ位置を付けずに送る。
-根拠: store/outbox.go (MoveTaskAtLocal); store/taskops.go (requeue); sync/push.go (pushMove, position); sync/batch.go; TestMoveTaskAtLocal, TestMoveToAPlaceGoesToTheEndOfTheQueue, TestPushMoveToAPlace
+根拠: store/outbox.go (MoveTaskAtLocal); store/taskops.go (requeue); sync/push_tasks.go (pushMove, position); sync/batch.go; TestMoveTaskAtLocal, TestMoveToAPlaceGoesToTheEndOfTheQueue, TestPushMoveToAPlace
 
 #### Scenario: 同じセクションで並べ替える
 - **WHEN** タスクを、同じセクションのタスクの後ろに置く
@@ -356,7 +356,7 @@ TUI・CLI・MCP の解決は `app.Outbox.Resolve` を通す (MUST)。`keep_local
 
 ### Requirement: 消えたものの削除
 Asana で既に消えているセクションやタグの削除は、失敗にせず完了とする (MUST)。空でないセクションの削除を Asana が拒んだら失敗にし、セクションは次の同期で戻る。
-根拠: sync/push_sections.go (pushDeleteSection, pushDeleteTag); TestPushDeleteAndReorderSections
+根拠: sync/push_sections.go (pushDeleteSection); sync/push_tags.go (pushDeleteTag); TestPushDeleteAndReorderSections
 
 #### Scenario: Asana で先に消されたセクション
 - **WHEN** 削除を積んだセクションが、送る前に Asana で消される
@@ -440,7 +440,7 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 
 ### Requirement: 作られていない記録の変更
 ローカル gid の記録を直す・消すとき、作成を一度も送っていなければ作成を書き換える・取り消す (MUST)。送っている途中や確認中なら、変更はローカル gid のまま積み、作成が済んでから本物の gid に送る。
-根拠: store/time_entries.go; sync/push.go (storyTarget, waitsForCreate); TestTimeEntryNotSentYet, TestTimeEntryChangedWhileSending, TestPushTimeEntryEditsWaitForAdd
+根拠: store/time_entries.go; sync/timetracking.go (localRef の登録); sync/push.go (waitsForCreate); TestTimeEntryNotSentYet, TestTimeEntryChangedWhileSending, TestPushTimeEntryEditsWaitForAdd
 
 #### Scenario: 送る前に直して消す
 - **WHEN** 記録を作り、送る前に時間を直し、そのあと消す
@@ -516,7 +516,7 @@ Asana で既に消えているセクションやタグの削除は、失敗に�
 
 ### Requirement: カスタムフィールドの変更を権限で断られたとき
 選択肢の作成に Asana が 403 を返したら、そのフィールドについて `field_options_locked:<field>` を記録し、そのフィールドでは選択肢の追加を出さない (MUST)。フィールドの付け外しの 403 なら、そのプロジェクトについて `project_fields_locked:<project>` を記録し、そこでは出さない。操作は理由付きで失敗にする。
-根拠: sync/push_fields.go (fieldForbidden); app/fields.go; TestPushNewOptionForbidden, TestValueWaitsForFailedFieldSetting, TestProjectFieldsLocked
+根拠: sync/push_fields.go (enumOptionForbidden, fieldSettingForbidden); app/fields.go; TestPushNewOptionForbidden, TestValueWaitsForFailedFieldSetting, TestProjectFieldsLocked
 
 #### Scenario: 選択肢の追加を 403 で断られる
 - **WHEN** 選択肢の作成に Asana が 403 を返す

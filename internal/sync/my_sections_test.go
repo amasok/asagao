@@ -173,7 +173,7 @@ func TestMySectionsPaymentRequired(t *testing.T) {
 		t.Fatal("a 404 hid the feature")
 	}
 	f.listStatus = http.StatusPaymentRequired
-	if err := s.syncMySections(ctx, "w1"); err != nil {
+	if err := s.Puller().syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	sections := &app.Sections{Store: st, Clock: s.now}

@@ -32,7 +32,7 @@ func TestBriefAttack403ThisProjectOnly(t *testing.T) {
 	if v, _ := st.SyncState(ctx, "plan_unavailable:"+plan.ProjectBrief); v != "" {
 		t.Fatalf("legacy global key marked: %q", v)
 	}
-	if hidden, _ := s.briefHidden(ctx, "p1"); hidden {
+	if hidden, _ := s.Details().briefHidden(ctx, "p1"); hidden {
 		t.Fatal("workspace hidden by a 403")
 	}
 	o, _ := st.ProjectOverview(ctx, "p1")

@@ -4,6 +4,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -127,7 +128,7 @@ func TestUploadToolRefusesSpecialFiles(t *testing.T) {
 	st := seed(t)
 	allowed := t.TempDir()
 	cache := t.TempDir()
-	cs := connect(t, &Server{Store: st, CacheDir: cache, Upload: UploadPolicy{Allowed: []string{allowed}}})
+	cs := connect(t, &Server{App: wire.UseCases(st), CacheDir: cache, Upload: UploadPolicy{Allowed: []string{allowed}}})
 	fifo := filepath.Join(allowed, "pipe.pdf")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatal(err)

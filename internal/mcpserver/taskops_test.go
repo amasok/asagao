@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"slices"
 	"testing"
 
@@ -16,7 +17,7 @@ func mcpOpKinds(t *testing.T, s *store.Store) []string {
 	}
 	out := []string{}
 	for _, op := range ops {
-		out = append(out, op.Kind+":"+op.TaskGID)
+		out = append(out, string(op.Kind)+":"+op.TaskGID)
 	}
 	return out
 }
@@ -25,7 +26,7 @@ func mcpOpKinds(t *testing.T, s *store.Store) []string {
 // is queued (offline here) and the task leaves the lists.
 func TestDeleteTaskTool(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var out DeleteTaskOutput
 	if res := call(t, cs, "delete_task", map[string]any{"gid": "t1", "dry_run": true}, &out); res.IsError {
 		t.Fatalf("dry run: %v", res.Content)
@@ -62,7 +63,7 @@ func TestDeleteTaskTool(t *testing.T) {
 
 func TestSetParentAndMoveToAPlaceTools(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	if res := call(t, cs, "set_parent", map[string]any{"gid": "t2", "parent": "t1"}, nil); res.IsError {
 		t.Fatalf("set_parent: %v", res.Content)
 	}

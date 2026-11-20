@@ -171,7 +171,7 @@ func setupTypes(t *testing.T) (*typesServer, *Syncer, *store.Store, *time.Time) 
 func TestSyncCustomTypesOfProject(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.typeGets) != 1 || !strings.Contains(f.typeGets[0], "project=p1") || !strings.Contains(f.typeGets[0], "status_options.completion_state") {
@@ -185,10 +185,10 @@ func TestSyncCustomTypesOfProject(t *testing.T) {
 		t.Fatalf("types %+v", d.CustomTypes)
 	}
 	// Not again until a full sync.
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil || len(f.typeGets) != 1 {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil || len(f.typeGets) != 1 {
 		t.Fatalf("fetched again: %v %v", f.typeGets, err)
 	}
-	if err := s.syncCustomTypes(ctx, "p1", "w1", true); err != nil || len(f.typeGets) != 2 {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", true); err != nil || len(f.typeGets) != 2 {
 		t.Fatalf("full sync did not fetch: %v %v", f.typeGets, err)
 	}
 }
@@ -199,14 +199,14 @@ func TestSyncCustomTypesPaymentRequired(t *testing.T) {
 	f, s, st, clock := setupTypes(t)
 	ctx := context.Background()
 	f.refuse = true
-	if err := s.syncCustomTypes(ctx, "p1", "w1", true); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); !ok {
 		t.Fatal("402 not recorded")
 	}
 	for _, p := range []string{"p1", "p2"} {
-		if err := s.syncCustomTypes(ctx, p, "w1", true); err != nil {
+		if err := s.Puller().syncCustomTypes(ctx, p, "w1", true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -214,12 +214,12 @@ func TestSyncCustomTypesPaymentRequired(t *testing.T) {
 		t.Fatalf("asked again during the 402: %v", f.typeGets)
 	}
 	// Another workspace is not hidden by it.
-	if err := s.syncCustomTypes(ctx, "p3", "w2", true); err != nil || len(f.typeGets) != 2 {
+	if err := s.Puller().syncCustomTypes(ctx, "p3", "w2", true); err != nil || len(f.typeGets) != 2 {
 		t.Fatalf("another workspace: %v %v", f.typeGets, err)
 	}
 	*clock = clock.Add(plan.RecheckAfter + time.Minute)
 	f.refuse = false
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil || len(f.typeGets) != 3 {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil || len(f.typeGets) != 3 {
 		t.Fatalf("not asked again after the recheck: %v %v", f.typeGets, err)
 	}
 	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomTypes, "w1"); ok {

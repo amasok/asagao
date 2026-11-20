@@ -72,7 +72,7 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, w, h int) *harness {
-	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow }}))
 	hs := &harness{t: t, m: m}
 	hs.send(tea.WindowSizeMsg{Width: w, Height: h})
 	hs.run(m.Init())
@@ -374,7 +374,7 @@ func addFixtureExtras(t *testing.T, st *store.Store) {
 func newHarnessWithExtras(t *testing.T, w, h int) *harness {
 	st := fixtureStore(t)
 	addFixtureExtras(t, st)
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	hs := &harness{t: t, m: m}
 	hs.send(tea.WindowSizeMsg{Width: w, Height: h})
 	hs.run(m.Init())
@@ -481,7 +481,7 @@ func TestMoveWithSectionPicker(t *testing.T) {
 		t.Fatalf("section picker:\n%s", s)
 	}
 	h.key("j", "enter")
-	d, err := h.m.deps.Store.GetTask(context.Background(), "t1")
+	d, err := storeOf(h.m).GetTask(context.Background(), "t1")
 	if err != nil || d.Memberships[0].SectionName != "手続き" || !d.Pending {
 		t.Fatalf("task should move to 手続き: %+v %v", d.Memberships, err)
 	}
@@ -509,7 +509,7 @@ func TestBoardAndZoomFitTerminal(t *testing.T) {
 }
 
 func projectHarness(t *testing.T, st *store.Store, viewImages func([]string) tea.Cmd) *harness {
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, ViewImages: viewImages})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }, ViewImages: viewImages}))
 	hs := &harness{t: t, m: m}
 	hs.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	hs.run(m.Init())
@@ -685,7 +685,7 @@ func TestDetailWidthAndSidebar(t *testing.T) {
 		t.Fatal("b should hide the sidebar")
 	}
 	// Layout is remembered across restarts.
-	m2 := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m2 := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h2 := &harness{t: t, m: m2}
 	h2.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h2.run(m2.Init())
@@ -725,7 +725,7 @@ func TestInlineImagePlaceholders(t *testing.T) {
 	_ = st.UpsertAttachment(ctx, "t1", asana.Attachment{GID: "9", Name: "photo.png"})
 	_ = st.SetAttachmentPath(ctx, "9", path)
 
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }, InlineImages: true}))
 	m.cache.cellW, m.cache.cellH = 10, 20
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
@@ -809,7 +809,7 @@ func TestSubtaskTree(t *testing.T) {
 func TestSubtaskShownWithParentInMyTasks(t *testing.T) {
 	st := fixtureStore(t)
 	addSubtasks(t, st)
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 160, Height: 30})
 	h.run(m.Init())
@@ -947,14 +947,14 @@ func TestEditTaskInEditor(t *testing.T) {
 		HTMLNotes: "<body>候補は<strong>ニトリ</strong></body>", Assignee: &asana.Ref{GID: "me", Name: "Me"},
 		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
 	var seen string
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, func(s string) string {
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, func(s string) string {
 		seen = s
 		s = strings.Replace(s, "name: ソファを買う", "name: ソファを買う（3人掛け）", 1)
 		s = strings.Replace(s, "due: 2026-11-20", "due: +7d", 1)
 		s = strings.Replace(s, "\nassignee: me\n", "\nassignee: Partner\n", 1)
 		s = strings.Replace(s, "section: 家具", "section: 手続き", 1)
 		return s + "\n## 予算\n- 10万円まで\n"
-	})})
+	})}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -977,7 +977,7 @@ func TestEditTaskInEditor(t *testing.T) {
 		t.Fatalf("html_notes = %q", d.HTMLNotes)
 	}
 	ops, _ := st.ListOps(ctx)
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 		if op.Kind == store.OpUpdateTask {
@@ -997,8 +997,8 @@ func TestEditTaskInEditor(t *testing.T) {
 func TestEditTaskErrorsAndNoChange(t *testing.T) {
 	st := fixtureStore(t)
 	editFn := func(s string) string { return s }
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
-		RunEditor: func(path string, done func(error) tea.Msg) tea.Cmd { return fakeEditor(t, editFn)(path, done) }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow },
+		RunEditor: func(path string, done func(error) tea.Msg) tea.Cmd { return fakeEditor(t, editFn)(path, done) }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -1015,8 +1015,8 @@ func TestEditTaskErrorsAndNoChange(t *testing.T) {
 
 func TestCommentInEditor(t *testing.T) {
 	st := fixtureStore(t)
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
-		RunEditor: fakeEditor(t, func(s string) string { return s + "**明日**行きます\n- 印鑑\n- 免許証\n" })})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow },
+		RunEditor: fakeEditor(t, func(s string) string { return s + "**明日**行きます\n- 印鑑\n- 免許証\n" })}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -1153,11 +1153,11 @@ func TestTagEditor(t *testing.T) {
 		t.Fatalf("tags = %v", names)
 	}
 	ops, _ := st.ListOps(ctx)
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 	}
-	if !slices.Equal(kinds, []string{store.OpAddTag, store.OpRemoveTag, store.OpAddTag}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpAddTag, store.OpRemoveTag, store.OpAddTag}) {
 		t.Fatalf("ops = %v", kinds)
 	}
 	// Toggling back cancels instead of queueing another change.
@@ -1179,8 +1179,8 @@ func TestEditFileUsesLocalImagePaths(t *testing.T) {
 	_ = st.UpsertAttachment(ctx, "t2", asana.Attachment{GID: "55", Name: "plan.png"})
 	_ = st.SetAttachmentPath(ctx, "55", path)
 	var seen string
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow },
-		RunEditor: fakeEditor(t, func(s string) string { seen = s; return s })})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow },
+		RunEditor: fakeEditor(t, func(s string) string { seen = s; return s })}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -1250,7 +1250,7 @@ func TestRecentUpdates(t *testing.T) {
 		{GID: "t5", Name: "年末調整", Completed: true, Assignee: ref("me"), ModifiedAt: testNow.Add(-26 * time.Hour)},
 		{GID: "t3", Name: "電気の契約", Assignee: ref("u2"), ModifiedAt: testNow.AddDate(0, 0, -10)},
 	})
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -1271,8 +1271,8 @@ func TestRecentUpdates(t *testing.T) {
 
 func TestKeyBindingsAndTheme(t *testing.T) {
 	st := fixtureStore(t)
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
-		KeyBindings: map[string][]string{"complete": {"d"}}, Theme: "light", Accent: "#123456"})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow },
+		KeyBindings: map[string][]string{"complete": {"d"}}, Theme: "light", Accent: "#123456"}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -1306,7 +1306,7 @@ func TestDetailExtras(t *testing.T) {
 	ctx := context.Background()
 	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "新居プロジェクト", Members: []asana.Ref{{GID: "me"}}}, {GID: "p2", Name: "家計", Members: []asana.Ref{{GID: "me"}}}}, "me")
 	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, CacheDir: t.TempDir()})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }, CacheDir: t.TempDir()}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
 	h.run(m.Init())
@@ -1362,10 +1362,10 @@ func TestProjectStatusInTUI(t *testing.T) {
 	ctx := context.Background()
 	_ = st.ReplaceStatusUpdates(ctx, "p1", []asana.StatusUpdate{{GID: "s0", StatusType: "off_track", Title: "先週",
 		HTMLText: "<body><strong>見積</strong>待ち</body>", Author: &asana.Ref{Name: "Partner"}, CreatedAt: testNow.Add(-48 * time.Hour)}})
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow },
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow },
 		RunEditor: fakeEditor(t, func(s string) string {
 			return strings.Replace(s, "status: off_track", "status: on_track", 1) + "家具の**手配**が終わった\n"
-		})})
+		})}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

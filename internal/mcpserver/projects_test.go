@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +37,7 @@ func seedProjects(t *testing.T) *store.Store {
 
 // #38: list_projects lists my favorites first and narrows to a team.
 func TestListProjectsByTeam(t *testing.T) {
-	cs := connect(t, &Server{Store: seedProjects(t)})
+	cs := connect(t, &Server{App: wire.UseCases(seedProjects(t))})
 	var out ProjectsOutput
 	call(t, cs, "list_projects", nil, &out)
 	if len(out.Projects) != 2 || out.Projects[0].GID != "p2" || !out.Projects[0].Favorite || out.Projects[1].TeamName != "家族" {
@@ -55,7 +56,7 @@ func TestListProjectsByTeam(t *testing.T) {
 // fields offline (no Asana needed for them).
 func TestProjectFieldsOffline(t *testing.T) {
 	st := seedProjects(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var p ProjectOutput
 	call(t, cs, "get_project", map[string]any{"project": "新居"}, &p)
 	if p.Markdown != "**年内**" || p.Owner == nil || p.Owner.Name != "Me" || p.DueOn != "2026-12-31" || p.Brief != nil || p.Counts != nil {
@@ -143,7 +144,7 @@ func TestProjectFieldsOnline(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL, api.MaxRetries = srv.URL, 0
 		return &sync.Syncer{API: api, Store: st}, nil

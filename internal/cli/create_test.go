@@ -61,7 +61,7 @@ func TestCreateTaskAssignee(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			st := createStore(t)
-			gid, err := createTask(ctx, st, createOpts{name: "牛乳を買う", project: tc.project, assignee: tc.assignee}, now)
+			gid, err := createTask(ctx, localFor(st), createOpts{name: "牛乳を買う", project: tc.project, assignee: tc.assignee}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func TestCreateTaskInvalidWritesNothing(t *testing.T) {
 			ctx := context.Background()
 			st := createStore(t)
 			tc.opts.name = "牛乳を買う"
-			_, err := createTask(ctx, st, tc.opts, now)
+			_, err := createTask(ctx, localFor(st), tc.opts, now)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || (tc.is != nil && !errors.Is(err, tc.is)) {
 				t.Fatalf("err = %v, want %q (%v)", err, tc.want, tc.is)
 			}

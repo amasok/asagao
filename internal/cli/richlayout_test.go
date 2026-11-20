@@ -20,7 +20,7 @@ func TestCLIRichTextTagsPerTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		args   []string
-		kind   string
+		kind   store.Kind
 		field  string
 		layout bool // headings, rules and images are elements
 	}{

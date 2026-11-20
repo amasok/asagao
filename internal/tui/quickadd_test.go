@@ -49,11 +49,11 @@ func TestCreateTaskQuickAdd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 	}
-	if !slices.Equal(kinds, []string{store.OpCreateTask, store.OpAddTag, store.OpAddTag}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpCreateTask, store.OpAddTag, store.OpAddTag}) {
 		t.Errorf("ops %q", kinds)
 	}
 }
@@ -143,7 +143,7 @@ func (tagFailStore) ApplyTagEdit(context.Context, string, task.TagEdit, time.Tim
 // says why, without the error's control characters.
 func TestCreateTaskQuickAddTagError(t *testing.T) {
 	st := quickAddStore(t)
-	m := New(context.Background(), Deps{Store: tagFailStore{st}, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(tagFailStore{st}, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

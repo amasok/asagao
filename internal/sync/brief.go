@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
@@ -18,8 +19,20 @@ import (
 // (plan.ProjectBrief) and hides it for a while, as a 402 hides other features
 // (plan.go); a 403 makes this one project's brief unavailable (briefRefusal).
 
+func init() {
+	register(outbox.KindUpdateProjectBrief, opHandler{send: (*Pusher).pushUpdateBrief})
+}
+
+// briefs is what Pusher and Details share to read a project's brief and to record that
+// Asana refused it.
+type briefs struct {
+	API   BriefAPI
+	Store BriefStore
+	clock func() time.Time
+}
+
 // serverBrief returns the brief project p has in Asana (nil: none).
-func (s *Syncer) serverBrief(ctx context.Context, p *model.Project) (*model.ProjectBrief, error) {
+func (s briefs) serverBrief(ctx context.Context, p *model.Project) (*model.ProjectBrief, error) {
 	if p.ProjectBrief == nil || p.ProjectBrief.GID == "" {
 		return nil, nil
 	}
@@ -65,14 +78,14 @@ func sameBriefText(a, b string) bool {
 // here and one deleted there while it was changed here (a delete conflicts with any change
 // there). A change Asana already has (it was sent before and its answer lost, or someone
 // made the same change) is done without sending it again.
-func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, error) {
 	p, err := s.API.Project(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err // a 404: the project was deleted (dropGone)
 	}
-	server, err := s.serverBrief(ctx, p)
+	server, err := s.briefs().serverBrief(ctx, p)
 	if err != nil {
-		return sent, s.briefRefusal(ctx, op.TaskGID, err)
+		return sent, s.briefs().briefRefusal(ctx, op.TaskGID, err)
 	}
 	str := func(m map[string]any, k string) string { v, _ := m[k].(string); return v }
 	del := op.Payload["delete"] == true
@@ -111,7 +124,7 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 	switch {
 	case del:
 		err = s.API.DeleteProjectBrief(ctx, server.GID)
-		if s.briefGone(ctx, op.TaskGID, server.GID, err) {
+		if s.briefs().briefGone(ctx, op.TaskGID, server.GID, err) {
 			err = nil // deleted meanwhile: done
 		}
 	case server == nil:
@@ -125,14 +138,14 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 			changes["html_text"] = htmlText
 		}
 		result, err = s.API.UpdateProjectBrief(ctx, server.GID, changes)
-		if s.briefGone(ctx, op.TaskGID, server.GID, err) { // deleted meanwhile: a conflict
+		if s.briefs().briefGone(ctx, op.TaskGID, server.GID, err) { // deleted meanwhile: a conflict
 			return conflicted, s.Store.MarkOpConflict(ctx, op.ID, briefValues(nil))
 		}
 	}
 	if err != nil {
-		return sent, s.briefRefusal(ctx, op.TaskGID, err)
+		return sent, s.briefs().briefRefusal(ctx, op.TaskGID, err)
 	}
-	if err := s.clearBriefRefusal(ctx, op.TaskGID); err != nil {
+	if err := s.briefs().clearBriefRefusal(ctx, op.TaskGID); err != nil {
 		return sent, sentNotSaved(err)
 	}
 	return sent, sentNotSaved(s.Store.CompleteBriefOp(ctx, op.ID, op.TaskGID, result))
@@ -142,7 +155,7 @@ func (s *Syncer) pushUpdateBrief(ctx context.Context, op outbox.Op) (outcome, er
 // is no more: a 404, or the 403 Asana answers for a brief that does not exist (checked on
 // the real Asana: "You do not have access to this project_brief."), when the project no
 // longer has that brief.
-func (s *Syncer) briefGone(ctx context.Context, projectGID, gid string, err error) bool {
+func (s briefs) briefGone(ctx context.Context, projectGID, gid string, err error) bool {
 	if isNotFound(err) {
 		return true
 	}
@@ -166,7 +179,7 @@ func briefRefused(err error) bool {
 // recorded for this project only (its brief is BriefUnavailable until the overview gets it
 // again): a project we may not change must not hide the briefs of the others. (Whether the
 // preview API answers 403 for a whole workspace is to be seen on the real Asana.)
-func (s *Syncer) briefRefusal(ctx context.Context, projectGID string, err error) error {
+func (s briefs) briefRefusal(ctx context.Context, projectGID string, err error) error {
 	switch {
 	case model.IsPaymentRequired(err):
 		ws, wsErr := s.Store.ProjectWorkspace(ctx, projectGID)
@@ -187,19 +200,23 @@ func (s *Syncer) briefRefusal(ctx context.Context, projectGID string, err error)
 
 // clearBriefRefusal forgets an earlier refusal of the brief API in the project's
 // workspace (Asana answered).
-func (s *Syncer) clearBriefRefusal(ctx context.Context, projectGID string) error {
+func (s briefs) clearBriefRefusal(ctx context.Context, projectGID string) error {
 	ws, err := s.Store.ProjectWorkspace(ctx, projectGID)
 	if err != nil || ws == "" {
 		return nil
 	}
-	return s.clearPlanRefusal(ctx, plan.ProjectBrief, ws)
+	return s.Store.ClearPlanRefusal(ctx, plan.ProjectBrief, ws)
 }
 
 // briefHidden reports whether a recent refusal hides the brief in the project's workspace.
-func (s *Syncer) briefHidden(ctx context.Context, projectGID string) (bool, error) {
+func (s *Details) briefHidden(ctx context.Context, projectGID string) (bool, error) {
 	ws, err := s.Store.ProjectWorkspace(ctx, projectGID)
 	if err != nil || ws == "" {
 		return false, nil
 	}
-	return s.planHidden(ctx, plan.ProjectBrief, ws)
+	return planHidden(ctx, s.Store, s.clock(), plan.ProjectBrief, ws)
 }
+
+func (s *Pusher) briefs() briefs { return briefs{API: s.API, Store: s.Store, clock: s.clock} }
+
+func (s *Details) briefs() briefs { return briefs{API: s.API, Store: s.Store, clock: s.clock} }

@@ -3,11 +3,9 @@ package mcpserver
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -53,27 +51,19 @@ type MarkNotificationsOutput struct {
 
 func (s *Server) listInbox(ctx context.Context, _ *mcp.CallToolRequest, in ListInboxInput) (*mcp.CallToolResult, InboxOutput, error) {
 	limit := clampLimit(in.Limit, 50)
-	state, err := s.query().InboxState(ctx)
+	v, err := s.query().Inbox(ctx, in.Unread, limit, s.Now())
 	if err != nil {
 		return nil, InboxOutput{}, err
 	}
-	out := InboxOutput{Available: state.Available(), Notifications: []readmodel.Notification{}}
-	if out.Available && state.WriteForbidden {
+	out := InboxOutput{Available: v.State.Available(), Notifications: v.Notifications, Unread: v.Unread, Recent: v.Recent}
+	switch {
+	case !out.Available:
+		out.Notice = sync.InboxUnavailableMessage(v.State, s.AuthScopes)
+		out.Notifications = []readmodel.Notification{}
+	case v.State.WriteForbidden:
 		out.Notice = sync.InboxReadOnlyMessage(s.AuthScopes)
 	}
-	if !out.Available {
-		out.Notice = sync.InboxUnavailableMessage(state, s.AuthScopes)
-		out.Recent, err = s.query().ListTasks(ctx, readmodel.TaskFilter{
-			ModifiedAfter:  s.Now().AddDate(0, 0, -7).UTC().Format(time.RFC3339),
-			SortByModified: true, Limit: limit,
-		})
-		return nil, out, err
-	}
-	if out.Notifications, err = s.query().ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: in.Unread, Limit: limit}); err != nil {
-		return nil, out, err
-	}
-	out.Unread, err = s.query().UnreadNotifications(ctx)
-	return nil, out, err
+	return nil, out, nil
 }
 
 func (s *Server) markNotifications(ctx context.Context, _ *mcp.CallToolRequest, in MarkNotificationsInput) (*mcp.CallToolResult, MarkNotificationsOutput, error) {
@@ -91,7 +81,7 @@ func (s *Server) markNotifications(ctx context.Context, _ *mcp.CallToolRequest, 
 	} else if len(gids) == 0 {
 		return nil, MarkNotificationsOutput{}, errors.New("pass gids or all=true")
 	}
-	notifications := app.Notifications{Store: s.Store, Clock: s.Now}
+	notifications := s.App.Notifications(s.Now)
 	n, err := notifications.Mark(ctx, gids, read)
 	if err != nil {
 		return nil, MarkNotificationsOutput{}, err

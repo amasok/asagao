@@ -13,6 +13,14 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
+func init() {
+	registerUndo(OpMoveMySection, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		section, _ := op.Base["section"].(string)
+		_, err := tx.ExecContext(ctx, "UPDATE tasks SET assignee_section_gid = ? WHERE gid = ?", section, op.TaskGID)
+		return err
+	})
+}
+
 // The sections of the user's My Tasks list (#35): the list's sections per workspace, and
 // the section each of my tasks is in there (tasks.assignee_section_gid).
 

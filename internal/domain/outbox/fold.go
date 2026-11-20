@@ -1,9 +1,6 @@
 package outbox
 
-import (
-	"fmt"
-	"maps"
-)
+import "maps"
 
 // Fold folds field changes of a task into its update_task entry op: consecutive edits of
 // the same task are one entry, whose base stays the value the task had before the first of
@@ -64,11 +61,6 @@ func Fold(op Op, cur, changes map[string]any) (Op, bool) {
 	}
 	return op, len(op.Payload) == 0
 }
-
-// SameValue reports whether two field values are the same: they print the same with
-// fmt.Sprint (a value read back from the outbox's JSON may not have the type it was
-// written with).
-func SameValue(a, b any) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
 
 func cloneOrNew(m map[string]any) map[string]any {
 	if m == nil {

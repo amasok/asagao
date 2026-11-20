@@ -31,7 +31,7 @@ func TestPushUpdateProjectColorAttack(t *testing.T) {
 			ps, s, st := setupProject(t)
 			ps.color = c.base
 			p, _ := s.API.Project(ctx, "p1")
-			if err := s.saveProject(ctx, p); err != nil {
+			if err := saveProject(ctx, s.Store, p); err != nil {
 				t.Fatal(err)
 			}
 			changes := map[string]any{"color": c.local}

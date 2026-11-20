@@ -32,7 +32,7 @@ func TestMySectionsPlanPerWorkspace(t *testing.T) {
 	s, st, now := setupMyTasks(t, f)
 	ctx := context.Background()
 	for _, ws := range []string{"w1", "w2"} {
-		if err := s.syncMySections(ctx, ws); err != nil {
+		if err := s.Puller().syncMySections(ctx, ws); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -52,7 +52,7 @@ func TestMySectionsPlanPerWorkspace(t *testing.T) {
 
 	// Within the day w1 is not asked again.
 	*now = now.Add(plan.RecheckAfter - time.Minute)
-	if err := s.syncMySections(ctx, "w1"); err != nil {
+	if err := s.Puller().syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	if n := f.listsIn("w1"); n != 1 {
@@ -63,7 +63,7 @@ func TestMySectionsPlanPerWorkspace(t *testing.T) {
 	f.mu.Lock()
 	f.listIn = nil
 	f.mu.Unlock()
-	if err := s.syncMySections(ctx, "w1"); err != nil {
+	if err := s.Puller().syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	if n := f.listsIn("w1"); n != 2 {
@@ -86,7 +86,7 @@ func TestMySectionsOldGlobalRecordIgnored(t *testing.T) {
 	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.MySection, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncMySections(ctx, "w1"); err != nil {
+	if err := s.Puller().syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	if f.listsIn("w1") != 1 {

@@ -10,17 +10,33 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
-// Sending changes to sections and tags themselves (#33).
+// Sending changes to sections themselves (#33).
 
-// sectionKinds are the kinds whose task_gid is a section gid.
-var sectionKinds = []string{outbox.KindRenameSection, outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection}
+func init() {
+	register(outbox.KindRenameSection, opHandler{send: (*Pusher).pushRenameSection})
+	register(outbox.KindCreateSection, opHandler{send: (*Pusher).pushCreateSection, planWorkspace: sectionWorkspace,
+		find: func(s *Pusher, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
+			return s.findCreatedSection(ctx, op)
+		}})
+	register(outbox.KindDeleteSection, opHandler{send: sends((*Pusher).pushDeleteSection), planWorkspace: sectionWorkspace,
+		waits: func(s *Pusher, ctx context.Context, op outbox.Op) (bool, error) {
+			return s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID) // Asana deletes only an empty section
+		}})
+	register(outbox.KindInsertSection, opHandler{send: sends((*Pusher).pushInsertSection), planWorkspace: sectionWorkspace})
+}
+
+// sectionWorkspace is the workspace of the project of a section entry.
+func sectionWorkspace(s *Pusher, ctx context.Context, op outbox.Op) string {
+	ws, _ := s.Store.ProjectWorkspace(ctx, payloadString(op, "project"))
+	return ws
+}
 
 // waitsForSection reports whether op names a section created offline whose creation is
 // still queued (pending, being verified or failed): it waits, and goes out once the
 // section is created (its gid is then replaced in op) or is discarded with it.
-func (s *Syncer) waitsForSection(ctx context.Context, op outbox.Op) (bool, error) {
+func (s *Pusher) waitsForSection(ctx context.Context, op outbox.Op) (bool, error) {
 	var refs []string
-	if slices.Contains(sectionKinds, op.Kind) && op.Kind != outbox.KindCreateSection {
+	if spec, _ := outbox.SpecOf(op.Kind); spec.Subject == outbox.SubjectSection && !spec.Creates {
 		refs = append(refs, op.TaskGID)
 	}
 	for _, k := range outbox.SectionRefKeys {
@@ -48,7 +64,7 @@ func (s *Syncer) waitsForSection(ctx context.Context, op outbox.Op) (bool, error
 
 // realSection returns the Asana gid of a section ("" stays ""). A section created offline
 // whose creation is gone (discarded) is reported as not found.
-func (s *Syncer) realSection(ctx context.Context, gid string) (string, error) {
+func (s *Pusher) realSection(ctx context.Context, gid string) (string, error) {
 	real, err := s.Store.RealSectionGID(ctx, gid)
 	if err != nil {
 		return "", err
@@ -62,7 +78,7 @@ func (s *Syncer) realSection(ctx context.Context, gid string) (string, error) {
 // pushCreateSection creates a section. Creating twice would make two sections, so before
 // the request the gids of the sections that already have that name are recorded: if the
 // answer is lost, reconcile takes a new section with the name as ours.
-func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, error) {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	secs, err := s.API.Sections(ctx, str("project"))
 	if err != nil {
@@ -108,7 +124,7 @@ func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 
 // findCreatedSection looks for the section a create_section entry may have created: a
 // section of the project with its name that was not there before the request.
-func (s *Syncer) findCreatedSection(ctx context.Context, op outbox.Op) (outcome, match, error) {
+func (s *Pusher) findCreatedSection(ctx context.Context, op outbox.Op) (outcome, match, error) {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	raw, ok := op.Payload["existing"].([]any)
 	if !ok {
@@ -138,7 +154,7 @@ func (s *Syncer) findCreatedSection(ctx context.Context, op outbox.Op) (outcome,
 }
 
 // pushDeleteSection deletes a section. One that is already gone is done.
-func (s *Syncer) pushDeleteSection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDeleteSection(ctx context.Context, op outbox.Op) error {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -150,7 +166,7 @@ func (s *Syncer) pushDeleteSection(ctx context.Context, op outbox.Op) error {
 }
 
 // pushInsertSection moves a section before or after another one.
-func (s *Syncer) pushInsertSection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushInsertSection(ctx context.Context, op outbox.Op) error {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -170,85 +186,27 @@ func (s *Syncer) pushInsertSection(ctx context.Context, op outbox.Op) error {
 	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
-// pushUpdateTag renames and/or recolors a tag. A value changed in Asana since the local
-// edit (to something else) is a conflict.
-func (s *Syncer) pushUpdateTag(ctx context.Context, op outbox.Op) (outcome, error) {
-	gid, err := s.Store.RealTagGID(ctx, op.TaskGID)
+func (s *Pusher) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
+	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
 	}
-	if localgid.IsLocal(gid) {
-		return sent, &model.Error{Status: 404} // the tag was never created
-	}
-	server, err := s.API.Tag(ctx, gid)
+	op.TaskGID = gid
+	server, err := s.API.Section(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
 	}
-	current := map[string]string{"name": server.Name, "color": server.Color}
-	changes := map[string]any{}
-	conflict := map[string]any{}
-	for k, v := range op.Payload {
-		want, _ := v.(string)
-		cur, base := any(current[k]), op.Base[k]
-		cmpWant := any(want)
-		if k == "color" { // "none" ≡ "", and Asana renames the written names, like a project's
-			cur, base, cmpWant = canonColor(cur), canonColor(base), canonColor(want)
-			if cmpWant == "" {
-				want = ""
-			}
-		}
-		if !same(cur, base) && cur != cmpWant {
-			conflict[k] = current[k]
-		}
-		if k == "color" && want == "" {
-			changes[k] = nil // no color
-		} else {
-			changes[k] = want
-		}
+	name, _ := op.Payload["name"].(string)
+	if !same(server.Name, op.Base["name"]) && !same(server.Name, name) {
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"name": server.Name})
 	}
-	if len(conflict) > 0 {
-		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflict)
-	}
-	updated, err := s.API.UpdateTag(ctx, gid, changes)
+	updated, err := s.API.UpdateSection(ctx, op.TaskGID, name)
 	if err != nil {
 		return sent, err
 	}
 	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 		return sent, sentNotSaved(err)
 	}
-	if updated.GID == "" {
-		updated.GID = gid
-	}
-	if updated.Workspace == nil || updated.Workspace.GID == "" {
-		updated.Workspace = server.Workspace
-	}
-	_ = s.Store.ApplyTag(ctx, *updated) // the next sync fixes a failure
+	_ = s.Store.ApplySectionName(ctx, op.TaskGID, updated.Name) // the next sync fixes a failure
 	return sent, nil
-}
-
-// pushDeleteTag deletes a tag. One that is already gone (or was never created) is done.
-func (s *Syncer) pushDeleteTag(ctx context.Context, op outbox.Op) error {
-	gid, err := s.Store.RealTagGID(ctx, op.TaskGID)
-	if err != nil {
-		return err
-	}
-	if !localgid.IsLocal(gid) {
-		if err := s.API.DeleteTag(ctx, gid); err != nil && !isNotFound(err) {
-			return err
-		}
-	}
-	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
-}
-
-// waitsForTag reports whether a change to a tag created offline waits for the tag to be
-// created (an add_tag that creates it is still queued).
-func (s *Syncer) waitsForTag(ctx context.Context, tag string) (bool, error) {
-	if !localgid.IsLocal(tag) {
-		return false, nil
-	}
-	real, err := s.Store.RealTagGID(ctx, tag)
-	if err != nil || !localgid.IsLocal(real) {
-		return false, err
-	}
-	return s.Store.TagCreateQueued(ctx, tag)
 }

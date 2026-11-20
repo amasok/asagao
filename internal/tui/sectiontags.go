@@ -35,44 +35,18 @@ func (w planWindow) off(now time.Time) bool {
 }
 
 // planOffIn returns the window during which a recent 402 hides feature in workspaceGID at
-// now (false when the feature is offered).
-func planOffIn(ctx context.Context, st Store, feature, workspaceGID string, now time.Time) (planWindow, bool) {
-	at, ok, err := st.PlanRefusedAt(ctx, feature, workspaceGID)
-	if err != nil || !ok {
-		return planWindow{}, false
-	}
-	from, until, off := plan.Window(at, now)
-	if !off {
-		return planWindow{}, false
-	}
-	return planWindow{from: from, until: until}, true
+// now (false when the feature is offered; app.Query.PlanOffIn).
+func planOffIn(ctx context.Context, st *app.UseCases, feature, workspaceGID string, now time.Time) (planWindow, bool) {
+	from, until, off := st.Query().PlanOffIn(ctx, feature, workspaceGID, now)
+	return planWindow{from: from, until: until}, off
 }
 
 // planOffEverywhere returns the window during which a recent 402 hides feature in every
-// workspace at now (false when at least one workspace offers it, or none are known).
-func planOffEverywhere(ctx context.Context, st Store, feature string, now time.Time) (planWindow, bool) {
-	wss, err := st.WorkspaceGIDs(ctx)
-	if err != nil || len(wss) == 0 {
-		return planWindow{}, false
-	}
-	var win planWindow
-	for i, ws := range wss {
-		w, off := planOffIn(ctx, st, feature, ws, now)
-		if !off {
-			return planWindow{}, false
-		}
-		if i == 0 {
-			win = w
-			continue
-		}
-		if w.from.After(win.from) {
-			win.from = w.from
-		}
-		if w.until.Before(win.until) {
-			win.until = w.until
-		}
-	}
-	return win, win.off(now)
+// workspace at now (false when at least one workspace offers it, or none are known;
+// app.Query.PlanOffEverywhere).
+func planOffEverywhere(ctx context.Context, st *app.UseCases, feature string, now time.Time) (planWindow, bool) {
+	from, until, off := st.Query().PlanOffEverywhere(ctx, feature, now)
+	return planWindow{from: from, until: until}, off
 }
 
 // planLoadedMsg says which features the workspace's plan lacks (and until when).
@@ -82,7 +56,7 @@ type planLoadedMsg struct {
 }
 
 func (m *Model) loadPlan() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	if st == nil {
 		return nil
 	}
@@ -99,7 +73,7 @@ func (m *Model) loadPlan() tea.Cmd {
 		}
 		// Goals, portfolios, project templates and custom fields: the default workspace's.
 		// (Task templates are hidden per project: templates.go.)
-		ws, wsErr := st.DefaultWorkspace(ctx)
+		ws, wsErr := st.Query().DefaultWorkspace(ctx)
 		for _, f := range []string{plan.Goals, plan.Portfolios, plan.ProjectTemplates} {
 			if w, hidden := planOffIn(ctx, st, f, ws, now); hidden {
 				off[f] = w
@@ -128,7 +102,7 @@ func (m *Model) planOK(feature string) bool {
 }
 
 func (m *Model) tagUseCases(now time.Time) *app.Tags {
-	return &app.Tags{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.Tags(func() time.Time { return now })
 }
 
 // updateSectionTags handles the messages of this file.
@@ -256,9 +230,9 @@ type tagsManageMsg struct {
 }
 
 func (m *Model) openTagManager() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		tags, err := queryOf(st).ListTags(m.ctx)
+		tags, err := st.Query().ListTags(m.ctx)
 		return tagsManageMsg{tags: tags, err: err}
 	}
 }

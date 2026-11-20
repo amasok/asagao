@@ -19,7 +19,7 @@ func opList(t *testing.T, st *store.Store) []string {
 	t.Helper()
 	var out []string
 	for _, op := range opsOf(t, st) {
-		out = append(out, op.Kind+":"+op.TaskGID)
+		out = append(out, string(op.Kind)+":"+op.TaskGID)
 	}
 	return out
 }
@@ -28,14 +28,14 @@ func opList(t *testing.T, st *store.Store) []string {
 // dependent), and unlinking cancels the unsent change.
 func TestSetDependencyQueues(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
+	st, ctx := storeOf(h.m), context.Background()
 	d, err := st.GetTask(ctx, "t1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.run(h.m.setDependency(d.TaskSummary, "t2", false, true))
 	h.run(h.m.setDependency(d.TaskSummary, "t3", true, true))
-	want := []string{store.OpAddDependency + ":t1", store.OpAddDependency + ":t3"}
+	want := []string{string(store.OpAddDependency) + ":t1", string(store.OpAddDependency) + ":t3"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -56,7 +56,7 @@ func TestSetDependencyQueues(t *testing.T) {
 // then) and queued; a value that does not read writes nothing.
 func TestSubmitFieldReadsAndQueues(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
+	st, ctx := storeOf(h.m), context.Background()
 	if err := st.ReplaceProjectCustomFields(ctx, "p1", []asana.CustomFieldSetting{
 		{CustomField: asana.CustomField{GID: "cf-date", Name: "締切", ResourceSubtype: store.CFDate}},
 		{CustomField: asana.CustomField{GID: "cf-num", Name: "見積もり", ResourceSubtype: store.CFNumber}},
@@ -83,7 +83,7 @@ func TestSubmitFieldReadsAndQueues(t *testing.T) {
 	}
 	h.m.prompt.fieldTask, h.m.prompt.fieldEdit = d.TaskSummary, field("cf-date")
 	h.run(h.m.submitField("+7d"))
-	if got := opList(t, st); !slices.Equal(got, []string{store.OpSetCustomField + ":t1"}) {
+	if got := opList(t, st); !slices.Equal(got, []string{string(store.OpSetCustomField) + ":t1"}) {
 		t.Fatalf("ops = %v", got)
 	}
 	d, _ = st.GetTask(ctx, "t1")
@@ -102,7 +102,7 @@ func TestSubmitFieldReadsAndQueues(t *testing.T) {
 // cancels it.
 func TestToggleFollowerAndTagQueue(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
+	st, ctx := storeOf(h.m), context.Background()
 	if err := st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestToggleFollowerAndTagQueue(t *testing.T) {
 	h.run(h.m.toggleTag(d.TaskSummary, pickerItem{value: "g1"}))
 	h.m.prompt.tagTask = d.TaskSummary
 	h.run(h.m.submitNewTag("新しいタグ"))
-	want := []string{store.OpAddFollower + ":t1", store.OpAddTag + ":t1", store.OpAddTag + ":t1"}
+	want := []string{string(store.OpAddFollower) + ":t1", string(store.OpAddTag) + ":t1", string(store.OpAddTag) + ":t1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -129,11 +129,11 @@ func TestToggleFollowerAndTagQueue(t *testing.T) {
 // cache directory the TUI was given.
 func TestDuplicateAndAttachQueue(t *testing.T) {
 	cache := t.TempDir()
-	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }, CacheDir: cache})
+	m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow }, CacheDir: cache}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
-	st, ctx := m.deps.Store.(*store.Store), context.Background()
+	st, ctx := storeOf(m), context.Background()
 	m.prompt.dupSource = "t1"
 	h.run(m.duplicate("ソファを買う (2)"))
 	file := filepath.Join(t.TempDir(), "図面.png")

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 // without it the unknown option is refused and nothing changes.
 func TestUpdateTaskAddMissingOptions(t *testing.T) {
 	st := seedFields(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	if res := call(t, cs, "update_task", map[string]any{"gid": "t1", "custom_fields": map[string]any{"優先度": "最高"}}, nil); toolError(res) == "" {
 		t.Fatal("unknown option accepted")
 	}
@@ -31,9 +32,9 @@ func TestUpdateTaskAddMissingOptions(t *testing.T) {
 	ops, _ := st.ListOps(context.Background())
 	var kinds []string
 	for _, op := range ops {
-		kinds = append(kinds, op.Kind)
+		kinds = append(kinds, string(op.Kind))
 	}
-	if strings.Join(kinds, ",") != store.OpCreateEnumOption+","+store.OpSetCustomField+","+store.OpSetCustomField {
+	if strings.Join(kinds, ",") != string(store.OpCreateEnumOption+","+store.OpSetCustomField+","+store.OpSetCustomField) {
 		t.Fatalf("ops = %v", kinds)
 	}
 	// refused before (403): an error, nothing written
@@ -58,7 +59,7 @@ func TestUpdateProjectCustomFields(t *testing.T) {
 		{GID: "cf9", Name: "メモ", ResourceSubtype: "text"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var p ProjectOutput
 	call(t, cs, "get_project", map[string]any{"project": "p1", "include_available_fields": true}, &p)
 	if len(p.CustomFields) != 3 || len(p.AvailableCustomFields) != 1 || p.AvailableCustomFields[0].GID != "cf9" {

@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"github.com/amasok/asagao/internal/wire"
 	"testing"
 
 	"github.com/amasok/asagao/internal/readmodel"
@@ -13,7 +14,7 @@ func TestSavedSearchAttackLimit(t *testing.T) {
 		readmodel.SavedSearch{Name: "all", Query: "を", Limit: 1},
 		readmodel.SavedSearch{Name: "none", Query: "を"},
 	)
-	cs := connect(t, &Server{Store: seed(t), Searches: f})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t)), Searches: f})
 	for _, tc := range []struct {
 		name  string
 		limit any
@@ -44,7 +45,7 @@ func TestSavedSearchAttackLimit(t *testing.T) {
 // almost right (case, trailing space) is not found.
 func TestSavedSearchAttackExactNameOnly(t *testing.T) {
 	f := searchFile(t, readmodel.SavedSearch{Name: "Weekly", DueBefore: "+7d"})
-	cs := connect(t, &Server{Store: seed(t), Searches: f})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t)), Searches: f})
 	for _, n := range []string{"weekly", "Weekly ", " Weekly", "Week"} {
 		if res := call(t, cs, "run_saved_search", map[string]any{"name": n}, nil); !res.IsError {
 			t.Errorf("%q ran", n)

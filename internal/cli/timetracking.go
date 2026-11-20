@@ -14,7 +14,7 @@ import (
 // timeCmd is `asagao time`: the time tracking entries of tasks (#6).
 func (a *app) timeCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "time", Short: "タスクの作業時間（タイムトラッキング。Asana の有料プラン）"}
-	tracking := func(st Store) *usecase.TimeTracking { return &usecase.TimeTracking{Store: st, Clock: time.Now} }
+	tracking := func(st *Local) *usecase.TimeTracking { return st.App.TimeTracking(time.Now) }
 
 	var offline bool
 	list := &cobra.Command{
@@ -83,7 +83,7 @@ func (a *app) timeCmd() *cobra.Command {
 	add.Flags().StringVar(&day, "date", "", "記録する日（YYYY-MM-DD / today / yesterday / -Nd。省略すると今日）")
 
 	edit := a.writeCommand("edit <記録の gid> [--duration 時間] [--date 日]", "記録した作業時間・日を直す", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st *Local, args []string) (string, string, error) {
 			duration, _ := cmd.Flags().GetString("duration")
 			on, _ := cmd.Flags().GetString("date")
 			if duration == "" && on == "" {
@@ -96,7 +96,7 @@ func (a *app) timeCmd() *cobra.Command {
 	edit.Example = "  asagao time edit 1209876543210 --duration 2h   # gid は time list で表示されます"
 
 	del := a.writeCommand("delete <記録の gid> --yes", "記録した作業時間を削除する（取り消せません）", cobra.ExactArgs(1),
-		func(cmd *cobra.Command, st Store, args []string) (string, string, error) {
+		func(cmd *cobra.Command, st *Local, args []string) (string, string, error) {
 			if err := a.confirmDelete(cmd, "作業時間の記録 "+args[0]); err != nil {
 				return "", "", err
 			}

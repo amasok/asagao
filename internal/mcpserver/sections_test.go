@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func TestMoveTaskAndRenameSectionQueue(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": "手続き", "project": "新居"}, &w); res.IsError {
 		t.Fatal(toolError(res))
@@ -28,7 +29,7 @@ func TestMoveTaskAndRenameSectionQueue(t *testing.T) {
 	if res := call(t, cs, "rename_section", map[string]any{"project": "新居", "section": "家具", "name": "大型家具"}, &w); res.IsError {
 		t.Fatal(toolError(res))
 	}
-	want := []string{store.OpMoveTask + ":t1", store.OpRenameSection + ":s1"}
+	want := []string{string(store.OpMoveTask) + ":t1", string(store.OpRenameSection) + ":s1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -44,7 +45,7 @@ func TestSectionAndTagTools(t *testing.T) {
 	if err := st.UpsertTags(context.Background(), []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	if res := call(t, cs, "create_section", map[string]any{"project": "新居", "name": "保留", "after": "家具"}, &w); res.IsError {
 		t.Fatal(toolError(res))
@@ -82,7 +83,7 @@ func TestSectionAndTagTools(t *testing.T) {
 	}
 	got := opList(t, st)
 	// The unsent color change of a tag deleted afterwards is not sent.
-	want := []string{store.OpCreateSection, store.OpMoveTask + ":t1", store.OpInsertSection + ":s2", store.OpDeleteTag + ":g1"}
+	want := []string{string(store.OpCreateSection), string(store.OpMoveTask) + ":t1", string(store.OpInsertSection) + ":s2", string(store.OpDeleteTag) + ":g1"}
 	if len(got) != len(want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -110,7 +111,7 @@ func TestSectionToolsHiddenAfterPaymentRequired(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +139,7 @@ func TestMoveTaskMyTasks(t *testing.T) {
 	if err := st.ReplaceMyTaskSections(ctx, "w1", []asana.Section{{GID: "m1", Name: "今日やる"}, {GID: "m2", Name: "あとで"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var secs MySectionsOutput
 	if res := call(t, cs, "list_my_sections", map[string]any{}, &secs); res.IsError || len(secs.Sections) != 2 {
 		t.Fatalf("list_my_sections = %+v", secs)
@@ -153,7 +154,7 @@ func TestMoveTaskMyTasks(t *testing.T) {
 	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": "今日やる", "my_tasks": true}, &w); res.IsError {
 		t.Fatal(toolError(res))
 	}
-	if got := opList(t, st); !slices.Equal(got, []string{store.OpMoveMySection + ":t1"}) {
+	if got := opList(t, st); !slices.Equal(got, []string{string(store.OpMoveMySection) + ":t1"}) {
 		t.Fatalf("ops = %v", got)
 	}
 	var list struct {

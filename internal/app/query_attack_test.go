@@ -11,16 +11,16 @@ import (
 	"github.com/amasok/asagao/internal/store"
 )
 
-// Every Query method returns exactly what the store's method of the same name returns, for
+// Every store read Query gives (QueryStore's methods) returns exactly what the store's method of the same name returns, for
 // the same arguments: all results in the same order and the same errors, with a live and
 // with a cancelled context, on a store with data in it (and with offline entries queued).
 func TestQueryMatchesStoreForEveryMethod(t *testing.T) {
 	st := resolveStore(t)
 	queue(t, st, store.OpUpdateTask)
 	queue(t, st, store.OpCreateTask)
-	q := app.Query{Store: st}
+	q := app.Query{QueryStore: st}
 	qv, sv := reflect.ValueOf(q), reflect.ValueOf(st)
-	qt := qv.Type()
+	qt := reflect.TypeOf((*app.QueryStore)(nil)).Elem() // Query's own reads are tested on their own
 
 	live := context.Background()
 	cancelled, cancel := context.WithCancel(live)
@@ -53,7 +53,7 @@ func TestQueryMatchesStoreForEveryMethod(t *testing.T) {
 	}
 	n := 0
 	for i := 0; i < qt.NumMethod(); i++ {
-		m := qt.Method(i)
+		m, _ := qv.Type().MethodByName(qt.Method(i).Name)
 		sm := sv.MethodByName(m.Name)
 		if !sm.IsValid() {
 			t.Errorf("store has no %s", m.Name)

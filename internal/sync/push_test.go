@@ -1258,7 +1258,7 @@ func dropConnection(rw http.ResponseWriter) {
 	conn.Close()
 }
 
-func opByKind(t *testing.T, st *store.Store, kind string) *store.Op {
+func opByKind(t *testing.T, st *store.Store, kind store.Kind) *store.Op {
 	t.Helper()
 	ops, err := st.ListOps(context.Background())
 	if err != nil {
@@ -1791,7 +1791,7 @@ func TestPushEditsWaitForFailedCreate(t *testing.T) {
 	if err != nil || res.Failed != 0 || res.Sent != 0 || res.Remaining != 2 {
 		t.Fatalf("edits of a task whose create failed should wait: %+v %v", res, err)
 	}
-	for _, kind := range []string{store.OpUpdateTask, store.OpMoveTask} {
+	for _, kind := range []store.Kind{store.OpUpdateTask, store.OpMoveTask} {
 		if op := opByKind(t, st, kind); op == nil || op.State != store.OpPending {
 			t.Fatalf("%s should stay pending: %+v", kind, op)
 		}

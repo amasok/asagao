@@ -35,7 +35,7 @@ func overviewStore(t *testing.T) *store.Store {
 
 func overviewHarness(t *testing.T, st *store.Store, edit func(string) string) *harness {
 	t.Helper()
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, edit)})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, edit)}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -145,7 +145,7 @@ func TestSidebarGroupsByFavoriteAndTeam(t *testing.T) {
 	if err := st.ReplaceFavoriteProjects(ctx, "w1", []asana.Ref{{GID: "p3"}}); err != nil {
 		t.Fatal(err)
 	}
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -204,7 +204,7 @@ func TestNewProjectAsksForTheTeam(t *testing.T) {
 	defer srv.Close()
 	api := asana.NewClient(srv.Client())
 	api.BaseURL, api.MaxRetries = srv.URL, 0
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

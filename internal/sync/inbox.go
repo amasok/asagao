@@ -13,6 +13,16 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
+func init() {
+	register(outbox.KindMarkNotification, opHandler{
+		send: func(s *Pusher, ctx context.Context, op outbox.Op) (outcome, error) {
+			out, _, err := s.pushMarkNotification(ctx, op)
+			return out, err
+		},
+		sendAlong: (*Pusher).pushMarkNotification,
+	})
+}
+
 // MaxNotifications is how many notifications per workspace sync keeps (newest first).
 const MaxNotifications = 100
 
@@ -21,7 +31,7 @@ const MaxNotifications = 100
 const maxTargetFetches = 50
 
 // syncInbox fetches the notifications of a workspace into the store.
-func (s *Syncer) syncInbox(ctx context.Context, workspaceGID string) error {
+func (s *Puller) syncInbox(ctx context.Context, workspaceGID string) error {
 	ns, err := s.API.Notifications(ctx, workspaceGID, MaxNotifications)
 	if err != nil {
 		return err
@@ -34,7 +44,7 @@ func (s *Syncer) syncInbox(ctx context.Context, workspaceGID string) error {
 // plan, ...), that is recorded for the front ends, which show recent updates instead, and
 // the sync goes on. An invalid login or a network error stops the sync like any other
 // fetch; Asana having trouble (5xx, 429) keeps the cached notifications.
-func (s *Syncer) syncInboxes(ctx context.Context, workspaces []model.Workspace) error {
+func (s *Puller) syncInboxes(ctx context.Context, workspaces []model.Workspace) error {
 	ok := false
 	var refused readmodel.InboxState
 	for _, w := range workspaces {
@@ -118,7 +128,7 @@ func InboxReadOnlyMessage(scopes []string) string {
 // sync every one (so the prune keeps them); otherwise the ones not cached yet and those
 // with a notification since the previous sync (since), which have changed. At most
 // maxTargetFetches per sync; the others are kept as cached (added to keep).
-func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]bool, full bool, since time.Time, upsert func([]model.Task) error) error {
+func (s *Puller) fetchNotificationTargets(ctx context.Context, keep map[string]bool, full bool, since time.Time, upsert func([]model.Task) error) error {
 	var after string
 	if !since.IsZero() {
 		after = since.UTC().Format(time.RFC3339)
@@ -168,7 +178,7 @@ func (s *Syncer) fetchNotificationTargets(ctx context.Context, keep map[string]b
 // what the user asks for is tried again). A change Asana accepts, or logging in again,
 // clears it. batched is how many other
 // entries were sent along.
-func (s *Syncer) pushMarkNotification(ctx context.Context, op outbox.Op) (out outcome, batched int, err error) {
+func (s *Pusher) pushMarkNotification(ctx context.Context, op outbox.Op) (out outcome, batched int, err error) {
 	ws, _ := op.Payload["workspace"].(string)
 	read, _ := op.Payload["read"].(bool)
 	peers, err := s.Store.PendingNotificationMarks(ctx, op, model.MaxNotificationGIDs-1)

@@ -48,12 +48,14 @@ upload_attachment で送れるのは、起動したフォルダ（/・ホーム�
 			s := &mcpserver.Server{
 				ContextDir: contextDir,
 				Upload:     upload,
-				Store:      st,
-				ReadOnly:   readOnly,
-				CacheDir:   filepath.Join(xdg.CacheDir(), "attachments"),
-				Version:    currentBuild().Version,
-				AuthScopes: a.cfg.Auth.Scopes,
-				Searches:   a.wiring.Searches,
+				App:        st.App,
+				// offline: attachments downloaded before
+				LocalSyncer: func() *sync.Syncer { return a.syncer(nil, st) },
+				ReadOnly:    readOnly,
+				CacheDir:    filepath.Join(xdg.CacheDir(), "attachments"),
+				Version:     currentBuild().Version,
+				AuthScopes:  a.cfg.Auth.Scopes,
+				Searches:    a.wiring.Searches,
 				// The syncer outlives the tool call that creates it, so build it with the
 				// server's context, not the request's (token refresh may write to 1Password).
 				NewSyncer: func(context.Context) (*sync.Syncer, error) {

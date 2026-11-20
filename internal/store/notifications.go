@@ -14,6 +14,17 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpMarkNotification, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		read, ok := op.Base["read"].(bool)
+		if !ok {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, "UPDATE notifications SET is_read = ? WHERE gid = ?", read, op.TaskGID)
+		return err
+	})
+}
+
 // The inbox: the user's Asana notifications, cached by sync (see sync.Run) so they can be
 // read offline. Marking one read / unread is applied locally and queued in the outbox.
 

@@ -10,7 +10,6 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/sync"
 )
 
 // Likes, followers, extra projects, duplicates and file uploads.
@@ -45,13 +44,13 @@ func (m *Model) openFollowers() tea.Cmd {
 }
 
 func (m *Model) openFollowersFor(task readmodel.TaskSummary) tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		users, err := queryOf(st).ListUsers(m.ctx)
+		users, err := st.Query().ListUsers(m.ctx)
 		if err != nil {
 			return followersMsg{err: err}
 		}
-		cur, err := queryOf(st).TaskFollowers(m.ctx, task.GID)
+		cur, err := st.Query().TaskFollowers(m.ctx, task.GID)
 		has := map[string]bool{}
 		for _, u := range cur {
 			has[u.GID] = true
@@ -135,12 +134,12 @@ func (m *Model) showProjects(task readmodel.TaskSummary) {
 }
 
 func (m *Model) toggleProject(t readmodel.TaskSummary, item pickerItem) tea.Cmd {
-	st, relations := m.deps.Store, m.relations(m.deps.Now())
+	st, relations := m.deps.App, m.relations(m.deps.Now())
 	return func() tea.Msg {
 		if err := relations.SetProject(m.ctx, t.GID, item.value, !item.checked); err != nil {
 			return writeDoneMsg{err: err}
 		}
-		d, err := queryOf(st).GetTask(m.ctx, t.GID)
+		d, err := st.Query().GetTask(m.ctx, t.GID)
 		if err == nil {
 			t = d.TaskSummary
 		}
@@ -210,10 +209,7 @@ func (m *Model) openAttachment(a readmodel.AttachmentView) tea.Cmd {
 	if a.IsImage {
 		return m.viewImages()
 	}
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = &sync.Syncer{Store: m.deps.Store}
-	}
+	syncer := m.attachments(false)
 	taskGID := m.detail.task.GID
 	return func() tea.Msg {
 		path, err := syncer.DownloadAttachment(m.ctx, taskGID, a.GID)

@@ -40,7 +40,7 @@ type DeleteTimeEntryInput struct {
 }
 
 func (s *Server) timeTracking() *app.TimeTracking {
-	return &app.TimeTracking{Store: s.Store, Clock: s.Now}
+	return s.App.TimeTracking(s.Now)
 }
 
 func (s *Server) addTimeTrackingTools(srv *mcp.Server) {

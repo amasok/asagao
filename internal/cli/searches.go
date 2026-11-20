@@ -170,11 +170,11 @@ func (a *app) searchesRunCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			tf, err := query(st).BuildFilter(ctx, s.Spec(), time.Now())
+			tf, err := st.App.Query().SavedSearchFilter(ctx, s.Name, s.Spec(), time.Now())
 			if err != nil {
-				return &usecase.SearchError{Name: s.Name, Err: err}
+				return err
 			}
-			tasks, err := query(st).ListTasks(ctx, tf)
+			tasks, err := st.App.Query().ListTasks(ctx, tf)
 			if err != nil {
 				return err
 			}

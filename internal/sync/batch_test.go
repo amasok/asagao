@@ -185,7 +185,7 @@ func TestBatchEntryForIntentWrites(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, ok, err := s.batchEntryFor(ctx, tc.op)
+			e, ok, err := s.Pusher().batchEntryFor(ctx, tc.op)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -198,7 +198,7 @@ func TestBatchEntryForIntentWrites(t *testing.T) {
 			if !reflect.DeepEqual(e.write, tc.wantWrite) {
 				t.Fatalf("write = %#v, want %#v", e.write, tc.wantWrite)
 			}
-			if e.check != tc.wantCheck || e.refresh != tc.wantRefresh || e.project != tc.wantProject || e.section != tc.wantSection {
+			if (e.check != nil) != tc.wantCheck || e.refresh != tc.wantRefresh || e.project != tc.wantProject || e.section != tc.wantSection {
 				t.Fatalf("entry flags/meta = %+v", e)
 			}
 		})

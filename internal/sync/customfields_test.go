@@ -98,7 +98,7 @@ func setupFieldPush(t *testing.T) (*fieldServer, *Syncer, *store.Store) {
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
 	task, err := api.Task(ctx, "t1")
@@ -171,7 +171,7 @@ func TestCustomFieldsUnavailableIsNotAnError(t *testing.T) {
 	fs, s, st := setupFieldPush(t)
 	ctx := context.Background()
 	fs.settings = http.StatusPaymentRequired
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.GetTask(ctx, "t1")
@@ -191,7 +191,7 @@ func TestCustomFieldsKeptOnUnauthorized(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs.settings = http.StatusUnauthorized
-	if err := s.syncCustomFields(ctx, "p1", false); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", false); err != nil {
 		t.Fatal(err)
 	}
 	if v, _ := st.ProjectCustomFieldsFetchedAt(ctx, "p1"); v != "" {

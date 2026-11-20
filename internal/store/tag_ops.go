@@ -14,6 +14,11 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpUpdateTag, undoTagOp)
+	registerUndo(OpDeleteTag, undoTagOp)
+}
+
 // Operations on tags themselves (outbox.KindUpdateTag, outbox.KindDeleteTag).
 const (
 	OpUpdateTag = outbox.KindUpdateTag
@@ -226,8 +231,9 @@ func reapplyTagEdits(ctx context.Context, tx *sql.Tx, gids ...string) error {
 		return err
 	}
 	type edit struct {
-		kind, gid string
-		payload   map[string]any
+		kind    Kind
+		gid     string
+		payload map[string]any
 	}
 	var edits []edit
 	for rows.Next() {

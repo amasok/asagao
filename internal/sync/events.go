@@ -43,7 +43,7 @@ type projectEvents struct {
 // readEvents reads a project's events since its token. A failure of Asana (412, 429, 5xx,
 // offline) is not an error: the result asks for a fallback fetch instead, which fails in
 // turn if Asana cannot be reached.
-func (s *Syncer) readEvents(ctx context.Context, projectGID string) (projectEvents, error) {
+func (s *Puller) readEvents(ctx context.Context, projectGID string) (projectEvents, error) {
 	ev := projectEvents{tasks: map[string]bool{}}
 	token, err := s.Store.EventsToken(ctx, projectGID)
 	if err != nil {
@@ -108,7 +108,7 @@ func (ev *projectEvents) note(projectGID string, e model.Event) {
 // applyEvents fetches the tasks the events name that this sync has not fetched already,
 // and removes those Asana no longer has or shows us. Unsent local changes keep winning
 // (store.UpsertTasks reapplies them; a task with queued changes is not removed).
-func (s *Syncer) applyEvents(ctx context.Context, ev projectEvents, keep map[string]bool,
+func (s *Puller) applyEvents(ctx context.Context, ev projectEvents, keep map[string]bool,
 	upsert func([]model.Task) error, withSubtasks *[]string) error {
 	var gids []string
 	for _, gid := range ev.order {

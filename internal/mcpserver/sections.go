@@ -46,7 +46,7 @@ type DeleteTagInput struct {
 
 func (s *Server) addSectionTagTools(srv *mcp.Server, write func(destructive bool) *mcp.ToolAnnotations) {
 	ctx := context.Background()
-	if (&app.Sections{Store: s.Store, Clock: s.Now}).Available(ctx) {
+	if s.App.Sections(s.Now).Available(ctx) {
 		mcp.AddTool(srv, &mcp.Tool{Name: "create_section", Annotations: write(false),
 			Description: "Create a section (a list/column) in a project. Works offline: tasks can be moved to it right away " +
 				"with move_task (use the returned section_gid)."}, s.createSection)
@@ -56,7 +56,7 @@ func (s *Server) addSectionTagTools(srv *mcp.Server, write func(destructive bool
 			Description: "Delete an empty section of a project (move its tasks elsewhere first). " +
 				"It cannot be undone in Asana: ask the user before deleting."}, s.deleteSection)
 	}
-	if (&app.Tags{Store: s.Store, Clock: s.Now}).Available(ctx) {
+	if s.App.Tags(s.Now).Available(ctx) {
 		mcp.AddTool(srv, &mcp.Tool{Name: "update_tag", Annotations: write(true),
 			Description: "Rename a tag and/or change its color (it changes on every task that has it)."}, s.updateTag)
 		mcp.AddTool(srv, &mcp.Tool{Name: "delete_tag", Annotations: write(true),
@@ -66,7 +66,7 @@ func (s *Server) addSectionTagTools(srv *mcp.Server, write func(destructive bool
 }
 
 func (s *Server) createSection(ctx context.Context, _ *mcp.CallToolRequest, in CreateSectionInput) (*mcp.CallToolResult, WriteOutput, error) {
-	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	sections := s.App.Sections(s.Now)
 	g, err := sections.Create(ctx, in.Project, in.Name, app.SectionPlace{Before: in.Before, After: in.After})
 	if err != nil {
 		return nil, WriteOutput{}, err
@@ -75,7 +75,7 @@ func (s *Server) createSection(ctx context.Context, _ *mcp.CallToolRequest, in C
 }
 
 func (s *Server) moveSection(ctx context.Context, _ *mcp.CallToolRequest, in MoveSectionInput) (*mcp.CallToolResult, WriteOutput, error) {
-	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	sections := s.App.Sections(s.Now)
 	if err := sections.Reorder(ctx, in.Project, in.Section, app.SectionPlace{Before: in.Before, After: in.After}); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -83,7 +83,7 @@ func (s *Server) moveSection(ctx context.Context, _ *mcp.CallToolRequest, in Mov
 }
 
 func (s *Server) deleteSection(ctx context.Context, _ *mcp.CallToolRequest, in DeleteSectionInput) (*mcp.CallToolResult, WriteOutput, error) {
-	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	sections := s.App.Sections(s.Now)
 	if err := sections.Delete(ctx, in.Project, in.Section); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -91,7 +91,7 @@ func (s *Server) deleteSection(ctx context.Context, _ *mcp.CallToolRequest, in D
 }
 
 func (s *Server) updateTag(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTagInput) (*mcp.CallToolResult, WriteOutput, error) {
-	tags := app.Tags{Store: s.Store, Clock: s.Now}
+	tags := s.App.Tags(s.Now)
 	t, err := tags.Resolve(ctx, in.Tag)
 	if err != nil {
 		return nil, WriteOutput{}, err
@@ -117,7 +117,7 @@ func (s *Server) updateTag(ctx context.Context, _ *mcp.CallToolRequest, in Updat
 }
 
 func (s *Server) deleteTag(ctx context.Context, _ *mcp.CallToolRequest, in DeleteTagInput) (*mcp.CallToolResult, WriteOutput, error) {
-	tags := app.Tags{Store: s.Store, Clock: s.Now}
+	tags := s.App.Tags(s.Now)
 	if err := tags.Delete(ctx, in.Tag); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -130,7 +130,7 @@ type MySectionsOutput struct {
 }
 
 func (s *Server) listMySections(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, MySectionsOutput, error) {
-	secs, err := (&app.Sections{Store: s.Store, Clock: s.Now}).MySections(ctx, "")
+	secs, err := s.App.Sections(s.Now).MySections(ctx, "")
 	if err != nil {
 		return nil, MySectionsOutput{}, err
 	}

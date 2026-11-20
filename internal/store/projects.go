@@ -14,6 +14,14 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
+func init() {
+	registerUndo(OpCreateStatus, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		gid, _ := op.Payload["status"].(string)
+		_, err := tx.ExecContext(ctx, "DELETE FROM status_updates WHERE gid = ?", gid)
+		return err
+	})
+}
+
 // OpCreateStatus posts a project status update (outbox.KindCreateStatus).
 const OpCreateStatus = outbox.KindCreateStatus
 

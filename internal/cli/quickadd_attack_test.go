@@ -36,7 +36,7 @@ func TestCreateQuickAttackBoundaries(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	d, kinds := createdTask(t, path)
-	if d.Name != "@me" || d.DueOn == "" || !slices.Equal(tagNames(d), []string{"急ぎ"}) || !slices.Equal(kinds, []string{store.OpCreateTask, store.OpAddTag}) {
+	if d.Name != "@me" || d.DueOn == "" || !slices.Equal(tagNames(d), []string{"急ぎ"}) || !slices.Equal(kinds, []store.Kind{store.OpCreateTask, store.OpAddTag}) {
 		t.Errorf("%+v %q", d, kinds)
 	}
 
@@ -59,7 +59,7 @@ func TestCreateQuickAttackWithParentAndProject(t *testing.T) {
 	if d.Name != "棚" || d.Assignee == nil || d.Assignee.GID != "u2" || !slices.Equal(tagNames(d), []string{"急ぎ"}) {
 		t.Errorf("%+v", d)
 	}
-	if !slices.Equal(kinds, []string{store.OpCreateTask, store.OpAddTag}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpCreateTask, store.OpAddTag}) {
 		t.Errorf("ops %q", kinds)
 	}
 }

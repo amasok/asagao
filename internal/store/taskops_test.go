@@ -29,7 +29,7 @@ func opKindsOf(t *testing.T, s *Store) []string {
 	}
 	out := []string{}
 	for _, op := range ops {
-		out = append(out, op.Kind+" "+op.TaskGID)
+		out = append(out, string(op.Kind)+" "+op.TaskGID)
 	}
 	return out
 }

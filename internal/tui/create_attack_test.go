@@ -133,7 +133,7 @@ func TestCreateTaskUsesTimeOfKeyPress(t *testing.T) {
 		t.Fatal(err)
 	}
 	cur := testNow
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return cur }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return cur }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

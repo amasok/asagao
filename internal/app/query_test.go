@@ -238,7 +238,7 @@ func TestQueryCallsTheStore(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			boom := errors.New("boom")
 			f := &fakeQueryStore{err: boom}
-			out, err := tc.call(Query{Store: f})
+			out, err := tc.call(Query{QueryStore: f})
 			if f.called != tc.name {
 				t.Errorf("called %q, want %q", f.called, tc.name)
 			}
@@ -253,4 +253,33 @@ func TestQueryCallsTheStore(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *fakeQueryStore) CountUnfetchedProjects(_ context.Context, memberOnly bool) (int, error) {
+	f.rec("CountUnfetchedProjects", memberOnly)
+	return 8, f.err
+}
+func (f *fakeQueryStore) PlanRefusedAt(_ context.Context, feature, ws string) (time.Time, bool, error) {
+	f.rec("PlanRefusedAt", feature, ws)
+	return time.Time{}, false, f.err
+}
+func (f *fakeQueryStore) WorkspaceGIDs(context.Context) ([]string, error) {
+	f.rec("WorkspaceGIDs")
+	return []string{"w1"}, f.err
+}
+func (f *fakeQueryStore) DefaultWorkspace(context.Context) (string, error) {
+	f.rec("DefaultWorkspace")
+	return "w1", f.err
+}
+func (f *fakeQueryStore) ProjectWorkspace(_ context.Context, gid string) (string, error) {
+	f.rec("ProjectWorkspace", gid)
+	return "w1", f.err
+}
+func (f *fakeQueryStore) TaskWorkspace(_ context.Context, gid string) (string, error) {
+	f.rec("TaskWorkspace", gid)
+	return "w1", f.err
+}
+func (f *fakeQueryStore) ProjectFields(_ context.Context, gid string) ([]readmodel.ProjectFieldView, error) {
+	f.rec("ProjectFields", gid)
+	return nil, f.err
 }

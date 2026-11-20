@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sync/atomic"
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
@@ -37,51 +36,6 @@ type Config struct {
 	LazyProjects bool
 }
 
-type Syncer struct {
-	API   AsanaAPI
-	Store LocalStore
-	Cfg   Config
-	// RichText rewrites comments and status updates queued before #63 before Push sends
-	// them. The caller must set it (richtext.Converter{}): without it, Push fails with
-	// store.ErrNoFit when there is such an entry to check, rather than send it unchecked.
-	RichText RichText
-	// Progress receives human-readable progress messages (optional).
-	Progress func(format string, args ...any)
-	// CacheDir is where attachments are downloaded (default: xdg.CacheDir()/attachments).
-	CacheDir string
-	// Download fetches a pre-signed attachment URL. It must not add the Asana
-	// Authorization header (the storage service rejects it). Default: plain HTTP GET.
-	Download func(ctx context.Context, url string) ([]byte, error)
-	now      func() time.Time
-	sleep    func(context.Context, time.Duration) error // replaced in tests
-	// PullOnly makes Run only fetch from Asana: queued local changes are left in the
-	// outbox (they stay protected from being overwritten) and Push refuses to send.
-	// Used by the read-only MCP server, so an agent cannot send what the user queued.
-	PullOnly bool
-	// DeferCompleted makes Run leave the completed tasks of what it fetches for the first
-	// time (My Tasks, a project opened) to FetchCompleted (Result.CompletedPending), so that
-	// the incomplete ones can be shown first. Without it, Run fetches them last.
-	DeferCompleted bool
-	// accountOK is set once Asana answered as the account the local data belongs to, so
-	// Push asks /users/me only once per Syncer (see checkPushAccount).
-	accountOK atomic.Bool
-}
-
-// wait pauses for d (or until ctx is done).
-func (s *Syncer) wait(ctx context.Context, d time.Duration) error {
-	if s.sleep != nil {
-		return s.sleep(ctx, d)
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 type Result struct {
 	Full bool `json:"full"`
 	// Poll: every project was fetched with modified_since (see PollInterval). Otherwise
@@ -107,23 +61,6 @@ type Result struct {
 	Duration     time.Duration `json:"duration_ns"`
 }
 
-func (s *Syncer) clock() time.Time {
-	if s.now != nil {
-		return s.now()
-	}
-	return time.Now()
-}
-
-// serverNow is the current time by Asana's clock (as far as the responses so far tell):
-// what is compared with Asana's timestamps or sent as modified_since must not depend on
-// this machine's clock being right.
-func (s *Syncer) serverNow() time.Time {
-	if s.API == nil {
-		return s.clock()
-	}
-	return s.clock().Add(s.API.ClockOffset())
-}
-
 // Run syncs Asana into the store.
 //
 // Most syncs read each project's events (GET /events) and fetch only the tasks they say
@@ -137,14 +74,14 @@ func (s *Syncer) serverNow() time.Time {
 // Only the projects to sync are fetched this way (see lazy.go): the others are listed, and
 // their tasks are fetched once they are opened (OpenProject). What is fetched for the first
 // time comes with its incomplete tasks first; the completed ones are fetched last.
-func (s *Syncer) Run(ctx context.Context, forceFull bool) (Result, error) {
+func (s *Puller) Run(ctx context.Context, forceFull bool) (Result, error) {
 	n := s.requests()
 	res, err := s.run(ctx, forceFull)
 	res.Requests = s.requests() - n
 	return res, err
 }
 
-func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
+func (s *Puller) run(ctx context.Context, forceFull bool) (Result, error) {
 	started := s.clock()
 	res := Result{Full: forceFull}
 
@@ -161,7 +98,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	} else if want != "" && me.GID != want {
 		return res, fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	} else if want != "" {
-		s.accountOK.Store(true)
+		s.Pusher.confirmAccount()
 	}
 	// The times recorded and compared below are by Asana's clock (measured from the Date
 	// header of the answer to Me), as modified_since is compared with Asana's modified_at.
@@ -205,7 +142,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	// The whole sync holds the push lock: no other process sends meanwhile, and the store
 	// cannot be reset (store.Reset) between our push and our pull, which would bring the
 	// old data back. If another process is syncing or pushing, this sync is skipped.
-	unlock, err := s.lock(ctx, &res.Push)
+	unlock, err := s.Pusher.lock(ctx, &res.Push)
 	if err != nil {
 		return res, err
 	}
@@ -214,11 +151,11 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	drops := &dropState{} // one account check and one drop limit for the whole sync
 	if s.PullOnly {
 		res.Push.Remaining, _, _, _ = s.Store.OutboxCounts(ctx)
-	} else if res.Push, lastSent, err = s.pushLocked(ctx, drops); err != nil {
+	} else if res.Push, lastSent, err = s.Pusher.pushLocked(ctx, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 
-	mode := s.newMode(stamp)
+	mode := s.Cfg.newMode(stamp)
 	mode.full, mode.poll, mode.modifiedSince = res.Full, res.Poll, modifiedSince
 	pl := newPull(&res)
 	upsert := func(tasks []model.Task) error { return s.upsert(ctx, pl, tasks) }
@@ -345,7 +282,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 	// Changes queued by other processes during the pull (they were told this sync sends them).
 	if s.PullOnly {
 		// Nothing is sent: they stay queued for a process that may push.
-	} else if res.Push, _, err = s.catchUp(ctx, res.Push, lastSent, drops); err != nil {
+	} else if res.Push, _, err = s.Pusher.catchUp(ctx, res.Push, lastSent, drops); err != nil {
 		return res, fmt.Errorf("未送信の変更を送れませんでした: %w", err)
 	}
 	if err := s.Store.SetLastSyncAt(ctx, stamp); err != nil {
@@ -363,7 +300,7 @@ func (s *Syncer) run(ctx context.Context, forceFull bool) (Result, error) {
 // syncCustomFields fetches a project's custom fields (with their choices) on a full sync,
 // or if they were never fetched. A workspace without custom fields (Asana answers e.g. 402
 // on a free plan) simply has none; any other failure is retried on the next sync.
-func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
+func (s *Puller) syncCustomFields(ctx context.Context, projectGID string, full bool) error {
 	if !full {
 		if last, err := s.Store.ProjectCustomFieldsFetchedAt(ctx, projectGID); err != nil || last != "" {
 			return err
@@ -389,17 +326,17 @@ func (s *Syncer) syncCustomFields(ctx context.Context, projectGID string, full b
 // statuses, when its custom fields are fetched (syncCustomFields). A 402 (a plan without
 // them) records it for the workspace (plan.go): no project of it asks again for a while,
 // and it has no types meanwhile. Any other failure is retried on the next sync.
-func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID string, full bool) error {
+func (s *Puller) syncCustomTypes(ctx context.Context, projectGID, workspaceGID string, full bool) error {
 	if !full {
 		if last, err := s.Store.ProjectCustomTypesFetchedAt(ctx, projectGID); err != nil || last != "" {
 			return err
 		}
 	}
-	if hidden, err := s.planHidden(ctx, plan.CustomTypes, workspaceGID); err != nil || hidden {
+	if hidden, err := planHidden(ctx, s.Store, s.clock(), plan.CustomTypes, workspaceGID); err != nil || hidden {
 		return err // tried again on a full sync after the 402 is forgotten
 	}
 	types, err := s.API.CustomTypes(ctx, projectGID)
-	if refused, recErr := s.recordPlanRefusal(ctx, plan.CustomTypes, workspaceGID, err); refused || recErr != nil {
+	if refused, recErr := recordPlanRefusal(ctx, s.Store, s.clock(), plan.CustomTypes, workspaceGID, err); refused || recErr != nil {
 		if recErr != nil {
 			return recErr
 		}
@@ -407,7 +344,7 @@ func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID s
 	}
 	switch {
 	case err == nil:
-		if err := s.clearPlanRefusal(ctx, plan.CustomTypes, workspaceGID); err != nil {
+		if err := s.Store.ClearPlanRefusal(ctx, plan.CustomTypes, workspaceGID); err != nil {
 			return err
 		}
 		if err := s.Store.ReplaceProjectCustomTypes(ctx, projectGID, types); err != nil {
@@ -428,7 +365,7 @@ func (s *Syncer) syncCustomTypes(ctx context.Context, projectGID, workspaceGID s
 // fetched with the poll, or if they were never fetched. A workspace that is not an
 // organization has no teams. A failure keeps what is cached and is tried again on the
 // next sync; only a local error stops the sync.
-func (s *Syncer) syncTeamsAndFavorites(ctx context.Context, w model.Workspace, poll bool) error {
+func (s *Puller) syncTeamsAndFavorites(ctx context.Context, w model.Workspace, poll bool) error {
 	if !poll {
 		if last, err := s.Store.WorkspaceTeamsFetchedAt(ctx, w.GID); err != nil || last != "" {
 			return err
@@ -476,7 +413,7 @@ func isForbidden(err error) bool {
 
 // FetchDetails refreshes one task with its subtasks and stories (comments and activity).
 // Comments do not change a task's modified_at, so they are fetched on demand rather than by Run.
-func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
+func (s *Details) FetchDetails(ctx context.Context, taskGID string) error {
 	if localgid.IsLocal(taskGID) {
 		return nil // created offline; nothing on the server yet
 	}
@@ -522,7 +459,7 @@ func (s *Syncer) FetchDetails(ctx context.Context, taskGID string) error {
 // fetchDependencies stores the names and states of a task's dependencies and dependents,
 // which may not be cached (the task itself only lists their gids). Without dependencies
 // (e.g. a free plan) or offline, the task simply keeps what it has.
-func (s *Syncer) fetchDependencies(ctx context.Context, t model.Task) {
+func (s *Details) fetchDependencies(ctx context.Context, t model.Task) {
 	if len(t.Dependencies) == 0 && len(t.Dependents) == 0 {
 		return
 	}
@@ -544,9 +481,3 @@ func (e *AttachmentsError) Error() string {
 	return "添付ファイルを取得できませんでした: " + e.Err.Error()
 }
 func (e *AttachmentsError) Unwrap() error { return e.Err }
-
-func (s *Syncer) progress(format string, args ...any) {
-	if s.Progress != nil {
-		s.Progress(format, args...)
-	}
-}

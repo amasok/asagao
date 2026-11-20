@@ -127,7 +127,7 @@ func TestAttackDeleteUnsentCommentLeavesNothing(t *testing.T) {
 	must(t, s.DeleteCommentLocal(ctx, gid, testNow))
 	ops, _ := s.ListOps(ctx)
 	for _, op := range ops {
-		if strings.Contains(op.Kind, "comment") || strings.Contains(op.Kind, "story") {
+		if strings.Contains(string(op.Kind), "comment") || strings.Contains(string(op.Kind), "story") {
 			t.Errorf("left %+v", op)
 		}
 	}

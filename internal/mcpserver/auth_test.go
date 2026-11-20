@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,7 +45,7 @@ func TestLoginProblemsAreExplainedAndNewLoginIsUsed(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	builds := 0
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		mu.Lock()
 		tok := stored
 		mu.Unlock()

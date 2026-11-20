@@ -12,7 +12,7 @@ import (
 
 var attackNow = time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
 
-func insertOp(t *testing.T, st *Store, kind, task, payload, base, state string) {
+func insertOp(t *testing.T, st *Store, kind Kind, task, payload, base, state string) {
 	t.Helper()
 	if _, err := st.db.ExecContext(context.Background(),
 		`INSERT INTO outbox(kind, task_gid, payload, base, state, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -84,7 +84,7 @@ func TestPruneResultsKeepsForOpsInAnyState(t *testing.T) {
 // A queued entry of a verified kind in a failed/conflict state still holds the mappings of
 // its kind back (its verification will read them).
 func TestPruneResultsHeldBackByFailedVerifiedKinds(t *testing.T) {
-	for kind, prefix := range map[string]string{OpCreateTask: resultPrefixTask, OpDuplicateTask: resultPrefixTask, OpAddComment: resultPrefixStory, OpUploadAttachment: resultPrefixAttachment, OpCreateStatus: resultPrefixStatus} {
+	for kind, prefix := range map[Kind]string{OpCreateTask: resultPrefixTask, OpDuplicateTask: resultPrefixTask, OpAddComment: resultPrefixStory, OpUploadAttachment: resultPrefixAttachment, OpCreateStatus: resultPrefixStatus} {
 		for _, state := range []string{"pending", "conflict", "failed"} {
 			st := resultsStore(t)
 			key := prefix + "local:old"

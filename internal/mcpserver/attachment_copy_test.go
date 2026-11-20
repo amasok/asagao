@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"image"
 	"image/png"
 	"os"
@@ -31,7 +32,7 @@ func TestGetAttachmentOfImageCopiedFromAnotherTask(t *testing.T) {
 	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st), LocalSyncer: localSyncer(st)})
 	var out AttachmentOutput
 	res := call(t, cs, "get_attachment", map[string]any{"gid": "77", "task_gid": "t1"}, &out)
 	if res.IsError || len(res.Content) == 0 {

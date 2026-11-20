@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/auth"
@@ -54,8 +55,48 @@ func newClient(hc *http.Client, baseURL string) *asana.Client {
 
 // Syncer is the Syncer for api and st, with the [sync] settings of cfg and the rich text
 // conversion. A nil api leaves Syncer.API unset (offline).
-func Syncer(api sync.AsanaAPI, st sync.LocalStore, cfg config.Config) *sync.Syncer {
+func Syncer[S sync.LocalStore](api sync.AsanaAPI, st S, cfg config.Config) *sync.Syncer {
 	return &sync.Syncer{API: api, Store: st, Cfg: sync.Config(cfg.Sync), RichText: richtext.Converter{}}
+}
+
+// UseCaseStore is the store as every use case's port: *store.Store (or, in a test, a
+// wrapper of one). Only the wiring sees it whole; each use case gets its own port.
+type UseCaseStore interface {
+	app.TaskStore
+	app.CommentStore
+	app.StatusStore
+	app.BriefStore
+	app.ProjectStore
+	app.RelationStore
+	app.SectionStore
+	app.TaskOpsStore
+	app.TagStore
+	app.CopyStore
+	app.FieldOptionStore
+	app.ProjectFieldStore
+	app.NotificationStore
+	app.OutboxStore
+	app.GoalStore
+	app.TimeTrackingStore
+	app.PushStore
+	app.GitLinkStore
+	app.CustomIDStore
+	app.QuickAddStore
+	app.QueryStore
+	app.ProjectOpenStore
+	app.ViewStateStore
+	app.ResetStore
+}
+
+// UseCases are the use cases over st, writing rich text with richtext.Converter: what the
+// entry points (tui, cli, mcpserver) write and read the local cache with.
+func UseCases[S UseCaseStore](st S) *app.UseCases {
+	return app.NewUseCases(app.Ports{
+		Tasks: st, Comments: st, Status: st, Briefs: st, Projects: st, Relations: st,
+		Sections: st, TaskOps: st, Tags: st, Copies: st, FieldOptions: st, ProjectFields: st,
+		Notifications: st, Outbox: st, Goals: st, TimeTracking: st, Push: st, GitLink: st,
+		CustomIDs: st, QuickAdd: st, Query: st, ProjectOpen: st, ViewState: st, Reset: st,
+	}, richtext.Converter{})
 }
 
 // OpenStore opens (creating it if need be) the local store at path. Dropped changes are

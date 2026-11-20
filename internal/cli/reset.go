@@ -41,7 +41,7 @@ func (a *app) resetCmd() *cobra.Command {
 			if force {
 				upTo = readmodel.AnyUnsent
 			}
-			res, err := st.ResetWithBackup(ctx, backupDir(), upTo, time.Now())
+			res, err := st.App.Reset(ctx, backupDir(), upTo, time.Now())
 			switch {
 			case errors.Is(err, readmodel.ErrUnsentChanges):
 				return fmt.Errorf("Asana に送っていない変更が %d 件あり、初期化すると消えます。"+
@@ -71,7 +71,7 @@ func (a *app) resetCmd() *cobra.Command {
 }
 
 // accountChanged explains sync.ErrAccountChanged with the number of unsent changes.
-func accountChanged(ctx context.Context, st Store) error {
-	n, _ := query(st).UnsentCount(ctx)
+func accountChanged(ctx context.Context, st *Local) error {
+	n, _ := st.App.Query().UnsentCount(ctx)
 	return fmt.Errorf("%s: %w", format.AccountChangedHelp(n, "asagao reset"), sync.ErrAccountChanged)
 }

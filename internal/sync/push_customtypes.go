@@ -60,7 +60,7 @@ func (e *customTypeWithdrawn) Unwrap() error { return e.err }
 
 // customTypeRefused turns Asana's refusal (400 / 403 / 422, or 402 for the plan, which
 // is recorded for the workspace) of a change with a custom type into customTypeWithdrawn.
-func (s *Syncer) customTypeRefused(ctx context.Context, op outbox.Op, err error) error {
+func (s *Pusher) customTypeRefused(ctx context.Context, op outbox.Op, err error) error {
 	var apiErr *model.Error
 	if op.Kind != outbox.KindUpdateTask || !domaintask.TouchesCustomType(op.Payload) || !errors.As(err, &apiErr) {
 		return err
@@ -68,7 +68,7 @@ func (s *Syncer) customTypeRefused(ctx context.Context, op outbox.Op, err error)
 	switch apiErr.Status {
 	case http.StatusPaymentRequired:
 		if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
-			_, _ = s.recordPlanRefusal(ctx, plan.CustomTypes, ws, err) // per workspace, for a while (plan.go)
+			_, _ = recordPlanRefusal(ctx, s.Store, s.clock(), plan.CustomTypes, ws, err) // per workspace, for a while (plan.go)
 		}
 		return &customTypeWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.CustomTypes), err: err}
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
@@ -112,7 +112,7 @@ func customTypeApplied(op outbox.Op, t *model.Task) error {
 // decide: it is dropped (and reported in res.Discarded, with the reason), and the rest of
 // the entry, if Asana did not apply it, is sent again right away. Asana applied nothing
 // of a refused request, so sending the rest again repeats nothing.
-func (s *Syncer) withdrawCustomType(ctx context.Context, op outbox.Op, w *customTypeWithdrawn, res *PushResult) (again bool, err error) {
+func (s *Pusher) withdrawCustomType(ctx context.Context, op outbox.Op, w *customTypeWithdrawn, res *PushResult) (again bool, err error) {
 	rest, d, err := s.Store.WithdrawCustomType(ctx, op.ID, w.reason, w.applied, s.clock())
 	if err != nil {
 		return false, err

@@ -20,7 +20,7 @@ func TestMySectionsOtherFailuresRecordNothing(t *testing.T) {
 		f := &myTasksAsana{section: "m2", listIn: map[string]int{"w1": status}}
 		s, st, _ := setupMyTasks(t, f)
 		ctx := context.Background()
-		_ = s.syncMySections(ctx, "w1")
+		_ = s.Puller().syncMySections(ctx, "w1")
 		for _, ws := range []string{"w1", "w2", ""} {
 			if _, ok, _ := st.PlanRefusedAt(ctx, plan.MySection, ws); ok {
 				t.Errorf("status %d: recorded for %q", status, ws)
@@ -44,7 +44,7 @@ func TestMySectionsConcurrentWorkspaces(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_ = s.syncMySections(ctx, ws)
+				_ = s.Puller().syncMySections(ctx, ws)
 			}()
 		}
 	}
@@ -73,7 +73,7 @@ func TestMySectionsFutureRecordAsksAgain(t *testing.T) {
 	if err := st.RecordPlanRefusal(ctx, plan.MySection, "w1", now.Add(48*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncMySections(ctx, "w1"); err != nil {
+	if err := s.Puller().syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	if f.listsIn("w1") != 1 {
@@ -92,7 +92,7 @@ func TestMySectionsGarbageRecordAsksAgain(t *testing.T) {
 	if err := st.SetSyncState(ctx, "plan_unavailable:"+plan.MySection+":w1", "1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncMySections(ctx, "w1"); err != nil {
+	if err := s.Puller().syncMySections(ctx, "w1"); err != nil {
 		t.Fatal(err)
 	}
 	if f.listsIn("w1") != 1 {
@@ -105,20 +105,20 @@ func TestMySectionsRecheckBoundary(t *testing.T) {
 	f := &myTasksAsana{section: "m2", listIn: map[string]int{"w1": http.StatusPaymentRequired}}
 	s, _, now := setupMyTasks(t, f)
 	ctx := context.Background()
-	_ = s.syncMySections(ctx, "w1")
+	_ = s.Puller().syncMySections(ctx, "w1")
 	*now = now.Add(plan.RecheckAfter - time.Nanosecond)
-	_ = s.syncMySections(ctx, "w1")
+	_ = s.Puller().syncMySections(ctx, "w1")
 	if n := f.listsIn("w1"); n != 1 {
 		t.Fatalf("asked %d times 1ns before the day", n)
 	}
 	*now = now.Add(time.Nanosecond)
-	_ = s.syncMySections(ctx, "w1")
+	_ = s.Puller().syncMySections(ctx, "w1")
 	if n := f.listsIn("w1"); n != 2 {
 		t.Fatalf("asked %d times at the day", n)
 	}
 	// Still 402: recorded again from the new time, so it hides for another day.
 	*now = now.Add(time.Hour)
-	_ = s.syncMySections(ctx, "w1")
+	_ = s.Puller().syncMySections(ctx, "w1")
 	if n := f.listsIn("w1"); n != 2 {
 		t.Fatalf("asked %d times right after a new 402", n)
 	}

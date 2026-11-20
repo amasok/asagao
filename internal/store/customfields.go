@@ -19,6 +19,10 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpSetCustomField, undoWith(applyCustomFieldOp))
+}
+
 // Custom fields. Values are kept in the form Asana accepts when setting them (PUT
 // /tasks/{gid} custom_fields), so a local change is sent as it is stored:
 //

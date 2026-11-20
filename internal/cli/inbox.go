@@ -26,9 +26,6 @@ type inboxOutput struct {
 	Recent        []readmodel.TaskSummary  `json:"recent,omitempty"`
 }
 
-// recentDays is how far back the recent updates (the inbox substitute) go.
-const recentDays = 7
-
 func (a *app) inboxCmd() *cobra.Command {
 	var unread bool
 	var limit int
@@ -59,7 +56,7 @@ func (a *app) inboxCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			if !out.Available {
 				fmt.Fprintln(cmd.ErrOrStderr(), out.Notice)
-				fmt.Fprintf(w, "最近の更新（直近 %d 日）:\n", recentDays)
+				fmt.Fprintf(w, "最近の更新（直近 %d 日）:\n", usecase.RecentDays)
 				printTaskTable(w, out.Recent)
 				return nil
 			}
@@ -77,28 +74,20 @@ func (a *app) inboxCmd() *cobra.Command {
 	return cmd
 }
 
-func loadInbox(ctx context.Context, st Store, unread bool, limit int, scopes []string, now time.Time) (inboxOutput, error) {
-	state, err := query(st).InboxState(ctx)
+func loadInbox(ctx context.Context, st *Local, unread bool, limit int, scopes []string, now time.Time) (inboxOutput, error) {
+	v, err := st.App.Query().Inbox(ctx, unread, limit, now)
 	if err != nil {
 		return inboxOutput{}, err
 	}
-	out := inboxOutput{Available: state.Available(), Notifications: []readmodel.Notification{}}
-	if out.Available && state.WriteForbidden {
+	out := inboxOutput{Available: v.State.Available(), Notifications: v.Notifications, Unread: v.Unread, Recent: v.Recent}
+	switch {
+	case !out.Available:
+		out.Notice = sync.InboxUnavailableMessage(v.State, scopes)
+		out.Notifications = []readmodel.Notification{}
+	case v.State.WriteForbidden:
 		out.Notice = sync.InboxReadOnlyMessage(scopes)
 	}
-	if !out.Available {
-		out.Notice = sync.InboxUnavailableMessage(state, scopes)
-		out.Recent, err = query(st).ListTasks(ctx, readmodel.TaskFilter{
-			ModifiedAfter:  now.AddDate(0, 0, -recentDays).UTC().Format(time.RFC3339),
-			SortByModified: true, Limit: limit,
-		})
-		return out, err
-	}
-	if out.Notifications, err = query(st).ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: unread, Limit: limit}); err != nil {
-		return out, err
-	}
-	out.Unread, err = query(st).UnreadNotifications(ctx)
-	return out, err
+	return out, nil
 }
 
 func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
@@ -124,7 +113,7 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			notifications := &usecase.Notifications{Store: st, Clock: time.Now}
+			notifications := st.App.Notifications(time.Now)
 			n, err := notifications.MarkHere(ctx, gids, read)
 			if err != nil {
 				return err
@@ -149,9 +138,9 @@ func (a *app) inboxMarkCmd(use string, read bool) *cobra.Command {
 
 // resolveNotifications turns the arguments (gids or unique suffixes) into gids; all
 // takes every cached notification not in the read state yet.
-func resolveNotifications(ctx context.Context, st Store, args []string, all, read bool) ([]string, error) {
+func resolveNotifications(ctx context.Context, st *Local, args []string, all, read bool) ([]string, error) {
 	if all {
-		ns, err := query(st).ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: read})
+		ns, err := st.App.Query().ListNotifications(ctx, readmodel.NotificationFilter{UnreadOnly: read})
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +152,7 @@ func resolveNotifications(ctx context.Context, st Store, args []string, all, rea
 		}
 		return gids, nil
 	}
-	return (&usecase.Notifications{Store: st}).Resolve(ctx, args)
+	return st.App.Notifications(time.Now).Resolve(ctx, args)
 }
 
 // printNotifications prints one line per notification: unread mark, when, who, what,

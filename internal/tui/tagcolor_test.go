@@ -12,7 +12,7 @@ import (
 // name Asana's GET answers (red, after a pull) or the written one (after a local change);
 // a name two colors share is the first of them (#52).
 func TestTUITagColorPickerMarksCurrent(t *testing.T) {
-	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow }}))
 	for color, want := range map[string]string{
 		"red": "dark-red", "RED": "dark-red", "dark-red": "dark-red", "blue": "dark-blue", "light-blue": "light-blue",
 		"yellow": "dark-brown", "light-yellow": "light-yellow", "cool-gray": "dark-warm-gray", "purple": "light-purple",

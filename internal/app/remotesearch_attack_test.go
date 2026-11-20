@@ -42,7 +42,7 @@ func TestSearchWithAsanaAttack(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := &searchCache{tasks: slices.Clone(tc.cache)}
 			find := &fakeTaskFinder{cache: cache, found: tc.found}
-			out, err := SearchWithAsana(context.Background(), Query{Store: cache}, find, tc.f)
+			out, err := SearchWithAsana(context.Background(), Query{QueryStore: cache}, find, tc.f)
 			if err != nil || out.RemoteErr != nil {
 				t.Fatal(err, out.RemoteErr)
 			}
@@ -65,7 +65,7 @@ func TestSearchWithAsanaErrorsKeepLocal(t *testing.T) {
 		cache := &searchCache{tasks: []readmodel.TaskSummary{ts("1", "牛乳", false)}}
 		find := &fakeTaskFinder{cache: cache, err: e}
 		f := readmodel.TaskFilter{Query: "牛乳", Limit: 3, GIDs: nil}
-		out, err := SearchWithAsana(context.Background(), Query{Store: cache}, find, f)
+		out, err := SearchWithAsana(context.Background(), Query{QueryStore: cache}, find, f)
 		if err != nil || !errors.Is(out.RemoteErr, e) || !slices.Equal(taskGIDs(out.Tasks), []string{"1"}) {
 			t.Fatalf("%v: %+v %v", e, out, err)
 		}
@@ -75,7 +75,7 @@ func TestSearchWithAsanaErrorsKeepLocal(t *testing.T) {
 	}
 	// a cache failure is an error even when Asana answered
 	cache := &searchCache{err: errors.New("db")}
-	if _, err := SearchWithAsana(context.Background(), Query{Store: cache}, &fakeTaskFinder{cache: cache}, readmodel.TaskFilter{Query: "q"}); err == nil {
+	if _, err := SearchWithAsana(context.Background(), Query{QueryStore: cache}, &fakeTaskFinder{cache: cache}, readmodel.TaskFilter{Query: "q"}); err == nil {
 		t.Fatal("cache error swallowed")
 	}
 }
@@ -85,7 +85,7 @@ func TestWithFoundEmptyList(t *testing.T) {
 	cache := &searchCache{tasks: []readmodel.TaskSummary{ts("1", "a", false), ts("2", "b", false)}}
 	local := []readmodel.TaskSummary{ts("1", "a", false)}
 	for _, g := range [][]string{nil, {}} {
-		got, err := WithFound(context.Background(), Query{Store: cache}, readmodel.TaskFilter{Query: "a"}, local, g)
+		got, err := WithFound(context.Background(), Query{QueryStore: cache}, readmodel.TaskFilter{Query: "a"}, local, g)
 		if err != nil || !slices.Equal(taskGIDs(got), []string{"1"}) {
 			t.Fatalf("%v: %v %v", g, got, err)
 		}
@@ -94,7 +94,7 @@ func TestWithFoundEmptyList(t *testing.T) {
 		t.Fatalf("cache asked: %+v", cache.filters)
 	}
 	// a found list whose tasks are all filtered out: GIDs set (not nil), so 2 does not leak in
-	got, _ := WithFound(context.Background(), Query{Store: cache}, readmodel.TaskFilter{Query: "a", Completed: boolPtr(true)}, nil, []string{"2"})
+	got, _ := WithFound(context.Background(), Query{QueryStore: cache}, readmodel.TaskFilter{Query: "a", Completed: boolPtr(true)}, nil, []string{"2"})
 	if len(got) != 0 {
 		t.Fatalf("leaked %v", got)
 	}
