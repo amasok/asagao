@@ -155,9 +155,7 @@ type Model struct {
 	listOffset int
 	taskSeq    int // drops stale task loads
 
-	detail     *readmodel.TaskDetail
-	detailMe   string // the logged-in user when detail was loaded: their comments can be changed
-	detailView viewport.Model
+	detail detailState // the detail pane (detail.go, detailnav.go)
 
 	search    textinput.Model
 	searching bool // input has focus
@@ -171,7 +169,6 @@ type Model struct {
 	syncBusy    bool // the last sync found another process syncing; retrying soon
 	busyRetries int  // busy syncs in a row (the retry waits longer each time)
 	lastSync    time.Time
-	fetchingFor string // gid whose details are being fetched
 	opening     string // project whose tasks are being fetched (lazy.go)
 
 	status string // transient message for the footer
@@ -244,21 +241,14 @@ type Model struct {
 	expanded      map[string]bool // tasks whose subtasks are shown under them
 	subtaskParent string          // parent for promptSubtask
 
-	// detail navigation (detailnav.go)
-	detailStack  []string     // tasks opened from the detail view (subtasks); top is shown
-	detailCursor int          // selected item in the detail view
-	detailItems  []detailItem // items of the rendered detail (fields, subtasks, add rows)
-	returnTo     string       // subtask to reselect after going back to its parent
-	commentGID   string       // task the comment prompt posts to
+	commentGID string // task the comment prompt posts to
 
 	// keys (keymap.go) and choosers (pickers.go)
-	renderedActive bool                    // the detail was last rendered with selectable items
-	dueTask        readmodel.TaskSummary   // task for promptDue and promptStart
-	startOffered   bool                    // the detail's task can be given a start date (startdate.go)
-	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
-	marked         map[string]bool         // gids of the tasks marked in the list (bulk.go)
-	bulkAsk        *bulkPlan               // a change to the marked tasks waiting for y/n
-	tagTask        readmodel.TaskSummary   // task for promptNewTag
+	dueTask      readmodel.TaskSummary   // task for promptDue and promptStart
+	bulkDueTasks []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
+	marked       map[string]bool         // gids of the tasks marked in the list (bulk.go)
+	bulkAsk      *bulkPlan               // a change to the marked tasks waiting for y/n
+	tagTask      readmodel.TaskSummary   // task for promptNewTag
 	// custom fields (fields.go)
 	fieldTask   readmodel.TaskSummary     // task for promptField
 	fieldEdit   readmodel.CustomFieldView // field for promptField
@@ -288,7 +278,7 @@ func New(ctx context.Context, deps Deps) *Model {
 		st:          newStyles(true, deps.Accent),
 		focus:       paneList,
 		scopes:      []scope{{kind: scopeMyTasks, name: "My Tasks"}},
-		detailView:  viewport.New(),
+		detail:      detailState{view: viewport.New()},
 		search:      ti,
 		prompt:      newInput(),
 		dark:        true,
@@ -473,10 +463,10 @@ func (m *Model) scheduleSync() tea.Cmd {
 }
 
 func (m *Model) fetchDetails(gid string) tea.Cmd {
-	if m.syncer == nil || m.fetchingFor == gid {
+	if m.syncer == nil || m.detail.fetchingFor == gid {
 		return nil
 	}
-	m.fetchingFor = gid
+	m.detail.fetchingFor = gid
 	syncer := m.syncer
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, 15*time.Second)
@@ -504,7 +494,7 @@ func (m *Model) openURL(url string) tea.Cmd {
 // sends any inline images that need (re)sending.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
-	if m.inDetail() != m.renderedActive {
+	if m.inDetail() != m.detail.renderedActive {
 		m.refreshDetailView() // items appear / disappear with the detail focus
 	}
 	m.syncDetailWidth()
@@ -596,19 +586,19 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.detail = nil
+			m.detail.task = nil
 			m.status = msg.err.Error()
 			if errors.Is(msg.err, readmodel.ErrNotFound) && m.selectedNotification() != nil {
 				m.status = "通知のタスクはまだ取得していません（オンラインなら自動で取得します）"
 			}
 		} else {
-			keepScroll := m.detail != nil && m.detail.GID == msg.gid
-			m.detail, m.detailMe, m.startOffered = msg.d, msg.me, msg.startOffered
+			keepScroll := m.detail.task != nil && m.detail.task.GID == msg.gid
+			m.detail.task, m.detail.me, m.detail.startOffered = msg.d, msg.me, msg.startOffered
 			m.placeCursorAfterLoad(keepScroll)
 			m.refreshDetailView()
-			m.detailCursor = clamp(m.detailCursor, 0, len(m.detailItems)-1)
+			m.detail.cursor = clamp(m.detail.cursor, 0, len(m.detail.items)-1)
 			if !keepScroll {
-				m.detailView.GotoTop()
+				m.detail.view.GotoTop()
 			}
 			m.scrollToCursor()
 			return m, m.prepareInline()
@@ -624,8 +614,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case remoteSearchMsg:
 		return m, m.remoteSearchDone(msg)
 	case detailFetchedMsg:
-		if m.fetchingFor == msg.gid {
-			m.fetchingFor = ""
+		if m.detail.fetchingFor == msg.gid {
+			m.detail.fetchingFor = ""
 		}
 		var attErr *sync.AttachmentsError
 		if errors.As(msg.err, &attErr) {
@@ -865,8 +855,8 @@ func (m *Model) back(key string) tea.Cmd {
 	case m.zoom:
 		m.zoom = false
 		m.focus = paneList
-		if t := m.selectedTask(); t == nil || len(m.detailStack) > 0 {
-			m.detailStack = nil // opened from the calendar or a subtask: back to the list's task
+		if t := m.selectedTask(); t == nil || len(m.detail.stack) > 0 {
+			m.detail.stack = nil // opened from the calendar or a subtask: back to the list's task
 			if t != nil {
 				return m.loadDetail(t.GID)
 			}
@@ -998,11 +988,11 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	}
 	t := m.selectedTask()
 	if t == nil {
-		m.detail = nil
+		m.detail.task = nil
 		m.refreshDetailView()
 		return nil
 	}
-	if gid := m.detailGID(); gid != t.GID || (t.GID == prev && m.detail != nil) {
+	if gid := m.detailGID(); gid != t.GID || (t.GID == prev && m.detail.task != nil) {
 		return m.loadDetail(gid) // refresh in place (or the subtask opened in the detail)
 	}
 	return tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
@@ -1099,10 +1089,10 @@ func (m *Model) debounceDetail(gid string) tea.Cmd {
 }
 
 func (m *Model) needsDetailFetch() bool {
-	if m.detail == nil || m.detail.DetailsFetchedAt == "" {
+	if m.detail.task == nil || m.detail.task.DetailsFetchedAt == "" {
 		return true
 	}
-	t, err := time.Parse(time.RFC3339, m.detail.DetailsFetchedAt)
+	t, err := time.Parse(time.RFC3339, m.detail.task.DetailsFetchedAt)
 	return err != nil || m.deps.Now().Sub(t) > detailRefreshAge
 }
 

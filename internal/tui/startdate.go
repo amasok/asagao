@@ -48,8 +48,8 @@ func (m *Model) startStartPrompt(t readmodel.TaskSummary) tea.Cmd {
 
 // detailStartOn is the start date of task gid when it is the one in the detail ("" else).
 func (m *Model) detailStartOn(gid string) string {
-	if m.detail != nil && m.detail.GID == gid {
-		return m.detail.StartOn
+	if m.detail.task != nil && m.detail.task.GID == gid {
+		return m.detail.task.StartOn
 	}
 	return ""
 }

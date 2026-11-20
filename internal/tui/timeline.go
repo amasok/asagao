@@ -163,14 +163,14 @@ func (m *Model) tlFollowSelection(l tlLayout) {
 // from its detail once loaded.
 func (m *Model) tlRelations() (before, after map[string]bool) {
 	t := m.selectedTask()
-	if t == nil || m.detail == nil || m.detail.GID != t.GID {
+	if t == nil || m.detail.task == nil || m.detail.task.GID != t.GID {
 		return nil, nil
 	}
 	before, after = map[string]bool{}, map[string]bool{}
-	for _, d := range m.detail.Dependencies {
+	for _, d := range m.detail.task.Dependencies {
 		before[d.GID] = true
 	}
-	for _, d := range m.detail.Dependents {
+	for _, d := range m.detail.task.Dependents {
 		after[d.GID] = true
 	}
 	return before, after

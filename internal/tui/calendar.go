@@ -156,10 +156,10 @@ func (m *Model) openDayPicker() {
 
 // openTaskDetail shows any task full screen (from the calendar or recent updates).
 func (m *Model) openTaskDetail(gid string) tea.Cmd {
-	m.detailStack = []string{gid}
+	m.detail.stack = []string{gid}
 	m.zoom = true
 	m.focus = paneDetail
-	m.detailCursor = 0
+	m.detail.cursor = 0
 	return tea.Batch(m.loadDetail(gid), m.debounceDetail(gid))
 }
 

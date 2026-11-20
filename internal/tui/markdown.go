@@ -139,7 +139,7 @@ func (m *Model) imageBlock(gid string, width, n int) []string {
 
 // prepareInline starts loading the images of the current task for inline display.
 func (m *Model) prepareInline() tea.Cmd {
-	d := m.detail
+	d := m.detail.task
 	if !m.deps.InlineImages || d == nil {
 		return nil
 	}
@@ -185,7 +185,7 @@ func (m *Model) onInlineLoaded(msg inlineLoadedMsg) {
 	img.loading, img.err = false, msg.err
 	if msg.err != nil {
 		// Keep the error so the image line says why; prepareInline tries again next time.
-		if d := m.detail; d != nil {
+		if d := m.detail.task; d != nil {
 			for i, g := range taskImages(d) {
 				if g == msg.gid {
 					m.status = fmt.Sprintf("画像%d を表示できません: %s", i+1, msg.err.Error())

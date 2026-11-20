@@ -1538,7 +1538,7 @@ func TestListCursorAfterComplete(t *testing.T) {
 	if len(h.visibleGIDs()) != 0 || h.selected() != "" {
 		t.Fatalf("empty list should select nothing: %v %q", h.visibleGIDs(), h.selected())
 	}
-	if h.m.detail != nil {
+	if h.m.detail.task != nil {
 		t.Fatal("detail should be cleared when nothing is selected")
 	}
 }

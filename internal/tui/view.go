@@ -108,8 +108,8 @@ func (m *Model) layoutDetail() {
 	if m.narrow() {
 		dw = m.width
 	}
-	m.detailView.SetWidth(max(1, dw-4))
-	m.detailView.SetHeight(m.listHeight())
+	m.detail.view.SetWidth(max(1, dw-4))
+	m.detail.view.SetHeight(m.listHeight())
 	m.refreshDetailView()
 }
 
@@ -179,19 +179,19 @@ func (m *Model) renderBody(h int) string {
 		panes = append(panes, m.pane(m.listTitle(), m.listLines(lw-4, h-3), lw, h, m.focus == paneList))
 	}
 	if dw > 0 {
-		if m.detailView.Width() != max(1, dw-4) {
-			m.detailView.SetWidth(max(1, dw-4))
+		if m.detail.view.Width() != max(1, dw-4) {
+			m.detail.view.SetWidth(max(1, dw-4))
 			m.refreshDetailView() // re-wrap for the new width (e.g. after z)
 		}
-		m.detailView.SetHeight(h - 3)
+		m.detail.view.SetHeight(h - 3)
 		title := "詳細"
 		if m.zoom {
 			title = "詳細（z / esc で戻る）"
 		}
-		if m.fetchingFor != "" && m.detail != nil && m.fetchingFor == m.detail.GID {
+		if m.detail.fetchingFor != "" && m.detail.task != nil && m.detail.fetchingFor == m.detail.task.GID {
 			title += " ⟳"
 		}
-		panes = append(panes, m.pane(title, strings.Split(m.detailView.View(), "\n"), dw, h, m.focus == paneDetail))
+		panes = append(panes, m.pane(title, strings.Split(m.detail.view.View(), "\n"), dw, h, m.focus == paneDetail))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, panes...)
 }
@@ -528,23 +528,23 @@ func (m *Model) highlight(s string, w int, selected, focused bool) string {
 // --- detail ---
 
 func (m *Model) refreshDetailView() {
-	m.detailView.SetContent(m.renderDetail(max(10, m.detailView.Width())))
+	m.detail.view.SetContent(m.renderDetail(max(10, m.detail.view.Width())))
 }
 
 func (m *Model) renderDetail(w int) string {
-	d := m.detail
-	m.detailItems = m.detailItems[:0]
+	d := m.detail.task
+	m.detail.items = m.detail.items[:0]
 	if d == nil {
 		return m.st.dim.Render("タスクを選択してください")
 	}
 	active := m.inDetail() // items are selectable (and empty fields shown)
-	m.renderedActive = active
+	m.detail.renderedActive = active
 	var b strings.Builder
 	line := func() int { return strings.Count(b.String(), "\n") }
 	// item marks the next line as a selectable item and returns whether it is selected.
 	item := func(kind itemKind, sub int) bool {
-		m.detailItems = append(m.detailItems, detailItem{kind: kind, sub: sub, line: line()})
-		return active && len(m.detailItems)-1 == m.detailCursor
+		m.detail.items = append(m.detail.items, detailItem{kind: kind, sub: sub, line: line()})
+		return active && len(m.detail.items)-1 == m.detail.cursor
 	}
 	row := func(selected bool, text string) {
 		if selected {
@@ -554,7 +554,7 @@ func (m *Model) renderDetail(w int) string {
 		}
 	}
 
-	if len(m.detailStack) > 1 {
+	if len(m.detail.stack) > 1 {
 		b.WriteString(m.st.dim.Render("← backspace で戻る") + "\n")
 	}
 	title := d.Name
@@ -586,7 +586,7 @@ func (m *Model) renderDetail(w int) string {
 	}
 	field(itemAssignee, "担当", assignee, "未割り当て")
 	field(itemDue, "期日", longDue(d.DueOn, d.DueAt), "なし")
-	if m.startOffered {
+	if m.detail.startOffered {
 		field(itemStart, "開始日", d.StartOn, "なし")
 	} else if d.StartOn != "" { // the plan lacks start dates (a recent 402): shown, not offered
 		b.WriteString(m.st.label.Render(padRight("開始日", labelW)) + " " + d.StartOn + "\n")

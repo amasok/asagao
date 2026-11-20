@@ -80,13 +80,13 @@ func TestInlineImageFailureReason(t *testing.T) {
 	if !strings.Contains(s, "[画像1]（表示できません: 画像として読") {
 		t.Fatalf("image line should give the reason:\n%s", s)
 	}
-	h.send(detailLoadedMsg{gid: "t1", d: h.m.detail}) // the task is loaded again: tries again, fails again
+	h.send(detailLoadedMsg{gid: "t1", d: h.m.detail.task}) // the task is loaded again: tries again, fails again
 	if !strings.Contains(h.m.status, "画像1 を表示できません: 画像として読めません（1220507679870013-shot.png）") {
 		t.Fatalf("status = %q", h.m.status)
 	}
 	// Opening the task again tries again.
 	_ = os.WriteFile(path, pngBytes(t, 40, 20), 0o600)
-	h.send(detailLoadedMsg{gid: "t1", d: h.m.detail})
+	h.send(detailLoadedMsg{gid: "t1", d: h.m.detail.task})
 	if !strings.Contains(h.m.render(), "\U0010EEEE") {
 		t.Fatalf("image should load on retry: %+v\n%s", h.m.inline["1220507679870013"], h.screen())
 	}

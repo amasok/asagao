@@ -109,8 +109,8 @@ func (m *Model) showProjects(task readmodel.TaskSummary) {
 		cursor = m.picker.cursor
 	}
 	in := map[string]bool{}
-	if m.detail != nil && m.detail.GID == task.GID {
-		task = m.detail.TaskSummary // freshest memberships
+	if m.detail.task != nil && m.detail.task.GID == task.GID {
+		task = m.detail.task.TaskSummary // freshest memberships
 	}
 	for _, ms := range task.Memberships {
 		in[ms.ProjectGID] = true
@@ -214,7 +214,7 @@ func (m *Model) openAttachment(a readmodel.AttachmentView) tea.Cmd {
 	if syncer == nil {
 		syncer = &sync.Syncer{Store: m.deps.Store}
 	}
-	taskGID := m.detail.GID
+	taskGID := m.detail.task.GID
 	return func() tea.Msg {
 		path, err := syncer.DownloadAttachment(m.ctx, taskGID, a.GID)
 		if err != nil {
