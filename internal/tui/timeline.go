@@ -29,7 +29,7 @@ const (
 )
 
 func (m *Model) timelineActive() bool {
-	return m.mode == viewTimeline && m.currentScope().kind == scopeProject && m.query == ""
+	return m.mode == viewTimeline && m.currentScope().kind == scopeProject && m.search.query == ""
 }
 
 // tlDayWidth is the number of columns of one day.

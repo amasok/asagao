@@ -52,7 +52,7 @@ func (m *Model) saveCollapsed() tea.Cmd {
 
 // visibleRows drops the tasks of collapsed groups (search results are never collapsed).
 func (m *Model) visibleRows() []row {
-	if m.query != "" || len(m.collapsed) == 0 {
+	if m.search.query != "" || len(m.collapsed) == 0 {
 		out := make([]row, len(m.allRows))
 		copy(out, m.allRows)
 		for i := range out {
@@ -89,7 +89,7 @@ func (m *Model) groupAt(i int) int {
 // toggleGroup collapses the group under the cursor, or expands it if it is collapsed.
 func (m *Model) toggleGroup() tea.Cmd {
 	h := m.groupAt(m.listCursor)
-	if h < 0 || m.query != "" {
+	if h < 0 || m.search.query != "" {
 		return nil
 	}
 	key := m.rows[h].key
@@ -118,7 +118,7 @@ func (m *Model) toggleGroup() tea.Cmd {
 
 // setAllGroups collapses (true) or expands (false) every group.
 func (m *Model) setAllGroups(collapse bool) tea.Cmd {
-	if m.query != "" {
+	if m.search.query != "" {
 		return nil
 	}
 	var prev string
@@ -151,7 +151,7 @@ func (m *Model) sectionUnderCursor() (gid, name string) {
 		}
 		return "", ""
 	}
-	if sc.kind == scopeProject && m.query == "" {
+	if sc.kind == scopeProject && m.search.query == "" {
 		if h := m.groupAt(m.listCursor); h >= 0 && m.rows[h].key != "other" {
 			return m.rows[h].key, m.rows[h].header
 		}

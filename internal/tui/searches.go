@@ -87,8 +87,8 @@ func (m *Model) applySavedSearch(name string) tea.Cmd {
 	}
 	m.saved = &x
 	m.filter, m.tagFilter, m.fieldFilter = filterOpen, "", fieldFilter{}
-	m.query = ""
-	m.search.SetValue("")
+	m.search.query = ""
+	m.search.input.SetValue("")
 	return m.loadTasks()
 }
 

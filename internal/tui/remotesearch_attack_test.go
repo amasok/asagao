@@ -13,11 +13,11 @@ import (
 // A late answer for an older search does not replace what Asana found for the current one (#36).
 func TestRemoteSearchLateAnswerKeepsTheNewer(t *testing.T) {
 	h := newHarness(t, 160, 30)
-	h.m.query = "B"
+	h.m.search.query = "B"
 	h.run(h.m.remoteSearchDone(remoteSearchMsg{query: "B", res: readmodel.RemoteSearchResult{GIDs: []string{"b1"}}}))
 	h.run(h.m.remoteSearchDone(remoteSearchMsg{query: "A", res: readmodel.RemoteSearchResult{GIDs: []string{"a1"}}}))
-	if got := h.m.remote.foundFor("B"); len(got) != 1 || got[0] != "b1" {
-		t.Fatalf("the current search's results were replaced by an old answer: %+v", h.m.remote)
+	if got := h.m.search.remote.foundFor("B"); len(got) != 1 || got[0] != "b1" {
+		t.Fatalf("the current search's results were replaced by an old answer: %+v", h.m.search.remote)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestRemoteSearchWithoutSyncer(t *testing.T) {
 		t.Fatal("nil syncer became a non-nil NameFinder")
 	}
 	h.m.deps.NewSyncer = func(context.Context) (*sync.Syncer, error) { return nil, errors.New("no token\x1b[2J") }
-	h.m.query = "x"
+	h.m.search.query = "x"
 	h.run(h.m.searchAsana())
 	if s := h.m.status; strings.ContainsRune(s, 0x1b) || !strings.Contains(s, "Asana では探せませんでした") {
 		t.Fatalf("status %q", s)
@@ -58,7 +58,7 @@ func TestRemoteSearchWithoutSyncer(t *testing.T) {
 func TestRemoteSearchStatusIsTermsafe(t *testing.T) {
 	h := newHarness(t, 160, 30)
 	h.m.deps.NewSyncer = func(context.Context) (*sync.Syncer, error) { return nil, errors.New("x") }
-	h.m.query = "a\x1b]0;x\x07b"
+	h.m.search.query = "a\x1b]0;x\x07b"
 	_ = h.m.searchAsana()
 	if strings.ContainsRune(h.m.status, 0x1b) || strings.ContainsRune(h.m.status, 7) {
 		t.Fatalf("status %q", h.m.status)

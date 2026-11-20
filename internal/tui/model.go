@@ -157,11 +157,8 @@ type Model struct {
 
 	detail detailState // the detail pane (detail.go, detailnav.go)
 
-	search    textinput.Model
-	searching bool // input has focus
-	query     string
-	remote    remoteFound // what Asana found for a search (remotesearch.go)
-	filter    filterMode
+	search searchState
+	filter filterMode
 
 	syncer      *sync.Syncer
 	syncing     bool
@@ -263,7 +260,7 @@ func New(ctx context.Context, deps Deps) *Model {
 		focus:       paneList,
 		scopes:      []scope{{kind: scopeMyTasks, name: "My Tasks"}},
 		detail:      detailState{view: viewport.New()},
-		search:      ti,
+		search:      searchState{input: ti},
 		prompt:      promptState{input: newInput()},
 		dark:        true,
 		detailRatio: defaultDetailRatio,
@@ -354,8 +351,8 @@ func (m *Model) loadTasks() tea.Cmd {
 
 func (m *Model) loadList() tea.Cmd {
 	m.taskSeq++
-	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
-	found := m.remote.foundFor(query)
+	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.search.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
+	found := m.search.remote.foundFor(query)
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
 	needCollapsed := scopeKey != m.collapsedScope
 	expanded := make(map[string]bool, len(m.expanded))
@@ -680,9 +677,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return model, cmd
 	}
 
-	if m.searching {
+	if m.search.active {
 		var cmd tea.Cmd
-		m.search, cmd = m.search.Update(msg)
+		m.search.input, cmd = m.search.input.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -711,7 +708,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleGoalKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
-	case m.searching:
+	case m.search.active:
 		return m.handleSearchKey(msg)
 	case m.showing(overlayMenu):
 		switch {
@@ -739,10 +736,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.openOverlay(overlayHelp)
 		return m, nil
 	case "/":
-		m.searching = true
-		m.search.SetValue(m.query)
-		m.search.CursorEnd()
-		return m, m.search.Focus()
+		m.search.active = true
+		m.search.input.SetValue(m.search.query)
+		m.search.input.CursorEnd()
+		return m, m.search.input.Focus()
 	case "esc", "backspace", "q":
 		return m, m.back(key)
 	case "tab", "shift+tab":
@@ -846,9 +843,9 @@ func (m *Model) back(key string) tea.Cmd {
 			}
 		}
 		return nil
-	case key != "q" && m.query != "":
-		m.query = ""
-		m.search.Reset()
+	case key != "q" && m.search.query != "":
+		m.search.query = ""
+		m.search.input.Reset()
 		return m.loadTasks()
 	case m.focus == paneDetail:
 		m.focus = paneList
@@ -862,20 +859,28 @@ func (m *Model) back(key string) tea.Cmd {
 	return nil
 }
 
+// searchState is the search in the footer (/): the text typed and what Asana found for it.
+type searchState struct {
+	input  textinput.Model
+	active bool // input has focus
+	query  string
+	remote remoteFound // what Asana found for a search (remotesearch.go)
+}
+
 func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key := msg.String(); key {
 	case "esc":
-		m.searching = false
-		m.search.Blur()
-		m.search.Reset()
-		if m.query != "" {
-			m.query = ""
+		m.search.active = false
+		m.search.input.Blur()
+		m.search.input.Reset()
+		if m.search.query != "" {
+			m.search.query = ""
 			return m, m.loadTasks()
 		}
 		return m, nil
 	case "enter":
-		m.searching = false
-		m.search.Blur()
+		m.search.active = false
+		m.search.input.Blur()
 		m.focus = paneList
 		return m, nil
 	case "up", "ctrl+p":
@@ -884,9 +889,9 @@ func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveList(1)
 	}
 	var cmd tea.Cmd
-	m.search, cmd = m.search.Update(msg)
-	if q := m.search.Value(); q != m.query {
-		m.query = q
+	m.search.input, cmd = m.search.input.Update(msg)
+	if q := m.search.input.Value(); q != m.search.query {
+		m.search.query = q
 		return m, tea.Batch(cmd, m.loadTasks())
 	}
 	return m, cmd

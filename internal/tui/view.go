@@ -247,8 +247,8 @@ func (m *Model) renderHeader() string {
 	if m.calendarActive() {
 		left += "  " + m.st.headerFilter.Render("[カレンダー]")
 	}
-	if m.query != "" {
-		left += "  " + m.st.headerFilter.Render("検索: "+m.query)
+	if m.search.query != "" {
+		left += "  " + m.st.headerFilter.Render("検索: "+m.search.query)
 	}
 	status, ok := m.syncStatus()
 	style := m.st.dim
@@ -278,9 +278,9 @@ func (m *Model) renderFooter() string {
 		m.prompt.input.SetWidth(max(10, m.width-4))
 		return m.prompt.input.View()
 	}
-	if m.searching {
-		m.search.SetWidth(max(10, m.width-4))
-		return m.search.View()
+	if m.search.active {
+		m.search.input.SetWidth(max(10, m.width-4))
+		return m.search.input.View()
 	}
 	if q, ok := m.bulkFooter(); ok {
 		return ansi.Truncate(" "+m.st.today.Render(q), m.width, "…")
@@ -404,7 +404,7 @@ func (m *Model) listTitle() string {
 	if len(m.marked) > 0 {
 		marked = fmt.Sprintf("  印 %d 件", len(m.marked))
 	}
-	if m.query != "" {
+	if m.search.query != "" {
 		return fmt.Sprintf("検索 (%d)", n) + marked
 	}
 	if m.currentScope().kind == scopeInbox {
@@ -478,7 +478,7 @@ func (m *Model) taskLine(t *readmodel.TaskSummary, depth, w int, today string, s
 			extra += fmt.Sprintf(" ↳%d", t.NumSubtasks)
 		}
 	}
-	if depth == 0 && (m.currentScope().kind == scopeMyTasks || m.query != "") {
+	if depth == 0 && (m.currentScope().kind == scopeMyTasks || m.search.query != "") {
 		switch {
 		case t.ParentName != "":
 			extra += "  ⊂ " + t.ParentName // a subtask listed on its own

@@ -17,7 +17,7 @@ import (
 
 func (m *Model) calendarActive() bool {
 	k := m.currentScope().kind
-	return m.mode == viewCalendar && k != scopeRecent && k != scopeInbox && m.query == ""
+	return m.mode == viewCalendar && k != scopeRecent && k != scopeInbox && m.search.query == ""
 }
 
 type calendarLoadedMsg struct {

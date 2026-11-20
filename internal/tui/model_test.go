@@ -200,11 +200,11 @@ func TestSearchAndFilter(t *testing.T) {
 		t.Fatalf("search across all tasks expected:\n%s", s)
 	}
 	h.key("enter")
-	if h.m.searching || h.m.query != "契約" {
+	if h.m.search.active || h.m.search.query != "契約" {
 		t.Fatalf("enter should keep the query and leave the input")
 	}
 	h.key("esc")
-	if h.m.query != "" || !strings.Contains(h.screen(), "期限切れ") {
+	if h.m.search.query != "" || !strings.Contains(h.screen(), "期限切れ") {
 		t.Fatalf("esc should clear the search")
 	}
 

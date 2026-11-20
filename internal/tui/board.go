@@ -26,7 +26,7 @@ const minBoardColumn = 26
 
 // boardActive reports whether the task area shows the board instead of the list.
 func (m *Model) boardActive() bool {
-	return m.mode == viewBoard && m.currentScope().kind == scopeProject && m.query == ""
+	return m.mode == viewBoard && m.currentScope().kind == scopeProject && m.search.query == ""
 }
 
 // boardColumns builds one column per section of the project (empty ones included, so cards
@@ -547,7 +547,7 @@ func (m *Model) viewKey(key string) tea.Cmd {
 		}
 	case "v":
 		// list -> board -> timeline (projects only) -> calendar -> list
-		if m.query != "" {
+		if m.search.query != "" {
 			m.status = "検索中は表示を切り替えられません（esc で検索を解除）"
 			return nil
 		}
