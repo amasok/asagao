@@ -170,10 +170,10 @@ func (m *Model) startRenameSection() tea.Cmd {
 		return nil
 	}
 	m.openPrompt(promptRenameSection)
-	m.renameGID = gid
-	m.prompt.SetValue(name)
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.renameGID = gid
+	m.prompt.input.SetValue(name)
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) renameSection(gid, name string) tea.Cmd {

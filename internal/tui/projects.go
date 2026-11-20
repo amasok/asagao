@@ -265,7 +265,7 @@ func (m *Model) startNewProject() tea.Cmd {
 		return nil
 	}
 	m.openPrompt(promptNewProject)
-	return m.prompt.Focus()
+	return m.prompt.input.Focus()
 }
 
 // createProject creates a project in the only team there is, or asks which team when

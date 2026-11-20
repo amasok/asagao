@@ -342,7 +342,7 @@ func TestPromptEscCancels(t *testing.T) {
 	h.key("a")
 	h.typeText("やめる")
 	h.key("esc")
-	if h.m.promptMode != promptNone || strings.Contains(h.screen(), "やめる") {
+	if h.m.prompt.mode != promptNone || strings.Contains(h.screen(), "やめる") {
 		t.Fatal("esc should cancel without creating")
 	}
 }
@@ -573,8 +573,8 @@ func TestRenameSectionFromListAndBoard(t *testing.T) {
 	st := fixtureStore(t)
 	h := projectHarness(t, st, nil)
 	h.key("j", "E") // cursor in 手続き
-	if h.m.prompt.Value() != "手続き" {
-		t.Fatalf("prompt should be prefilled, got %q", h.m.prompt.Value())
+	if h.m.prompt.input.Value() != "手続き" {
+		t.Fatalf("prompt should be prefilled, got %q", h.m.prompt.input.Value())
 	}
 	h.typeText("（役所）")
 	h.key("enter")
@@ -582,8 +582,8 @@ func TestRenameSectionFromListAndBoard(t *testing.T) {
 		t.Fatalf("renamed section:\n%s", s)
 	}
 	h.key("v", "E") // board opens on the selected task's column (手続き（役所）)
-	if h.m.prompt.Value() != "手続き（役所）" {
-		t.Fatalf("board rename should target the column, got %q", h.m.prompt.Value())
+	if h.m.prompt.input.Value() != "手続き（役所）" {
+		t.Fatalf("board rename should target the column, got %q", h.m.prompt.input.Value())
 	}
 	h.key("esc")
 	h.key("!")
@@ -1095,7 +1095,7 @@ func TestDetailFieldsAreChosenFromLists(t *testing.T) {
 	}
 	cursorTo(itemDue)
 	h.key("enter", "G", "k", "enter") // 日付を入力…
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText("2026-12-24")
 	h.key("enter")
 	if d, _ := st.GetTask(ctx, "t1"); d.DueOn != "2026-12-24" {
@@ -1392,7 +1392,7 @@ func TestProjectStatusInTUI(t *testing.T) {
 		t.Fatalf("members offline:\n%s", h.screen())
 	}
 	h.key("space", "N")
-	if h.m.promptMode != promptNone {
+	if h.m.prompt.mode != promptNone {
 		t.Fatal("new project must not prompt while offline")
 	}
 }

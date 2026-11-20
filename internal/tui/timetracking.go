@@ -126,7 +126,7 @@ func (m *Model) handleTimePicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 	case pickTimeEntries:
 		if item.value == "+" {
 			m.openPrompt(promptTimeAdd)
-			return m.prompt.Focus(), true
+			return m.prompt.input.Focus(), true
 		}
 		m.picker = &picker{kind: pickTimeAction, title: "作業時間 " + strings.TrimSpace(item.label), task: p.task,
 			items: []pickerItem{
@@ -145,10 +145,10 @@ func (m *Model) handleTimePicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 				return nil, true
 			}
 			m.openPrompt(promptTimeEdit)
-			m.timeEntry = gid
-			m.prompt.SetValue(e.Duration + " " + e.EnteredOn)
-			m.prompt.CursorEnd()
-			return m.prompt.Focus(), true
+			m.prompt.timeEntry = gid
+			m.prompt.input.SetValue(e.Duration + " " + e.EnteredOn)
+			m.prompt.input.CursorEnd()
+			return m.prompt.input.Focus(), true
 		case "delete":
 			m.picker = &picker{kind: pickTimeDelete, title: "この作業時間の記録を削除しますか？（Asana に送ったあとは取り消せません）", task: p.task,
 				items: []pickerItem{{label: "やめる", value: "back"}, {label: "削除する", value: gid}}}
@@ -172,7 +172,7 @@ func (m *Model) submitTime(kind promptKind, input string) tea.Cmd {
 	day = strings.TrimSpace(day)
 	tracking, task := m.timeTracking(m.deps.Now()), m.timeTask
 	if kind == promptTimeEdit {
-		gid := m.timeEntry
+		gid := m.prompt.timeEntry
 		return m.timeWrite(task, func() error { return tracking.Edit(m.ctx, gid, duration, day) }, "作業時間を直しました")
 	}
 	return m.timeWrite(task, func() error {

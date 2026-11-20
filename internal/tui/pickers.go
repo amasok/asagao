@@ -68,22 +68,24 @@ func (m *Model) setDue(t readmodel.TaskSummary, due string) tea.Cmd {
 
 func (m *Model) startDuePrompt(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptDue)
-	m.dueTask, m.bulkDueTasks = t, nil
-	m.prompt.SetValue(t.DueOn)
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.dueTask, m.prompt.bulkDue = t, nil
+	m.prompt.input.SetValue(t.DueOn)
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) submitDue(input string) tea.Cmd {
+	// the prompt is closed: its marked tasks are done with even if the date is wrong
+	tasks := m.prompt.bulkDue
+	m.prompt.bulkDue = nil
 	due, err := app.ParseDue(input, m.deps.Now())
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
 	}
-	if tasks := m.bulkDueTasks; tasks != nil {
-		m.bulkDueTasks = nil
+	if tasks != nil {
 		return m.askDue(tasks, due)
 	}
-	return m.setDue(m.dueTask, due)
+	return m.setDue(m.prompt.dueTask, due)
 }
 
 // --- list filter ---
@@ -166,12 +168,12 @@ type tagToggledMsg struct{ task readmodel.TaskSummary }
 
 func (m *Model) startNewTag(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptNewTag)
-	m.tagTask = t
-	return m.prompt.Focus()
+	m.prompt.tagTask = t
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) submitNewTag(name string) tea.Cmd {
-	relations, t := m.relations(m.deps.Now()), m.tagTask
+	relations, t := m.relations(m.deps.Now()), m.prompt.tagTask
 	return func() tea.Msg {
 		if err := relations.AddNewTag(m.ctx, t.GID, name); err != nil {
 			return writeDoneMsg{err: err}

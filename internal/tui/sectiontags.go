@@ -174,15 +174,15 @@ func (m *Model) startNewSection() tea.Cmd {
 	}
 	_, section, name := m.sectionHere()
 	m.openPrompt(promptNewSection)
-	m.newSectionAfter = section
+	m.prompt.newSectionAfter = section
 	if section != "" {
-		m.prompt.Placeholder = "「" + name + "」の後に追加（Enter で追加 / Esc で取り消し）"
+		m.prompt.input.Placeholder = "「" + name + "」の後に追加（Enter で追加 / Esc で取り消し）"
 	}
-	return m.prompt.Focus()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) createSection(name string) tea.Cmd {
-	project, after := m.currentProject(), m.newSectionAfter
+	project, after := m.currentProject(), m.prompt.newSectionAfter
 	if project == "" {
 		return nil
 	}
@@ -361,9 +361,9 @@ func (m *Model) handleSectionTagPicker(p *picker, item pickerItem) (tea.Cmd, boo
 		switch item.value {
 		case "rename":
 			m.openPrompt(promptRenameTag)
-			m.prompt.SetValue(t.Name)
-			m.prompt.CursorEnd()
-			return m.prompt.Focus(), true
+			m.prompt.input.SetValue(t.Name)
+			m.prompt.input.CursorEnd()
+			return m.prompt.input.Focus(), true
 		case "color":
 			m.openTagColors(t)
 		case "delete":

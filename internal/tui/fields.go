@@ -45,21 +45,21 @@ func (m *Model) editCustomField(t readmodel.TaskSummary, f readmodel.CustomField
 		return nil
 	}
 	m.openPrompt(promptField)
-	m.fieldTask, m.fieldEdit = t, f
-	m.prompt.Prompt = f.Name + ": "
+	m.prompt.fieldTask, m.prompt.fieldEdit = t, f
+	m.prompt.input.Prompt = f.Name + ": "
 	switch f.Type {
 	case readmodel.CFNumber:
-		m.prompt.Placeholder = "数値（空欄で空にする）"
+		m.prompt.input.Placeholder = "数値（空欄で空にする）"
 	case readmodel.CFDate:
-		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で空にする）"
+		m.prompt.input.Placeholder = "2026-12-01 / 明日 / +3d（空欄で空にする）"
 	case readmodel.CFPeople:
-		m.prompt.Placeholder = "me / 名前（カンマ区切りで複数。空欄で空にする）"
+		m.prompt.input.Placeholder = "me / 名前（カンマ区切りで複数。空欄で空にする）"
 	default:
-		m.prompt.Placeholder = "テキスト（空欄で空にする）"
+		m.prompt.input.Placeholder = "テキスト（空欄で空にする）"
 	}
-	m.prompt.SetValue(fieldInput(f))
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.input.SetValue(fieldInput(f))
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 // fieldInput is a field's value as the prompt takes it back: the raw number (the display
@@ -192,7 +192,7 @@ type queuedField struct {
 }
 
 func (m *Model) submitField(input string) tea.Cmd {
-	relations, t, f := m.relations(m.deps.Now()), m.fieldTask, m.fieldEdit
+	relations, t, f := m.relations(m.deps.Now()), m.prompt.fieldTask, m.prompt.fieldEdit
 	value, err := relations.ParseFieldValue(m.ctx, f.GID, input)
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }

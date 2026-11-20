@@ -274,9 +274,9 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	if m.promptMode != promptNone {
-		m.prompt.SetWidth(max(10, m.width-4))
-		return m.prompt.View()
+	if m.prompt.mode != promptNone {
+		m.prompt.input.SetWidth(max(10, m.width-4))
+		return m.prompt.input.View()
 	}
 	if m.searching {
 		m.search.SetWidth(max(10, m.width-4))

@@ -108,9 +108,9 @@ func (m *Model) startSubtask() tea.Cmd {
 		return nil
 	}
 	m.openPrompt(promptSubtask)
-	m.prompt.Prompt = "サブタスク（" + truncateRunes(t.Name, 20) + "）: "
-	m.subtaskParent = t.GID
-	return m.prompt.Focus()
+	m.prompt.input.Prompt = "サブタスク（" + truncateRunes(t.Name, 20) + "）: "
+	m.prompt.subtaskParent = t.GID
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) createSubtask(parent, input string) tea.Cmd {

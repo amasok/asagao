@@ -65,7 +65,7 @@ func TestTimeEntriesInTUI(t *testing.T) {
 	h.m.syncer = nil // the writes stay local
 
 	h.key("enter") // ＋ 作業時間を記録する…
-	if h.m.promptMode != promptTimeAdd {
+	if h.m.prompt.mode != promptTimeAdd {
 		t.Fatalf("no prompt:\n%s", h.screen())
 	}
 	h.typeText("1h30m 昨日")
@@ -94,10 +94,10 @@ func TestTimeEntriesInTUI(t *testing.T) {
 		t.Fatalf("no actions:\n%s", h.screen())
 	}
 	h.key("enter") // 時間・日を直す…
-	if h.m.promptMode != promptTimeEdit || h.m.prompt.Value() != "1h30m 2026-11-12" {
-		t.Fatalf("edit prompt %q", h.m.prompt.Value())
+	if h.m.prompt.mode != promptTimeEdit || h.m.prompt.input.Value() != "1h30m 2026-11-12" {
+		t.Fatalf("edit prompt %q", h.m.prompt.input.Value())
 	}
-	h.m.prompt.SetValue("45m")
+	h.m.prompt.input.SetValue("45m")
 	h.key("enter")
 	if es, _ := st.TimeEntries(ctx, task); es.TotalMinutes != 75 {
 		t.Errorf("after the edit %+v", es)

@@ -236,7 +236,7 @@ func TestBulkDuePickerAndPrompt(t *testing.T) {
 
 	h.markRows("t2", "t3")
 	h.key(" ", "d", "G", "k", "enter") // 日付を入力…
-	if h.m.promptMode != promptDue {
+	if h.m.prompt.mode != promptDue {
 		t.Fatal("should prompt for the date")
 	}
 	h.typeText("2026-12-01")
@@ -251,7 +251,7 @@ func TestBulkDuePickerAndPrompt(t *testing.T) {
 		}
 	}
 	// a later single-task date prompt is not taken for the marked tasks
-	if h.m.bulkDueTasks != nil {
+	if h.m.prompt.bulkDue != nil {
 		t.Fatal("the bulk date prompt should be done")
 	}
 }
@@ -322,8 +322,8 @@ func TestBulkDatePromptEscForgetsTasks(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	h.markRows("t2", "t3")
 	h.key(" ", "d", "G", "k", "enter", "esc")
-	if h.m.bulkDueTasks != nil {
-		t.Fatalf("esc should forget the bulk date prompt: %+v", h.m.bulkDueTasks)
+	if h.m.prompt.bulkDue != nil {
+		t.Fatalf("esc should forget the bulk date prompt: %+v", h.m.prompt.bulkDue)
 	}
 }
 

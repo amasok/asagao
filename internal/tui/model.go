@@ -178,10 +178,9 @@ type Model struct {
 	menuPage int // the page of the menu shown, when it is too high for the screen
 
 	// writes (write.go)
-	prompt      textinput.Model
-	promptMode  promptKind
-	selectAfter string // gid to select after the next list load (e.g. a created task)
-	syncAgain   bool   // a write happened during a sync; sync again when it finishes
+	prompt      promptState // the text input in the footer and what it changes (write.go)
+	selectAfter string      // gid to select after the next list load (e.g. a created task)
+	syncAgain   bool        // a write happened during a sync; sync again when it finishes
 	outbox      outboxCounts
 	outboxView  outboxScreen
 	inbox       readmodel.InboxState // whether the notifications can be shown (inbox.go)
@@ -198,16 +197,13 @@ type Model struct {
 	// collapsible groups (collapse.go)
 	allRows   []row           // every row; rows is allRows minus collapsed groups
 	collapsed map[string]bool // keys of collapsed groups in the current scope
-	renameGID string          // section being renamed (promptRenameSection)
 	// sections and tags (sectiontags.go)
-	planOff         map[string]planWindow // features the workspace's plan lacks (402), and until when
-	planSeq         uint64                // latest loadPlan in flight
-	newSectionAfter string                // promptNewSection: the section to add it after
-	tagList         []readmodel.TagCount  // the tags the tag manager shows
-	tagTarget       readmodel.TagCount    // the tag being changed
-	// time tracking (timetracking.go): the task whose entries are shown, the entry edited
-	timeTask  readmodel.TaskSummary
-	timeEntry string
+	planOff   map[string]planWindow // features the workspace's plan lacks (402), and until when
+	planSeq   uint64                // latest loadPlan in flight
+	tagList   []readmodel.TagCount  // the tags the tag manager shows
+	tagTarget readmodel.TagCount    // the tag being changed
+	// time tracking (timetracking.go): the task whose entries are shown
+	timeTask readmodel.TaskSummary
 	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
 	collapsedScope string
 	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).
@@ -238,29 +234,17 @@ type Model struct {
 	goals goalScreen
 
 	// subtasks (subtasks.go)
-	expanded      map[string]bool // tasks whose subtasks are shown under them
-	subtaskParent string          // parent for promptSubtask
-
-	commentGID string // task the comment prompt posts to
+	expanded map[string]bool // tasks whose subtasks are shown under them
 
 	// keys (keymap.go) and choosers (pickers.go)
-	dueTask      readmodel.TaskSummary   // task for promptDue and promptStart
-	bulkDueTasks []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
-	marked       map[string]bool         // gids of the tasks marked in the list (bulk.go)
-	bulkAsk      *bulkPlan               // a change to the marked tasks waiting for y/n
-	tagTask      readmodel.TaskSummary   // task for promptNewTag
+	marked  map[string]bool // gids of the tasks marked in the list (bulk.go)
+	bulkAsk *bulkPlan       // a change to the marked tasks waiting for y/n
 	// custom fields (fields.go)
-	fieldTask   readmodel.TaskSummary     // task for promptField
-	fieldEdit   readmodel.CustomFieldView // field for promptField
 	fieldFilter fieldFilter
 	fieldSaving map[string]bool         // fieldKey: a multi_enum toggle of it is being saved
 	fieldQueued map[string]*queuedField // fieldKey: its latest toggle made meanwhile
 	// dependencies (deps.go)
-	depTask       readmodel.TaskSummary // task for promptDepSearch
-	depDependents bool
 	// extras.go
-	dupSource      string        // task to duplicate (promptDuplicate)
-	attachTask     string        // task to attach a file to (promptAttach)
 	sectionProject string        // project whose sections to choose from (detail project line)
 	tmpl           templateState // templates.go
 }
@@ -280,7 +264,7 @@ func New(ctx context.Context, deps Deps) *Model {
 		scopes:      []scope{{kind: scopeMyTasks, name: "My Tasks"}},
 		detail:      detailState{view: viewport.New()},
 		search:      ti,
-		prompt:      newInput(),
+		prompt:      promptState{input: newInput()},
 		dark:        true,
 		detailRatio: defaultDetailRatio,
 	}
@@ -715,7 +699,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.bulkAsk != nil:
 		return m.handleBulkKey(key)
-	case m.promptMode != promptNone:
+	case m.prompt.mode != promptNone:
 		return m.handlePromptKey(msg)
 	case m.showing(overlayOutbox):
 		return m.handleOutboxKey(key)

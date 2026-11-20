@@ -233,8 +233,8 @@ func (m *Model) showDependencyTargets(msg depCandidatesMsg) {
 
 func (m *Model) startDependencySearch(t readmodel.TaskSummary, dependents bool) tea.Cmd {
 	m.openPrompt(promptDepSearch)
-	m.depTask, m.depDependents = t, dependents
-	return m.prompt.Focus()
+	m.prompt.depTask, m.prompt.depDependents = t, dependents
+	return m.prompt.input.Focus()
 }
 
 // updateDeps handles the messages of this file.

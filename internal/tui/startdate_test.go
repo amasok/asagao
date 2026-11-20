@@ -47,10 +47,10 @@ func TestDetailStartDate(t *testing.T) {
 	// Typed: after the due date is refused, and says why.
 	reach(itemStart)
 	h.key("enter", "G", "k", "enter") // 日付を入力…
-	if h.m.promptMode != promptStart || h.m.prompt.Value() != "2026-11-14" {
-		t.Fatalf("prompt %v %q", h.m.promptMode, h.m.prompt.Value())
+	if h.m.prompt.mode != promptStart || h.m.prompt.input.Value() != "2026-11-14" {
+		t.Fatalf("prompt %v %q", h.m.prompt.mode, h.m.prompt.input.Value())
 	}
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText("2026-11-21")
 	h.key("enter")
 	if d, _ := st.GetTask(ctx, "t1"); d.StartOn != "2026-11-14" {
@@ -112,7 +112,7 @@ func TestTimelineStartDate(t *testing.T) {
 		h.key("j")
 	}
 	h.key("enter", "G", "k", "enter") // 日付を入力…
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText("2026-11-16")
 	h.key("enter")
 	h.key("esc")

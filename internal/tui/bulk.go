@@ -60,7 +60,7 @@ func (m *Model) markedTasks() []readmodel.TaskSummary {
 // change that is being chosen or confirmed to the tasks still shown (as they are now):
 // what was marked when the key was pressed may have been hidden by a reload since.
 func (m *Model) pruneMarks() {
-	if len(m.marked) == 0 && m.bulkAsk == nil && m.bulkDueTasks == nil && (m.picker == nil || m.picker.bulk == nil) {
+	if len(m.marked) == 0 && m.bulkAsk == nil && m.prompt.bulkDue == nil && (m.picker == nil || m.picker.bulk == nil) {
 		return
 	}
 	shown := m.shownTasks()
@@ -83,12 +83,12 @@ func (m *Model) pruneMarks() {
 			p.title = strings.Replace(p.title, fmt.Sprintf("%d 件", n), fmt.Sprintf("%d 件", len(p.bulk)), 1)
 		}
 	}
-	if m.bulkDueTasks != nil {
-		if m.bulkDueTasks = stillShown(m.bulkDueTasks, shown); len(m.bulkDueTasks) == 0 {
-			m.bulkDueTasks, m.status = nil, gone
-			if m.promptMode == promptDue {
-				m.promptMode = promptNone
-				m.prompt.Blur()
+	if m.prompt.bulkDue != nil {
+		if m.prompt.bulkDue = stillShown(m.prompt.bulkDue, shown); len(m.prompt.bulkDue) == 0 {
+			m.prompt.bulkDue, m.status = nil, gone
+			if m.prompt.mode == promptDue {
+				m.prompt.mode = promptNone
+				m.prompt.input.Blur()
 			}
 		}
 	}
@@ -402,8 +402,8 @@ func (m *Model) bulkPicked(p *picker, item pickerItem) tea.Cmd {
 	case pickDue:
 		if item.value == "?" {
 			m.openPrompt(promptDue)
-			m.bulkDueTasks = p.bulk
-			return m.prompt.Focus()
+			m.prompt.bulkDue = p.bulk
+			return m.prompt.input.Focus()
 		}
 		return m.askDue(p.bulk, item.value)
 	}

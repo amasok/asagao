@@ -40,10 +40,10 @@ func (m *Model) setStart(t readmodel.TaskSummary, start string) tea.Cmd {
 
 func (m *Model) startStartPrompt(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptStart)
-	m.dueTask, m.bulkDueTasks = t, nil
-	m.prompt.SetValue(m.detailStartOn(t.GID))
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.dueTask, m.prompt.bulkDue = t, nil
+	m.prompt.input.SetValue(m.detailStartOn(t.GID))
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 // detailStartOn is the start date of task gid when it is the one in the detail ("" else).
@@ -59,5 +59,5 @@ func (m *Model) submitStart(input string) tea.Cmd {
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
 	}
-	return m.setStart(m.dueTask, start)
+	return m.setStart(m.prompt.dueTask, start)
 }

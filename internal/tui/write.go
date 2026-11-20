@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -19,6 +20,29 @@ import (
 // queued in the outbox; a sync is then requested to send them. Offline, they simply wait.
 
 type promptKind int
+
+// promptState is the text input in the footer: its kind and what it changes. Opening a
+// prompt forgets what the one before it changed, so a target left over from an earlier
+// prompt is never taken for this one.
+type promptState struct {
+	input textinput.Model
+	mode  promptKind // promptNone: closed
+
+	commentGID      string                    // promptComment: the task commented on
+	renameGID       string                    // promptRenameSection: the section renamed
+	newSectionAfter string                    // promptNewSection: the section to add it after
+	subtaskParent   string                    // promptSubtask: the parent
+	dueTask         readmodel.TaskSummary     // promptDue and promptStart: the task
+	bulkDue         []readmodel.TaskSummary   // promptDue for the marked tasks (bulk.go)
+	tagTask         readmodel.TaskSummary     // promptNewTag: the task to tag
+	fieldTask       readmodel.TaskSummary     // promptField, promptFieldOption: the task
+	fieldEdit       readmodel.CustomFieldView // promptField, promptFieldOption: the field
+	depTask         readmodel.TaskSummary     // promptDepSearch: the task
+	depDependents   bool                      // promptDepSearch: add a dependent, not a dependency
+	dupSource       string                    // promptDuplicate: the task duplicated
+	attachTask      string                    // promptAttach: the task attached to
+	timeEntry       string                    // promptTimeEdit: the entry edited
+}
 
 const (
 	promptNone promptKind = iota
@@ -283,14 +307,14 @@ func (m *Model) writeKey(key string) tea.Cmd {
 		return m.editComment(t.GID)
 	case "a":
 		m.openPrompt(promptCreate)
-		return m.prompt.Focus()
+		return m.prompt.input.Focus()
 	case "c":
 		if t == nil || m.focus == paneSidebar {
 			return nil
 		}
 		m.openPrompt(promptComment)
-		m.commentGID = t.GID
-		return m.prompt.Focus()
+		m.prompt.commentGID = t.GID
+		return m.prompt.input.Focus()
 	case "!":
 		m.openOverlay(overlayOutbox)
 		m.outboxView.top = 0
@@ -308,72 +332,71 @@ func (m *Model) toggleComplete(t readmodel.TaskSummary) tea.Cmd {
 }
 
 func (m *Model) openPrompt(kind promptKind) {
-	m.promptMode = kind
-	m.prompt.Reset()
+	m.prompt = promptState{input: m.prompt.input, mode: kind}
+	m.prompt.input.Reset()
 	switch kind {
 	case promptCreate:
-		m.prompt.Prompt = "新しいタスク: "
-		m.prompt.Placeholder = "タスク名  （例: 牛乳を買う @me 明日 #買い物 / +3d / 2026-12-01）"
+		m.prompt.input.Prompt = "新しいタスク: "
+		m.prompt.input.Placeholder = "タスク名  （例: 牛乳を買う @me 明日 #買い物 / +3d / 2026-12-01）"
 	case promptComment:
-		m.prompt.Prompt = "コメント: "
-		m.prompt.Placeholder = "Enter で投稿 / Esc で取り消し"
+		m.prompt.input.Prompt = "コメント: "
+		m.prompt.input.Placeholder = "Enter で投稿 / Esc で取り消し"
 	case promptRenameSection:
-		m.prompt.Prompt = "セクション名: "
-		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+		m.prompt.input.Prompt = "セクション名: "
+		m.prompt.input.Placeholder = "Enter で変更 / Esc で取り消し"
 	case promptNewSection:
-		m.prompt.Prompt = "新しいセクション: "
-		m.prompt.Placeholder = "Enter で追加 / Esc で取り消し"
+		m.prompt.input.Prompt = "新しいセクション: "
+		m.prompt.input.Placeholder = "Enter で追加 / Esc で取り消し"
 	case promptRenameTag:
-		m.prompt.Prompt = "タグ名: "
-		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+		m.prompt.input.Prompt = "タグ名: "
+		m.prompt.input.Placeholder = "Enter で変更 / Esc で取り消し"
 	case promptTimeAdd, promptTimeEdit:
-		m.prompt.Prompt = "作業時間: "
-		m.prompt.Placeholder = "1h30m / 45m / 1:30 のあとに日付（昨日 / 2026-11-12。省略で今日）"
+		m.prompt.input.Prompt = "作業時間: "
+		m.prompt.input.Placeholder = "1h30m / 45m / 1:30 のあとに日付（昨日 / 2026-11-12。省略で今日）"
 	case promptSubtask:
-		m.prompt.Prompt = "サブタスク: "
-		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
+		m.prompt.input.Prompt = "サブタスク: "
+		m.prompt.input.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
 	case promptDue:
-		m.prompt.Prompt = "期日: "
-		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
+		m.prompt.input.Prompt = "期日: "
+		m.prompt.input.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
 	case promptStart:
-		m.prompt.Prompt = "開始日: "
-		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で開始日なし。期日より後にはできません）"
+		m.prompt.input.Prompt = "開始日: "
+		m.prompt.input.Placeholder = "2026-12-01 / 明日 / +3d（空欄で開始日なし。期日より後にはできません）"
 	case promptNewTag:
-		m.prompt.Prompt = "新しいタグ: "
-		m.prompt.Placeholder = "タグ名"
+		m.prompt.input.Prompt = "新しいタグ: "
+		m.prompt.input.Placeholder = "タグ名"
 	case promptDuplicate:
-		m.prompt.Prompt = "複製したタスクの名前: "
-		m.prompt.Placeholder = ""
+		m.prompt.input.Prompt = "複製したタスクの名前: "
+		m.prompt.input.Placeholder = ""
 	case promptNewProject:
-		m.prompt.Prompt = "新しいプロジェクト: "
-		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+		m.prompt.input.Prompt = "新しいプロジェクト: "
+		m.prompt.input.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptTemplateProject:
-		m.prompt.Prompt = "テンプレートから作るプロジェクト: "
-		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+		m.prompt.input.Prompt = "テンプレートから作るプロジェクト: "
+		m.prompt.input.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptDuplicateProject:
-		m.prompt.Prompt = "複製したプロジェクトの名前: "
-		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+		m.prompt.input.Prompt = "複製したプロジェクトの名前: "
+		m.prompt.input.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptDepSearch:
-		m.prompt.Prompt = "タスクを検索: "
-		m.prompt.Placeholder = "タスク名の一部"
+		m.prompt.input.Prompt = "タスクを検索: "
+		m.prompt.input.Placeholder = "タスク名の一部"
 	case promptAttach:
-		m.prompt.Prompt = "添付するファイル: "
-		m.prompt.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
+		m.prompt.input.Prompt = "添付するファイル: "
+		m.prompt.input.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
 	}
 }
 
 func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.promptMode = promptNone
-		m.prompt.Blur()
-		m.bulkDueTasks = nil // a bulk date prompt is cancelled too
+		m.prompt.input.Blur()
+		m.prompt = promptState{input: m.prompt.input} // a bulk date prompt is cancelled too
 		return m, nil
 	case "enter":
-		value := strings.TrimSpace(m.prompt.Value())
-		kind := m.promptMode
-		m.promptMode = promptNone
-		m.prompt.Blur()
+		value := strings.TrimSpace(m.prompt.input.Value())
+		kind := m.prompt.mode
+		m.prompt.mode = promptNone
+		m.prompt.input.Blur()
 		if kind == promptDue { // empty clears the due date
 			return m, m.submitDue(value)
 		}
@@ -390,7 +413,7 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptCreate:
 			return m, m.createTask(value)
 		case promptRenameSection:
-			return m, m.renameSection(m.renameGID, value)
+			return m, m.renameSection(m.prompt.renameGID, value)
 		case promptNewSection:
 			return m, m.createSection(value)
 		case promptRenameTag:
@@ -398,7 +421,7 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptTimeAdd, promptTimeEdit:
 			return m, m.submitTime(kind, value)
 		case promptSubtask:
-			return m, m.createSubtask(m.subtaskParent, value)
+			return m, m.createSubtask(m.prompt.subtaskParent, value)
 		case promptNewTag:
 			return m, m.submitNewTag(value)
 		case promptFieldOption:
@@ -414,15 +437,15 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptDuplicateProject:
 			return m, m.duplicateProject(value)
 		case promptDepSearch:
-			return m, m.openDependencyTargets(m.depTask, m.depDependents, value)
+			return m, m.openDependencyTargets(m.prompt.depTask, m.prompt.depDependents, value)
 		}
-		if m.commentGID != "" {
-			return m, m.addComment(m.commentGID, value)
+		if m.prompt.commentGID != "" {
+			return m, m.addComment(m.prompt.commentGID, value)
 		}
 		return m, nil
 	}
 	var cmd tea.Cmd
-	m.prompt, cmd = m.prompt.Update(msg)
+	m.prompt.input, cmd = m.prompt.input.Update(msg)
 	return m, cmd
 }
 
