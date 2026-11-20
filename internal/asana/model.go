@@ -35,6 +35,7 @@ type (
 	TimeEntry          = model.TimeEntry
 	Error              = model.Error
 	BatchWrite         = model.BatchWrite
+	BatchWriteKind     = model.BatchWriteKind
 	BatchWriteResult   = model.BatchWriteResult
 )
 
