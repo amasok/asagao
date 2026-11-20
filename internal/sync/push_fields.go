@@ -232,3 +232,79 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 	}
 	return s.Store.SetWorkspaceCustomFieldsFetchedAt(ctx, workspaceGID, now)
 }
+
+// pushCustomField sets one custom field, after checking that nobody changed it in Asana
+// since it was edited here. A field the task no longer has is treated like a 404 (the
+// change is dropped and the user told).
+func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, error) {
+	task, err := s.Store.RealGID(ctx, op.TaskGID)
+	if err != nil {
+		return sent, err
+	}
+	if localgid.IsLocal(task) {
+		return sent, &model.Error{Status: 404} // its create failed
+	}
+	server, err := s.API.Task(ctx, task)
+	if err != nil {
+		return sent, err
+	}
+	if conflicts, err := customFieldConflict(op, server); err != nil {
+		return sent, err
+	} else if conflicts != nil {
+		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
+	}
+	t, err := s.API.UpdateTask(ctx, task, customFieldUpdate(op))
+	var apiErr *model.Error
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
+		// Shown with the failed change (not dropped): the value may be in a form Asana does not take.
+		return sent, fmt.Errorf("Asana が「%v」の値を受け付けませんでした（値の形式が合っていない可能性があります）: %w", op.Payload["field_name"], err)
+	}
+	if err != nil {
+		return sent, err
+	}
+	if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
+		return sent, sentNotSaved(err)
+	}
+	s.refresh(ctx, *t)
+	return sent, nil
+}
+
+// customFieldConflict compares a custom field change with the task in Asana: the server's
+// value if it was changed there too (nil if not), or a 404 if the task no longer has the
+// field.
+func customFieldConflict(op outbox.Op, server *model.Task) (map[string]any, error) {
+	if server.Partial { // Asana gave no custom fields to compare with: just send
+		return nil, nil
+	}
+	field, _ := op.Payload["field"].(string)
+	sv, display, found := model.ServerCustomField(server, field)
+	if !found {
+		return nil, &model.Error{Status: http.StatusNotFound} // removed from the task's projects
+	}
+	if !same(sv, normalize(op.Base["value"])) && !same(sv, normalize(op.Payload["value"])) {
+		return map[string]any{"value": sv, "display": display}, nil
+	}
+	return nil, nil
+}
+
+// customFieldUpdate is the task update that sets a custom field change.
+func customFieldUpdate(op outbox.Op) map[string]any {
+	field, _ := op.Payload["field"].(string)
+	fieldType, _ := op.Payload["type"].(string)
+	return map[string]any{"custom_fields": map[string]any{field: model.CustomFieldAPIValue(fieldType, op.Payload["value"])}}
+}
+
+// normalize turns a JSON-decoded list ([]any) into []string, so it prints like a stored one.
+func normalize(v any) any {
+	if l, ok := v.([]any); ok {
+		out := make([]string, 0, len(l))
+		for _, e := range l {
+			out = append(out, fmt.Sprint(e))
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	return v
+}
