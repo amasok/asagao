@@ -152,13 +152,12 @@ func (s *Store) ReplaceLocalTagGID(ctx context.Context, local, real string) erro
 			"UPDATE tags SET gid = ?2 WHERE gid = ?1",
 			"UPDATE OR IGNORE task_tags SET tag_gid = ?2 WHERE tag_gid = ?1",
 			"DELETE FROM task_tags WHERE tag_gid = ?1",
-			"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('tag:' || ?1, ?2)",
 		} {
 			if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
 				return err
 			}
 		}
-		return nil
+		return recordResult(ctx, tx, resultPrefixTag, local, real)
 	})
 }
 

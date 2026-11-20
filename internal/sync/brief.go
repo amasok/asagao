@@ -162,7 +162,7 @@ func briefRefused(err error) bool {
 
 // briefRefusal records a refusal of the brief API (briefRefused) and says so in the error;
 // other errors are returned as they are. A 402 is the workspace's plan: it is recorded for
-// the workspace (readmodel.PlanKey), which hides the brief there for a while. A 403 is
+// the workspace (store.RecordPlanUnavailable), which hides the brief there for a while. A 403 is
 // recorded for this project only (its brief is BriefUnavailable until the overview gets it
 // again): a project we may not change must not hide the briefs of the others. (Whether the
 // preview API answers 403 for a whole workspace is to be seen on the real Asana.)

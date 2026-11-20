@@ -9,6 +9,7 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Goals and portfolios (#7), read only: space Q opens the goals, space l my portfolios
@@ -339,7 +340,7 @@ func (m *Model) openGoalRow() tea.Cmd {
 
 // goalBadge is a goal's status, colored.
 func (m *Model) goalBadge(status string) string {
-	label := "[" + readmodel.GoalStatusLabel(status) + "]"
+	label := "[" + format.GoalStatusLabel(status) + "]"
 	switch status {
 	case "green", "achieved":
 		return m.st.tag.Render(label)
@@ -353,7 +354,7 @@ func (m *Model) goalBadge(status string) string {
 
 // metricBar is "■■■□□□ 40 / 100（40%）", or the text alone when the progress is unknown.
 func metricBar(mt *readmodel.GoalMetric, width int) string {
-	text := mt.Text()
+	text := format.GoalMetricText(mt)
 	p, ok := mt.Progress()
 	if !ok {
 		return text

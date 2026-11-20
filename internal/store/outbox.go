@@ -864,14 +864,13 @@ func replaceLocalTaskGID(ctx context.Context, tx *sql.Tx, local, real string) er
 		"UPDATE time_entries SET task_gid = ?2 WHERE task_gid = ?1",
 		"UPDATE attachments SET parent_gid = ?2 WHERE parent_gid = ?1",
 		"UPDATE outbox SET task_gid = ?2 WHERE task_gid = ?1",
-		// Remember the mapping so callers holding the local gid can find the task.
-		"INSERT OR REPLACE INTO sync_state(key, value) VALUES ('gid:' || ?1, ?2)",
 	} {
 		if _, err := tx.ExecContext(ctx, q, local, real); err != nil {
 			return err
 		}
 	}
-	return nil
+	// Remember the mapping so callers holding the local gid can find the task.
+	return recordResult(ctx, tx, resultPrefixTask, local, real)
 }
 
 // RealGID returns the Asana gid for a task created offline, or gid itself if it is not

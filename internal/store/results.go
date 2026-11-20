@@ -34,6 +34,7 @@ var resultKinds = map[string][]string{
 	resultPrefixStatus:     {OpCreateStatus},
 	resultPrefixTag:        nil,
 	resultPrefixSection:    {OpCreateSection},
+	resultPrefixTimeEntry:  {OpAddTimeEntry},
 	resultPrefixEnumOption: {OpCreateEnumOption},
 }
 
@@ -47,6 +48,7 @@ var resultTables = map[string][]string{
 	resultPrefixStatus:     {localIn("status_updates", "gid")},
 	resultPrefixTag:        {localIn("tags", "gid"), localIn("task_tags", "tag_gid")},
 	resultPrefixSection:    {localIn("sections", "gid"), localIn("task_memberships", "section_gid")},
+	resultPrefixTimeEntry:  {localIn("time_entries", "gid")},
 	// An option is stored inside JSON: in the field's options, and in the tasks' values.
 	resultPrefixEnumOption: {localInJSON("custom_fields", "enum_options", "$.gid"), localInJSON("task_custom_fields", "value", "")},
 }
@@ -160,7 +162,7 @@ type stateChange struct {
 func planPruneResults(ctx context.Context, tx *sql.Tx, now time.Time) ([]stateChange, int, error) {
 	var changes []stateChange
 	deleted := 0
-	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, resultPrefixTask, resultPrefixStory, resultPrefixAttachment, resultPrefixStatus, resultPrefixTag, resultPrefixEnumOption)
+	state, err := readSyncStatePrefixes(ctx, tx, keyResultSeen, resultPrefixTask, resultPrefixStory, resultPrefixAttachment, resultPrefixStatus, resultPrefixTag, resultPrefixSection, resultPrefixTimeEntry, resultPrefixEnumOption)
 	if err != nil {
 		return nil, 0, err
 	}

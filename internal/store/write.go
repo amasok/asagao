@@ -480,9 +480,11 @@ func (s *Store) DeleteGoneTasks(ctx context.Context, gids []string) (int64, erro
 // project's key from other keys with the same prefix ({gid} is the part after the prefix).
 var projectKeys = []struct{ prefix, isProject string }{
 	{keyCustomFields, "1"},
+	{keyCustomTypes, "1"},
 	{keyEvents, "1"},
 	{keyProjectTasks, "1"},
 	{keyTaskOrder, "1"},
+	{keyProjectFieldsLocked, "1"},
 	{keyCollapsed, "{gid} GLOB '[0-9]*'"}, // Asana gids are digits; "my" and "inbox" are not projects
 }
 
@@ -588,7 +590,7 @@ func (s *Store) PruneWorkspaces(ctx context.Context, keep []model.Workspace) err
 				"DELETE FROM goals WHERE workspace_gid = ?",
 				"DELETE FROM time_periods WHERE workspace_gid = ?",
 				"UPDATE portfolios SET mine = 0 WHERE workspace_gid = ?",
-				"DELETE FROM sync_state WHERE key IN ('" + keyGoals + "' || ?1, '" + keyPortfolios + "' || ?1)",
+				"DELETE FROM sync_state WHERE key IN ('" + keyGoals + "' || ?1, '" + keyPortfolios + "' || ?1, '" + keyUserTaskList + "' || ?1, '" + keyWorkspaceCustomFields + "' || ?1)",
 				"DELETE FROM sync_state WHERE key GLOB '" + keyPlanUnavailable + "*:' || ?", // its 402s (planKey)
 				"DELETE FROM workspaces WHERE gid = ?",
 			} {

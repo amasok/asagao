@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 func TestOffForBoundaries(t *testing.T) {
@@ -101,6 +103,109 @@ func TestFeatureConstantsDistinctAndStable(t *testing.T) {
 		seen[val] = name
 		if strings.Contains(val, ":") {
 			t.Errorf("%s value %q must not contain separator ':'", name, val)
+		}
+	}
+}
+
+func TestPlanWindowBoundaries(t *testing.T) {
+	at := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	jst := time.FixedZone("JST", 9*3600)
+	zero := time.Time{}
+
+	cases := []struct {
+		name      string
+		refusedAt time.Time
+		now       time.Time
+		wantOff   bool
+	}{
+		{"zero refusedAt with zero now", zero, zero, false},
+		{"zero refusedAt with valid now", zero, at, false},
+		{"refusedAt 1ns in future", at, at.Add(-time.Nanosecond), false},
+		{"refusedAt far in future", at.Add(48 * time.Hour), at, false},
+		{"exactly 0 elapsed", at, at, true},
+		{"24h - 1ns elapsed", at, at.Add(RecheckAfter - time.Nanosecond), true},
+		{"exactly 24h elapsed", at, at.Add(RecheckAfter), false},
+		{"24h + 1ns elapsed", at, at.Add(RecheckAfter + time.Nanosecond), false},
+		{"different timezones, active", at.In(jst), at.Add(RecheckAfter - time.Nanosecond), true},
+		{"different timezones, expired", at, at.Add(RecheckAfter).In(jst), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			from, until, off := Window(tc.refusedAt, tc.now)
+			if off != tc.wantOff {
+				t.Fatalf("Window off = %v, want %v", off, tc.wantOff)
+			}
+			if !off {
+				if !from.IsZero() || !until.IsZero() {
+					t.Fatalf("Window inactive returned non-zero (%v, %v)", from, until)
+				}
+				return
+			}
+			if !from.Equal(tc.refusedAt) || !until.Equal(tc.refusedAt.Add(RecheckAfter)) {
+				t.Fatalf("Window = (%v, %v), want (%v, %v)", from, until, tc.refusedAt, tc.refusedAt.Add(RecheckAfter))
+			}
+		})
+	}
+}
+
+func TestPlanOffAtAndOffForExtended(t *testing.T) {
+	at := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	jst := time.FixedZone("JST", 9*3600)
+
+	if OffAt(at, at.Add(RecheckAfter+time.Nanosecond)) {
+		t.Fatal("OffAt(24h+1ns) = true, want false")
+	}
+	if OffAt(at.Add(time.Nanosecond), at) {
+		t.Fatal("OffAt(future) = true, want false")
+	}
+
+	// RFC3339Nano, timezone offsets, and malformed strings.
+	nano := at.Add(123456789 * time.Nanosecond).In(jst).Format(time.RFC3339Nano)
+	if !OffFor(nano, at.Add(RecheckAfter)) {
+		t.Fatal("OffFor(RFC3339Nano) should still be active at at+24h because sub-second puts it < 24h")
+	}
+	if OffFor(nano, at.Add(RecheckAfter+123456789*time.Nanosecond)) {
+		t.Fatal("OffFor(RFC3339Nano) should expire exactly 24h after nano timestamp")
+	}
+	for _, bad := range []string{"", "2026-11-17T10:00:00", "not-a-timestamp", "1700000000", "\x00", "2026-13-45T99:99:99Z"} {
+		if OffFor(bad, at) {
+			t.Errorf("OffFor(%q) = true, want false", bad)
+		}
+	}
+	if OffFor(at.Add(time.Nanosecond).Format(time.RFC3339Nano), at) {
+		t.Fatal("OffFor(future) = true, want false")
+	}
+}
+
+func TestPlanFeatureOfAndUnavailableMessage(t *testing.T) {
+	// FeatureOf edge cases: all plan-gated kinds and non-gated/empty/unknown kinds.
+	nonGated := []string{
+		"", "unknown", outbox.KindCreateTask, outbox.KindUpdateTask, outbox.KindDeleteTask,
+		outbox.KindAddComment, outbox.KindMoveTask, outbox.KindRenameSection,
+		outbox.KindAddTag, outbox.KindRemoveTag, outbox.KindSetCustomField,
+		outbox.KindUpdateProject, outbox.KindCreateStatus, outbox.KindMarkNotification,
+	}
+	for _, k := range nonGated {
+		if got := FeatureOf(k); got != "" {
+			t.Errorf("FeatureOf(%q) = %q, want empty", k, got)
+		}
+	}
+
+	// Every exported feature constant must produce a non-broken UnavailableMessage
+	// (never leaving "では、を API で使えません" with an empty feature name).
+	allFeatures := []string{
+		Sections, Tags, MySection, Search, Typeahead, CustomID, TimeTracking,
+		Goals, Portfolios, CustomFields, ProjectBrief, StartOn, CustomTypes,
+		TaskTemplates, ProjectTemplates,
+	}
+	for _, f := range allFeatures {
+		msg := UnavailableMessage(f)
+		if strings.Contains(msg, "では、を API") {
+			t.Errorf("UnavailableMessage(%q) produced empty feature description: %q", f, msg)
+		}
+		errMsg := (&UnavailableError{Feature: f}).Error()
+		if errMsg != msg {
+			t.Errorf("UnavailableError(%q).Error() = %q, want %q", f, errMsg, msg)
 		}
 	}
 }

@@ -152,3 +152,74 @@ func TestCustomFieldValueAndServer(t *testing.T) {
 		t.Error("found")
 	}
 }
+
+func TestCustomFieldAPIValueAndServerBoundaries(t *testing.T) {
+	s := func(x string) *string { return &x }
+	f := func(x float64) *float64 { return &x }
+
+	// Non-string values for CFDate should not be wrapped in {"date": ...}.
+	for _, v := range []any{123, true, []string{"2026-01-01"}} {
+		if got := CustomFieldAPIValue(CFDate, v); !reflect.DeepEqual(got, NormalizeCustomFieldValue(v)) {
+			t.Errorf("CustomFieldAPIValue(CFDate, %#v) = %#v", v, got)
+		}
+	}
+	// []any with only non-strings or empty slice normalizes to nil, and for CFPeople/CFMultiEnum becomes [].
+	for _, ft := range []string{CFPeople, CFMultiEnum} {
+		if got := CustomFieldAPIValue(ft, []any{1, nil, true}); !reflect.DeepEqual(got, []string{}) {
+			t.Errorf("CustomFieldAPIValue(%s, non-string slice) = %#v, want []string{}", ft, got)
+		}
+		if got := CustomFieldAPIValue(ft, []string{}); !reflect.DeepEqual(got, []string{}) {
+			t.Errorf("CustomFieldAPIValue(%s, empty []string) = %#v, want []string{}", ft, got)
+		}
+	}
+	// []any containing empty string "" in multi_enum/people: confirm current behavior doesn't panic and sorts/compacts.
+	if got := NormalizeCustomFieldValue([]any{"b", "", "a", "b"}); !reflect.DeepEqual(got, []string{"", "a", "b"}) {
+		t.Errorf("NormalizeCustomFieldValue([]any with empty) = %#v", got)
+	}
+	// Negative and zero float64 values are preserved for CFNumber.
+	if got := CustomFieldValue(CustomField{ResourceSubtype: CFNumber, NumberValue: f(-42.5)}); got != -42.5 {
+		t.Errorf("negative number = %#v", got)
+	}
+
+	// TaskFieldValues boundaries: ResourceSubtype != "custom" ignores CustomType fields.
+	nonCustom := &Task{
+		ResourceSubtype:        "default_task",
+		CustomType:             &Ref{GID: "ct1"},
+		CustomTypeStatusOption: &Ref{GID: "cs1"},
+	}
+	vals := TaskFieldValues(nonCustom)
+	if vals["custom_type"] != "" || vals["custom_type_status_option"] != "" {
+		t.Errorf("non-custom task should report empty custom_type fields: %v", vals)
+	}
+
+	// ResourceSubtype == "custom" with partial CustomType/StatusOption.
+	partialCustom := &Task{
+		ResourceSubtype: "custom",
+		CustomType:      &Ref{GID: "ct1"},
+	}
+	vals = TaskFieldValues(partialCustom)
+	if vals["custom_type"] != "ct1" || vals["custom_type_status_option"] != "" {
+		t.Errorf("partial custom task = %v", vals)
+	}
+
+	// NoCustomType keeps approval_status while deleting custom_type keys.
+	noCT := &Task{ResourceSubtype: "custom", NoCustomType: true, ApprovalStatus: "pending"}
+	vals = TaskFieldValues(noCT)
+	if vals["approval_status"] != "pending" {
+		t.Errorf("NoCustomType dropped approval_status: %v", vals)
+	}
+
+	// ServerCustomField with empty CustomFields, nil DisplayValue, and duplicate GIDs.
+	if _, _, ok := ServerCustomField(&Task{}, "1"); ok {
+		t.Error("empty task should not find field")
+	}
+	dupTask := &Task{
+		CustomFields: []CustomField{
+			{GID: "f1", ResourceSubtype: CFText, TextValue: s("first"), DisplayValue: nil},
+			{GID: "f1", ResourceSubtype: CFText, TextValue: s("second"), DisplayValue: s("second")},
+		},
+	}
+	if v, d, ok := ServerCustomField(dupTask, "f1"); !ok || v != "first" || d != "" {
+		t.Errorf("ServerCustomField(dup) = (%v, %q, %v), want ('first', '', true)", v, d, ok)
+	}
+}

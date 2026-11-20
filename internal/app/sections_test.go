@@ -245,7 +245,7 @@ func TestSectionsPlanUnavailable(t *testing.T) {
 }
 
 // #50: a 402 in another workspace (a free one) does not hide sections in this one (a paid
-// organization), and a 402 is tried again after readmodel.PlanRecheckAfter.
+// organization), and a 402 is tried again after plan.RecheckAfter.
 func TestSectionsPlanPerWorkspace(t *testing.T) {
 	ctx := context.Background()
 	st := &sectionStore{}

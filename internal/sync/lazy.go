@@ -16,7 +16,7 @@ import (
 // Projects fetched when they are opened (#54).
 //
 // A sync fetches the list of every project, but the tasks only of the projects to sync:
-// those opened once (KeyProjectTasks), the favorites, those synced before #54 (they have
+// those opened once (ProjectTaskState), the favorites, those synced before #54 (they have
 // an events token), and with Config.AllProjects every project (with LazyProjects false,
 // every project I am a member of). Only those projects' events are read. A project opened
 // for the first time is fetched by OpenProject (or, offline, by the next sync).

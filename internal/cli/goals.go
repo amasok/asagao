@@ -256,8 +256,8 @@ func isGID(arg string) bool {
 }
 
 func goalLine(g readmodel.GoalView) string {
-	parts := []string{"[" + readmodel.GoalStatusLabel(g.Status) + "] " + g.Name}
-	if t := g.Metric.Text(); t != "" {
+	parts := []string{"[" + format.GoalStatusLabel(g.Status) + "] " + g.Name}
+	if t := format.GoalMetricText(g.Metric); t != "" {
 		parts = append(parts, t)
 	}
 	if g.TimePeriod != nil {
@@ -297,8 +297,8 @@ func printGoal(out io.Writer, g *readmodel.GoalDetail, now time.Time) {
 			fmt.Fprintf(out, "  %s: %s\n", label, v)
 		}
 	}
-	line("ステータス", readmodel.GoalStatusLabel(g.Status))
-	line("進み具合", g.Metric.Text())
+	line("ステータス", format.GoalStatusLabel(g.Status))
+	line("進み具合", format.GoalMetricText(g.Metric))
 	if g.TimePeriod != nil {
 		line("期間", g.TimePeriod.DisplayName)
 	}

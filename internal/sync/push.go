@@ -199,7 +199,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 	}()
 	verified := map[int64]bool{} // checked in Asana during this push (at most once each)
 	// The account is checked only before dropping anything (dropGone), not here: only Run
-	// changes the stored account (KeyMeGID), and Run refuses to when Asana answers as
+	// changes the stored account (SyncedMeGID/SetMeGID), and Run refuses to when Asana answers as
 	// another account, so the stored one stays the account the local data belongs to.
 	drops.res = &res // this pass's counts
 	for i := 0; i < len(ops); {
@@ -449,7 +449,7 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
 // workspace's plan lacks the feature (402) also hides that feature in the workspace for
-// readmodel.PlanRecheckAfter (readmodel.PlanKey).
+// plan.RecheckAfter.
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
 	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)
@@ -1169,7 +1169,7 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 // refreshSectionOrderAfterMove fetches Asana's order for section right after pushing a
 // move into it (#69: Asana emits no Events on intra-section reorders, so an external
 // reorder before our push would otherwise leave the cache out of order). Transient
-// failures queue section in KeyTaskOrder so the next sync retries it.
+// failures queue section in PendingSectionOrders so the next sync retries it.
 func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, section string) {
 	if section == "" || localgid.IsLocal(section) {
 		return

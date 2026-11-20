@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // The kind comes from the unit; resource_subtype is only a fallback. Empty, unknown,
@@ -54,7 +55,7 @@ func TestAttackGoalMetricsRoundTrip(t *testing.T) {
 	} {
 		g, err := s.GoalDetail(ctx, gid)
 		must(t, err)
-		if got := g.Metric.Text(); got != want {
+		if got := format.GoalMetricText(g.Metric); got != want {
 			t.Errorf("%s: %q, want %q", gid, got, want)
 		}
 	}

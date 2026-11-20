@@ -17,6 +17,7 @@ import (
 	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // goalsAsana answers the goal, time period and portfolio endpoints as Asana documents
@@ -148,7 +149,7 @@ func TestFetchGoalsAndGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.HTMLNotes == "" || g.Owner == nil || g.Owner.Name != "山田" || g.Metric == nil || g.Metric.Text() != "40 / 100（40%）" ||
+	if g.HTMLNotes == "" || g.Owner == nil || g.Owner.Name != "山田" || g.Metric == nil || format.GoalMetricText(g.Metric) != "40 / 100（40%）" ||
 		len(g.Supporting) != 2 || g.Supporting[0].Type != "goal" || g.Supporting[1].Name != "営業" || g.FetchedAt == "" {
 		t.Fatalf("goal = %+v", g)
 	}

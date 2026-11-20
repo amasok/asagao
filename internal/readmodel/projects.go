@@ -131,17 +131,3 @@ type Stats struct {
 	OpenTasks  int        `json:"open_tasks"`
 	LastSync   *time.Time `json:"last_sync,omitempty"`
 }
-
-// ProjectGroup is the heading a project is listed under (ListProjects' order): ★ お気に入り,
-// its team, or チームなし.
-func ProjectGroup(p ProjectView) string {
-	switch {
-	case p.Favorite:
-		return "★ お気に入り"
-	case p.TeamName != "":
-		return p.TeamName
-	case p.TeamGID != "":
-		return p.TeamGID
-	}
-	return "チームなし"
-}

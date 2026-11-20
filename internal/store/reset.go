@@ -16,7 +16,7 @@ var ErrUnsentChanges = readmodel.ErrUnsentChanges
 const ResetReason = format.ResetReason
 
 // Reset deletes all local data: tasks, projects, comments, attachments, the outbox, the
-// record of dropped changes and sync state including the account (KeyMeGID), so the store
+// record of dropped changes and sync state including the account (keyMeGID), so the store
 // can be used with another Asana account. It is one transaction, taken under the push
 // lock (ErrPushBusy if another process is sending).
 //

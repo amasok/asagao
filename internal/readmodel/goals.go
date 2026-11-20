@@ -1,13 +1,9 @@
 package readmodel
 
-import (
-	"math"
-	"strconv"
-	"strings"
-)
+import "math"
 
 // Goals, portfolios and time periods (#7), read from the local cache. They are fetched
-// from Asana when shown (online) and need a plan that has them (PlanGoals, PlanPortfolios).
+// from Asana when shown (online) and need a plan that has them (Goals, Portfolios).
 
 // GoalView is a goal.
 type GoalView struct {
@@ -17,7 +13,7 @@ type GoalView struct {
 	// HTMLNotes is set once the goal itself was fetched (GoalDetail).
 	HTMLNotes string `json:"html_notes,omitempty"`
 	// Status: green, yellow, red (open) or missed, achieved, partial, dropped (closed); ""
-	// when not set. GoalStatusLabel names it.
+	// when not set.
 	Status         string          `json:"status,omitempty"`
 	Owner          *UserRef        `json:"owner,omitempty"`
 	TeamName       string          `json:"team_name,omitempty"`
@@ -74,62 +70,6 @@ func (m *GoalMetric) Progress() (p float64, ok bool) {
 	return math.Max(0, math.Min(1, p)), true
 }
 
-// percent is the progress in whole percent, rounded down: computed as (current - initial)
-// * 100 / span so that e.g. 29 of 100 is 29 (29/100*100 is 28.999…), with a margin for
-// what is left of the rounding.
-func (m *GoalMetric) percent() (int, bool) {
-	if _, ok := m.Progress(); !ok {
-		return 0, false
-	}
-	start := 0.0
-	if m.Initial != nil {
-		start = *m.Initial
-	}
-	pct := math.Floor((*m.Current-start)*100/(*m.Target-start) + 1e-9)
-	if math.IsNaN(pct) {
-		return 0, false
-	}
-	return int(math.Max(0, math.Min(100, pct))), true
-}
-
-// Text describes the metric's progress, e.g. "40 / 100（40%）".
-func (m *GoalMetric) Text() string {
-	if m == nil {
-		return ""
-	}
-	num := func(v *float64) string {
-		if v == nil {
-			return ""
-		}
-		x := *v
-		if m.Kind == "percentage" {
-			x *= 100 // Asana keeps a percentage as a fraction (1 is 100%)
-		}
-		s := strconv.FormatFloat(x, 'f', max(0, min(m.Precision, 6)), 64)
-		switch m.Kind {
-		case "percentage":
-			return s + "%"
-		case "currency":
-			return strings.TrimSpace(m.Currency + " " + s)
-		}
-		return s
-	}
-	cur := m.Display
-	if cur == "" || (m.Kind == "percentage" && m.Current != nil) {
-		// Asana's display of a percentage is "0%" in a GET but "0.00" in other answers
-		// (#31): build it from the value instead.
-		cur = num(m.Current)
-	}
-	text := cur
-	if t := num(m.Target); t != "" {
-		text = strings.TrimSpace(cur + " / " + t)
-	}
-	if pct, ok := m.percent(); ok {
-		text += "（" + strconv.Itoa(pct) + "%）"
-	}
-	return text
-}
-
 // GoalSupport is what supports a goal.
 type GoalSupport struct {
 	GID string `json:"gid"`
@@ -152,29 +92,6 @@ type TimePeriodView struct {
 // Contains reports whether the period includes day (YYYY-MM-DD).
 func (p TimePeriodView) Contains(day string) bool {
 	return p.StartOn != "" && p.EndOn != "" && p.StartOn <= day && day <= p.EndOn
-}
-
-// GoalStatusLabel names a goal's status in Japanese.
-func GoalStatusLabel(status string) string {
-	switch status {
-	case "green":
-		return "順調"
-	case "yellow":
-		return "要注意"
-	case "red":
-		return "遅れ"
-	case "achieved":
-		return "達成"
-	case "partial":
-		return "一部達成"
-	case "missed":
-		return "未達"
-	case "dropped":
-		return "中止"
-	case "":
-		return "未設定"
-	}
-	return status
 }
 
 // PortfolioView is a portfolio.

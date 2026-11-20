@@ -8,6 +8,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/plan"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Control characters from Asana do not reach the screen through the JSON columns (metric,
@@ -188,8 +189,8 @@ func TestGoalMetricKindFromUnit(t *testing.T) {
 	} {
 		g, err := s.GoalDetail(ctx, gid)
 		must(t, err)
-		if g.Metric == nil || g.Metric.Kind != want.kind || g.Metric.Text() != want.text {
-			t.Errorf("%s: %+v %q, want %s %q", gid, g.Metric, g.Metric.Text(), want.kind, want.text)
+		if g.Metric == nil || g.Metric.Kind != want.kind || format.GoalMetricText(g.Metric) != want.text {
+			t.Errorf("%s: %+v %q, want %s %q", gid, g.Metric, format.GoalMetricText(g.Metric), want.kind, want.text)
 		}
 	}
 }

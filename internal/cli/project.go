@@ -43,11 +43,11 @@ func (a *app) projectCmd() *cobra.Command {
 			// Under headings (favorites, then each team) when there is more than one.
 			groups := map[string]bool{}
 			for _, p := range projects {
-				groups[readmodel.ProjectGroup(p)] = true
+				groups[format.ProjectGroup(p)] = true
 			}
 			group := ""
 			for _, p := range projects {
-				if g := readmodel.ProjectGroup(p); len(groups) > 1 && g != group {
+				if g := format.ProjectGroup(p); len(groups) > 1 && g != group {
 					group = g
 					fmt.Fprintf(out, "[%s]\n", g)
 				}

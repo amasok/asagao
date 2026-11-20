@@ -94,10 +94,12 @@ func UnavailableMessage(feature string) string {
 		CustomID:     "タスクの ID (custom ID) での取得",
 		Goals:        "ゴール",
 		Portfolios:   "ポートフォリオ",
-		CustomFields: "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
-		ProjectBrief: "プロジェクトブリーフ (概要のページ)",
-		StartOn:      "タスクの開始日",
-		CustomTypes:  "カスタムタイプ (タスクの種類とステータス)",
+		CustomFields:     "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
+		ProjectBrief:     "プロジェクトブリーフ (概要のページ)",
+		StartOn:          "タスクの開始日",
+		CustomTypes:      "カスタムタイプ (タスクの種類とステータス)",
+		TaskTemplates:    "タスクテンプレート",
+		ProjectTemplates: "プロジェクトテンプレート",
 	}[feature]
 	// Every feature is tried again after RecheckAfter.
 	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"

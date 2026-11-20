@@ -58,7 +58,7 @@ type action struct {
 	needTask    bool                // needs a selected (or shown) task
 	needProject bool                // needs a project to be open
 	needInbox   bool                // only in the inbox (notifications)
-	plan        string              // a feature the workspace's plan may lack (readmodel.Plan*): hidden without it
+	plan        string              // a feature the workspace's plan may lack (plan.*): hidden without it
 	bulk        bool                // also acts on the marked tasks (bulk.go), so usable with them and no selection
 	ready       func(m *Model) bool // offered only when it returns true (nil: always)
 	run         func(m *Model) tea.Cmd
