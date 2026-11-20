@@ -464,6 +464,9 @@ func (c *Client) UploadAttachment(ctx context.Context, parentGID, fileName strin
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
+	if err := c.pace(ctx); err != nil {
+		return nil, err
+	}
 	c.requests.Add(1)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

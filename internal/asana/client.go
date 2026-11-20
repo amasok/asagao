@@ -27,6 +27,12 @@ type Client struct {
 	MaxRetryDelay time.Duration
 	// OnRetry, if set, is called before waiting to retry a request that got status.
 	OnRetry func(status int, wait time.Duration)
+	// Limiter, if set, paces the requests: its Wait is called before each HTTP request
+	// (each retry and each upload too), so that a long run (a full sync, scripts/realcheck)
+	// stays under Asana's rate limit instead of running into 429s. Nil: no pacing, the
+	// requests go out as fast as they are made (the default). *rate.Limiter of
+	// golang.org/x/time/rate satisfies it.
+	Limiter Limiter
 	// AuthHint tells the user how to fix a 401 (e.g. how to log in again); it is added to
 	// the message of 401 errors.
 	AuthHint string
@@ -43,6 +49,23 @@ type Client struct {
 	clockKnown  atomic.Bool // a response with a Date header has arrived
 	// requests counts the HTTP requests sent (each retry too), for Requests.
 	requests atomic.Int64
+}
+
+// Limiter paces requests: Wait blocks until one more request may be sent, or returns an
+// error (for example ctx's) when it should not be sent at all.
+type Limiter interface {
+	Wait(ctx context.Context) error
+}
+
+// pace waits for c.Limiter, if one is set, before a request is sent.
+func (c *Client) pace(ctx context.Context) error {
+	if c.Limiter == nil {
+		return nil
+	}
+	if err := c.Limiter.Wait(ctx); err != nil {
+		return fmt.Errorf("asana: rate limiter: %w", err)
+	}
+	return nil
 }
 
 // Requests is how many HTTP requests the client has sent to Asana (each retry counts), to
@@ -171,6 +194,9 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, pa
 		req.Header.Set("Accept", "application/json")
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		if err := c.pace(ctx); err != nil {
+			return nil, err
 		}
 		c.requests.Add(1)
 		resp, err := hc.Do(req)
