@@ -11,26 +11,26 @@ import (
 // Sending the relations of a task: tags, followers, projects and dependencies.
 
 func init() {
-	register(outbox.KindAddTag, opHandler{send: sends((*Syncer).pushTag), batch: batchTag, find: findAddedTag})
-	register(outbox.KindRemoveTag, opHandler{send: sends((*Syncer).pushTag), batch: batchTag})
+	register(outbox.KindAddTag, opHandler{send: sends((*Pusher).pushTag), batch: batchTag, find: findAddedTag})
+	register(outbox.KindRemoveTag, opHandler{send: sends((*Pusher).pushTag), batch: batchTag})
 	register(outbox.KindAddFollower, opHandler{batch: batchFollower,
-		send: relationSender(func(s *Syncer, ctx context.Context, task, _ string, op outbox.Op) error {
+		send: relationSender(func(s *Pusher, ctx context.Context, task, _ string, op outbox.Op) error {
 			return s.API.AddFollowers(ctx, task, []string{payloadString(op, "user")})
 		})})
 	register(outbox.KindRemoveFollower, opHandler{batch: batchFollower,
-		send: relationSender(func(s *Syncer, ctx context.Context, task, _ string, op outbox.Op) error {
+		send: relationSender(func(s *Pusher, ctx context.Context, task, _ string, op outbox.Op) error {
 			return s.API.RemoveFollowers(ctx, task, []string{payloadString(op, "user")})
 		})})
 	register(outbox.KindAddProject, opHandler{batch: batchAddProject,
-		send: relationSender(func(s *Syncer, ctx context.Context, task, section string, op outbox.Op) error {
+		send: relationSender(func(s *Pusher, ctx context.Context, task, section string, op outbox.Op) error {
 			return s.API.AddProject(ctx, task, payloadString(op, "project"), section)
 		})})
 	register(outbox.KindRemoveProject, opHandler{batch: batchRemoveProject,
-		send: relationSender(func(s *Syncer, ctx context.Context, task, _ string, op outbox.Op) error {
+		send: relationSender(func(s *Pusher, ctx context.Context, task, _ string, op outbox.Op) error {
 			return s.API.RemoveProject(ctx, task, payloadString(op, "project"))
 		})})
-	register(outbox.KindAddDependency, opHandler{send: sends((*Syncer).pushDependency), batch: batchDependency, goneReason: dependencyGone})
-	register(outbox.KindRemoveDependency, opHandler{send: sends((*Syncer).pushDependency), batch: batchDependency, goneReason: dependencyGone})
+	register(outbox.KindAddDependency, opHandler{send: sends((*Pusher).pushDependency), batch: batchDependency, goneReason: dependencyGone})
+	register(outbox.KindRemoveDependency, opHandler{send: sends((*Pusher).pushDependency), batch: batchDependency, goneReason: dependencyGone})
 }
 
 // dependencyGone is why a dependency change is dropped when the task is there.
@@ -38,7 +38,7 @@ func dependencyGone(_ outbox.Op, cause error) string {
 	return "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
 }
 
-func (s *Syncer) pushTag(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushTag(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
@@ -73,11 +73,11 @@ func (s *Syncer) pushTag(ctx context.Context, op outbox.Op) error {
 
 // relationSender sends a follower or project entry: apply makes the request for the task
 // (an Asana gid) and the section of the entry (an Asana gid, or "").
-func relationSender(apply func(s *Syncer, ctx context.Context, task, section string, op outbox.Op) error) func(*Syncer, context.Context, outbox.Op) (outcome, error) {
-	return sends(func(s *Syncer, ctx context.Context, op outbox.Op) error { return s.pushRelation(ctx, op, apply) })
+func relationSender(apply func(s *Pusher, ctx context.Context, task, section string, op outbox.Op) error) func(*Pusher, context.Context, outbox.Op) (outcome, error) {
+	return sends(func(s *Pusher, ctx context.Context, op outbox.Op) error { return s.pushRelation(ctx, op, apply) })
 }
 
-func (s *Syncer) pushRelation(ctx context.Context, op outbox.Op, apply func(s *Syncer, ctx context.Context, task, section string, op outbox.Op) error) error {
+func (s *Pusher) pushRelation(ctx context.Context, op outbox.Op, apply func(s *Pusher, ctx context.Context, task, section string, op outbox.Op) error) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -101,7 +101,7 @@ func (s *Syncer) pushRelation(ctx context.Context, op outbox.Op, apply func(s *S
 
 // pushDependency adds or removes a dependency. Both are harmless to repeat: Asana adds only
 // tasks that are not dependencies yet.
-func (s *Syncer) pushDependency(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDependency(ctx context.Context, op outbox.Op) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -125,7 +125,7 @@ func (s *Syncer) pushDependency(ctx context.Context, op outbox.Op) error {
 }
 
 // findAddedTag looks for the tag an add_tag of a tag created offline made (see reconcile).
-func findAddedTag(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+func findAddedTag(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	// A tag created offline is created before it is added. If a tag with that name
 	// exists (whoever made it), use it; the add itself is harmless to repeat, so it is
@@ -151,7 +151,7 @@ func findAddedTag(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outco
 }
 
 // batchTag is the batch request for an add_tag or remove_tag of a tag Asana has.
-func batchTag(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchTag(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	tag, err := s.Store.RealTagGID(ctx, str("tag"))
@@ -170,7 +170,7 @@ func batchTag(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool
 }
 
 // batchFollower is the batch request for an add_follower or remove_follower.
-func batchFollower(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchFollower(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	user := str("user")
@@ -186,7 +186,7 @@ func batchFollower(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) 
 }
 
 // batchAddProject is the batch request for an add_project.
-func batchAddProject(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchAddProject(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	project, section := str("project"), str("section")
@@ -198,7 +198,7 @@ func batchAddProject(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry
 }
 
 // batchRemoveProject is the batch request for a remove_project.
-func batchRemoveProject(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchRemoveProject(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	project := str("project")
@@ -210,7 +210,7 @@ func batchRemoveProject(s *Syncer, ctx context.Context, op outbox.Op, e *batchEn
 }
 
 // batchDependency is the batch request for an add_dependency or remove_dependency.
-func batchDependency(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchDependency(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	dep, err := s.Store.RealGID(ctx, str("dependency"))

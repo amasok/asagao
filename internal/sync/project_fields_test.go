@@ -152,7 +152,7 @@ func setupProject(t *testing.T) (*projectServer, *Syncer, *store.Store) {
 		t.Fatal(err)
 	}
 	p, _ := s.API.Project(ctx, "p1")
-	if err := s.saveProject(ctx, p); err != nil {
+	if err := saveProject(ctx, s.Store, p); err != nil {
 		t.Fatal(err)
 	}
 	return ps, s, st
@@ -229,7 +229,7 @@ func TestPushUpdateProjectNoColorIsNone(t *testing.T) {
 			ps, s, st := setupProject(t)
 			ps.color = c.stored
 			p, _ := s.API.Project(ctx, "p1")
-			if err := s.saveProject(ctx, p); err != nil {
+			if err := saveProject(ctx, s.Store, p); err != nil {
 				t.Fatal(err)
 			}
 			ps.color = c.asana
@@ -252,7 +252,7 @@ func TestPushUpdateProjectRenamedColorIsSame(t *testing.T) {
 	ps, s, st := setupProject(t)
 	ps.color = "dark-green"
 	p, _ := s.API.Project(ctx, "p1")
-	if err := s.saveProject(ctx, p); err != nil {
+	if err := saveProject(ctx, s.Store, p); err != nil {
 		t.Fatal(err)
 	}
 	ps.color = "green"
@@ -401,7 +401,7 @@ func TestSyncTeamsAndFavorites(t *testing.T) {
 	ctx := context.Background()
 	ps, s, st := setupProject(t)
 	w := asana.Workspace{GID: "w1", Name: "会社", IsOrganization: true}
-	if err := s.syncTeamsAndFavorites(ctx, w, false); err != nil {
+	if err := s.Puller().syncTeamsAndFavorites(ctx, w, false); err != nil {
 		t.Fatal(err)
 	}
 	teams, _ := st.ListTeams(ctx)
@@ -412,7 +412,7 @@ func TestSyncTeamsAndFavorites(t *testing.T) {
 		t.Fatalf("favorite not stored: %+v", projects)
 	}
 	// Not again until the poll.
-	if err := s.syncTeamsAndFavorites(ctx, w, false); err != nil {
+	if err := s.Puller().syncTeamsAndFavorites(ctx, w, false); err != nil {
 		t.Fatal(err)
 	}
 	if ps.calls["GET /users/me/teams"] != 1 || ps.calls["GET /users/me/favorites"] != 1 {
@@ -420,14 +420,14 @@ func TestSyncTeamsAndFavorites(t *testing.T) {
 	}
 	// A failure keeps what is cached and tries again on the next sync.
 	ps.favoritesStatus = http.StatusInternalServerError
-	if err := s.syncTeamsAndFavorites(ctx, w, true); err != nil {
+	if err := s.Puller().syncTeamsAndFavorites(ctx, w, true); err != nil {
 		t.Fatal(err)
 	}
 	if projects, _ := st.ListProjects(ctx, true); !projects[0].Favorite {
 		t.Fatalf("favorites dropped after a failure")
 	}
 	ps.favoritesStatus = http.StatusPaymentRequired
-	if err := s.syncTeamsAndFavorites(ctx, w, false); err != nil {
+	if err := s.Puller().syncTeamsAndFavorites(ctx, w, false); err != nil {
 		t.Fatal(err)
 	}
 	if ps.calls["GET /users/me/favorites"] != 3 {
@@ -437,7 +437,7 @@ func TestSyncTeamsAndFavorites(t *testing.T) {
 		t.Fatalf("402: favorites kept")
 	}
 	// A workspace that is not an organization has no teams to ask for.
-	if err := s.syncTeamsAndFavorites(ctx, asana.Workspace{GID: "w1"}, true); err != nil {
+	if err := s.Puller().syncTeamsAndFavorites(ctx, asana.Workspace{GID: "w1"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if ps.calls["GET /users/me/teams"] != 3 {

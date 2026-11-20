@@ -250,8 +250,8 @@ func setupOptions(t *testing.T) (*optionServer, *Syncer, *store.Store) {
 	}
 	must(st.SetMeGID(ctx, "me"))
 	must(st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p1", Name: "P"}}, "me"))
-	must(s.syncCustomFields(ctx, "p1", true))
-	must(s.syncWorkspaceCustomFields(ctx, "w1", true))
+	must(s.Puller().syncCustomFields(ctx, "p1", true))
+	must(s.Puller().syncWorkspaceCustomFields(ctx, "w1", true))
 	for _, g := range []string{"t1", "t2"} {
 		task, err := api.Task(ctx, g)
 		must(err)
@@ -495,10 +495,10 @@ func TestPullKeepsLocalOption(t *testing.T) {
 	if _, err := st.SetCustomFieldLocal(ctx, "t1", "cf1", local, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
+	if err := s.Puller().syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 		t.Fatal(err)
 	}
 	task, err := s.API.Task(ctx, "t1")
@@ -599,7 +599,7 @@ func TestPushRemoveFieldSetting(t *testing.T) {
 		t.Fatal(err)
 	}
 	// a pull before it is sent keeps it removed
-	if err := s.syncCustomFields(ctx, "p1", true); err != nil {
+	if err := s.Puller().syncCustomFields(ctx, "p1", true); err != nil {
 		t.Fatal(err)
 	}
 	fields, _ := st.ProjectFields(ctx, "p1")
@@ -630,7 +630,7 @@ func TestSyncWorkspaceCustomFields(t *testing.T) {
 		t.Fatalf("fields = %v", got)
 	}
 	f.status["GET /workspaces/w1/custom_fields"] = 402
-	if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
+	if err := s.Puller().syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomFields, "w1"); !ok {
@@ -642,7 +642,7 @@ func TestSyncWorkspaceCustomFields(t *testing.T) {
 	}
 	// another error keeps what is cached, and is tried again
 	f.status["GET /workspaces/w1/custom_fields"] = 500
-	if err := s.syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
+	if err := s.Puller().syncWorkspaceCustomFields(ctx, "w1", true); err != nil {
 		t.Fatal(err)
 	}
 }

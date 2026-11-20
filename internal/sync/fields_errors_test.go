@@ -162,7 +162,7 @@ func TestCustomFieldSettingsFailures(t *testing.T) {
 			fs, s, st := setupFieldPush(t)
 			_ = st.SetProjectCustomFieldsFetchedAt(ctx, "p1", time.Time{})
 			fs.settings = tc.status
-			if err := s.syncCustomFields(ctx, "p1", false); err != nil {
+			if err := s.Puller().syncCustomFields(ctx, "p1", false); err != nil {
 				t.Fatalf("a %d must not stop the sync: %v", tc.status, err)
 			}
 			v, _ := st.ProjectCustomFieldsFetchedAt(ctx, "p1")
@@ -171,7 +171,7 @@ func TestCustomFieldSettingsFailures(t *testing.T) {
 			}
 			if !tc.recorded {
 				fs.settings = 0
-				if err := s.syncCustomFields(ctx, "p1", false); err != nil {
+				if err := s.Puller().syncCustomFields(ctx, "p1", false); err != nil {
 					t.Fatal(err)
 				}
 				if v, _ := st.ProjectCustomFieldsFetchedAt(ctx, "p1"); v == "" {

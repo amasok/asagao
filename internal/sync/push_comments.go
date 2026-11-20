@@ -15,14 +15,14 @@ import (
 func init() {
 	story := localRef{key: "story", result: readmodel.ResultStory}
 	attachment := localRef{key: "attachment", result: readmodel.ResultAttachment}
-	register(outbox.KindAddComment, opHandler{send: sends((*Syncer).pushComment), find: findComment})
-	register(outbox.KindUpdateStory, opHandler{send: sends((*Syncer).pushUpdateStory), local: story})
-	register(outbox.KindDeleteStory, opHandler{send: sends((*Syncer).pushDeleteItem), local: story})
-	register(outbox.KindUploadAttachment, opHandler{send: sends((*Syncer).pushUpload), find: findUpload})
-	register(outbox.KindDeleteAttachment, opHandler{send: sends((*Syncer).pushDeleteItem), local: attachment})
+	register(outbox.KindAddComment, opHandler{send: sends((*Pusher).pushComment), find: findComment})
+	register(outbox.KindUpdateStory, opHandler{send: sends((*Pusher).pushUpdateStory), local: story})
+	register(outbox.KindDeleteStory, opHandler{send: sends((*Pusher).pushDeleteItem), local: story})
+	register(outbox.KindUploadAttachment, opHandler{send: sends((*Pusher).pushUpload), find: findUpload})
+	register(outbox.KindDeleteAttachment, opHandler{send: sends((*Pusher).pushDeleteItem), local: attachment})
 }
 
-func (s *Syncer) pushComment(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushComment(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
@@ -36,7 +36,7 @@ func (s *Syncer) pushComment(ctx context.Context, op outbox.Op) error {
 	return sentNotSaved(s.Store.CompleteComment(ctx, op.ID, localGID, op.TaskGID, *st))
 }
 
-func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushUpload(ctx context.Context, op outbox.Op) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 
 // pushUpdateStory edits a comment; sending it twice is harmless (PUT). A comment deleted
 // in Asana answers 404: the edit is dropped (dropGone).
-func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushUpdateStory(ctx context.Context, op outbox.Op) error {
 	gid, _ := op.Payload["story"].(string)
 	real, _, err := s.Store.LocalResult(ctx, readmodel.ResultStory, gid)
 	if err != nil {
@@ -85,7 +85,7 @@ func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
 // pushDeleteItem deletes a comment or an attachment. Sending it twice is harmless: a 404 means
 // it is gone already (deleted elsewhere, or by an earlier request whose answer was lost),
 // which is what was asked.
-func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 	ref := handlers[op.Kind].local
 	real, _, err := s.Store.LocalResult(ctx, ref.result, payloadString(op, ref.key))
 	if err != nil {
@@ -112,7 +112,7 @@ func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 }
 
 // findComment looks for the comment an add_comment posted (see reconcile).
-func findComment(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+func findComment(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	stories, err := s.API.Stories(ctx, op.TaskGID)
 	if err != nil {
@@ -133,7 +133,7 @@ func findComment(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcom
 }
 
 // findUpload looks for the attachment an upload_attachment added (see reconcile).
-func findUpload(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+func findUpload(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	atts, err := s.API.Attachments(ctx, op.TaskGID)
 	if err != nil {

@@ -13,20 +13,20 @@ import (
 // Sending changes to sections themselves (#33).
 
 func init() {
-	register(outbox.KindRenameSection, opHandler{send: (*Syncer).pushRenameSection})
-	register(outbox.KindCreateSection, opHandler{send: (*Syncer).pushCreateSection, planWorkspace: sectionWorkspace,
-		find: func(s *Syncer, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
+	register(outbox.KindRenameSection, opHandler{send: (*Pusher).pushRenameSection})
+	register(outbox.KindCreateSection, opHandler{send: (*Pusher).pushCreateSection, planWorkspace: sectionWorkspace,
+		find: func(s *Pusher, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
 			return s.findCreatedSection(ctx, op)
 		}})
-	register(outbox.KindDeleteSection, opHandler{send: sends((*Syncer).pushDeleteSection), planWorkspace: sectionWorkspace,
-		waits: func(s *Syncer, ctx context.Context, op outbox.Op) (bool, error) {
+	register(outbox.KindDeleteSection, opHandler{send: sends((*Pusher).pushDeleteSection), planWorkspace: sectionWorkspace,
+		waits: func(s *Pusher, ctx context.Context, op outbox.Op) (bool, error) {
 			return s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID) // Asana deletes only an empty section
 		}})
-	register(outbox.KindInsertSection, opHandler{send: sends((*Syncer).pushInsertSection), planWorkspace: sectionWorkspace})
+	register(outbox.KindInsertSection, opHandler{send: sends((*Pusher).pushInsertSection), planWorkspace: sectionWorkspace})
 }
 
 // sectionWorkspace is the workspace of the project of a section entry.
-func sectionWorkspace(s *Syncer, ctx context.Context, op outbox.Op) string {
+func sectionWorkspace(s *Pusher, ctx context.Context, op outbox.Op) string {
 	ws, _ := s.Store.ProjectWorkspace(ctx, payloadString(op, "project"))
 	return ws
 }
@@ -34,7 +34,7 @@ func sectionWorkspace(s *Syncer, ctx context.Context, op outbox.Op) string {
 // waitsForSection reports whether op names a section created offline whose creation is
 // still queued (pending, being verified or failed): it waits, and goes out once the
 // section is created (its gid is then replaced in op) or is discarded with it.
-func (s *Syncer) waitsForSection(ctx context.Context, op outbox.Op) (bool, error) {
+func (s *Pusher) waitsForSection(ctx context.Context, op outbox.Op) (bool, error) {
 	var refs []string
 	if spec, _ := outbox.SpecOf(op.Kind); spec.Subject == outbox.SubjectSection && !spec.Creates {
 		refs = append(refs, op.TaskGID)
@@ -64,7 +64,7 @@ func (s *Syncer) waitsForSection(ctx context.Context, op outbox.Op) (bool, error
 
 // realSection returns the Asana gid of a section ("" stays ""). A section created offline
 // whose creation is gone (discarded) is reported as not found.
-func (s *Syncer) realSection(ctx context.Context, gid string) (string, error) {
+func (s *Pusher) realSection(ctx context.Context, gid string) (string, error) {
 	real, err := s.Store.RealSectionGID(ctx, gid)
 	if err != nil {
 		return "", err
@@ -78,7 +78,7 @@ func (s *Syncer) realSection(ctx context.Context, gid string) (string, error) {
 // pushCreateSection creates a section. Creating twice would make two sections, so before
 // the request the gids of the sections that already have that name are recorded: if the
 // answer is lost, reconcile takes a new section with the name as ours.
-func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, error) {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	secs, err := s.API.Sections(ctx, str("project"))
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *Syncer) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 
 // findCreatedSection looks for the section a create_section entry may have created: a
 // section of the project with its name that was not there before the request.
-func (s *Syncer) findCreatedSection(ctx context.Context, op outbox.Op) (outcome, match, error) {
+func (s *Pusher) findCreatedSection(ctx context.Context, op outbox.Op) (outcome, match, error) {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	raw, ok := op.Payload["existing"].([]any)
 	if !ok {
@@ -154,7 +154,7 @@ func (s *Syncer) findCreatedSection(ctx context.Context, op outbox.Op) (outcome,
 }
 
 // pushDeleteSection deletes a section. One that is already gone is done.
-func (s *Syncer) pushDeleteSection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDeleteSection(ctx context.Context, op outbox.Op) error {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -166,7 +166,7 @@ func (s *Syncer) pushDeleteSection(ctx context.Context, op outbox.Op) error {
 }
 
 // pushInsertSection moves a section before or after another one.
-func (s *Syncer) pushInsertSection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushInsertSection(ctx context.Context, op outbox.Op) error {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func (s *Syncer) pushInsertSection(ctx context.Context, op outbox.Op) error {
 	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
-func (s *Syncer) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err

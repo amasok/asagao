@@ -18,19 +18,19 @@ import (
 
 func init() {
 	entry := localRef{key: "entry", result: readmodel.ResultTimeEntry}
-	register(outbox.KindAddTimeEntry, opHandler{send: sends((*Syncer).pushAddTimeEntry),
-		find: func(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+	register(outbox.KindAddTimeEntry, opHandler{send: sends((*Pusher).pushAddTimeEntry),
+		find: func(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 			return s.findTimeEntry(ctx, op, f.byMe, f.recent)
 		}})
-	register(outbox.KindUpdateTimeEntry, opHandler{send: sends((*Syncer).pushUpdateTimeEntry), local: entry})
-	register(outbox.KindDeleteTimeEntry, opHandler{send: sends((*Syncer).pushDeleteTimeEntry), local: entry})
+	register(outbox.KindUpdateTimeEntry, opHandler{send: sends((*Pusher).pushUpdateTimeEntry), local: entry})
+	register(outbox.KindDeleteTimeEntry, opHandler{send: sends((*Pusher).pushDeleteTimeEntry), local: entry})
 }
 
 // FetchTimeEntries refreshes a task's time tracking entries. It returns a
 // *readmodel.PlanUnavailableError, without asking Asana, while a 402 in the task's
 // workspace still hides time tracking (plan.go); after that it asks again, and a list read
 // forgets the 402.
-func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
+func (s *Details) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	if s.API == nil {
 		return ErrOffline
 	}
@@ -39,7 +39,7 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 		return err
 	}
 	unavailable := &readmodel.PlanUnavailableError{Feature: plan.TimeTracking}
-	if hidden, err := s.planHidden(ctx, plan.TimeTracking, ws); err != nil || hidden {
+	if hidden, err := planHidden(ctx, s.Store, s.clock(), plan.TimeTracking, ws); err != nil || hidden {
 		if err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	// Entries Asana creates after this (an add sent meanwhile) are newer than the list.
 	from := s.serverNow().Add(-clockSkew)
 	entries, err := s.API.TimeEntries(ctx, taskGID)
-	if refused, recErr := s.recordPlanRefusal(ctx, plan.TimeTracking, ws, err); refused || recErr != nil {
+	if refused, recErr := recordPlanRefusal(ctx, s.Store, s.clock(), plan.TimeTracking, ws, err); refused || recErr != nil {
 		if recErr != nil {
 			return recErr
 		}
@@ -60,7 +60,7 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.clearPlanRefusal(ctx, plan.TimeTracking, ws); err != nil {
+	if err := s.Store.ClearPlanRefusal(ctx, plan.TimeTracking, ws); err != nil {
 		return err
 	}
 	return s.Store.ReplaceTimeEntries(ctx, taskGID, entries, from)
@@ -79,7 +79,7 @@ func timeEntryValues(op outbox.Op) (minutes int, enteredOn string) {
 
 // pushAddTimeEntry creates the entry. Sending it twice would record the time twice, so an
 // answer that is lost is checked (findTimeEntry) before sending it again.
-func (s *Syncer) pushAddTimeEntry(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushAddTimeEntry(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its task's create failed
 	}
@@ -94,7 +94,7 @@ func (s *Syncer) pushAddTimeEntry(ctx context.Context, op outbox.Op) error {
 
 // pushUpdateTimeEntry changes an entry; sending it twice is harmless (PUT). An entry
 // deleted in Asana answers 404: the edit is dropped (dropGone).
-func (s *Syncer) pushUpdateTimeEntry(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushUpdateTimeEntry(ctx context.Context, op outbox.Op) error {
 	gid, _ := op.Payload["entry"].(string)
 	real, _, err := s.Store.LocalResult(ctx, readmodel.ResultTimeEntry, gid)
 	if err != nil {
@@ -120,7 +120,7 @@ func (s *Syncer) pushUpdateTimeEntry(ctx context.Context, op outbox.Op) error {
 
 // pushDeleteTimeEntry deletes an entry. A 404 means it is gone already, which is what was
 // asked.
-func (s *Syncer) pushDeleteTimeEntry(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDeleteTimeEntry(ctx context.Context, op outbox.Op) error {
 	gid, _ := op.Payload["entry"].(string)
 	real, _, err := s.Store.LocalResult(ctx, readmodel.ResultTimeEntry, gid)
 	if err != nil {
@@ -138,7 +138,7 @@ func (s *Syncer) pushDeleteTimeEntry(ctx context.Context, op outbox.Op) error {
 // minutes and day, by me, created since the add was sent, and not the result of another
 // entry. A candidate the list gives without created_at (as the reference documents it) is
 // read on its own.
-func (s *Syncer) findTimeEntry(ctx context.Context, op outbox.Op, byMe func(*model.Ref) bool, recent func(time.Time) bool) (outcome, match, error) {
+func (s *Pusher) findTimeEntry(ctx context.Context, op outbox.Op, byMe func(*model.Ref) bool, recent func(time.Time) bool) (outcome, match, error) {
 	if localgid.IsLocal(op.TaskGID) {
 		return sent, notFound, nil // its task is not in Asana: nothing can have been created
 	}

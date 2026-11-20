@@ -21,25 +21,31 @@ import (
 // are fetched when it is opened (FetchProjectOverview).
 
 func init() {
-	register(outbox.KindCreateStatus, opHandler{send: sends((*Syncer).pushStatus), find: findStatus})
-	register(outbox.KindUpdateProject, opHandler{send: (*Syncer).pushUpdateProject})
+	register(outbox.KindCreateStatus, opHandler{send: sends((*Pusher).pushStatus), find: findStatus})
+	register(outbox.KindUpdateProject, opHandler{send: (*Pusher).pushUpdateProject})
 }
 
 // ErrOffline is returned by online-only operations when there is no API client.
 var ErrOffline = errors.New("オンラインのときだけできる操作です")
 
-func (s *Syncer) saveProject(ctx context.Context, p *model.Project) error {
-	me, _ := s.Store.MeGID(ctx)
+func saveProject(ctx context.Context, st ProjectSaver, p *model.Project) error {
+	me, _ := st.MeGID(ctx)
 	ws := ""
 	if p.Workspace != nil {
 		ws = p.Workspace.GID
 	}
-	return s.Store.UpsertProjects(ctx, ws, []model.Project{*p}, me)
+	return st.UpsertProjects(ctx, ws, []model.Project{*p}, me)
+}
+
+// ProjectSaver is where a project made or changed online is stored (saveProject).
+type ProjectSaver interface {
+	MeGID(ctx context.Context) (string, error)
+	UpsertProjects(ctx context.Context, workspaceGID string, ps []model.Project, meGID string) error
 }
 
 // CreateProject creates a project in team teamGID ("" for none, in a workspace that is
 // not an organization) of the default workspace, and stores it with its sections.
-func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*model.Project, error) {
+func (s *Projects) CreateProject(ctx context.Context, name, teamGID string) (*model.Project, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -60,7 +66,7 @@ func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*mode
 	if p.Workspace == nil {
 		p.Workspace = &model.Ref{GID: ws}
 	}
-	if err := s.saveProject(ctx, p); err != nil {
+	if err := saveProject(ctx, s.Store, p); err != nil {
 		return nil, err
 	}
 	if secs, err := s.API.Sections(ctx, p.GID); err == nil {
@@ -78,7 +84,7 @@ func (s *Syncer) CreateProject(ctx context.Context, name, teamGID string) (*mode
 // created since started, that is it. Asana may need a moment to list a new project, so it
 // looks twice, projectSettle apart. If it is still not there, the project is not created
 // again (that could make a duplicate); the error says to check after the next sync.
-func (s *Syncer) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*model.Project, error) {
+func (s *Projects) recoverCreateProject(ctx context.Context, ws, name string, started time.Time, cause error) (*model.Project, error) {
 	if notMade(ctx, cause) {
 		return nil, cause // not created
 	}
@@ -96,7 +102,7 @@ func notMade(ctx context.Context, cause error) bool {
 // findCreatedProject looks in Asana for the one project named name created since started
 // (twice, projectSettle apart). Not there, the error is notFound wrapping cause (cause
 // alone if notFound is "").
-func (s *Syncer) findCreatedProject(ctx context.Context, ws, name string, started time.Time, cause error, notFound string) (*model.Project, error) {
+func (s *Projects) findCreatedProject(ctx context.Context, ws, name string, started time.Time, cause error, notFound string) (*model.Project, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
 			if err := s.wait(ctx, projectSettle); err != nil {
@@ -130,7 +136,7 @@ func (s *Syncer) findCreatedProject(ctx context.Context, ws, name string, starte
 const projectSettle = 5 * time.Second
 
 // SetProjectArchived archives (or unarchives) a project.
-func (s *Syncer) SetProjectArchived(ctx context.Context, gid string, archived bool) error {
+func (s *Projects) SetProjectArchived(ctx context.Context, gid string, archived bool) error {
 	if s.API == nil {
 		return ErrOffline
 	}
@@ -141,7 +147,7 @@ func (s *Syncer) SetProjectArchived(ctx context.Context, gid string, archived bo
 }
 
 // SetProjectMembers adds and removes project members.
-func (s *Syncer) SetProjectMembers(ctx context.Context, gid string, add, remove []string) error {
+func (s *Projects) SetProjectMembers(ctx context.Context, gid string, add, remove []string) error {
 	if s.API == nil {
 		return ErrOffline
 	}
@@ -165,11 +171,11 @@ func (s *Syncer) SetProjectMembers(ctx context.Context, gid string, add, remove 
 			return err
 		}
 	}
-	return s.saveProject(ctx, p)
+	return saveProject(ctx, s.Store, p)
 }
 
 // FetchStatusUpdates refreshes a project's status updates.
-func (s *Syncer) FetchStatusUpdates(ctx context.Context, projectGID string) error {
+func (s *Details) FetchStatusUpdates(ctx context.Context, projectGID string) error {
 	if s.API == nil {
 		return ErrOffline
 	}
@@ -180,7 +186,7 @@ func (s *Syncer) FetchStatusUpdates(ctx context.Context, projectGID string) erro
 	return s.Store.ReplaceStatusUpdates(ctx, projectGID, updates)
 }
 
-func (s *Syncer) pushStatus(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushStatus(ctx context.Context, op outbox.Op) error {
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	u, err := s.API.CreateStatusUpdate(ctx, op.TaskGID, str("status_type"), str("title"), str("text"), str("html_text"))
 	if err != nil {
@@ -195,7 +201,7 @@ func (s *Syncer) pushStatus(ctx context.Context, op outbox.Op) error {
 // 403): it is then recorded as unavailable and not shown, and the workspace is marked so
 // that it is not asked for there for a while (brief.go). Whatever was fetched is stored
 // even if a later request fails; the error is the first failure.
-func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) error {
+func (s *Details) FetchProjectOverview(ctx context.Context, projectGID string) error {
 	if s.API == nil {
 		return ErrOffline
 	}
@@ -203,7 +209,7 @@ func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) er
 	if err != nil {
 		return err
 	}
-	if err := s.saveProject(ctx, p); err != nil {
+	if err := saveProject(ctx, s.Store, p); err != nil {
 		return err
 	}
 	var fail error
@@ -221,17 +227,17 @@ func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) er
 	case hidden: // refused lately in this workspace: not asked again for a while (brief.go)
 		state = readmodel.BriefUnavailable
 	case p.ProjectBrief != nil && p.ProjectBrief.GID != "":
-		brief, err = s.serverBrief(ctx, p)
+		brief, err = s.briefs().serverBrief(ctx, p)
 		switch {
 		case err == nil && brief == nil: // deleted meanwhile
 		case err == nil:
 			state = readmodel.BriefAvailable
-			if err := s.clearBriefRefusal(ctx, projectGID); err != nil {
+			if err := s.briefs().clearBriefRefusal(ctx, projectGID); err != nil {
 				return err
 			}
 		case briefRefused(err):
 			state, brief = readmodel.BriefUnavailable, nil
-			_ = s.briefRefusal(ctx, projectGID, err) // 402: for the workspace; 403: this project
+			_ = s.briefs().briefRefusal(ctx, projectGID, err) // 402: for the workspace; 403: this project
 		default:
 			state, brief = "", nil // keep the cached brief
 			if fail == nil {
@@ -247,7 +253,7 @@ func (s *Syncer) FetchProjectOverview(ctx context.Context, projectGID string) er
 
 // pushUpdateProject sends a project edit, after checking that nobody changed the same
 // fields in Asana since it was made here (like a task's update).
-func (s *Syncer) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, error) {
 	server, err := s.API.Project(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -292,7 +298,7 @@ func (s *Syncer) pushUpdateProject(ctx context.Context, op outbox.Op) (outcome, 
 	if p.Workspace == nil {
 		p.Workspace = server.Workspace
 	}
-	_ = s.saveProject(ctx, p) // the next sync fixes a failure
+	_ = saveProject(ctx, s.Store, p) // the next sync fixes a failure
 	return sent, nil
 }
 
@@ -323,7 +329,7 @@ func nullIfEmpty(s string) any {
 }
 
 // findStatus looks for the status update a create_status posted (see reconcile).
-func findStatus(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+func findStatus(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	ups, err := s.API.StatusUpdates(ctx, op.TaskGID)
 	if err != nil {

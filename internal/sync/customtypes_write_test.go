@@ -16,7 +16,7 @@ import (
 func TestPushCustomType(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "custom", "custom_type": "ct1"}, time.Now()); err != nil {
@@ -51,7 +51,7 @@ func TestPushCustomTypeConflict(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
 	f.subtype, f.typ, f.status = "custom", "ct1", "cs-doing"
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", ResourceSubtype: "custom", Workspace: &asana.Ref{GID: "w1"},
@@ -77,7 +77,7 @@ func TestPushCustomTypeConflict(t *testing.T) {
 func TestPushCustomTypePaymentRequired(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "custom", "custom_type": "ct1"}, time.Now()); err != nil {
@@ -108,7 +108,7 @@ func TestPushCustomTypeNotSupported(t *testing.T) {
 			t.Run(fmt.Sprintf("%s name=%v", mode, withName), func(t *testing.T) {
 				f, s, st, _ := setupTypes(t)
 				ctx := context.Background()
-				if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+				if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 					t.Fatal(err)
 				}
 				f.reject, f.ignore = mode == "reject", mode == "ignore"
@@ -155,7 +155,7 @@ func TestPushCustomTypeNotSupported(t *testing.T) {
 func TestPushCustomTypeAndStartOnPaymentRequired(t *testing.T) {
 	f, s, st, _ := setupTypes(t)
 	ctx := context.Background()
-	if err := s.syncCustomTypes(ctx, "p1", "w1", false); err != nil {
+	if err := s.Puller().syncCustomTypes(ctx, "p1", "w1", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "A", Workspace: &asana.Ref{GID: "w1"}, DueOn: "2026-12-31",

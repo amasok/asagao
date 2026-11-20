@@ -84,14 +84,14 @@ func TestAttackPlanWorkspaceEveryKind(t *testing.T) {
 		for _, gid := range []string{"", "t1", "t2", "g2", "p2", "local:zz"} {
 			for _, p := range payloads {
 				op := outbox.Op{Kind: k, TaskGID: gid, Payload: p}
-				if got, want := s.planWorkspace(ctx, op), oldPlanWorkspace(ctx, s, op); got != want {
+				if got, want := s.Pusher().planWorkspace(ctx, op), oldPlanWorkspace(ctx, s, op); got != want {
 					t.Errorf("%s gid=%q payload=%v: %q, want %q", k, gid, p, got, want)
 				}
 			}
 		}
 	}
 	// and for an entry of a kind from the future
-	if got, want := s.planWorkspace(ctx, outbox.Op{Kind: "x", TaskGID: "t2"}), oldPlanWorkspace(ctx, s, outbox.Op{Kind: "x", TaskGID: "t2"}); got != want {
+	if got, want := s.Pusher().planWorkspace(ctx, outbox.Op{Kind: "x", TaskGID: "t2"}), oldPlanWorkspace(ctx, s, outbox.Op{Kind: "x", TaskGID: "t2"}); got != want {
 		t.Errorf("unknown kind: %q, want %q", got, want)
 	}
 }
@@ -113,7 +113,7 @@ func TestAttackWaitsForCreateEveryKind(t *testing.T) {
 		outbox.KindCreateTask} // a create waits only for its parent
 	for _, k := range outbox.AllKinds() {
 		op := outbox.Op{Kind: k, TaskGID: local, Payload: map[string]any{}}
-		got, err := s.waitsForCreate(ctx, op)
+		got, err := s.Pusher().waitsForCreate(ctx, op)
 		if err != nil {
 			t.Errorf("%s: %v", k, err)
 			continue
@@ -123,7 +123,7 @@ func TestAttackWaitsForCreateEveryKind(t *testing.T) {
 		}
 		// the same entry on a task that exists in Asana never waits
 		op.TaskGID = "t1"
-		if got, err := s.waitsForCreate(ctx, op); err != nil || got {
+		if got, err := s.Pusher().waitsForCreate(ctx, op); err != nil || got {
 			t.Errorf("%s on a real task: waits = %v, %v", k, got, err)
 		}
 	}
@@ -145,19 +145,19 @@ func TestAttackWaitsForCreateEveryKind(t *testing.T) {
 		{"local gid whose create is gone", outbox.Op{Kind: outbox.KindUpdateTask, TaskGID: "local:ghost", Payload: map[string]any{}}, false},
 	}
 	for _, tc := range cases {
-		if got, err := s.waitsForCreate(ctx, tc.op); err != nil || got != tc.want {
+		if got, err := s.Pusher().waitsForCreate(ctx, tc.op); err != nil || got != tc.want {
 			t.Errorf("%s: waits = %v, %v; want %v", tc.name, got, err, tc.want)
 		}
 	}
 	// A delete_section waits for the deletes of tasks queued in it, and nothing else does.
-	if got, err := s.waitsForCreate(ctx, outbox.Op{Kind: outbox.KindDeleteSection, TaskGID: "s1", Payload: map[string]any{"project": "p1"}}); err != nil || got {
+	if got, err := s.Pusher().waitsForCreate(ctx, outbox.Op{Kind: outbox.KindDeleteSection, TaskGID: "s1", Payload: map[string]any{"project": "p1"}}); err != nil || got {
 		t.Errorf("delete_section with nothing queued: %v %v", got, err)
 	}
 	if _, err := st.DeleteTaskLocal(ctx, "t1", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range outbox.AllKinds() {
-		got, err := s.waitsForCreate(ctx, outbox.Op{Kind: k, TaskGID: "s1", Payload: map[string]any{"project": "p1"}})
+		got, err := s.Pusher().waitsForCreate(ctx, outbox.Op{Kind: k, TaskGID: "s1", Payload: map[string]any{"project": "p1"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func oldBatchable(ctx context.Context, s *Syncer, op outbox.Op) (bool, error) {
 		if str("field") == "" {
 			return false, nil
 		}
-		wait, err := s.waitsForField(ctx, op)
+		wait, err := s.Pusher().waitsForField(ctx, op)
 		return !wait && err == nil, err
 	case outbox.KindMoveTask:
 		return real(str("section")) && str("insert_before") == "" && str("insert_after") == "", nil
@@ -230,7 +230,7 @@ func TestAttackBatchableEveryKind(t *testing.T) {
 			for _, p := range payloads {
 				op := outbox.Op{ID: 1, Kind: k, TaskGID: gid, Payload: p}
 				want, werr := oldBatchable(ctx, s, op)
-				e, got, err := s.batchEntryFor(ctx, op)
+				e, got, err := s.Pusher().batchEntryFor(ctx, op)
 				if (err != nil) != (werr != nil) || got != want {
 					t.Errorf("%s gid=%q payload=%v: batch = %v (%v), want %v (%v)", k, gid, p, got, err, want, werr)
 					continue

@@ -1,6 +1,8 @@
 package mcpserver
 
 import (
+	"context"
+
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -25,4 +27,6 @@ type Store interface {
 	app.TimeTrackingStore
 	app.GoalStore
 	sync.LocalStore
+
+	CountUnfetchedProjects(ctx context.Context, memberOnly bool) (int, error)
 }

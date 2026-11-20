@@ -123,7 +123,7 @@ func TestBatchAttackEntryForIntentAndResolvedGIDs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, ok, err := s.batchEntryFor(ctx, tc.op)
+			e, ok, err := s.Pusher().batchEntryFor(ctx, tc.op)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -221,7 +221,7 @@ func TestBatchAttackEntryForExclusions(t *testing.T) {
 
 	for _, tc := range excluded {
 		t.Run(tc.name, func(t *testing.T) {
-			_, ok, err := s.batchEntryFor(ctx, tc.op)
+			_, ok, err := s.Pusher().batchEntryFor(ctx, tc.op)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -252,7 +252,7 @@ func TestBatchAttackGroupBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Syncer{Store: st}
-	group, err := s.batchGroup(ctx, ops)
+	group, err := s.Pusher().batchGroup(ctx, ops)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestBatchAttackGroupBoundaries(t *testing.T) {
 
 	// Duplicate task in ops stops the group before the duplicate.
 	dupOps := []outbox.Op{ops[0], ops[1], ops[0]}
-	dupGroup, err := s.batchGroup(ctx, dupOps)
+	dupGroup, err := s.Pusher().batchGroup(ctx, dupOps)
 	if err != nil {
 		t.Fatal(err)
 	}

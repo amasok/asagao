@@ -353,7 +353,7 @@ func TestLazyDeferCompleted(t *testing.T) {
 	if fres.Requests != int64(len(e.fake.requests())) || fres.Requests == 0 {
 		t.Errorf("FetchCompleted requests %d, server got %d", fres.Requests, len(e.fake.requests()))
 	}
-	if pending, _ := e.s.completedPending(context.Background()); pending {
+	if pending, _ := e.s.Puller().completedPending(context.Background()); pending {
 		t.Error("still pending after FetchCompleted")
 	}
 	// Nothing left: a second call sends nothing.
