@@ -36,7 +36,7 @@ func (t *Tasks) resolveUser(ctx context.Context, arg string) (string, error) {
 // ParseDue reads them; Notes is Markdown.
 type CreateTaskInput struct {
 	Name, Parent, Project, Section, Due, Start, Assignee, Notes string
-	Tags                                                 []string // names or gids to add
+	Tags                                                        []string // names or gids to add
 }
 
 // Create resolves all of its input and then creates the task locally, queued in the

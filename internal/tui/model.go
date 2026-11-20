@@ -210,8 +210,8 @@ type Model struct {
 	planOff         map[string]planWindow // features the workspace's plan lacks (402), and until when
 	planSeq         uint64                // latest loadPlan in flight
 	newSectionAfter string                // promptNewSection: the section to add it after
-	tagList         []readmodel.TagCount // the tags the tag manager shows
-	tagTarget       readmodel.TagCount   // the tag being changed
+	tagList         []readmodel.TagCount  // the tags the tag manager shows
+	tagTarget       readmodel.TagCount    // the tag being changed
 	// time tracking (timetracking.go): the task whose entries are shown, the entry edited
 	timeTask  readmodel.TaskSummary
 	timeEntry string

@@ -382,7 +382,10 @@ func TestBatchRoundTripMatchesSingleEndpoints(t *testing.T) {
 		{
 			"UpdateTask",
 			model.BatchUpdateTask("t/1", map[string]any{"completed": true}),
-			func(c *Client) error { _, err := c.UpdateTask(ctx, "t/1", map[string]any{"completed": true}); return err },
+			func(c *Client) error {
+				_, err := c.UpdateTask(ctx, "t/1", map[string]any{"completed": true})
+				return err
+			},
 		},
 		{
 			"AddTaskToSection",

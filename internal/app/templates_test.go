@@ -43,7 +43,7 @@ func TestTemplatesOffered(t *testing.T) {
 		{map[string]string{key: "garbage"}, true},
 		{map[string]string{plan.ProjectTemplates + ":w1": now.Format(time.RFC3339)}, true},
 		{map[string]string{plan.TaskTemplates + ":w2": now.Format(time.RFC3339)}, true}, // another workspace
-		{map[string]string{plan.TaskTemplates: now.Format(time.RFC3339)}, true},          // workspace-less
+		{map[string]string{plan.TaskTemplates: now.Format(time.RFC3339)}, true},         // workspace-less
 		{map[string]string{"err": "locked"}, true},
 	} {
 		if got := TemplatesOffered(ctx, syncStateMap(tc.state), plan.TaskTemplates, "w1", now); got != tc.want {

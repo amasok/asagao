@@ -491,9 +491,9 @@ func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 			defer cancel()
 			c.setup(f, cancel)
 			s, st, _ := setupCustomIDAttack(t, f)
-				if err := st.SetCustomIDTaskGID(context.Background(), "RC-1", "old-gid"); err != nil {
-					t.Fatal(err)
-				}
+			if err := st.SetCustomIDTaskGID(context.Background(), "RC-1", "old-gid"); err != nil {
+				t.Fatal(err)
+			}
 
 			_, err := s.TaskByCustomID(ctx, "RC-1")
 			if err == nil || errors.Is(err, readmodel.ErrNotFound) {
