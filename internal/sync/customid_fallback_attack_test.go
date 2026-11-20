@@ -424,18 +424,18 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 // only a search 402 marks plan.Search.
 func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 	type tc struct {
-		name           string
-		setup          func(f *customIDAttackServer, cancel context.CancelFunc)
-		wantErr500     bool
-		wantCanceled   bool
-		wantPlanSearch bool
+		name          string
+		setup         func(f *customIDAttackServer, cancel context.CancelFunc)
+		wantErr500    bool
+		wantCanceled  bool
+		wantSearch402 bool
 	}
 	cases := []tc{
 		{
-			name:           "search 402 records PlanSearch only and returns original 500",
-			setup:          func(f *customIDAttackServer, _ context.CancelFunc) { f.searchStatus = http.StatusPaymentRequired },
-			wantErr500:     true,
-			wantPlanSearch: true,
+			name:          "search 402 records plan.Search only and returns original 500",
+			setup:         func(f *customIDAttackServer, _ context.CancelFunc) { f.searchStatus = http.StatusPaymentRequired },
+			wantErr500:    true,
+			wantSearch402: true,
 		},
 		{
 			name:  "search 500",
@@ -513,19 +513,19 @@ func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 				t.Fatalf("cached gid wiped: got %q, want old-gid", v)
 			}
 			if _, ok, _ := st.PlanRefusedAt(bg, plan.CustomID, "w1"); ok {
-				t.Fatal("PlanCustomID wrongly marked 402")
+				t.Fatal("plan.CustomID wrongly marked 402")
 			}
 			_, ps, _ := st.PlanRefusedAt(bg, plan.Search, "w1")
-			if c.wantPlanSearch && !ps {
-				t.Fatal("PlanSearch 402 not recorded")
+			if c.wantSearch402 && !ps {
+				t.Fatal("plan.Search 402 not recorded")
 			}
-			if !c.wantPlanSearch && ps {
-				t.Fatal("PlanSearch wrongly marked 402")
+			if !c.wantSearch402 && ps {
+				t.Fatal("plan.Search wrongly marked 402")
 			}
 		})
 	}
 
-	t.Run("expired PlanSearch is rechecked and cleared on success, and another workspace PlanSearch does not block", func(t *testing.T) {
+	t.Run("expired plan.Search is rechecked and cleared on success, and another workspace plan.Search does not block", func(t *testing.T) {
 		f := &customIDAttackServer{
 			searchRefs: []model.Ref{{GID: "t-ok"}},
 			tasks:      map[string]string{"t-ok": customIDTaskJSON("t-ok", "recovered", "RC-1")},
@@ -544,10 +544,10 @@ func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 			t.Fatalf("got %q, %v; want t-ok, nil", gid, err)
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); ok {
-			t.Fatal("expired PlanSearch for w1 not cleared")
+			t.Fatal("expired plan.Search for w1 not cleared")
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w2"); !ok {
-			t.Fatal("PlanSearch for w2 should remain untouched")
+			t.Fatal("plan.Search for w2 should remain untouched")
 		}
 	})
 }
@@ -747,13 +747,13 @@ func TestTaskByCustomIDNon500NeverFallsBackToSearch(t *testing.T) {
 			}
 			_, pc, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1")
 			if tc.wantPlanCustom && !pc {
-				t.Fatal("PlanCustomID 402 not recorded")
+				t.Fatal("plan.CustomID 402 not recorded")
 			}
 			if !tc.wantPlanCustom && pc {
-				t.Fatal("PlanCustomID wrongly recorded")
+				t.Fatal("plan.CustomID wrongly recorded")
 			}
 			if _, ps, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); ps {
-				t.Fatal("PlanSearch wrongly recorded")
+				t.Fatal("plan.Search wrongly recorded")
 			}
 		})
 	}
@@ -1001,10 +1001,10 @@ func TestTaskByCustomID500FallbackConcurrent(t *testing.T) {
 			t.Fatal("expected at least 1 search call")
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); !ok {
-			t.Error("PlanSearch 402 not recorded")
+			t.Error("plan.Search 402 not recorded")
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); ok {
-			t.Error("PlanCustomID wrongly recorded")
+			t.Error("plan.CustomID wrongly recorded")
 		}
 		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 			t.Errorf("cached gid lost: %q", v)

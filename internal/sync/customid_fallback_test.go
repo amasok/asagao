@@ -259,7 +259,7 @@ func TestTaskByCustomID500FallbackNotFoundClearsCache(t *testing.T) {
 // plan.Search is recorded/kept, plan.CustomID is NOT marked 402, typeahead is NOT used, the
 // original 500 error is returned, and any cached custom_id gid is kept.
 func TestTaskByCustomID500FallbackSearchPlan402(t *testing.T) {
-	t.Run("PlanSearch already hidden", func(t *testing.T) {
+	t.Run("plan.Search already hidden", func(t *testing.T) {
 		f := &customIDFallbackServer{}
 		s, st, _ := setupCustomIDFallback(t, f)
 		ctx := context.Background()
@@ -279,7 +279,7 @@ func TestTaskByCustomID500FallbackSearchPlan402(t *testing.T) {
 			t.Fatalf("search=%d typeahead=%d, want 0", f.searchCalls, f.typeaheadCalls)
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); ok {
-			t.Fatal("PlanCustomID wrongly marked 402")
+			t.Fatal("plan.CustomID wrongly marked 402")
 		}
 		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 			t.Fatalf("cached gid lost: %q", v)
@@ -303,10 +303,10 @@ func TestTaskByCustomID500FallbackSearchPlan402(t *testing.T) {
 			t.Fatalf("search=%d typeahead=%d, want 1, 0", f.searchCalls, f.typeaheadCalls)
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.Search, "w1"); !ok {
-			t.Fatal("PlanSearch 402 not recorded")
+			t.Fatal("plan.Search 402 not recorded")
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); ok {
-			t.Fatal("PlanCustomID wrongly marked 402")
+			t.Fatal("plan.CustomID wrongly marked 402")
 		}
 		if v, _ := st.CustomIDTaskGID(ctx, "RC-1"); v != "old-gid" {
 			t.Fatalf("cached gid lost: %q", v)
@@ -406,8 +406,8 @@ func TestTaskByCustomIDNon500DoesNotFallbackToSearch(t *testing.T) {
 // When an expired (>24h) plan.CustomID 402 record is retried and TaskByCustomID returns 500,
 // a successful fallback resolution clears the stale plan.CustomID refusal, while a failed
 // fallback leaves it alone.
-func TestTaskByCustomID500FallbackClearsExpiredPlanCustomID(t *testing.T) {
-	t.Run("clears expired PlanCustomID when fallback resolves", func(t *testing.T) {
+func TestTaskByCustomID500FallbackClearsExpiredCustomID402(t *testing.T) {
+	t.Run("clears expired plan.CustomID when fallback resolves", func(t *testing.T) {
 		f := &customIDFallbackServer{
 			searchRefs: []model.Ref{{GID: "t4"}},
 			tasks: map[string]string{
@@ -425,11 +425,11 @@ func TestTaskByCustomID500FallbackClearsExpiredPlanCustomID(t *testing.T) {
 			t.Fatalf("got %q, %v", gid, err)
 		}
 		if _, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); ok {
-			t.Fatal("expired PlanCustomID not cleared")
+			t.Fatal("expired plan.CustomID not cleared")
 		}
 	})
 
-	t.Run("keeps expired PlanCustomID when fallback fails", func(t *testing.T) {
+	t.Run("keeps expired plan.CustomID when fallback fails", func(t *testing.T) {
 		f := &customIDFallbackServer{searchStatus: http.StatusPaymentRequired}
 		s, st, _ := setupCustomIDFallback(t, f)
 		ctx := context.Background()
@@ -443,7 +443,7 @@ func TestTaskByCustomID500FallbackClearsExpiredPlanCustomID(t *testing.T) {
 			t.Fatalf("err = %v, want 500 *model.Error", err)
 		}
 		if got, ok, _ := st.PlanRefusedAt(ctx, plan.CustomID, "w1"); !ok || !got.Equal(expired) {
-			t.Fatalf("expired PlanCustomID changed on failed fallback: got (%v, %v), want %v", got, ok, expired)
+			t.Fatalf("expired plan.CustomID changed on failed fallback: got (%v, %v), want %v", got, ok, expired)
 		}
 	})
 }
