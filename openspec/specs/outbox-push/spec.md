@@ -211,8 +211,8 @@ TUI・CLI・MCP の解決は `sync.Resolve` を通す (MUST)。`keep_local` と 
 - **THEN** `ErrOpSending` で断り、何も変えない
 
 ### Requirement: 自動で捨てた変更を残す
-自動で捨てた変更は、要約・理由・payload ごと `discarded_changes` に記録し、利用者に 1 回だけ知らせる (MUST)。一覧では、知らせたかどうかを問わず新しい順に出す。
-根拠: store/discard.go:135-154; store/discard_list.go:12; TestDroppedChangeKeepsPayload, TestRecentDiscards
+自動で捨てた変更は、要約・理由・payload ごと `discarded_changes` に記録し、利用者に 1 回だけ知らせる (MUST)。一覧では、知らせたかどうかを問わず新しい順に出す。理由は保存する値で、初期化で消したものはコード `reset` (`readmodel.DiscardReasonReset`)、それ以外は Asana の応答を述べる文にする。表示の文言は保存しない (#82。それより前に保存した日本語の文は、マイグレーションで `reset` にする)。CLI (`outbox discarded --json`、書き込みの `--json` の `discarded`) と MCP の `discarded` は、`reason` を保存したまま返す。要約は、組み立てが `Store.SetDescribeChange` で渡す表示の説明で記録し、渡されていなければ空にして、表示するときに種類と payload から作る。
+根拠: store/discard.go (recordDiscard); store/discard_list.go; store/schema.go (最後のマイグレーション); readmodel/discard.go (DiscardReasonReset、IsReset); TestDroppedChangeKeepsPayload, TestRecentDiscards, TestMigrateResetReasonToCode, TestResetDiscardReasonAndSummary, TestOpenStoreDescribesDroppedChanges
 
 #### Scenario: 消えたタスクへの変更を捨てた
 - **WHEN** push が、Asana で消えたタスクへの変更を捨てる

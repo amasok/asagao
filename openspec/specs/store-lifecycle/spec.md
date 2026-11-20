@@ -51,7 +51,7 @@ outbox の送信 (push)、同期全体 (`Syncer.Run`)、初期化 (`ResetUpTo`) 
 - **THEN** 初期化は `ErrPushBusy` で止まり、何も消さない
 
 ### Requirement: 未送信の変更があれば初期化しない
-初期化は、指定した番号より新しい outbox の操作があれば `ErrUnsentChanges` を返し、何も消さない (MUST)。消すときは 1 つのトランザクションで、outbox の操作を「破棄した変更」として記録してから、キャッシュの表を消す。バックアップ付きの初期化は、先に操作と破棄の記録を JSON (0700 のフォルダ、fsync) に書き、書けなければ何も消さない。
+初期化は、指定した番号より新しい outbox の操作があれば `ErrUnsentChanges` を返し、何も消さない (MUST)。消すときは 1 つのトランザクションで、outbox の操作を「破棄した変更」(理由は `reset`) として記録してから、キャッシュの表を消す。バックアップ付きの初期化は、先に操作と破棄の記録を JSON (0700 のフォルダ、fsync) に書き、書けなければ何も消さない。
 根拠: internal/store/reset.go:38-130; reset_backup.go:18-110; TestResetRefusesWithUnsentChanges, TestResetDeletesOnlyConfirmedChanges, TestResetWithBackup
 
 #### Scenario: 確認のあとに新しい操作が積まれた
