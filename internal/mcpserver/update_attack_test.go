@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func updateOps(t *testing.T, st *store.Store) []store.Op {
 // approval_status, due_on, assignee, worded as before, and nothing is written.
 func TestUpdateTaskErrorOrderAndWording(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	_, errSub := task.ParseSubtype("bug")
 	_, errAp := task.ParseApprovalStatus("maybe")
 	bad := map[string]any{"gid": "t1", "resource_subtype": "bug", "approval_status": "maybe", "due_on": "someday", "assignee": "誰か", "name": "x"}
@@ -75,7 +76,7 @@ func TestUpdateTaskErrorOrderAndWording(t *testing.T) {
 // liked and the other fields go into one queued update, one entry, as one write.
 func TestUpdateTaskLikedSharesTheEntry(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "name": "新", "liked": true, "completed": true, "notes": "**本文**"}, nil)
 	ops := updateOps(t, st)
 	if len(ops) != 1 {
@@ -94,7 +95,7 @@ func TestUpdateTaskLikedSharesTheEntry(t *testing.T) {
 // nothing at all is refused with the same sentence.
 func TestUpdateTaskWithoutFieldsQueuesNoUpdate(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "add_tags": []string{"新タグ"}}, nil)
 	if ops := updateOps(t, st); len(ops) != 0 {
 		t.Fatalf("empty update queued: %+v", ops)
@@ -118,7 +119,7 @@ func TestUpdateTaskWithoutFieldsQueuesNoUpdate(t *testing.T) {
 // Notes "" clears the description (a value, not "no change").
 func TestUpdateTaskEmptyNotesClears(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "notes": ""}, nil)
 	ops := updateOps(t, st)
 	if len(ops) != 1 {
@@ -134,7 +135,7 @@ func TestUpdateTaskEmptyNotesClears(t *testing.T) {
 // in the same call is not saved.
 func TestUpdateTaskApprovalOnPlainTask(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	before := take(t, st, "t1")
 	msg := toolError(call(t, cs, "update_task", map[string]any{"gid": "t1", "name": "新", "approval_status": "approve"}, nil))
 	if msg == "" {
@@ -160,7 +161,7 @@ func TestUpdateTaskReadsTheClockOnce(t *testing.T) {
 	st := seed(t)
 	day := time.Date(2026, 11, 13, 23, 59, 59, 0, time.UTC)
 	n := 0
-	s := &Server{Store: st}
+	s := &Server{App: wire.UseCases(st)}
 	cs := connect(t, s)
 	s.Now = func() time.Time { n++; return day.Add(time.Duration(n-1) * time.Second) } // 2nd read is tomorrow
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "due_on": "today", "completed": true}, nil)

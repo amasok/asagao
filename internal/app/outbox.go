@@ -22,6 +22,8 @@ type OutboxStore interface {
 	ResolveKeepLocal(ctx context.Context, id int64) error
 	RetryOp(ctx context.Context, id int64) error
 	DiscardOp(ctx context.Context, id int64) error
+	PendingDiscards(ctx context.Context) ([]readmodel.Discard, error)
+	MarkDiscardsNotified(ctx context.Context, ids []int64) error
 }
 
 // Outbox is the use case on outbox entries: resolving one.
@@ -133,4 +135,33 @@ func refreshTarget(op outbox.Op) string {
 		return ""
 	}
 	return op.TaskGID
+}
+
+// TakenDiscards are the dropped changes not announced yet, taken by TakeDiscards.
+type TakenDiscards struct {
+	// All are every one of them; Announce those to tell the user about (a change deleted
+	// by a reset was confirmed by the user, and is not).
+	All, Announce []readmodel.Discard
+	// MarkErr is why they could not be marked as announced: they come again next time.
+	MarkErr error
+}
+
+// TakeDiscards reads the dropped changes not announced yet and marks them as announced
+// (the TUI and the CLI each announce them once). When none are, nothing is marked.
+func (o *Outbox) TakeDiscards(ctx context.Context) (TakenDiscards, error) {
+	var t TakenDiscards
+	all, err := o.Store.PendingDiscards(ctx)
+	if err != nil || len(all) == 0 {
+		return t, err
+	}
+	t.All = all
+	ids := make([]int64, len(all))
+	for i, d := range all {
+		ids[i] = d.ID
+		if !d.IsReset() {
+			t.Announce = append(t.Announce, d)
+		}
+	}
+	t.MarkErr = o.Store.MarkDiscardsNotified(ctx, ids)
+	return t, nil
 }

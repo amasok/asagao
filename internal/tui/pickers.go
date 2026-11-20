@@ -131,13 +131,13 @@ func (m *Model) openTagEditor() tea.Cmd {
 }
 
 func (m *Model) openTagEditorFor(task readmodel.TaskSummary) tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		all, err := queryOf(st).ListTags(m.ctx)
+		all, err := st.Query().ListTags(m.ctx)
 		if err != nil {
 			return taskTagsMsg{err: err}
 		}
-		mine, err := queryOf(st).TaskTags(m.ctx, task.GID)
+		mine, err := st.Query().TaskTags(m.ctx, task.GID)
 		has := map[string]bool{}
 		for _, r := range mine {
 			has[r.GID] = true

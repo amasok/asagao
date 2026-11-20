@@ -27,7 +27,22 @@ var entryForbiddenCalls = map[string][]string{
 		"TaskNotes.FromMarkdown", "TaskNotes.PlainFromMarkdown",
 		"Comment.FromMarkdown", "Comment.PlainFromMarkdown",
 		"StatusUpdate.FromMarkdown", "StatusUpdate.PlainFromMarkdown",
+		// the conversion the use cases write with: internal/wire gives it to them (#71)
+		"Converter",
 	},
+}
+
+// entryForbiddenLiterals are, for each package, the types an entry point may not make a
+// value of itself (#71): the use cases and the query, which it gets from app.UseCases
+// (internal/wire puts them together over the store), and the sync engine and its parts,
+// which it gets from the wiring too. Tests are not checked: they may build any of them.
+var entryForbiddenLiterals = map[string][]string{
+	"internal/app": {
+		"Tasks", "Comments", "Status", "Briefs", "Projects", "Relations", "Sections", "TaskOps",
+		"Tags", "Copies", "FieldOptions", "ProjectFields", "Notifications", "Outbox", "Goals",
+		"TimeTracking", "PushNow", "GitLink", "QuickAdd", "Query", "UseCases", "Ports",
+	},
+	"internal/sync": {"Syncer", "Pusher", "Puller", "Details", "Goals", "Templates", "Search", "Projects"},
 }
 
 // storeWrites says whether a method name is one of the store's local writes, which an
@@ -90,6 +105,9 @@ func entryCalls(t *testing.T, g *graph) []string {
 			for _, c := range forbiddenCalls(fset, f) {
 				out = append(out, p+"/"+c)
 			}
+			for _, c := range forbiddenLiterals(fset, f) {
+				out = append(out, p+"/"+c)
+			}
 		}
 	}
 	return out
@@ -149,6 +167,47 @@ func forbiddenCalls(fset *token.FileSet, f *ast.File) []string {
 		if rel, ok := pkgOf[id.Name]; ok && slices.Contains(entryForbiddenCalls[rel], name) {
 			pos := fset.Position(sel.Pos())
 			out = append(out, fmt.Sprintf("%s:%d: %s.%s", filepath.Base(pos.Filename), pos.Line, filepath.Base(rel), name))
+		}
+		return true
+	})
+	return out
+}
+
+// forbiddenLiterals returns "file:line: app.Tasks{}" for each composite literal in f of an
+// entryForbiddenLiterals type (&app.Tasks{...} and app.Tasks{...} alike), whatever name f
+// gives the package.
+func forbiddenLiterals(fset *token.FileSet, f *ast.File) []string {
+	pkgOf := map[string]string{} // the name in f → "internal/app"
+	for _, imp := range f.Imports {
+		path, _ := strconv.Unquote(imp.Path.Value)
+		rel, ok := strings.CutPrefix(path, modulePath)
+		if _, banned := entryForbiddenLiterals[rel]; !ok || !banned {
+			continue
+		}
+		name := filepath.Base(rel)
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		pkgOf[name] = rel
+	}
+	shadowed := rebound(f)
+	var out []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok || shadowed[id.Name] {
+			return true
+		}
+		if rel, ok := pkgOf[id.Name]; ok && slices.Contains(entryForbiddenLiterals[rel], sel.Sel.Name) {
+			pos := fset.Position(lit.Pos())
+			out = append(out, fmt.Sprintf("%s:%d: %s.%s{}", filepath.Base(pos.Filename), pos.Line, filepath.Base(rel), sel.Sel.Name))
 		}
 		return true
 	})
@@ -300,5 +359,37 @@ var _, _ = Parse("today", Now())
 	}
 	if got := key("internal/tui/edit.go:12: dates.Parse"); got != "internal/tui/edit.go: dates.Parse" {
 		t.Errorf("key = %q", got)
+	}
+}
+
+// The literal check finds the use cases and syncers an entry point makes itself, under
+// whatever name the file gives the package, and leaves their types and other values alone.
+func TestForbiddenLiteralsFindsThem(t *testing.T) {
+	src := `package x
+
+import (
+	usecase "github.com/amasok/asagao/internal/app"
+	"github.com/amasok/asagao/internal/richtext"
+	"github.com/amasok/asagao/internal/sync"
+)
+
+func f(st S) *usecase.Tasks {
+	_ = usecase.Query{QueryStore: st}
+	_ = &sync.Syncer{Store: st}
+	_ = usecase.CreateTaskInput{Name: "a"} // an input: allowed
+	_ = []usecase.Tasks{}                   // a slice of them: not a use case made
+	_ = richtext.Converter{}
+	return &usecase.Tasks{Store: st}
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "x.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := append(forbiddenCalls(fset, f), forbiddenLiterals(fset, f)...)
+	want := []string{"x.go:14: richtext.Converter", "x.go:10: app.Query{}", "x.go:11: sync.Syncer{}", "x.go:15: app.Tasks{}"}
+	if !slices.Equal(got, want) {
+		t.Errorf("found %q, want %q", got, want)
 	}
 }

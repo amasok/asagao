@@ -155,35 +155,35 @@ type depCandidatesMsg struct {
 // openDependencyTargets lists tasks to link: with query, the search hits; otherwise the
 // incomplete tasks of the task's projects (or my incomplete tasks).
 func (m *Model) openDependencyTargets(t readmodel.TaskSummary, dependents bool, query string) tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
 		open := false
 		var tasks []readmodel.TaskSummary
 		switch {
 		case query != "":
-			found, err := queryOf(st).ListTasks(m.ctx, readmodel.TaskFilter{Query: query, Limit: 100})
+			found, err := st.Query().ListTasks(m.ctx, readmodel.TaskFilter{Query: query, Limit: 100})
 			if err != nil {
 				return depCandidatesMsg{err: err}
 			}
 			tasks = found
 		case len(t.Memberships) > 0:
 			for _, ms := range t.Memberships {
-				found, err := queryOf(st).ListTasks(m.ctx, readmodel.TaskFilter{ProjectGID: ms.ProjectGID, Completed: &open, Limit: 200})
+				found, err := st.Query().ListTasks(m.ctx, readmodel.TaskFilter{ProjectGID: ms.ProjectGID, Completed: &open, Limit: 200})
 				if err != nil {
 					return depCandidatesMsg{err: err}
 				}
 				tasks = append(tasks, found...)
 			}
 		default:
-			me, err := queryOf(st).MeGID(m.ctx)
+			me, err := st.Query().MeGID(m.ctx)
 			if err != nil {
 				return depCandidatesMsg{err: err}
 			}
-			if tasks, err = queryOf(st).ListTasks(m.ctx, readmodel.TaskFilter{AssigneeGID: me, Completed: &open, Limit: 200}); err != nil {
+			if tasks, err = st.Query().ListTasks(m.ctx, readmodel.TaskFilter{AssigneeGID: me, Completed: &open, Limit: 200}); err != nil {
 				return depCandidatesMsg{err: err}
 			}
 		}
-		d, err := queryOf(st).GetTask(m.ctx, t.GID)
+		d, err := st.Query().GetTask(m.ctx, t.GID)
 		if err != nil {
 			return depCandidatesMsg{err: err}
 		}

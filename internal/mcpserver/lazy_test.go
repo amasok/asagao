@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,7 +54,7 @@ func lazyServer(t *testing.T) (*httptest.Server, func() []string) {
 func TestListTasksFetchesUnfetchedProject(t *testing.T) {
 	st := seedProjects(t)
 	srv, requests := lazyServer(t)
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14, LazyProjects: true}}, nil
@@ -78,7 +79,7 @@ func TestListTasksFetchesUnfetchedProject(t *testing.T) {
 
 func TestListTasksUnfetchedProjectOffline(t *testing.T) {
 	st := seedProjects(t)
-	cs := connect(t, &Server{Store: st}) // offline
+	cs := connect(t, &Server{App: wire.UseCases(st)}) // offline
 	var out TasksOutput
 	call(t, cs, "list_tasks", map[string]any{"project": "仕事", "assignee": "any"}, &out)
 	if out.Count != 0 || !strings.Contains(out.Note, "not in the local cache") || !strings.Contains(out.Note, "next sync") {

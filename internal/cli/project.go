@@ -13,7 +13,6 @@ import (
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
 	"github.com/amasok/asagao/internal/ui/format"
 )
@@ -32,7 +31,7 @@ func (a *app) projectCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			projects, err := query(st).ListProjectsInTeam(ctx, !all, team)
+			projects, err := st.App.Query().ListProjectsInTeam(ctx, !all, team)
 			if err != nil {
 				return err
 			}
@@ -82,7 +81,7 @@ func (a *app) projectTeamsCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			teams, err := query(st).ListTeams(ctx)
+			teams, err := st.App.Query().ListTeams(ctx)
 			if err != nil {
 				return err
 			}
@@ -113,7 +112,7 @@ func (a *app) projectShowCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -124,7 +123,7 @@ func (a *app) projectShowCmd() *cobra.Command {
 					stale = s.FetchProjectOverview(ctx, gid)
 				}
 			}
-			o, err := query(st).ProjectOverview(ctx, gid)
+			o, err := st.App.Query().ProjectOverview(ctx, gid)
 			if err != nil {
 				return err
 			}
@@ -217,7 +216,7 @@ func (a *app) projectEditCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			projects := &usecase.Projects{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			projects := st.App.Projects(time.Now)
 			if _, _, err := projects.Update(ctx, args[0], in); err != nil {
 				return flagErr(err, map[string]string{"owner": "owner", "start_on": "start", "due_on": "due", "color": "color"})
 			}
@@ -233,7 +232,7 @@ func (a *app) projectEditCmd() *cobra.Command {
 }
 
 // onlineSyncer returns a syncer with an API client (for online-only project operations).
-func (a *app) onlineSyncer(ctx context.Context, st Store) (*sync.Syncer, error) {
+func (a *app) onlineSyncer(ctx context.Context, st *Local) (*sync.Syncer, error) {
 	if a.dryRun {
 		return nil, errDryRunSend
 	}
@@ -256,14 +255,14 @@ func (a *app) projectStatusCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
 			if s, err := a.onlineSyncer(ctx, st); err == nil {
 				_ = s.FetchStatusUpdates(ctx, gid)
 			}
-			updates, err := query(st).StatusUpdates(ctx, gid)
+			updates, err := st.App.Query().StatusUpdates(ctx, gid)
 			if err != nil {
 				return err
 			}
@@ -291,7 +290,7 @@ func (a *app) projectStatusCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			statuses := usecase.Status{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			statuses := st.App.Status(time.Now)
 			if _, err := statuses.Create(ctx, usecase.StatusInput{Project: args[0], Status: status, Title: title, Text: text}); err != nil {
 				return err
 			}
@@ -319,7 +318,7 @@ func (a *app) projectCreateCmd() *cobra.Command {
 			}
 			defer st.Close()
 			name := strings.Join(args, " ")
-			teamGID, err := query(st).TeamForNewProject(ctx, team)
+			teamGID, err := st.App.Query().TeamForNewProject(ctx, team)
 			if err != nil {
 				return fmt.Errorf("--team: %w", err)
 			}
@@ -363,7 +362,7 @@ func (a *app) projectArchiveCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -402,21 +401,21 @@ func (a *app) projectMembersCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
 			if len(add)+len(remove) > 0 {
 				var addG, remG []string
 				for _, u := range add {
-					g, err := query(st).ResolveUser(ctx, u)
+					g, err := st.App.Query().ResolveUser(ctx, u)
 					if err != nil {
 						return err
 					}
 					addG = append(addG, g)
 				}
 				for _, u := range remove {
-					g, err := query(st).ResolveUser(ctx, u)
+					g, err := st.App.Query().ResolveUser(ctx, u)
 					if err != nil {
 						return err
 					}
@@ -441,7 +440,7 @@ func (a *app) projectMembersCmd() *cobra.Command {
 					return err
 				}
 			}
-			members, err := query(st).ProjectMembers(ctx, gid)
+			members, err := st.App.Query().ProjectMembers(ctx, gid)
 			if err != nil {
 				return err
 			}

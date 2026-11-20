@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	usecase "github.com/amasok/asagao/internal/app"
 )
 
 // projectFieldsCmd lists a project's custom fields, and adds a field of the workspace to
@@ -29,7 +27,7 @@ func (a *app) projectFieldsCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			pf := &usecase.ProjectFields{Store: st, Clock: time.Now}
+			pf := st.App.ProjectFields(time.Now)
 			if len(remove) > 0 {
 				if yes, _ := cmd.Flags().GetBool("yes"); !yes && !a.dryRun {
 					return errors.New("フィールドを外すと、このプロジェクトのタスクからそのフィールドと値が外れます。外すには --yes を付けてください（--dry-run で何が変わるか確かめられます）")

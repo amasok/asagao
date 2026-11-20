@@ -48,9 +48,9 @@ func (m *Model) openStatuses() tea.Cmd {
 	}
 	m.openOverlay(overlayStatuses)
 	m.statusView.offset = 0
-	st, syncer := m.deps.Store, m.syncer
+	st, syncer := m.deps.App, m.syncer
 	load := func() tea.Msg {
-		updates, err := queryOf(st).StatusUpdates(m.ctx, project)
+		updates, err := st.Query().StatusUpdates(m.ctx, project)
 		return statusesLoadedMsg{project: project, updates: updates, err: err}
 	}
 	if syncer == nil {
@@ -275,11 +275,11 @@ func (m *Model) createProject(name string) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		team, err := queryOf(st).TeamForNewProject(m.ctx, "")
+		team, err := st.Query().TeamForNewProject(m.ctx, "")
 		if errors.Is(err, readmodel.ErrAmbiguous) {
-			teams, err := queryOf(st).ListTeams(m.ctx)
+			teams, err := st.Query().ListTeams(m.ctx)
 			return teamChoiceMsg{name: name, teams: teams, err: err}
 		}
 		if err != nil {
@@ -354,13 +354,13 @@ func (m *Model) openMembers() tea.Cmd {
 }
 
 func (m *Model) loadMembers(project string) tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		users, err := queryOf(st).ListUsers(m.ctx)
+		users, err := st.Query().ListUsers(m.ctx)
 		if err != nil {
 			return membersMsg{err: err}
 		}
-		cur, err := queryOf(st).ProjectMembers(m.ctx, project)
+		cur, err := st.Query().ProjectMembers(m.ctx, project)
 		has := map[string]bool{}
 		for _, u := range cur {
 			has[u.GID] = true

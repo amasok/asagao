@@ -60,9 +60,9 @@ func (s *Server) runSavedSearch(ctx context.Context, _ *mcp.CallToolRequest, in 
 		spec.Limit = in.Limit
 	}
 	spec.Limit = clampLimit(spec.Limit, 100)
-	f, err := s.query().BuildFilter(ctx, spec, s.Now())
+	f, err := s.query().SavedSearchFilter(ctx, x.Name, spec, s.Now())
 	if err != nil {
-		return nil, RunSavedSearchOutput{}, &app.SearchError{Name: x.Name, Err: err}
+		return nil, RunSavedSearchOutput{}, err
 	}
 	tasks, err := s.query().ListTasks(ctx, f)
 	return nil, RunSavedSearchOutput{Search: x, TasksOutput: TasksOutput{Tasks: tasks, Count: len(tasks)}}, err

@@ -127,7 +127,7 @@ func TestCreateTaskSameAsBeforeA1(t *testing.T) {
 				oa.parent, ob.parent = pa, pb
 			}
 			ga, ea := legacyCreateTask(ctx, a, oa, now)
-			gb, eb := createTask(ctx, b, ob, now)
+			gb, eb := createTask(ctx, localFor(b), ob, now)
 			if (ea == nil) != (eb == nil) {
 				t.Fatalf("legacy err = %v, new err = %v", ea, eb)
 			}

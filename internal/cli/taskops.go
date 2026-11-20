@@ -12,8 +12,8 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
-func taskOpsUseCases(st Store) *usecase.TaskOps {
-	return &usecase.TaskOps{Store: st, Clock: time.Now}
+func taskOpsUseCases(st *Local) *usecase.TaskOps {
+	return st.App.TaskOps(time.Now)
 }
 
 // deleteSummary says what deleting a task takes with it, for the confirmation.

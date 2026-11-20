@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +71,7 @@ func (f *findAsana) serve(t *testing.T) *httptest.Server {
 func findServer(t *testing.T, st *store.Store, f *findAsana, readOnly bool) *Server {
 	srv := f.serve(t)
 	t.Cleanup(srv.Close)
-	return &Server{Store: st, ReadOnly: readOnly, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	return &Server{App: wire.UseCases(st), ReadOnly: readOnly, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL, api.MaxRetries = srv.URL, 0
 		return &sync.Syncer{API: api, Store: st, PullOnly: readOnly}, nil
@@ -103,7 +104,7 @@ func TestSearchTasksRemote(t *testing.T) {
 
 func TestSearchTasksRemoteOffline(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st}) // no syncer: offline
+	cs := connect(t, &Server{App: wire.UseCases(st)}) // no syncer: offline
 	var out SearchOutput
 	call(t, cs, "search_tasks", map[string]any{"query": "ソファ", "remote": true}, &out)
 	if out.Count != 1 || !strings.Contains(out.Note, "could not be searched") {

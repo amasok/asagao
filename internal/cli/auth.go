@@ -195,7 +195,7 @@ func (a *app) afterLogin(cmd *cobra.Command, gid string) {
 	if want, err := st.SyncedMeGID(ctx); err != nil || want == "" || want == gid {
 		return
 	}
-	n, _ := query(st).UnsentCount(ctx)
+	n, _ := st.App.Query().UnsentCount(ctx)
 	fmt.Fprintln(cmd.ErrOrStderr(), "注意: "+format.AccountChangedHelp(n, "asagao reset"))
 }
 

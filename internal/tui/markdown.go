@@ -14,7 +14,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/sync"
 )
 
 // Descriptions and comments are rendered as Markdown (converted from Asana's rich text).
@@ -154,7 +153,8 @@ func (m *Model) prepareInline() tea.Cmd {
 	}
 	syncer := m.syncer
 	if syncer == nil {
-		syncer = &sync.Syncer{Store: m.deps.Store, CacheDir: m.deps.CacheDir} // offline: cached files only
+		syncer = m.deps.LocalSyncer() // offline: cached files only
+		syncer.CacheDir = m.deps.CacheDir
 	}
 	var cmds []tea.Cmd
 	for _, gid := range taskImages(d) {

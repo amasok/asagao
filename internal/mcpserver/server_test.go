@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"image"
 	"image/png"
 	"io"
@@ -116,7 +117,7 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 		{false, []string{"add_comment", "add_time_entry", "create_project", "create_project_from_template", "create_section", "create_status_update", "create_task", "create_task_from_template", "delete_attachment", "delete_comment", "delete_section", "delete_tag", "delete_task", "delete_time_entry", "duplicate_project", "duplicate_task", "get_attachment", "get_context", "get_goal", "get_portfolio", "get_project", "get_project_brief", "get_task", "list_goals", "list_inbox", "list_my_sections", "list_portfolios", "list_project_templates", "list_projects", "list_saved_searches", "list_tags", "list_task_templates", "list_tasks", "list_time_entries", "list_users", "mark_notifications", "move_section", "move_task", "rename_section", "resolve_outbox", "run_saved_search", "search_tasks", "set_parent", "sync", "sync_status", "update_comment", "update_project", "update_project_brief", "update_project_custom_fields", "update_tag", "update_task", "update_time_entry", "upload_attachment"}},
 		{true, []string{"get_attachment", "get_context", "get_goal", "get_portfolio", "get_project", "get_project_brief", "get_task", "list_goals", "list_inbox", "list_my_sections", "list_portfolios", "list_project_templates", "list_projects", "list_saved_searches", "list_tags", "list_task_templates", "list_tasks", "list_time_entries", "list_users", "run_saved_search", "search_tasks", "sync", "sync_status"}},
 	} {
-		cs := connect(t, &Server{Store: seed(t), ReadOnly: tc.readOnly})
+		cs := connect(t, &Server{App: wire.UseCases(seed(t)), ReadOnly: tc.readOnly})
 		res, err := cs.ListTools(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -136,7 +137,7 @@ func TestToolsListedAndReadOnly(t *testing.T) {
 }
 
 func TestReadTools(t *testing.T) {
-	cs := connect(t, &Server{Store: seed(t)})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t))})
 
 	var tasks TasksOutput
 	call(t, cs, "list_tasks", nil, &tasks)
@@ -187,7 +188,7 @@ func TestReadTools(t *testing.T) {
 
 func TestWritesOfflineAreQueued(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t2", "completed": true}, &w)
@@ -246,7 +247,7 @@ func fakeAsana(t *testing.T) *httptest.Server {
 func TestWritesOnlineAreSent(t *testing.T) {
 	st := seed(t)
 	srv := fakeAsana(t)
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
@@ -271,7 +272,7 @@ func TestWritesOnlineAreSent(t *testing.T) {
 func TestCreateSubtaskAndAssignByName(t *testing.T) {
 	st := seed(t)
 	_ = st.UpsertUsers(context.Background(), []asana.User{{GID: "u2", Name: "Partner"}})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	call(t, cs, "create_task", map[string]any{"name": "採寸", "parent": "t1"}, &w)
 	var task GetTaskOutput
@@ -295,7 +296,7 @@ func TestMarkdownTagsAndComments(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
 	_ = st.UpsertTags(ctx, []asana.Tag{{GID: "g1", Name: "買い物"}})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t1",
 		"notes":    "## 候補\n- **ニトリ**\n- 無印\n\n![画像](asana:42)",
@@ -333,7 +334,7 @@ func TestMarkdownTagsAndComments(t *testing.T) {
 func TestResolveOutbox(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 	ops, _ := st.ListOps(ctx)
 	_ = st.MarkOpConflict(ctx, ops[0].ID, map[string]any{"name": "サーバー"})
@@ -367,7 +368,7 @@ func TestGetAttachmentReturnsImage(t *testing.T) {
 	_ = os.WriteFile(path, buf.Bytes(), 0o600)
 	_ = st.UpsertAttachment(ctx, "t1", asana.Attachment{GID: "42", Name: "plan.png"})
 	_ = st.SetAttachmentPath(ctx, "42", path)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st), LocalSyncer: localSyncer(st)})
 	res := call(t, cs, "get_attachment", map[string]any{"gid": "42", "task_gid": "t1"}, nil)
 	if res.IsError || len(res.Content) == 0 {
 		t.Fatalf("result = %+v", res)
@@ -386,7 +387,7 @@ func TestListRecentlyModified(t *testing.T) {
 		{GID: "t2", Name: "転居届を出す", Completed: true, Assignee: &asana.Ref{GID: "me"}, ModifiedAt: testNow.Add(-time.Hour)},
 		{GID: "t3", Name: "電気の契約", ModifiedAt: testNow.AddDate(0, 0, -30)},
 	})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var tasks TasksOutput
 	call(t, cs, "list_tasks", map[string]any{"assignee": "any", "modified_within_days": 7}, &tasks)
 	if got := names(tasks.Tasks); !slices.Equal(got, []string{"転居届を出す", "ソファを買う"}) {
@@ -401,7 +402,7 @@ func TestTaskExtras(t *testing.T) {
 	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
 	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
 	uploads := t.TempDir()
-	cs := connect(t, &Server{Store: st, CacheDir: t.TempDir(), Upload: UploadPolicy{Allowed: []string{uploads}}})
+	cs := connect(t, &Server{App: wire.UseCases(st), CacheDir: t.TempDir(), Upload: UploadPolicy{Allowed: []string{uploads}}})
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "liked": true, "add_followers": []string{"Partner", "me"}, "add_projects": []string{"家計"}}, &w)
 	d, _ := st.GetTask(ctx, "t1")
@@ -428,7 +429,7 @@ func TestTaskExtras(t *testing.T) {
 
 func TestProjectStatusAndOnlineOnly(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st}) // offline
+	cs := connect(t, &Server{App: wire.UseCases(st)}) // offline
 	var w WriteOutput
 	call(t, cs, "create_status_update", map[string]any{"project": "新居", "status": "at_risk", "title": "遅れ気味", "text": "**家具**の到着が遅れる"}, &w)
 	var p ProjectOutput
@@ -445,4 +446,9 @@ func TestProjectStatusAndOnlineOnly(t *testing.T) {
 	if msg := toolError(call(t, cs, "create_project", map[string]any{"name": "新規"}, nil)); !strings.Contains(msg, "接続できない") {
 		t.Fatalf("offline create_project should explain: %q", msg)
 	}
+}
+
+// localSyncer is a syncer over st without an Asana client, as cli gives the server.
+func localSyncer(st *store.Store) func() *sync.Syncer {
+	return func() *sync.Syncer { return &sync.Syncer{Store: st} }
 }

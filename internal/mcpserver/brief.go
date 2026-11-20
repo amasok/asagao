@@ -44,7 +44,7 @@ type BriefDetailOutput struct {
 }
 
 func (s *Server) briefs() *app.Briefs {
-	return &app.Briefs{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	return s.App.Briefs(s.Now)
 }
 
 func (s *Server) getBrief(ctx context.Context, _ *mcp.CallToolRequest, in BriefInput) (*mcp.CallToolResult, BriefDetailOutput, error) {

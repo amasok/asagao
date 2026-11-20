@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/wire"
 	"testing"
 	"time"
 
@@ -102,7 +103,7 @@ func TestAddCommentAndStatusSameAsBeforeA4(t *testing.T) {
 				_ = json.Unmarshal(raw, &in)
 				ea = legacyCreateStatus(ctx, a, testNow, in)
 			}
-			cs := connect(t, &Server{Store: b})
+			cs := connect(t, &Server{App: wire.UseCases(b)})
 			res := call(t, cs, c.tool, c.in, nil)
 			if (ea == nil) == res.IsError {
 				t.Fatalf("legacy err = %v, new IsError = %v (%s)", ea, res.IsError, toolError(res))
@@ -128,7 +129,7 @@ func TestAddCommentAndStatusReadTheClockOnce(t *testing.T) {
 	} {
 		st := seed(t)
 		calls := 0
-		s := &Server{Store: st}
+		s := &Server{App: wire.UseCases(st)}
 		cs := connect(t, s)
 		inner := s.Now
 		s.Now = func() time.Time { calls++; return inner() }
@@ -165,9 +166,9 @@ func TestAddCommentAndStatusOddStatesSameAsBeforeA4(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			a, b := two(t), two(t)
 			sa := legacyCreateStatus(c.ctx, a, testNow, CreateStatusInput{Project: c.project, Status: "on_track", Text: "x"})
-			_, _, sb := (&Server{Store: b, Now: func() time.Time { return testNow }}).createStatus(c.ctx, nil, CreateStatusInput{Project: c.project, Status: "on_track", Text: "x"})
+			_, _, sb := (&Server{App: wire.UseCases(b), Now: func() time.Time { return testNow }}).createStatus(c.ctx, nil, CreateStatusInput{Project: c.project, Status: "on_track", Text: "x"})
 			ca := legacyAddComment(c.ctx, a, testNow, AddCommentInput{GID: "t1", Text: "x"})
-			_, _, cb := (&Server{Store: b, Now: func() time.Time { return testNow }}).addComment(c.ctx, nil, AddCommentInput{GID: "t1", Text: "x"})
+			_, _, cb := (&Server{App: wire.UseCases(b), Now: func() time.Time { return testNow }}).addComment(c.ctx, nil, AddCommentInput{GID: "t1", Text: "x"})
 			for _, p := range [][2]error{{sa, sb}, {ca, cb}} {
 				if (p[0] == nil) != (p[1] == nil) || (p[0] != nil && p[0].Error() != p[1].Error()) {
 					t.Fatalf("legacy %v, new %v", p[0], p[1])

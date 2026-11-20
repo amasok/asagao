@@ -24,7 +24,7 @@ func (h *harness) markRows(gids ...string) {
 
 func (h *harness) ops() []store.Op {
 	h.t.Helper()
-	ops, err := h.m.deps.Store.(*store.Store).ListOps(context.Background())
+	ops, err := storeOf(h.m).ListOps(context.Background())
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -56,12 +56,12 @@ func TestBulkCompleteAsksThenQueuesEachTask(t *testing.T) {
 		t.Fatalf("one outbox entry per task, got %+v", ops)
 	}
 	for _, gid := range []string{"t2", "t3"} {
-		d, err := h.m.deps.Store.GetTask(context.Background(), gid)
+		d, err := storeOf(h.m).GetTask(context.Background(), gid)
 		if err != nil || !d.Completed || !d.Pending {
 			t.Errorf("%s should be completed locally and pending: %+v %v", gid, d.TaskSummary, err)
 		}
 	}
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t1"); d.Completed {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t1"); d.Completed {
 		t.Error("an unmarked task must not change")
 	}
 	if len(h.m.list.marked) != 0 {
@@ -97,7 +97,7 @@ func TestBulkReopenWhenAllCompleted(t *testing.T) {
 		t.Fatalf("footer=%q", h.footer())
 	}
 	h.key("y")
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t5"); d.Completed {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t5"); d.Completed {
 		t.Fatal("t5 should be reopened")
 	}
 }
@@ -114,10 +114,10 @@ func TestBulkMarksOfHiddenTasksAreDropped(t *testing.T) {
 		t.Fatalf("only the task still shown keeps its mark: %v", h.m.list.marked)
 	}
 	h.key("x", "y")
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t2"); d.Completed {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t2"); d.Completed {
 		t.Fatal("a task hidden by the search must not be completed")
 	}
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t1"); !d.Completed {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t1"); !d.Completed {
 		t.Fatal("the marked task shown should be completed")
 	}
 }
@@ -159,7 +159,7 @@ func TestBulkMoveContinuesPastAFailure(t *testing.T) {
 	h := projectHarness(t, fixtureStore(t), nil)
 	h.markRows("t1", "t3", "t4")
 	// t3 disappears from the cache behind the list's back
-	if _, err := h.m.deps.Store.(*store.Store).DeleteGoneTasks(context.Background(), []string{"t3"}); err != nil {
+	if _, err := storeOf(h.m).DeleteGoneTasks(context.Background(), []string{"t3"}); err != nil {
 		t.Fatal(err)
 	}
 	h.key("m")
@@ -175,7 +175,7 @@ func TestBulkMoveContinuesPastAFailure(t *testing.T) {
 	if !strings.Contains(f, "1 件を「家具」に移動しました") || !strings.Contains(f, "1 件は変更できませんでした") {
 		t.Fatalf("result footer=%q", f)
 	}
-	d, err := h.m.deps.Store.GetTask(context.Background(), "t4")
+	d, err := storeOf(h.m).GetTask(context.Background(), "t4")
 	if err != nil || d.Memberships[0].SectionGID != "s1" || !d.Pending {
 		t.Fatalf("t4 should be moved: %+v %v", d.Memberships, err)
 	}
@@ -212,7 +212,7 @@ func TestBulkAssignee(t *testing.T) {
 	}
 	h.key("y")
 	for _, gid := range []string{"t2", "t3"} {
-		d, _ := h.m.deps.Store.GetTask(context.Background(), gid)
+		d, _ := storeOf(h.m).GetTask(context.Background(), gid)
 		if d.Assignee == nil || d.Assignee.GID != "u2" {
 			t.Errorf("%s assignee = %+v", gid, d.Assignee)
 		}
@@ -229,7 +229,7 @@ func TestBulkDuePickerAndPrompt(t *testing.T) {
 	h.key("j", "enter") // 明日 (2026-11-14)
 	h.key("y")
 	for _, gid := range []string{"t2", "t3"} {
-		if d, _ := h.m.deps.Store.GetTask(context.Background(), gid); d.DueOn != "2026-11-14" {
+		if d, _ := storeOf(h.m).GetTask(context.Background(), gid); d.DueOn != "2026-11-14" {
 			t.Errorf("%s due = %q", gid, d.DueOn)
 		}
 	}
@@ -246,7 +246,7 @@ func TestBulkDuePickerAndPrompt(t *testing.T) {
 	}
 	h.key("y")
 	for _, gid := range []string{"t2", "t3"} {
-		if d, _ := h.m.deps.Store.GetTask(context.Background(), gid); d.DueOn != "2026-12-01" {
+		if d, _ := storeOf(h.m).GetTask(context.Background(), gid); d.DueOn != "2026-12-01" {
 			t.Errorf("%s due = %q", gid, d.DueOn)
 		}
 	}
@@ -269,7 +269,7 @@ func TestBulkOnlyInList(t *testing.T) {
 	if h.m.bulkAsk != nil {
 		t.Fatal("x on the board acts on the card, without asking")
 	}
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), sel); !d.Completed {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), sel); !d.Completed {
 		t.Fatalf("the selected card %s should be completed", sel)
 	}
 }

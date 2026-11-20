@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func seedNumeric(t *testing.T) *store.Store {
 
 func TestGetContext(t *testing.T) {
 	dir, file := repoWith(t, `{"project": "新居", "section": "手続き", "task": "1002"}`)
-	cs := connect(t, &Server{Store: seedNumeric(t), ContextDir: dir})
+	cs := connect(t, &Server{App: wire.UseCases(seedNumeric(t)), ContextDir: dir})
 	var out ContextOutput
 	if res := call(t, cs, "get_context", nil, &out); res.IsError {
 		t.Fatalf("error: %s", toolError(res))
@@ -61,7 +62,7 @@ func TestGetContext(t *testing.T) {
 func TestGetContextNone(t *testing.T) {
 	dir, _ := repoWith(t, "")
 	for _, d := range []string{dir, ""} { // no file; no folder given (asagao mcp --no-context)
-		cs := connect(t, &Server{Store: seed(t), ContextDir: d})
+		cs := connect(t, &Server{App: wire.UseCases(seed(t)), ContextDir: d})
 		var out ContextOutput
 		if res := call(t, cs, "get_context", nil, &out); res.IsError || out.Found || out.Path != "" {
 			t.Errorf("%q: %+v %s", d, out, toolError(res))
@@ -71,7 +72,7 @@ func TestGetContextNone(t *testing.T) {
 
 func TestGetContextInvalid(t *testing.T) {
 	dir, _ := repoWith(t, `{"project": "新居", "tsk": "t1"}`)
-	cs := connect(t, &Server{Store: seed(t), ContextDir: dir})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t)), ContextDir: dir})
 	res := call(t, cs, "get_context", nil, nil)
 	if !res.IsError || !strings.Contains(toolError(res), ".asana.json") {
 		t.Errorf("an invalid file should be an error: %s", toolError(res))
@@ -91,7 +92,7 @@ func getPrompt(t *testing.T, cs *mcp.ClientSession, name string, args map[string
 }
 
 func TestPromptsListed(t *testing.T) {
-	cs := connect(t, &Server{Store: seed(t)})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t))})
 	res, err := cs.ListPrompts(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestPromptsListed(t *testing.T) {
 // Without a project the prompts work on my tasks; with one (the argument, or .asana.json's)
 // on that project, by gid; .asana.json's task is named.
 func TestPromptScope(t *testing.T) {
-	cs := connect(t, &Server{Store: seed(t)})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t))})
 	text, err := getPrompt(t, cs, "standup", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func TestPromptScope(t *testing.T) {
 	}
 
 	dir, file := repoWith(t, `{"project": "p1", "task": "1002"}`)
-	cs = connect(t, &Server{Store: seedNumeric(t), ContextDir: dir})
+	cs = connect(t, &Server{App: wire.UseCases(seedNumeric(t)), ContextDir: dir})
 	text, err = getPrompt(t, cs, "weekly_review", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +151,7 @@ func TestPromptScope(t *testing.T) {
 // A read-only server's prompts only propose changes.
 func TestPromptsReadOnly(t *testing.T) {
 	for _, ro := range []bool{false, true} {
-		cs := connect(t, &Server{Store: seed(t), ReadOnly: ro})
+		cs := connect(t, &Server{App: wire.UseCases(seed(t)), ReadOnly: ro})
 		text, err := getPrompt(t, cs, "triage_overdue", nil)
 		if err != nil {
 			t.Fatal(err)

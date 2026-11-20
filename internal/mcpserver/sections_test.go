@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func TestMoveTaskAndRenameSectionQueue(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": "手続き", "project": "新居"}, &w); res.IsError {
 		t.Fatal(toolError(res))
@@ -44,7 +45,7 @@ func TestSectionAndTagTools(t *testing.T) {
 	if err := st.UpsertTags(context.Background(), []asana.Tag{{GID: "g1", Name: "急ぎ"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	if res := call(t, cs, "create_section", map[string]any{"project": "新居", "name": "保留", "after": "家具"}, &w); res.IsError {
 		t.Fatal(toolError(res))
@@ -110,7 +111,7 @@ func TestSectionToolsHiddenAfterPaymentRequired(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +139,7 @@ func TestMoveTaskMyTasks(t *testing.T) {
 	if err := st.ReplaceMyTaskSections(ctx, "w1", []asana.Section{{GID: "m1", Name: "今日やる"}, {GID: "m2", Name: "あとで"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var secs MySectionsOutput
 	if res := call(t, cs, "list_my_sections", map[string]any{}, &secs); res.IsError || len(secs.Sections) != 2 {
 		t.Fatalf("list_my_sections = %+v", secs)

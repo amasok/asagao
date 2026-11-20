@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"reflect"
 	"strings"
 	"testing"
@@ -50,7 +51,7 @@ func fieldByName(t *testing.T, d *store.TaskDetail, name string) store.CustomFie
 // nothing at all, not even the valid parts given with it.
 func TestUpdateTaskCustomFieldsAllOrNothing(t *testing.T) {
 	st := seedFields(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	before := take(t, st, "t1")
 	for _, args := range []map[string]any{
 		{"gid": "t1", "name": "新しい名前", "custom_fields": map[string]any{"優先度": "最高"}},
@@ -71,7 +72,7 @@ func TestUpdateTaskCustomFieldsAllOrNothing(t *testing.T) {
 // Fields are set by name (enum by option name), shown by get_task, and queued offline.
 func TestUpdateTaskCustomFieldsByName(t *testing.T) {
 	st := seedFields(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	call(t, cs, "update_task", map[string]any{"gid": "t1", "custom_fields": map[string]any{"優先度": "中", "見積": 3.5, "締切": "2026-12-01"}}, &w)
 	if w.Sent {

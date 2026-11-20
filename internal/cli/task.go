@@ -75,8 +75,8 @@ func (f *listFlags) spec(cmd *cobra.Command, defaultAssignee string, defaultComp
 }
 
 // filter builds the store filter for the flags.
-func (f *listFlags) filter(ctx context.Context, st Store, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (readmodel.TaskFilter, error) {
-	tf, err := query(st).BuildFilter(ctx, f.spec(cmd, defaultAssignee, defaultCompleted), now)
+func (f *listFlags) filter(ctx context.Context, st *Local, cmd *cobra.Command, defaultAssignee string, defaultCompleted *bool, now time.Time) (readmodel.TaskFilter, error) {
+	tf, err := st.App.Query().BuildFilter(ctx, f.spec(cmd, defaultAssignee, defaultCompleted), now)
 	var fe *readmodel.FilterError
 	if errors.As(err, &fe) {
 		flag := "--" + strings.ReplaceAll(fe.Field, "_", "-")
@@ -122,7 +122,7 @@ func (a *app) taskListCmd() *cobra.Command {
 			if tf.ProjectGID != "" {
 				a.openProject(cmd, st, tf.ProjectGID, offline)
 			}
-			tasks, err := query(st).ListTasks(ctx, tf)
+			tasks, err := st.App.Query().ListTasks(ctx, tf)
 			if err != nil {
 				return err
 			}
@@ -170,7 +170,7 @@ func (a *app) searchCmd() *cobra.Command {
 			if remote {
 				return a.searchRemote(cmd, st, tf)
 			}
-			tasks, err := query(st).ListTasks(ctx, tf)
+			tasks, err := st.App.Query().ListTasks(ctx, tf)
 			if err != nil {
 				return err
 			}
@@ -193,7 +193,7 @@ func (a *app) searchCmd() *cobra.Command {
 // searchRemote is search --remote: the cache's matches and what Asana finds. What Asana
 // found, or why it could not be searched, goes to stderr, so the output (and --json) has
 // the same shape as without --remote.
-func (a *app) searchRemote(cmd *cobra.Command, st Store, tf readmodel.TaskFilter) error {
+func (a *app) searchRemote(cmd *cobra.Command, st *Local, tf readmodel.TaskFilter) error {
 	ctx := cmd.Context()
 	var find usecase.TaskFinder
 	if s, err := a.onlineSyncer(ctx, st); err != nil {
@@ -201,7 +201,7 @@ func (a *app) searchRemote(cmd *cobra.Command, st Store, tf readmodel.TaskFilter
 	} else {
 		find = s
 	}
-	out, err := usecase.SearchWithAsana(ctx, query(st), find, tf)
+	out, err := usecase.SearchWithAsana(ctx, st.App.Query(), find, tf)
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func (a *app) taskShowCmd() *cobra.Command {
 			if !offline {
 				fetchErr = a.fetchDetails(ctx, st, args[0])
 			}
-			d, err := query(st).GetTask(ctx, args[0])
+			d, err := st.App.Query().GetTask(ctx, args[0])
 			if err != nil {
 				if fetchErr != nil {
 					return fmt.Errorf("%w（Asana からの取得にも失敗: %v）", err, fetchErr)
@@ -284,7 +284,7 @@ func (a *app) taskShowCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) fetchDetails(ctx context.Context, st Store, gid string) error {
+func (a *app) fetchDetails(ctx context.Context, st *Local, gid string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	api, err := a.apiClient(ctx)

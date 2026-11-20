@@ -52,7 +52,7 @@ func ptrF(v float64) *float64 { return &v }
 
 func goalsHarness(t *testing.T, st *store.Store, now func() time.Time) *harness {
 	t.Helper()
-	m := New(context.Background(), Deps{Store: st, Now: now})
+	m := New(context.Background(), onStore(st, Deps{Now: now}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

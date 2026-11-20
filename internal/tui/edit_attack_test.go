@@ -16,8 +16,8 @@ import (
 func editWith(t *testing.T, edit func(string) string) (*harness, *store.Store) {
 	t.Helper()
 	st := fixtureStore(t)
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow },
-		RunEditor: func(path string, done func(error) tea.Msg) tea.Cmd { return fakeEditor(t, edit)(path, done) }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow },
+		RunEditor: func(path string, done func(error) tea.Msg) tea.Cmd { return fakeEditor(t, edit)(path, done) }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

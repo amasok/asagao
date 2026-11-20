@@ -91,7 +91,7 @@ type (
 )
 
 func (m *Model) briefs() *app.Briefs {
-	return &app.Briefs{Store: m.deps.Store, Text: richtext.Converter{}, Clock: m.deps.Now}
+	return m.deps.App.Briefs(m.deps.Now)
 }
 
 // editBrief opens the current project's brief in the editor (an empty one if it has none).
@@ -101,12 +101,12 @@ func (m *Model) editBrief() tea.Cmd {
 		return nil
 	}
 	briefs := m.briefs()
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
 		if err := briefs.Available(m.ctx, project); err != nil {
 			return briefEditReadyMsg{err: err}
 		}
-		o, err := queryOf(st).ProjectOverview(m.ctx, project)
+		o, err := st.Query().ProjectOverview(m.ctx, project)
 		if err != nil {
 			return briefEditReadyMsg{err: err}
 		}

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
@@ -21,7 +22,7 @@ func TestReadToolLimitsAreCapped(t *testing.T) {
 	if err := st.UpsertTasks(ctx, tasks); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	for _, tc := range []struct {
 		tool string
 		args map[string]any

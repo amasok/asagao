@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"github.com/amasok/asagao/internal/app"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,9 +22,9 @@ func (m *Model) scopeKey() string {
 }
 
 // loadCollapsed reads the collapsed group keys of a scope (in a command goroutine).
-func loadCollapsed(ctx context.Context, st Store, scope string) map[string]bool {
+func loadCollapsed(ctx context.Context, st *app.UseCases, scope string) map[string]bool {
 	out := map[string]bool{}
-	v, err := st.CollapsedGroups(ctx, scope)
+	v, err := st.ViewState().CollapsedGroups(ctx, scope)
 	if err != nil || v == "" {
 		return out
 	}
@@ -43,9 +44,9 @@ func (m *Model) saveCollapsed() tea.Cmd {
 	}
 	slices.Sort(keys)
 	b, _ := json.Marshal(keys)
-	st, scope := m.deps.Store, m.scopeKey()
+	st, scope := m.deps.App, m.scopeKey()
 	return func() tea.Msg {
-		_ = st.SetCollapsedGroups(m.ctx, scope, string(b))
+		_ = st.ViewState().SetCollapsedGroups(m.ctx, scope, string(b))
 		return nil
 	}
 }

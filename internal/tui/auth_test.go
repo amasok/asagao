@@ -20,11 +20,11 @@ import (
 func TestSyncLoginProblemRebuildsSyncer(t *testing.T) {
 	calls := 0
 	nextErr := error(auth.ErrNotLoggedIn)
-	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow },
+	m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow },
 		NewSyncer: func(context.Context) (*sync.Syncer, error) {
 			calls++
 			return nil, nextErr
-		}})
+		}}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 220, Height: 30})
 	h.run(m.Init())
@@ -72,11 +72,11 @@ func TestSyncLoginProblemRebuildsSyncer(t *testing.T) {
 // again at once with a new syncer, so the account check applies without waiting.
 func TestLoginReplacedSyncsAgainAtOnce(t *testing.T) {
 	calls := 0
-	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow },
+	m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow },
 		NewSyncer: func(context.Context) (*sync.Syncer, error) {
 			calls++
 			return nil, errors.New("offline")
-		}})
+		}}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 220, Height: 30})
 	built := &sync.Syncer{}

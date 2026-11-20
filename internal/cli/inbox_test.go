@@ -30,7 +30,7 @@ func inboxStore(t *testing.T, state store.InboxState) (*store.Store, string) {
 		t.Fatal(err)
 	}
 	st := createStoreAt(t, filepath.Join(config.DataDir(), "store.db"))
-	task, err := createTask(ctx, st, createOpts{name: "棚を組む"}, time.Now())
+	task, err := createTask(ctx, localFor(st), createOpts{name: "棚を組む"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestResolveNotificationArguments(t *testing.T) {
 		{all: true, read: true, want: "1200001,1300002"},
 		{all: true, read: false, want: "1200002"},
 	} {
-		gids, err := resolveNotifications(ctx, st, tc.args, tc.all, tc.read)
+		gids, err := resolveNotifications(ctx, localFor(st), tc.args, tc.all, tc.read)
 		if tc.wantErr != "" {
 			if tc.wantErr == "見つかりません" {
 				if !errors.Is(err, store.ErrNotFound) {
@@ -163,7 +163,7 @@ func TestResolveNotificationArguments(t *testing.T) {
 	}
 
 	// read --all marks every unread one; unread --all brings them all back.
-	gids, _ := resolveNotifications(ctx, st, nil, true, true)
+	gids, _ := resolveNotifications(ctx, localFor(st), nil, true, true)
 	if n, err := st.MarkNotificationsLocal(ctx, gids, true, time.Now()); err != nil || n != 2 {
 		t.Fatalf("read --all: %d %v", n, err)
 	}
@@ -173,7 +173,7 @@ func TestResolveNotificationArguments(t *testing.T) {
 	if ops, _ := st.PendingOps(ctx); len(ops) != 3 { // 2 marks + the create of the local task
 		t.Fatalf("queued %d", len(ops))
 	}
-	gids, _ = resolveNotifications(ctx, st, nil, true, false)
+	gids, _ = resolveNotifications(ctx, localFor(st), nil, true, false)
 	if n, err := st.MarkNotificationsLocal(ctx, gids, false, time.Now()); err != nil || n != 3 {
 		t.Fatalf("unread --all: %d %v", n, err)
 	}

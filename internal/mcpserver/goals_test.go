@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -45,7 +46,7 @@ func goalsServer(t *testing.T) (*Server, *store.Store) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	return &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		api.MaxRetries = 0
@@ -91,7 +92,7 @@ func TestGoalToolsOffline(t *testing.T) {
 	if err := st.ReplaceGoals(ctx, "w1", []model.Goal{{GID: "g1", Name: "売上"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var goals GoalsOutput
 	call(t, cs, "list_goals", nil, &goals)
 	if len(goals.Goals) != 1 {
@@ -109,7 +110,7 @@ func TestGoalToolsHiddenByPlan(t *testing.T) {
 	if err := st.RecordPlanRefusal(ctx, plan.Goals, "w1", testNow.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

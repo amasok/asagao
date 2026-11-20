@@ -42,7 +42,7 @@ func (a *app) runTUI(ctx context.Context) error {
 			return fmt.Errorf("config [keys]: unknown action %q (see `asagao keys`)", id)
 		}
 	}
-	deps := tui.Deps{Store: st, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
+	deps := tui.Deps{App: st.App, LocalSyncer: func() *sync.Syncer { return a.syncer(nil, st) }, SyncInterval: tuiSyncInterval, OpenURL: browser.Open, ViewImages: a.viewImages,
 		InlineImages: a.inlineImages(), RunEditor: a.runEditor,
 		Theme: a.cfg.UI.Theme, Accent: a.cfg.UI.Accent, KeyBindings: keys,
 		CacheDir: filepath.Join(xdg.CacheDir(), "attachments"), BackupDir: backupDir(), AuthScopes: a.cfg.Auth.Scopes,

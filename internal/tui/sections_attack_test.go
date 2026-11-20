@@ -17,7 +17,7 @@ func editInEditor(t *testing.T, change func(string) string) (*harness, func() []
 	_ = st.UpsertTasks(ctx, []asana.Task{{GID: "t1", Name: "ソファを買う", DueOn: "2026-11-20",
 		Assignee:    &asana.Ref{GID: "me", Name: "Me"},
 		Memberships: []asana.Membership{{Project: &asana.Ref{GID: "p1"}, Section: &asana.Ref{GID: "s1"}}}}})
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, change)})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, change)}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

@@ -50,7 +50,7 @@ type PortfolioOutput struct {
 	Note      string                    `json:"note,omitempty"`
 }
 
-func (s *Server) goals() *app.Goals { return &app.Goals{Store: s.Store, Clock: s.Now} }
+func (s *Server) goals() *app.Goals { return s.App.Goals(s.Now) }
 
 func (s *Server) addGoalTools(srv *mcp.Server) {
 	ctx := context.Background()

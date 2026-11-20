@@ -95,10 +95,10 @@ func (m *Model) applySavedSearch(name string) tea.Cmd {
 // savedRows loads what the saved search finds, with the list's own narrowings on top: the
 // filter (other than 未完了, which leaves the search's completion as it is), the tag, the
 // field and the search words (which replace the search's).
-func savedRows(ctx context.Context, st Store, x readmodel.SavedSearch, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
-	f, err := queryOf(st).BuildFilter(ctx, x.Spec(), now)
+func savedRows(ctx context.Context, st *app.UseCases, x readmodel.SavedSearch, query string, filter filterMode, tag string, field fieldFilter, now time.Time) ([]row, error) {
+	f, err := st.Query().SavedSearchFilter(ctx, x.Name, x.Spec(), now)
 	if err != nil {
-		return nil, &app.SearchError{Name: x.Name, Err: err}
+		return nil, err
 	}
 	if query != "" {
 		f.Query = query
@@ -121,7 +121,7 @@ func savedRows(ctx context.Context, st Store, x readmodel.SavedSearch, query str
 	case filterAll:
 		f.Completed = nil
 	}
-	tasks, err := queryOf(st).ListTasks(ctx, f)
+	tasks, err := st.Query().ListTasks(ctx, f)
 	if err != nil {
 		return nil, err
 	}

@@ -36,7 +36,7 @@ func (a *app) templateTasksCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -78,7 +78,7 @@ func (a *app) templateProjectsCmd() *cobra.Command {
 			defer st.Close()
 			teamGID := ""
 			if team != "" {
-				if teamGID, err = query(st).ResolveTeam(ctx, team); err != nil {
+				if teamGID, err = st.App.Query().ResolveTeam(ctx, team); err != nil {
 					return fmt.Errorf("--team: %w", err)
 				}
 			}
@@ -130,7 +130,7 @@ func (a *app) templateNewTaskCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -176,7 +176,7 @@ func (a *app) templateNewProjectCmd() *cobra.Command {
 			defer st.Close()
 			in := sync.ProjectInput{Name: strings.Join(args[1:], " "), Public: public}
 			if team != "" {
-				if in.TeamGID, err = query(st).ResolveTeam(ctx, team); err != nil {
+				if in.TeamGID, err = st.App.Query().ResolveTeam(ctx, team); err != nil {
 					return fmt.Errorf("--team: %w", err)
 				}
 			}
@@ -187,7 +187,7 @@ func (a *app) templateNewProjectCmd() *cobra.Command {
 				return err
 			}
 			for k, v := range in.Roles {
-				if in.Roles[k], err = query(st).ResolveUser(ctx, v); err != nil || in.Roles[k] == "" {
+				if in.Roles[k], err = st.App.Query().ResolveUser(ctx, v); err != nil || in.Roles[k] == "" {
 					return fmt.Errorf("--role %s: %w", k, orNoUser(err))
 				}
 			}
@@ -232,13 +232,13 @@ func (a *app) projectDuplicateCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
 			name := strings.Join(args[1:], " ")
 			if strings.TrimSpace(name) == "" {
-				o, err := query(st).ProjectOverview(ctx, gid)
+				o, err := st.App.Query().ProjectOverview(ctx, gid)
 				if err != nil {
 					return err
 				}
@@ -246,7 +246,7 @@ func (a *app) projectDuplicateCmd() *cobra.Command {
 			}
 			teamGID := ""
 			if team != "" {
-				if teamGID, err = query(st).ResolveTeam(ctx, team); err != nil {
+				if teamGID, err = st.App.Query().ResolveTeam(ctx, team); err != nil {
 					return fmt.Errorf("--team: %w", err)
 				}
 			}

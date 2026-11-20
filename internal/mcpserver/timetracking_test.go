@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/amasok/asagao/internal/wire"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -58,7 +59,7 @@ func (f *timeAsana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func timeServer(t *testing.T, st *store.Store, fake *timeAsana) *Server {
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
-	return &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	return &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		api.MaxRetries = 0
@@ -115,7 +116,7 @@ func TestTimeEntryToolsPaymentRequired(t *testing.T) {
 	if err := st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", testNow); err != nil {
 		t.Fatal(err)
 	}
-	cs = connect(t, &Server{Store: st})
+	cs = connect(t, &Server{App: wire.UseCases(st)})
 	tools, err := cs.ListTools(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

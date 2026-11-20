@@ -35,8 +35,8 @@ func newQuickAddJSON(q usecase.QuickAddResult) *quickAddJSON {
 // readQuickAdd reads the quick-add tokens at the end of o.name (app.ParseQuickAdd) into o:
 // the name loses them, and the assignee, due date and tags are set. A token that names
 // what a flag also gives (--due, --assignee) is an error, before anything is written.
-func readQuickAdd(ctx context.Context, st Store, o *createOpts, now time.Time) (*usecase.QuickAddResult, error) {
-	q, err := usecase.ReadQuickAddFinding(ctx, st, o.names, o.name, now)
+func readQuickAdd(ctx context.Context, st *Local, o *createOpts, now time.Time) (*usecase.QuickAddResult, error) {
+	q, err := st.App.QuickAdd().ReadFinding(ctx, o.names, o.name, now)
 	if err != nil {
 		return nil, err
 	}
@@ -74,11 +74,11 @@ func printQuickAdd(w io.Writer, q usecase.QuickAddResult) {
 
 // nameFinder looks names the cache lacks up in Asana (app.NameFinder), through a syncer
 // made only when a name needs it. Without a login (or with --dry-run) nothing is looked up.
-func (a *app) nameFinder(st Store) usecase.NameFinder { return &lazyFinder{a: a, st: st} }
+func (a *app) nameFinder(st *Local) usecase.NameFinder { return &lazyFinder{a: a, st: st} }
 
 type lazyFinder struct {
 	a    *app
-	st   Store
+	st   *Local
 	done bool
 	s    *sync.Syncer
 	err  error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"regexp"
 	"testing"
 	"time"
@@ -124,7 +125,7 @@ func TestCreateTaskSameAsBeforeA1(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, ea := legacyCreate(ctx, a, testNow, in)
-			cs := connect(t, &Server{Store: b})
+			cs := connect(t, &Server{App: wire.UseCases(b)})
 			res := call(t, cs, "create_task", tc.in, nil)
 			if (ea == nil) == res.IsError {
 				t.Fatalf("legacy err = %v, new IsError = %v (%s)", ea, res.IsError, toolError(res))
@@ -143,7 +144,7 @@ func TestCreateTaskSameAsBeforeA1(t *testing.T) {
 func TestCreateTaskUsesOneTimestamp(t *testing.T) {
 	st := seed(t)
 	calls := 0
-	s := &Server{Store: st}
+	s := &Server{App: wire.UseCases(st)}
 	cs := connect(t, s)
 	inner := s.Now
 	s.Now = func() time.Time { calls++; return inner() }

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"testing"
 
 	"github.com/amasok/asagao/internal/dates"
@@ -13,7 +14,7 @@ import (
 func TestCreateTaskErrorText(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st}) // offline
+	cs := connect(t, &Server{App: wire.UseCases(st)}) // offline
 	errText := func(_ string, err error) string {
 		if err == nil {
 			t.Fatal("expected an error")

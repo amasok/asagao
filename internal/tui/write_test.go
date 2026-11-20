@@ -19,7 +19,7 @@ func TestInlineCommentIsRichText(t *testing.T) {
 	h.key("c")
 	h.typeText("**区役所**は9時から")
 	h.key("enter")
-	d, err := h.m.deps.Store.GetTask(context.Background(), "t2")
+	d, err := storeOf(h.m).GetTask(context.Background(), "t2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func outboxAction(t *testing.T, h *harness, i int, key string) writeDoneMsg {
 
 func TestOutboxDiscardRefreshesOnlyTasks(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	if err := st.RenameSectionLocal(ctx, "s1", "家具2", testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestOutboxDiscardRefreshesOnlyTasks(t *testing.T) {
 
 func TestOutboxActionsCheckState(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestOutboxActionsCheckState(t *testing.T) {
 
 func TestOutboxShowsSendingAndVerify(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestOutboxShowsSendingAndVerify(t *testing.T) {
 // Detail lines (conflict values, notes) start where the entry's description starts.
 func TestOutboxDetailLinesAligned(t *testing.T) {
 	h := newHarness(t, 120, 24)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 	_ = st.UpdateTaskLocal(ctx, "t2", map[string]any{"name": "ローカル2"}, testNow)
 	ops, _ := st.ListOps(ctx)
@@ -166,7 +166,7 @@ func TestOutboxDetailLinesAligned(t *testing.T) {
 // they were, and listed in the outbox for the rest of the session.
 func TestDiscardedChangesAnnouncedOnce(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ソファを2台買う"}, testNow); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestDiscardStatusUsesBoundKey(t *testing.T) {
 		{map[string][]string{"outbox": {"O"}}, "（O で一覧）"},
 		{map[string][]string{"outbox": {}}, "（space ! で一覧）"},
 	} {
-		m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }, KeyBindings: tc.bindings})
+		m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow }, KeyBindings: tc.bindings}))
 		if got := m.discardStatus(ds); !strings.HasSuffix(got, tc.want) {
 			t.Errorf("bindings %v: %q, want suffix %q", tc.bindings, got, tc.want)
 		}
@@ -218,7 +218,7 @@ func TestDiscardStatusUsesBoundKey(t *testing.T) {
 // What the user wrote in a dropped change is shown in full (wrapped) and can be scrolled to.
 func TestOutboxShowsDroppedTextInFull(t *testing.T) {
 	h := newHarness(t, 60, 14)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	long := strings.Repeat("あいうえおかきくけこ", 12) + "\n最後の行です"
 	if _, err := st.AddCommentLocal(ctx, "t1", long, store.UserRef{GID: "me"}, testNow); err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestOutboxShowsDroppedTextInFull(t *testing.T) {
 // Moving through many entries keeps the selected one on screen.
 func TestOutboxCursorStaysVisible(t *testing.T) {
 	h := newHarness(t, 100, 10)
-	ctx, st := context.Background(), h.m.deps.Store.(*store.Store)
+	ctx, st := context.Background(), storeOf(h.m)
 	for i := 0; i < 12; i++ {
 		if _, err := st.AddCommentLocal(ctx, "t2", fmt.Sprintf("コメント%02d", i), store.UserRef{GID: "me"}, testNow); err != nil {
 			t.Fatal(err)

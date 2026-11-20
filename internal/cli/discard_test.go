@@ -15,7 +15,7 @@ func TestTakeDiscards(t *testing.T) {
 	ctx := context.Background()
 	st := createStore(t)
 	now := time.Date(2026, 11, 13, 10, 0, 0, 0, time.Local)
-	gid, err := createTask(ctx, st, createOpts{name: "牛乳を買う"}, now)
+	gid, err := createTask(ctx, localFor(st), createOpts{name: "牛乳を買う"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,19 +24,19 @@ func TestTakeDiscards(t *testing.T) {
 	}
 
 	var b bytes.Buffer
-	ds := takeDiscards(ctx, st, &b, true)
+	ds := takeDiscards(ctx, localFor(st), &b, true)
 	if len(ds) != 1 || !strings.Contains(b.String(), format.DiscardNotice) || !strings.Contains(b.String(), "牛乳を買う") {
 		t.Fatalf("discards = %+v, output %q", ds, b.String())
 	}
 	b.Reset()
-	if ds := takeDiscards(ctx, st, &b, true); len(ds) != 0 || b.Len() != 0 {
+	if ds := takeDiscards(ctx, localFor(st), &b, true); len(ds) != 0 || b.Len() != 0 {
 		t.Fatalf("shown twice: %+v %q", ds, b.String())
 	}
 
 	// --json: not printed, but returned and marked
-	gid, _ = createTask(ctx, st, createOpts{name: "パンを買う"}, now)
+	gid, _ = createTask(ctx, localFor(st), createOpts{name: "パンを買う"}, now)
 	_, _ = st.DiscardDeletedTask(ctx, gid, "deleted", now)
-	if ds := takeDiscards(ctx, st, &b, false); len(ds) != 1 || b.Len() != 0 {
+	if ds := takeDiscards(ctx, localFor(st), &b, false); len(ds) != 1 || b.Len() != 0 {
 		t.Fatalf("json mode: %+v %q", ds, b.String())
 	}
 	if ds, _ := st.PendingDiscards(ctx); len(ds) != 0 {

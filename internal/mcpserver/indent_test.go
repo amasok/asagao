@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestGetTaskShowsIndentationAsWhitespace(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	for gid, want := range map[string]string{"t8": "手順  \n  字下げ  \n\tタブ\n\n    四つ", "t9": "  先頭  \n\tタブ"} {
 		var task GetTaskOutput
 		call(t, cs, "get_task", map[string]any{"gid": gid, "offline": true}, &task)

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestCustomTypeOverMCP(t *testing.T) {
 		{GID: "cs1", Name: "対応中", CompletionState: "Incomplete"}, {GID: "cs2", Name: "修正済み", CompletionState: "Complete"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 
 	if msg := toolError(call(t, cs, "update_task", map[string]any{"gid": "t1", "custom_type_status": "対応中"}, nil)); !strings.HasPrefix(msg, "custom_type_status: ") {
 		t.Fatalf("status on a plain task: %q", msg)

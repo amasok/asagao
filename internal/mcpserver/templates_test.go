@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,7 +78,7 @@ func templateServer(t *testing.T, readOnly bool) (*templateFake, func(name strin
 	f := &templateFake{}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	cs := connect(t, &Server{Store: st, ReadOnly: readOnly, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), ReadOnly: readOnly, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL, api.MaxRetries = srv.URL, 0
 		return &sync.Syncer{API: api, Store: st}, nil
@@ -161,7 +162,7 @@ func TestTemplateToolsPlan(t *testing.T) {
 }
 
 func TestTemplateToolsOffline(t *testing.T) {
-	cs := connect(t, &Server{Store: seed(t), NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(seed(t)), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		return nil, fmt.Errorf("ログインしていません")
 	}})
 	for name, args := range map[string]map[string]any{

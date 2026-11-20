@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 func TestUpdateTaskStartOn(t *testing.T) {
 	st := seed(t) // t1 is due 2026-11-20
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	if res := call(t, cs, "update_task", map[string]any{"gid": "t1", "start_on": "2026-11-15"}, &w); res.IsError {
 		t.Fatalf("update_task: %s", toolError(res))
@@ -68,7 +69,7 @@ func TestUpdateTaskStartOn(t *testing.T) {
 func TestCreateTaskStartOn(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	if res := call(t, cs, "create_task", map[string]any{"name": "設計", "project": "p1", "start_on": "2026-12-01", "due_on": "2026-12-10"}, &w); res.IsError {
 		t.Fatalf("create_task: %s", toolError(res))

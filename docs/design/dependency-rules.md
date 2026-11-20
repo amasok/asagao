@@ -46,6 +46,8 @@
 | 入り口は Markdown → html を呼ばない | `richtext.TaskNotes`・`richtext.Comment`・`richtext.StatusUpdate` の `FromMarkdown`・`PlainFromMarkdown` | a5 で入れた |
 | 入り口は store の書き込みを呼ばない | `Local` で終わる公開のメソッド (`CreateTaskLocal` など。store にしかない) と `ApplyTagEdit`。パッケージ名で修飾したもの (`sync.KeepLocal`) は数えない | a6 で入れた |
 | 入り口は期日を解釈しない | `dates.Parse` | a5 で入れた |
+| 入り口はリッチテキストの変換器を作らない | `richtext.Converter` (ユースケースが使うものは `internal/wire` が渡す) | #71 で入れた |
+| 入り口はユースケースと同期を自分で組み立てない | `app` のユースケースと `Query`・`UseCases` (`app.Tasks{…}` など)、`sync.Syncer` とその部品の複合リテラル。`app.UseCases` (wire が組み立てる) から受け取る | #71 で入れた (`entryForbiddenLiterals`) |
 
 これも許可リスト (ファイルと名前の組) を持ち、段階ごとに減らす。a5 で、上の 2 つを `internal/archtest/calls_test.go` に入れた (`entryForbiddenCalls`。違反がなくなったので許可リスト `allowedCalls` は空)。store の書き込みの決まりは a6 で同じテストに足し (`storeWrites`)、そのときの呼び出しを許可リストに入れて、まとまりごとに消した。a6 の終わりに許可リストは空になった。
 

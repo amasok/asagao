@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,7 +26,7 @@ func hostileServer(t *testing.T, st *store.Store, status int) *Server {
 		http.Redirect(w, r, inner.URL+r.URL.Path, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(srv.Close)
-	return &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	return &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL, api.MaxRetries = srv.URL, 0
 		return &sync.Syncer{API: api, Store: st}, nil

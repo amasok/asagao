@@ -20,9 +20,9 @@ var errOfflineFlag = errors.New("--offline のため Asana に問い合わせて
 // the project as one to sync and, if its tasks are not cached, fetches them now (with the
 // completed ones). If Asana cannot be reached, it says on stderr what is missing; the next
 // sync fetches it. offline: Asana is not asked.
-func (a *app) openProject(cmd *cobra.Command, st Store, gid string, offline bool) {
+func (a *app) openProject(cmd *cobra.Command, st *Local, gid string, offline bool) {
 	ctx := cmd.Context()
-	state, err := st.WantProject(ctx, gid)
+	state, err := st.App.WantProject(ctx, gid)
 	if err != nil || state == readmodel.TasksAll {
 		return
 	}
@@ -58,8 +58,8 @@ func (a *app) openProject(cmd *cobra.Command, st Store, gid string, offline bool
 }
 
 // noteUnfetched says on stderr how many projects a search of the cache did not look in.
-func (a *app) noteUnfetched(cmd *cobra.Command, st Store) {
-	n, err := st.CountUnfetchedProjects(cmd.Context(), true)
+func (a *app) noteUnfetched(cmd *cobra.Command, st *Local) {
+	n, err := st.App.Query().CountUnfetchedProjects(cmd.Context(), true)
 	if err != nil || n == 0 {
 		return
 	}

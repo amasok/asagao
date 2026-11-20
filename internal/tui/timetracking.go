@@ -28,7 +28,7 @@ type timeEntriesMsg struct {
 }
 
 func (m *Model) timeTracking(now time.Time) *app.TimeTracking {
-	return &app.TimeTracking{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.TimeTracking(func() time.Time { return now })
 }
 
 func (m *Model) openTimeEntries() tea.Cmd {

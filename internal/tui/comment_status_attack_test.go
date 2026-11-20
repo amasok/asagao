@@ -100,7 +100,7 @@ func TestCommentAndStatusSameAsBeforeA4(t *testing.T) {
 				}
 			}
 			now := testNow
-			m := New(ctx, Deps{Store: b, Now: func() time.Time { return now }})
+			m := New(ctx, onStore(b, Deps{Now: func() time.Time { return now }}))
 			dir := t.TempDir()
 			write := func(s string) string {
 				p := filepath.Join(dir, "doc.md")
@@ -145,7 +145,7 @@ func TestCommentAndStatusUseTimeOfKeyPress(t *testing.T) {
 	st := fixtureStore(t)
 	cur := testNow
 	reads := 0
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { reads++; return cur }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { reads++; return cur }}))
 	dir := t.TempDir()
 	p1 := filepath.Join(dir, "c.md")
 	p2 := filepath.Join(dir, "s.md")

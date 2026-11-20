@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	gosync "sync"
@@ -63,7 +64,7 @@ func TestReadOnlyServerNeverWrites(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	cs := connect(t, &Server{Store: st, ReadOnly: true, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), ReadOnly: true, NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil

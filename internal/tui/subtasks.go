@@ -17,7 +17,7 @@ const maxSubtaskDepth = 5
 
 // withSubtasks inserts the subtasks of expanded tasks after them (recursively).
 // Subtasks follow the completion filter, except that "all" also shows completed ones.
-func withSubtasks(ctx context.Context, st Store, rows []row, expanded map[string]bool, completed *bool) ([]row, error) {
+func withSubtasks(ctx context.Context, st *app.UseCases, rows []row, expanded map[string]bool, completed *bool) ([]row, error) {
 	if len(expanded) == 0 {
 		return rows, nil
 	}
@@ -28,7 +28,7 @@ func withSubtasks(ctx context.Context, st Store, rows []row, expanded map[string
 		if r.task == nil || !expanded[r.task.GID] || r.depth >= maxSubtaskDepth {
 			return nil
 		}
-		subs, err := queryOf(st).ListTasks(ctx, readmodel.TaskFilter{ParentGID: r.task.GID, Completed: completed})
+		subs, err := st.Query().ListTasks(ctx, readmodel.TaskFilter{ParentGID: r.task.GID, Completed: completed})
 		if err != nil {
 			return err
 		}
@@ -140,9 +140,9 @@ func (m *Model) openAssigneePicker() tea.Cmd {
 	if m.actionTask() == nil || m.focus == paneSidebar {
 		return nil
 	}
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		users, err := queryOf(st).ListUsers(m.ctx)
+		users, err := st.Query().ListUsers(m.ctx)
 		return usersLoadedMsg{users: users, err: err}
 	}
 }
@@ -152,7 +152,7 @@ func (m *Model) showAssigneePicker(users []readmodel.UserRef) {
 	if t == nil {
 		return
 	}
-	me, _ := queryOf(m.deps.Store).MeGID(m.ctx)
+	me, _ := m.deps.App.Query().MeGID(m.ctx)
 	current := ""
 	if t.Assignee != nil {
 		current = t.Assignee.GID

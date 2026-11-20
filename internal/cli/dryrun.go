@@ -39,6 +39,8 @@ func (a *app) addDryRunFlag(cmd *cobra.Command) *cobra.Command {
 // dryRunStore is the copy of the store a dry run writes to. Close removes it.
 type dryRunStore struct {
 	Store
+	// app is the use cases over the copy.
+	app *usecase.UseCases
 	dir string
 	// before is the copy's outbox before the command ran.
 	before []outbox.Op
@@ -80,7 +82,7 @@ func removeOnSignal(dir string) (unwatch func()) {
 }
 
 // openDryRun copies st (which it closes) to a private temporary folder and opens the copy.
-func (a *app) openDryRun(ctx context.Context, st Store) (_ Store, err error) {
+func (a *app) openDryRun(ctx context.Context, st *Local) (_ *Local, err error) {
 	defer func() { err = errors.Join(err, st.Close()) }()
 	removeStaleDryRuns(time.Now())
 	dir, err := os.MkdirTemp("", dryRunPrefix) // 0700
@@ -88,7 +90,7 @@ func (a *app) openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 		return nil, err
 	}
 	unwatch := removeOnSignal(dir)
-	fail := func(err error) (Store, error) {
+	fail := func(err error) (*Local, error) {
 		defer unwatch()
 		return nil, errors.Join(err, os.RemoveAll(dir))
 	}
@@ -101,11 +103,12 @@ func (a *app) openDryRun(ctx context.Context, st Store) (_ Store, err error) {
 		return fail(err)
 	}
 	cp.SetAttachmentDir(filepath.Join(dir, "attachments")) // never the real files
-	before, err := cp.ListOps(ctx)
+	before, err := cp.App.Query().ListOps(ctx)
 	if err != nil {
 		return fail(errors.Join(err, cp.Close()))
 	}
-	return &dryRunStore{Store: cp, dir: dir, before: before, unwatch: unwatch}, nil
+	d := &dryRunStore{Store: cp.Store, app: cp.App, dir: dir, before: before, unwatch: unwatch}
+	return &Local{Store: d, App: cp.App, Syncer: cp.Syncer}, nil
 }
 
 // dryRunPrefix starts the name of a dry run's temporary folder.
@@ -160,7 +163,7 @@ type dryRunResult struct {
 // queuedChanges compares the copy's outbox with what it was before the command: the
 // entries added or changed, and the ids of those that went away.
 func (d *dryRunStore) queuedChanges(ctx context.Context) ([]plannedChange, []cancelledChange, error) {
-	after, err := d.ListOps(ctx)
+	after, err := d.app.Query().ListOps(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -238,8 +241,8 @@ func (a *app) dryRunPlan(cmd *cobra.Command, planned ...plannedChange) error {
 
 // attachmentCacheDir is where a file to attach is copied before it is sent: in a dry run,
 // the copy's folder, so that the real cache is not touched either.
-func attachmentCacheDir(st Store) string {
-	if d, ok := st.(*dryRunStore); ok {
+func attachmentCacheDir(st *Local) string {
+	if d, ok := st.Store.(*dryRunStore); ok {
 		return filepath.Join(d.dir, "attachments")
 	}
 	return filepath.Join(xdg.CacheDir(), "attachments")
@@ -256,7 +259,7 @@ var resolveLabels = map[usecase.ResolveAction]string{
 // dryRunResolve resolves outbox entry id on the copy (so that the same checks run) and
 // says what it would do.
 func (a *app) dryRunResolve(cmd *cobra.Command, d *dryRunStore, id int64, act usecase.ResolveAction) error {
-	r, err := (&usecase.Outbox{Store: d}).Resolve(cmd.Context(), id, act)
+	r, err := d.app.Outbox().Resolve(cmd.Context(), id, act)
 	if err != nil {
 		return err
 	}
@@ -267,8 +270,8 @@ func (a *app) dryRunResolve(cmd *cobra.Command, d *dryRunStore, id int64, act us
 }
 
 // projectName is the cached name of project gid (the gid itself when it is not cached).
-func projectName(ctx context.Context, st Store, gid string) string {
-	ps, err := query(st).ListProjects(ctx, false)
+func projectName(ctx context.Context, st *Local, gid string) string {
+	ps, err := st.App.Query().ListProjects(ctx, false)
 	if err == nil {
 		for _, p := range ps {
 			if p.GID == gid {

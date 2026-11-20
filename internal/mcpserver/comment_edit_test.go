@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func TestCommentEditTools(t *testing.T) {
 	if err := st.ReplaceAttachments(ctx, "t1", []asana.Attachment{{GID: "a1", Name: "図面.pdf"}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {

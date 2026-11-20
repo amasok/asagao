@@ -32,7 +32,7 @@ func TestCreateTaskErrorText(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.opts.name = "牛乳を買う"
-			if _, err := createTask(ctx, st, tc.opts, now); err == nil || err.Error() != tc.want {
+			if _, err := createTask(ctx, localFor(st), tc.opts, now); err == nil || err.Error() != tc.want {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})

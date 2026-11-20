@@ -44,7 +44,7 @@ func TestTUIPlanRecheckExactBoundariesAttack(t *testing.T) {
 	}
 
 	now := recordedAt.Add(time.Hour)
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -156,7 +156,7 @@ func TestTUIPlanMultiWorkspaceTimelineAndClockRollbackAttack(t *testing.T) {
 
 	// Start at T+12h (both active) so m.planOff caches the intersection window [T+10h, T+24h).
 	now := base.Add(12 * time.Hour)
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -292,7 +292,7 @@ func TestTUISpaceReloadsPlanFromOtherProcessAttack(t *testing.T) {
 	t.Cleanup(func() { st2.Close() })
 
 	now := testNow
-	m := New(ctx, Deps{Store: st1, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st1, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -345,7 +345,7 @@ func TestTUIPlanSeqDropsStaleOutOfOrderAndTemplateRaceAttack(t *testing.T) {
 	}
 
 	now := testNow
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -441,7 +441,7 @@ func TestTUIPlanLoadConcurrentAttack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := New(ctx, Deps{Store: st1, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st1, Deps{Now: func() time.Time { return testNow }}))
 	var cmds []tea.Cmd
 	for i := 0; i < 8; i++ {
 		cmds = append(cmds, m.loadPlan())

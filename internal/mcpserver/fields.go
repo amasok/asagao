@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/amasok/asagao/internal/app"
 )
 
 // Custom fields of projects (#37): adding a field of the workspace to a project, or
@@ -35,7 +33,7 @@ func (s *Server) updateProjectFields(ctx context.Context, _ *mcp.CallToolRequest
 	if err != nil {
 		return nil, ProjectWriteOutput{}, err
 	}
-	pf := app.ProjectFields{Store: s.Store, Clock: s.Now}
+	pf := s.App.ProjectFields(s.Now)
 	if err := pf.Changeable(ctx, gid); err != nil {
 		return nil, ProjectWriteOutput{}, err
 	}
@@ -51,7 +49,7 @@ func (s *Server) updateProjectFields(ctx context.Context, _ *mcp.CallToolRequest
 		arg   string
 	}{{in.Add, true, "add"}, {in.Remove, false, "remove"}} {
 		for _, name := range c.names {
-			f, err := s.Store.ResolveProjectField(ctx, gid, name)
+			f, err := pf.Store.ResolveProjectField(ctx, gid, name)
 			if err != nil {
 				return nil, ProjectWriteOutput{}, fmt.Errorf("%s: %w", c.arg, err)
 			}

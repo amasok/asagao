@@ -33,7 +33,7 @@ func inboxHarness(t *testing.T, state store.InboxState) (*harness, *store.Store)
 	if err := st.SetInboxWriteForbidden(ctx, state.WriteForbidden); err != nil {
 		t.Fatal(err)
 	}
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
