@@ -3,15 +3,19 @@ package outbox
 import (
 	"encoding/json"
 	"math"
+	"math/big"
 	"reflect"
+	"strconv"
 )
 
 // SameValue reports whether two field values are the same. A value read back from the
 // outbox's JSON may not have the type it was written with, so values are compared by what
 // JSON keeps of them, type by type:
 //
-//   - numbers of any Go type are equal when their values are (3 and 3.0 are; a
-//     json.Number compares by its value); NaN equals nothing;
+//   - numbers of any Go type are equal when their values are exactly (3 and 3.0 are;
+//     integers beyond 2^53 are not rounded to a float64 first; a json.Number holding an
+//     integer compares exactly, any other one as the float64 JSON reads); NaN equals
+//     nothing;
 //   - lists of any element type are equal when they have the same length and their
 //     elements are equal in order ([]string{"a"} and []any{"a"} are); objects likewise,
 //     key by key;
@@ -33,9 +37,12 @@ func SameValue(a, b any) bool {
 	case string:
 		y, ok := b.(string)
 		return ok && x == y
-	case float64:
+	case float64: // NaN or an infinity (finite numbers are *big.Rat)
 		y, ok := b.(float64)
 		return ok && x == y // NaN != NaN
+	case *big.Rat:
+		y, ok := b.(*big.Rat)
+		return ok && x.Cmp(y) == 0
 	case []any:
 		y, ok := b.([]any)
 		if !ok || len(x) != len(y) {
@@ -64,13 +71,16 @@ func SameValue(a, b any) bool {
 }
 
 // jsonShape returns v as encoding/json decodes it into an any, for the kinds of values
-// the outbox holds: a number becomes a float64, a list []any, an object with string keys
+// the outbox holds: a number becomes its exact value as a *big.Rat (a float64 NaN or
+// infinity stays a float64), a list []any, an object with string keys
 // map[string]any, a named string or bool type its plain type. A nil list, map or pointer
 // is nil. Other values are returned as they are.
 func jsonShape(v any) any {
 	switch x := v.(type) {
-	case nil, bool, string, float64:
+	case nil, bool, string:
 		return v
+	case float64:
+		return exact(x)
 	case []any:
 		if x == nil {
 			return nil
@@ -82,10 +92,14 @@ func jsonShape(v any) any {
 		}
 		return x
 	case json.Number:
-		if f, err := x.Float64(); err == nil {
-			return f
+		// An integer exactly; any other number as the float64 JSON reads it as.
+		if i, ok := new(big.Int).SetString(string(x), 10); ok {
+			return new(big.Rat).SetInt(i)
 		}
-		return string(x)
+		if f, err := strconv.ParseFloat(string(x), 64); err == nil {
+			return exact(f)
+		}
+		return string(x) // not a number a float64 holds: compared as written
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
@@ -94,22 +108,21 @@ func jsonShape(v any) any {
 	case reflect.String:
 		return rv.String()
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return float64(rv.Int())
+		return new(big.Rat).SetInt64(rv.Int())
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return float64(rv.Uint())
+		return new(big.Rat).SetUint64(rv.Uint())
 	case reflect.Float32:
 		f := rv.Float()
-		if math.IsNaN(f) {
-			return math.NaN()
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return f
 		}
-		// As JSON writes a float32: its shortest decimal form, read back as a float64.
-		var out float64
-		if b, err := json.Marshal(float32(f)); err == nil && json.Unmarshal(b, &out) == nil {
-			return out
+		// As JSON writes a float32 (its shortest decimal form) and reads it back.
+		if g, err := strconv.ParseFloat(strconv.FormatFloat(f, 'g', -1, 32), 64); err == nil {
+			return exact(g)
 		}
-		return f
+		return exact(f)
 	case reflect.Float64:
-		return rv.Float()
+		return exact(rv.Float())
 	case reflect.Slice, reflect.Array:
 		if rv.Kind() == reflect.Slice && rv.IsNil() {
 			return nil
@@ -137,4 +150,13 @@ func jsonShape(v any) any {
 		}
 	}
 	return v
+}
+
+// exact returns the value of f as a *big.Rat, or f itself for a NaN or an infinity
+// (which a big.Rat cannot hold).
+func exact(f float64) any {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return f
+	}
+	return new(big.Rat).SetFloat64(f)
 }
