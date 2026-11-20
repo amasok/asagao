@@ -109,8 +109,8 @@ func (s *Store) DeleteTaskLocal(ctx context.Context, gid string, now time.Time) 
 				return err
 			}
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpDeleteTask, TaskGID: gid, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"name": p.Name}})
+		op := &Op{Kind: OpDeleteTask, TaskGID: gid, State: OpPending, CreatedAt: formatTime(now)}
+		return savePayload(ctx, tx, op, outbox.DeleteTask{Name: p.Name})
 	})
 	return p, err
 }
@@ -298,7 +298,7 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 					return err
 				}
 			}
-			op = &Op{Kind: OpSetParent, TaskGID: gid, Payload: map[string]any{}, Base: base,
+			op = &Op{Kind: OpSetParent, TaskGID: gid, Base: base,
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
 		if err := setParent(ctx, tx, gid, parent); err != nil {
@@ -324,14 +324,8 @@ func (s *Store) SetParentLocal(ctx context.Context, gid, parent string, pos Posi
 				return err
 			}
 		}
-		op.Payload = map[string]any{"parent": parent, "parent_name": parentName}
-		if pos.Before != "" {
-			op.Payload["insert_before"] = pos.Before
-		}
-		if pos.After != "" {
-			op.Payload["insert_after"] = pos.After
-		}
-		return saveOp(ctx, tx, op)
+		return savePayload(ctx, tx, op, outbox.SetParent{Parent: parent, ParentName: parentName,
+			InsertBefore: pos.Before, InsertAfter: pos.After})
 	})
 }
 

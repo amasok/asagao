@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/rich"
 )
 
@@ -76,12 +77,25 @@ func (s *Store) FitQueuedRichText(ctx context.Context, fit func(target rich.Targ
 			if fit == nil {
 				return ErrNoFit
 			}
-			htmlText, _ := op.Payload["html_text"].(string)
-			fitted, plain, changed := fit(target, htmlText)
+			changed := false
+			rewrite := func(htmlText, text *string) {
+				var fitted, plain string
+				if fitted, plain, changed = fit(target, *htmlText); changed {
+					*htmlText, *text = fitted, plain
+				}
+			}
+			switch op.Kind {
+			case OpAddComment:
+				err = outbox.EditPayload(op, func(p *outbox.AddComment) { rewrite(&p.HTMLText, &p.Text) })
+			case OpCreateStatus:
+				err = outbox.EditPayload(op, func(p *outbox.CreateStatus) { rewrite(&p.HTMLText, &p.Text) })
+			}
+			if err != nil {
+				return err
+			}
 			if !changed {
 				continue
 			}
-			op.Payload["html_text"], op.Payload["text"] = fitted, plain
 			failed := op.State == OpFailed
 			if failed {
 				op.State, op.LastError = OpPending, ""

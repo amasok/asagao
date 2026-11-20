@@ -139,8 +139,7 @@ func (s *Store) MoveMySectionLocal(ctx context.Context, gid, sectionGID string, 
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
-		op.Payload = map[string]any{"section": sectionGID, "section_name": name, "workspace": workspace}
-		return saveOp(ctx, tx, op)
+		return savePayload(ctx, tx, op, outbox.MoveMySection{Section: sectionGID, SectionName: name, Workspace: workspace})
 	})
 }
 

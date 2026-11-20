@@ -48,8 +48,12 @@ func relationKey(kind Kind) string {
 
 // queueRelation applies a follower/project change and queues it; doing the opposite of a
 // pending change cancels it instead.
-func (s *Store) queueRelation(ctx context.Context, kind Kind, taskGID string, payload map[string]any, now time.Time) error {
+func (s *Store) queueRelation(ctx context.Context, kind Kind, taskGID string, p any, now time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
+		op := Op{Kind: kind, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now)}
+		if err := outbox.SetPayload(&op, p); err != nil {
+			return err
+		}
 		var exists int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", taskGID).Scan(&exists); err != nil {
 			return err
@@ -57,13 +61,12 @@ func (s *Store) queueRelation(ctx context.Context, kind Kind, taskGID string, pa
 		if exists == 0 {
 			return fmt.Errorf("task %s: %w", taskGID, ErrNotFound)
 		}
-		op := Op{Kind: kind, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: formatTime(now)}
 		if err := applyRelation(ctx, tx, op, false); err != nil {
 			return err
 		}
 		key := relationKey(kind)
 		res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
-			AND json_extract(payload, '$.`+key+`') = ?`, opposite(kind), taskGID, payload[key])
+			AND json_extract(payload, '$.`+key+`') = ?`, opposite(kind), taskGID, op.Payload[key])
 		if err != nil {
 			return err
 		}
@@ -148,7 +151,7 @@ func (s *Store) SetFollowerLocal(ctx context.Context, taskGID, userGID string, f
 	if !follow {
 		kind = OpRemoveFollower
 	}
-	return s.queueRelation(ctx, kind, taskGID, map[string]any{"user": userGID, "user_name": name}, now)
+	return s.queueRelation(ctx, kind, taskGID, outbox.Follower{User: userGID, UserName: name}, now)
 }
 
 // SetProjectLocal adds a task to a project (into section, or the first section) or removes it.
@@ -169,7 +172,7 @@ func (s *Store) SetProjectLocal(ctx context.Context, taskGID, projectGID, sectio
 		kind = OpRemoveProject
 		_ = s.db.QueryRowContext(ctx, "SELECT section_gid FROM task_memberships WHERE task_gid = ? AND project_gid = ?", taskGID, projectGID).Scan(&sectionGID)
 	}
-	return s.queueRelation(ctx, kind, taskGID, map[string]any{"project": projectGID, "project_name": name, "section": sectionGID}, now)
+	return s.queueRelation(ctx, kind, taskGID, outbox.ProjectMembership{Project: projectGID, ProjectName: name, Section: &sectionGID}, now)
 }
 
 // TaskFollowers returns who follows a task.
@@ -224,8 +227,8 @@ func (s *Store) DuplicateTaskLocal(ctx context.Context, gid, name string, now ti
 				return err
 			}
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpDuplicateTask, TaskGID: copyGID, State: OpPending, CreatedAt: ts,
-			Payload: map[string]any{"source": gid, "name": name}})
+		return savePayload(ctx, tx, &Op{Kind: OpDuplicateTask, TaskGID: copyGID, State: OpPending, CreatedAt: ts},
+			outbox.DuplicateTask{Source: gid, Name: name})
 	})
 	return copyGID, err
 }
@@ -279,8 +282,8 @@ func (s *Store) UploadAttachmentLocal(ctx context.Context, taskGID, srcPath, cac
 			VALUES(?, ?, ?, 'asana', 'asana', ?, ?, ?)`, gid, taskGID, name, size, ts, dst); err != nil {
 			return fmt.Errorf("task %s: %w", taskGID, err)
 		}
-		if err := saveOp(ctx, tx, &Op{Kind: OpUploadAttachment, TaskGID: taskGID, State: OpPending, CreatedAt: ts,
-			Payload: map[string]any{"attachment": gid, "name": name, "path": dst}}); err != nil {
+		if err := savePayload(ctx, tx, &Op{Kind: OpUploadAttachment, TaskGID: taskGID, State: OpPending, CreatedAt: ts},
+			outbox.UploadAttachment{Attachment: gid, Name: name, Path: dst}); err != nil {
 			return err
 		}
 		committing = true

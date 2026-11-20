@@ -129,7 +129,9 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 		// An entry this version cannot send (written by a newer one) takes the edit in all
 		// the same: it is held with it, and the version that reads it sends them together.
 		if op != nil && update == nil && !task.TouchesCustomType(changes) {
-			maps.Copy(op.Payload, changes)
+			if err := outbox.MergeFields(op, changes); err != nil {
+				return err
+			}
 			if err := saveOp(ctx, tx, op); err != nil {
 				return err
 			}
@@ -150,10 +152,12 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 		return err
 	}
 	if op == nil {
-		op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
-			BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
+		op = &Op{Kind: OpUpdateTask, TaskGID: gid, Base: map[string]any{}, BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
 	}
 	// (an entry this version cannot send is folded into too: held with the edit, see above)
+	if err := outbox.CheckFields(OpUpdateTask, changes); err != nil {
+		return err
+	}
 	folded, deleteOp := outbox.Fold(*op, cur, changes)
 	if err := applyFields(ctx, tx, gid, changes, now); err != nil {
 		return err
@@ -237,7 +241,9 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 			}
 			if op != nil && pos.IsZero() {
 				// created there: Asana's place for it is not known until it is fetched
-				op.Payload["section"] = sectionGID
+				if err := outbox.EditPayload(op, func(p *outbox.CreateTask) { p.Section = &sectionGID }); err != nil {
+					return err
+				}
 				return saveOp(ctx, tx, op)
 			}
 			// The create was (or is being) sent, or failed: queue a move, sent once the task exists.
@@ -251,8 +257,7 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 			return err
 		}
 		if op == nil {
-			op = &Op{Kind: OpMoveTask, TaskGID: gid, Payload: map[string]any{"project": projectGID},
-				Base: place, State: OpPending, CreatedAt: formatTime(now)}
+			op = &Op{Kind: OpMoveTask, TaskGID: gid, Base: place, State: OpPending, CreatedAt: formatTime(now)}
 			op.Base["section"] = current
 		}
 		if op.Base["section"] == sectionGID && pos.IsZero() { // moved back where it started
@@ -274,15 +279,11 @@ func (s *Store) MoveTaskAtLocal(ctx context.Context, gid, projectGID, sectionGID
 				return err
 			}
 		}
-		op.Payload["section"] = sectionGID
-		op.Payload["section_name"] = sectionName
-		delete(op.Payload, "insert_before") // the last move says where
-		delete(op.Payload, "insert_after")
-		if pos.Before != "" {
-			op.Payload["insert_before"] = pos.Before
-		}
-		if pos.After != "" {
-			op.Payload["insert_after"] = pos.After
+		if err := outbox.EditPayload(op, func(p *outbox.MoveTask) {
+			p.Project, p.Section, p.SectionName = projectGID, sectionGID, sectionName
+			p.InsertBefore, p.InsertAfter = pos.Before, pos.After // the last move says where
+		}); err != nil {
+			return err
 		}
 		return saveOp(ctx, tx, op)
 	})
@@ -308,7 +309,7 @@ func findMoveOp(ctx context.Context, tx *sql.Tx, gid, projectGID string) (*Op, e
 		if err != nil {
 			return nil, err
 		}
-		if op.Payload["project"] == projectGID {
+		if p, _ := outbox.BestEffortPayload[outbox.MoveTask](*op); p.Project == projectGID {
 			return op, nil
 		}
 	}
@@ -377,31 +378,10 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 		}
 	}
 	gid := newLocalGID()
-	payload := map[string]any{"workspace": nt.WorkspaceGID, "name": nt.Name}
-	if nt.ParentGID != "" {
-		payload["parent"] = nt.ParentGID
-	}
-	if nt.ProjectGID != "" {
-		payload["project"] = nt.ProjectGID
-	}
-	if nt.SectionGID != "" {
-		payload["section"] = nt.SectionGID
-	}
-	if nt.Notes != "" {
-		payload["notes"] = nt.Notes
-	}
-	if nt.HTMLNotes != "" {
-		payload["html_notes"] = nt.HTMLNotes
-	}
-	if nt.DueOn != "" {
-		payload["due_on"] = nt.DueOn
-	}
-	if nt.StartOn != "" {
-		payload["start_on"] = nt.StartOn
-	}
-	if nt.AssigneeGID != "" {
-		payload["assignee"] = nt.AssigneeGID
-	}
+	payload := outbox.CreateTask{Workspace: nt.WorkspaceGID, Name: nt.Name,
+		Parent: nt.ParentGID, Project: nt.ProjectGID, Section: nonEmpty(nt.SectionGID),
+		Notes: nonEmpty(nt.Notes), HTMLNotes: nonEmpty(nt.HTMLNotes), DueOn: nonEmpty(nt.DueOn),
+		StartOn: nonEmpty(nt.StartOn), Assignee: nonEmpty(nt.AssigneeGID)}
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		ts := formatTime(now)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks
@@ -426,7 +406,7 @@ func (s *Store) CreateTaskLocal(ctx context.Context, nt NewTask, now time.Time) 
 				return err
 			}
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpCreateTask, TaskGID: gid, Payload: payload, State: OpPending, CreatedAt: ts})
+		return savePayload(ctx, tx, &Op{Kind: OpCreateTask, TaskGID: gid, State: OpPending, CreatedAt: ts}, payload)
 	})
 	return gid, err
 }
@@ -462,11 +442,8 @@ func addCommentLocal(ctx context.Context, tx *sql.Tx, gid, taskGID, text, htmlTe
 		gid, taskGID, text, author.GID, author.Name, ts, htmlText); err != nil {
 		return err
 	}
-	payload := map[string]any{"text": text, "story_gid": gid}
-	if htmlText != "" {
-		payload["html_text"] = htmlText
-	}
-	return saveOp(ctx, tx, &Op{Kind: OpAddComment, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: ts})
+	op := &Op{Kind: OpAddComment, TaskGID: taskGID, State: OpPending, CreatedAt: ts}
+	return savePayload(ctx, tx, op, outbox.AddComment{Text: text, HTMLText: htmlText, StoryGID: gid})
 }
 
 // commentOncePrefix starts the sync_state keys that record the markers AddCommentOnceLocal
@@ -1102,6 +1079,15 @@ func saveOp(ctx context.Context, tx *sql.Tx, op *Op) error {
 	return err
 }
 
+// savePayload sets the payload of op to p, its kind's struct (outbox.SetPayload: the whole
+// payload is replaced), and saves op.
+func savePayload(ctx context.Context, tx *sql.Tx, op *Op, p any) error {
+	if err := outbox.SetPayload(op, p); err != nil {
+		return err
+	}
+	return saveOp(ctx, tx, op)
+}
+
 func unmarshalOp(op *Op, payload, base, conflict string) error {
 	for _, f := range []struct {
 		src string
@@ -1115,6 +1101,15 @@ func unmarshalOp(op *Op, payload, base, conflict string) error {
 		}
 	}
 	return nil
+}
+
+// nonEmpty points to s, or is nil for "" (a payload field written only when it holds
+// something).
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func nonNil(m map[string]any) map[string]any {

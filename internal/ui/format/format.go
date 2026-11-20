@@ -118,39 +118,52 @@ type DiscardDetail struct {
 // (the editors and the MCP tools take Markdown): toMarkdown converts it, and is
 // richtext.ToEditableMarkdown in the callers (the store does not convert rich text).
 func DiscardDetails(d readmodel.Discard, toMarkdown func(html string) string) []DiscardDetail {
-	str := func(k string) string { v, _ := d.Payload[k].(string); return v }
 	var out []DiscardDetail
-	add := func(label, key string) {
-		if v := str(key); v != "" {
+	add := func(label, v string) {
+		if v != "" {
 			out = append(out, DiscardDetail{label, termsafe.String(v)})
 		}
 	}
-	// addRich prefers the rich text (htmlKey) as Markdown over the plain text (key).
-	addRich := func(label, key, htmlKey string) {
-		if h := str(htmlKey); h != "" {
-			if md := strings.TrimSpace(toMarkdown(h)); md != "" {
+	// addRich prefers the rich text (html) as Markdown over the plain text.
+	addRich := func(label, text, html string) {
+		if html != "" {
+			if md := strings.TrimSpace(toMarkdown(html)); md != "" {
 				out = append(out, DiscardDetail{label + "（Markdown）", termsafe.String(md)})
 				return
 			}
 		}
-		add(label, key)
+		add(label, text)
 	}
+	op := outbox.Op{Kind: d.Kind, Payload: d.Payload} // what is read of it, whatever this version can send
 	switch d.Kind {
-	case outbox.KindAddComment, outbox.KindUpdateStory:
-		addRich("コメント", "text", "html_text")
+	case outbox.KindAddComment:
+		p, _ := outbox.BestEffortPayload[outbox.AddComment](op)
+		addRich("コメント", p.Text, p.HTMLText)
+	case outbox.KindUpdateStory:
+		p, _ := outbox.BestEffortPayload[outbox.UpdateStory](op)
+		addRich("コメント", p.Text, p.HTMLText)
 	case outbox.KindCreateStatus:
-		add("タイトル", "title")
-		addRich("本文", "text", "html_text")
+		p, _ := outbox.BestEffortPayload[outbox.CreateStatus](op)
+		add("タイトル", p.Title)
+		addRich("本文", p.Text, p.HTMLText)
 	case outbox.KindUploadAttachment:
-		add("ファイルのコピー", "path")
-	case outbox.KindCreateTask, outbox.KindUpdateTask:
-		add("名前", "name")
-		addRich("説明", "notes", "html_notes")
+		p, _ := outbox.BestEffortPayload[outbox.UploadAttachment](op)
+		add("ファイルのコピー", p.Path)
+	case outbox.KindCreateTask:
+		p, _ := outbox.BestEffortPayload[outbox.CreateTask](op)
+		add("名前", p.Name)
+		addRich("説明", outbox.Str(p.Notes), outbox.Str(p.HTMLNotes))
+	case outbox.KindUpdateTask:
+		p, _ := outbox.BestEffortPayload[outbox.UpdateTask](op)
+		add("名前", outbox.Str(p.Name))
+		addRich("説明", outbox.Str(p.Notes), outbox.Str(p.HTMLNotes))
 	case outbox.KindUpdateProject:
-		addRich("説明", "notes", "html_notes")
+		p, _ := outbox.BestEffortPayload[outbox.UpdateProject](op)
+		addRich("説明", outbox.Str(p.Notes), outbox.Str(p.HTMLNotes))
 	case outbox.KindUpdateProjectBrief:
-		add("ブリーフのタイトル", "title")
-		addRich("ブリーフ", "text", "html_text")
+		p, _ := outbox.BestEffortPayload[outbox.UpdateProjectBrief](op)
+		add("ブリーフのタイトル", outbox.Str(p.Title))
+		addRich("ブリーフ", outbox.Str(p.Text), outbox.Str(p.HTMLText))
 	}
 	return out
 }
@@ -176,17 +189,19 @@ func FieldLabel(k string) string {
 // "label: こちら=local / Asana=server".
 func ConflictLines(op outbox.Op) []string {
 	if op.Kind == outbox.KindSetCustomField {
-		text := func(m map[string]any) string {
-			if s, _ := m["display"].(string); s != "" {
-				return s
+		text := func(display string, value any) string {
+			if display != "" {
+				return display
 			}
-			if m["value"] == nil {
+			if value == nil {
 				return "（空）"
 			}
-			return fmt.Sprint(m["value"])
+			return fmt.Sprint(value)
 		}
-		name, _ := op.Payload["field_name"].(string)
-		return []string{termsafe.String(fmt.Sprintf("%s: こちら=%s / Asana=%s", name, text(op.Payload), text(op.Conflict)))}
+		p, _ := outbox.BestEffortPayload[outbox.SetCustomField](op)
+		display, _ := op.Conflict["display"].(string)
+		return []string{termsafe.String(fmt.Sprintf("%s: こちら=%s / Asana=%s", p.FieldName,
+			text(p.Display, p.Value), text(display, op.Conflict["value"])))}
 	}
 	if op.Kind == outbox.KindUpdateProjectBrief {
 		return BriefConflictLines(op)
@@ -195,10 +210,11 @@ func ConflictLines(op outbox.Op) []string {
 	if op.Kind == outbox.KindUpdateProject {
 		label = project.FieldLabel
 	}
+	local := outbox.PayloadFields(op)
 	keys := slices.Sorted(maps.Keys(op.Conflict))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
-		lines = append(lines, termsafe.String(fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), op.Payload[k], op.Conflict[k])))
+		lines = append(lines, termsafe.String(fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), local[k], op.Conflict[k])))
 	}
 	return lines
 }
@@ -415,24 +431,24 @@ func intOf(v any) int {
 // there). The conflict holds Asana's brief as the base does: state, title, text.
 func BriefConflictLines(op outbox.Op) []string {
 	str := func(m map[string]any, k string) string { v, _ := m[k].(string); return v }
-	local := func(k string) string {
-		if op.Payload["delete"] == true {
+	p, _ := outbox.BestEffortPayload[outbox.UpdateProjectBrief](op)
+	del := p.Delete
+	local := func(v *string) string {
+		if del {
 			return "（削除）"
 		}
-		return clip(str(op.Payload, k), 60)
+		return clip(outbox.Str(v), 60)
 	}
 	if str(op.Conflict, "state") != readmodel.BriefAvailable {
-		return []string{termsafe.String("ブリーフ: こちら=" + local("title") + " / Asana=（ブリーフがありません。削除されています）")}
+		return []string{termsafe.String("ブリーフ: こちら=" + local(p.Title) + " / Asana=（ブリーフがありません。削除されています）")}
 	}
 	var lines []string
-	del := op.Payload["delete"] == true
-	_, title := op.Payload["title"] // a change sends only what it changes
-	_, text := op.Payload["text"]
-	if del || title && str(op.Payload, "title") != str(op.Conflict, "title") {
-		lines = append(lines, termsafe.String(fmt.Sprintf("ブリーフのタイトル: こちら=%s / Asana=%s", local("title"), clip(str(op.Conflict, "title"), 60))))
+	// a change sends only what it changes (nil: not changed)
+	if del || p.Title != nil && *p.Title != str(op.Conflict, "title") {
+		lines = append(lines, termsafe.String(fmt.Sprintf("ブリーフのタイトル: こちら=%s / Asana=%s", local(p.Title), clip(str(op.Conflict, "title"), 60))))
 	}
-	if del || text && str(op.Payload, "text") != str(op.Conflict, "text") {
-		lines = append(lines, termsafe.String(fmt.Sprintf("ブリーフ: こちら=%s / Asana=%s", local("text"), clip(str(op.Conflict, "text"), 60))))
+	if del || p.Text != nil && *p.Text != str(op.Conflict, "text") {
+		lines = append(lines, termsafe.String(fmt.Sprintf("ブリーフ: こちら=%s / Asana=%s", local(p.Text), clip(str(op.Conflict, "text"), 60))))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, "ブリーフ: Asana でも変更されています")

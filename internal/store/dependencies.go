@@ -177,8 +177,10 @@ func (s *Store) SetDependencyLocal(ctx context.Context, taskGID, dependencyGID s
 		if !add {
 			kind, opposite = opposite, kind
 		}
-		op := Op{Kind: kind, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"dependency": dependencyGID, "dependency_name": taskName(ctx, tx, dependencyGID)}}
+		op := Op{Kind: kind, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now)}
+		if err := outbox.SetPayload(&op, outbox.Dependency{Dependency: dependencyGID, DependencyName: taskName(ctx, tx, dependencyGID)}); err != nil {
+			return err
+		}
 		if err := applyDependency(ctx, tx, op, false); err != nil {
 			return err
 		}
