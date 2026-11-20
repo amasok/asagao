@@ -211,10 +211,16 @@ func ConflictLines(op outbox.Op) []string {
 		label = project.FieldLabel
 	}
 	local := outbox.PayloadFields(op)
+	value := func(k string) any { // as read, else as stored (a kind or key this version does not know)
+		if v, ok := local[k]; ok {
+			return v
+		}
+		return op.Payload[k]
+	}
 	keys := slices.Sorted(maps.Keys(op.Conflict))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
-		lines = append(lines, termsafe.String(fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), local[k], op.Conflict[k])))
+		lines = append(lines, termsafe.String(fmt.Sprintf("%s: こちら=%v / Asana=%v", label(k), value(k), op.Conflict[k])))
 	}
 	return lines
 }

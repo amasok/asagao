@@ -194,10 +194,6 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 		if err := outbox.SetPayload(&withdrawn, w); err != nil {
 			return err
 		}
-		keys := slices.Clone(customTypeKeys)
-		if w.ResourceSubtype != nil {
-			keys = append(keys, "resource_subtype")
-		}
 		for k := range withdrawn.Payload {
 			withdrawn.Base[k] = op.Base[k]
 			delete(op.Conflict, k)
@@ -213,7 +209,7 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 		// Back to the base: the kind of task, its custom type and status, and completed
 		// unless the entry changes it itself (a status completes the task locally).
 		restore := map[string]any{}
-		for _, k := range append(keys, "resource_subtype", "custom_type", "custom_type_status_option") {
+		for _, k := range append(slices.Clone(customTypeKeys), "resource_subtype") {
 			if v, ok := op.Base[k]; ok {
 				if _, still := op.Payload[k]; !still {
 					restore[k] = v

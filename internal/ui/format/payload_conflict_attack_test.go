@@ -2,6 +2,7 @@ package format
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
@@ -110,5 +111,20 @@ func TestAttackDiscardDetails(t *testing.T) {
 	}
 	if got := DiscardDetails(readmodel.Discard{Kind: outbox.KindDeleteTask, Payload: map[string]any{"name": "n"}}, md); len(got) != 0 {
 		t.Errorf("%+v", got)
+	}
+}
+
+// A conflicting field the payload struct does not read (a kind or a key of a newer
+// version) is shown as stored, not as <nil>.
+func TestConflictLinesShowWhatTheStructDoesNotRead(t *testing.T) {
+	for _, op := range []outbox.Op{
+		{Kind: "from_a_newer_version", Payload: map[string]any{"name": "こちら"}, Conflict: map[string]any{"name": "Asana"}},
+		{Kind: outbox.KindUpdateTask, Payload: map[string]any{"name": "こちら", "from_newer": "こちら"},
+			Conflict: map[string]any{"from_newer": "Asana"}},
+	} {
+		got := ConflictLines(op)
+		if len(got) != 1 || !strings.Contains(got[0], "こちら=こちら / Asana=Asana") {
+			t.Errorf("ConflictLines(%s) = %q, want the stored value", op.Kind, got)
+		}
 	}
 }
