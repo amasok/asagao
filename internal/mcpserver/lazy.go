@@ -20,7 +20,7 @@ const openTimeout = 2 * time.Minute
 // completed ones). It returns a note for the agent when tasks are still missing, and what
 // was fetched (nil if nothing).
 func (s *Server) openProject(ctx context.Context, gid string) (string, *sync.OpenResult) {
-	state, err := s.Store.WantProject(ctx, gid)
+	state, err := s.App.WantProject(ctx, gid)
 	if err != nil || state == readmodel.TasksAll {
 		return "", nil
 	}
@@ -56,7 +56,7 @@ func (s *Server) openProject(ctx context.Context, gid string) (string, *sync.Ope
 
 // unfetchedNote says how many projects a search of the cache did not look in.
 func (s *Server) unfetchedNote(ctx context.Context) string {
-	n, err := s.Store.CountUnfetchedProjects(ctx, true)
+	n, err := s.query().CountUnfetchedProjects(ctx, true)
 	if err != nil || n == 0 {
 		return ""
 	}

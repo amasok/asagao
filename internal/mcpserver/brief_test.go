@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestProjectBriefTools(t *testing.T) {
 		&asana.ProjectBrief{GID: "b1", Title: "目的", Text: "年内", HTMLText: "<body>年内\n" + mcpBriefTable + "</body>"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var b BriefDetailOutput
 	call(t, cs, "get_project_brief", map[string]any{"project": "新居"}, &b)
 	if b.State != "available" || b.Title != "目的" || !strings.Contains(b.Markdown, "```asana-html\n"+mcpBriefTable+"\n```") {
@@ -65,7 +66,7 @@ func TestProjectBriefToolRefuses(t *testing.T) {
 	st := seedProjects(t)
 	ctx := context.Background()
 	_ = st.SaveProjectOverview(ctx, "p1", nil, store.BriefNone, nil, time.Now())
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	for _, tc := range []struct {
 		args map[string]any
 		want string

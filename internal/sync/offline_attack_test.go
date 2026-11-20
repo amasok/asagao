@@ -30,7 +30,7 @@ func TestOfflineSyncerNeverCallsAPI(t *testing.T) {
 	if _, err := s.DownloadAttachment(ctx, "t1", "nope"); err == nil {
 		t.Error("DownloadAttachment: no error")
 	}
-	if got := s.serverNow(); got.IsZero() {
+	if got := s.Pusher().serverNow(); got.IsZero() {
 		t.Error("serverNow is zero")
 	}
 }

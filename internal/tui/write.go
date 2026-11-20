@@ -92,15 +92,15 @@ func (m *Model) loadOutbox() tea.Cmd {
 }
 
 func (m *Model) loadOutboxOnly() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
 		var c outboxCounts
 		var err error
-		c.pending, c.conflict, c.failed, err = queryOf(st).OutboxCounts(m.ctx)
+		c.pending, c.conflict, c.failed, err = st.Query().OutboxCounts(m.ctx)
 		if err != nil {
 			return outboxLoadedMsg{err: err}
 		}
-		ops, err := queryOf(st).ListOps(m.ctx)
+		ops, err := st.Query().ListOps(m.ctx)
 		if err != nil {
 			return outboxLoadedMsg{err: err}
 		}
@@ -110,21 +110,12 @@ func (m *Model) loadOutboxOnly() tea.Cmd {
 		// shown the backup (they are still listed in the overlay).
 		// The dropped changes are extra information: if they cannot be read (e.g. one bad
 		// row), the outbox still opens so conflicts and failures can be resolved.
-		pending, discardErr := queryOf(st).PendingDiscards(m.ctx)
-		var discards []readmodel.Discard
-		if discardErr == nil && len(pending) > 0 {
-			ids := make([]int64, len(pending))
-			for i, d := range pending {
-				ids[i] = d.ID
-				if !d.IsReset() {
-					discards = append(discards, d)
-				}
-			}
-			if err := st.MarkDiscardsNotified(m.ctx, ids); err != nil {
-				discards = nil
-			}
+		taken, discardErr := st.Outbox().TakeDiscards(m.ctx)
+		discards := taken.Announce
+		if taken.MarkErr != nil {
+			discards = nil
 		}
-		recent, err := queryOf(st).RecentDiscards(m.ctx, recentDiscards)
+		recent, err := st.Query().RecentDiscards(m.ctx, recentDiscards)
 		if err != nil {
 			discardErr = err
 		}
@@ -141,44 +132,41 @@ func (m *Model) requestSync() tea.Cmd {
 	return m.startSync()
 }
 
-// queryOf reads the local cache (app.Query over the store).
-func queryOf(st Store) app.Query { return app.Query{Store: st} }
-
 // tasks returns the task use cases on the cache, with the clock stopped at now: the time
 // the key was pressed, which the TUI's writes use. The use cases only write locally and
 // queue in the outbox; sending is afterWrite's sync, as for every other write.
 func (m *Model) tasks(now time.Time) *app.Tasks {
-	return &app.Tasks{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	return m.deps.App.Tasks(func() time.Time { return now }, nil)
 }
 
 // comments is the comment use case, with a clock that reads now (see tasks).
 func (m *Model) comments(now time.Time) *app.Comments {
-	return &app.Comments{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	return m.deps.App.Comments(func() time.Time { return now })
 }
 
 // statusUpdates is the status update use cases, with a clock that reads now (see tasks).
 func (m *Model) statusUpdates(now time.Time) *app.Status {
-	return &app.Status{Store: m.deps.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }}
+	return m.deps.App.Status(func() time.Time { return now })
 }
 
 // relations is the use cases on a task's relations, with a clock that reads now (see tasks).
 func (m *Model) relations(now time.Time) *app.Relations {
-	return &app.Relations{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.Relations(func() time.Time { return now })
 }
 
 // sections is the use cases on sections, with a clock that reads now (see tasks).
 func (m *Model) sections(now time.Time) *app.Sections {
-	return &app.Sections{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.Sections(func() time.Time { return now })
 }
 
 // copies is the duplicate and attach use cases, with a clock that reads now (see tasks).
 func (m *Model) copies(now time.Time) *app.Copies {
-	return &app.Copies{Store: m.deps.Store, CacheDir: m.deps.CacheDir, Clock: func() time.Time { return now }}
+	return m.deps.App.Copies(m.deps.CacheDir, func() time.Time { return now })
 }
 
 // notifications is the inbox use cases, with a clock that reads now (see tasks).
 func (m *Model) notifications(now time.Time) *app.Notifications {
-	return &app.Notifications{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.Notifications(func() time.Time { return now })
 }
 
 // afterWrite reloads everything a write can change and asks for a sync.
@@ -499,9 +487,9 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 			m.status = "送信中の変更は操作できません（送信が終わると結果が表示されます）"
 			return nil
 		}
-		st, id := m.deps.Store, op.ID
+		st, id := m.deps.App, op.ID
 		return func() tea.Msg {
-			r, err := (&app.Outbox{Store: st}).Resolve(m.ctx, id, action)
+			r, err := st.Outbox().Resolve(m.ctx, id, action)
 			if err != nil {
 				return writeDoneMsg{err: err}
 			}

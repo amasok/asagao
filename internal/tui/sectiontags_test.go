@@ -17,7 +17,7 @@ import (
 // openProjectList opens 新居プロジェクト (p1) as a list, on t1 (家具).
 func openProjectList(t *testing.T, st *store.Store) *harness {
 	t.Helper()
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -211,7 +211,7 @@ func TestTUIPlanMenuReappearsAfterRecheckWithoutWrites(t *testing.T) {
 		}
 	}
 
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -279,7 +279,7 @@ func TestTUIPlanMultiWorkspaceRecheckAndStaleMsg(t *testing.T) {
 	if err := st.RecordPlanRefusal(ctx, plan.Tags, "w2", now); err != nil {
 		t.Fatal(err)
 	}
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

@@ -13,7 +13,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/sync"
 )
 
 // Editing in $EDITOR: e writes the task as a Markdown file with front matter, opens the
@@ -127,11 +126,11 @@ func editableBody(htmlNotes, plain string, imagePath func(gid string) string) st
 	})
 }
 
-func docFor(ctx context.Context, st Store, d *readmodel.TaskDetail, imagePath func(string) string) taskDoc {
+func docFor(ctx context.Context, st *app.UseCases, d *readmodel.TaskDetail, imagePath func(string) string) taskDoc {
 	doc := taskDoc{Name: d.Name, Due: d.DueOn, Completed: d.Completed, Body: editableBody(d.HTMLNotes, d.Notes, imagePath)}
 	if d.Assignee != nil {
 		doc.Assignee = d.Assignee.Name
-		if me, _ := queryOf(st).MeGID(ctx); me == d.Assignee.GID {
+		if me, _ := st.Query().MeGID(ctx); me == d.Assignee.GID {
 			doc.Assignee = "me"
 		}
 	}
@@ -172,13 +171,10 @@ func (m *Model) editTask(gid string) tea.Cmd {
 		m.status = "エディタを起動できません"
 		return nil
 	}
-	st := m.deps.Store
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = &sync.Syncer{Store: st} // offline: cached images only
-	}
+	st := m.deps.App
+	syncer := m.attachments(false) // offline: cached images only
 	return func() tea.Msg {
-		d, err := queryOf(st).GetTask(m.ctx, gid)
+		d, err := st.Query().GetTask(m.ctx, gid)
 		if err != nil {
 			return editReadyMsg{err: err}
 		}

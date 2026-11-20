@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/wire"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ func TestUploadAttachmentPolicyBeforeWriteAndCacheDir(t *testing.T) {
 		}
 		return p
 	}
-	cs := connect(t, &Server{Store: st, CacheDir: cache, Upload: UploadPolicy{Allowed: []string{allowed}}})
+	cs := connect(t, &Server{App: wire.UseCases(st), CacheDir: cache, Upload: UploadPolicy{Allowed: []string{allowed}}})
 	if res := call(t, cs, "upload_attachment", map[string]any{"task_gid": "t1", "path": write(other)}, nil); !res.IsError {
 		t.Error("a file outside the allowed folders was accepted")
 	}
@@ -46,7 +47,7 @@ func TestUploadAttachmentPolicyBeforeWriteAndCacheDir(t *testing.T) {
 // Duplicating a task that does not exist queues nothing.
 func TestDuplicateUnknownTaskQueuesNothing(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	if res := call(t, cs, "duplicate_task", map[string]any{"gid": "no-such"}, nil); !res.IsError {
 		t.Error("should fail")
 	}
@@ -58,7 +59,7 @@ func TestDuplicateUnknownTaskQueuesNothing(t *testing.T) {
 // The write tools stamp their change with the server's clock, not the wall clock.
 func TestWritesUseTheServerClock(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	for _, tc := range []struct {
 		tool string
 		args map[string]any
@@ -85,7 +86,7 @@ func TestWritesUseTheServerClock(t *testing.T) {
 // One notification that does not resolve, after ones that do, marks none of them.
 func TestMarkNotificationsBadIDMarksNothing(t *testing.T) {
 	st := seedInbox(t, store.InboxState{Status: store.InboxOK})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	if res := call(t, cs, "mark_notifications", map[string]any{"gids": []string{"5550001", "nope"}}, nil); !res.IsError {
 		t.Fatal("should fail")
 	}

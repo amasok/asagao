@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/amasok/asagao/internal/wire"
 	"testing"
 	"time"
 
@@ -98,7 +99,7 @@ func TestToolOutputIsTerminalSafe(t *testing.T) {
 		WorkObjects: []asana.WorkRef{{GID: "e1", ResourceType: "task", Name: "悪い" + attack}}}}))
 	must(st.SetInboxState(ctx, store.InboxState{Status: store.InboxOK}))
 
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	// writes from the MCP client itself are read back safely too
 	for _, w := range []struct {
 		name string

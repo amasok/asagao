@@ -54,10 +54,10 @@ func TestRewriteAndDeleteMyComment(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seen string
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, func(s string) string {
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }, RunEditor: fakeEditor(t, func(s string) string {
 		seen = s
 		return strings.Replace(s, "**元**の文", "**新**しい文", 1)
-	})})
+	})}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
 	h.run(m.Init())
@@ -118,7 +118,7 @@ func TestDeleteAttachmentInTUI(t *testing.T) {
 	if err := st.ReplaceAttachments(ctx, "t2", []asana.Attachment{{GID: "a1", Name: "見積.pdf"}}); err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, m: New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})}
+	h := &harness{t: t, m: New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
 	h.run(h.m.Init())
 	h.cursorTo(itemAttachment)
@@ -149,7 +149,7 @@ func TestDeleteInlineImageWarns(t *testing.T) {
 	if err := st.ReplaceAttachments(ctx, "t2", []asana.Attachment{{GID: "777", Name: "図.png"}}); err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, m: New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})}
+	h := &harness{t: t, m: New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
 	h.run(h.m.Init())
 	h.cursorTo(itemAttachment)

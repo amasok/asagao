@@ -332,9 +332,9 @@ func (m *Model) bulkMove(tasks []readmodel.TaskSummary) tea.Cmd {
 
 // bulkAssignee loads the members to choose the assignee of the marked tasks.
 func (m *Model) bulkAssignee(tasks []readmodel.TaskSummary) tea.Cmd {
-	st, ctx := m.deps.Store, m.ctx
+	st, ctx := m.deps.App, m.ctx
 	return func() tea.Msg {
-		users, err := queryOf(st).ListUsers(ctx)
+		users, err := st.Query().ListUsers(ctx)
 		return bulkUsersMsg{tasks: tasks, users: users, err: err}
 	}
 }
@@ -345,7 +345,7 @@ func (m *Model) showBulkAssignee(msg bulkUsersMsg) {
 		m.status = "対象のタスクが一覧から見えなくなったので取り消しました"
 		return
 	}
-	me, _ := queryOf(m.deps.Store).MeGID(m.ctx)
+	me, _ := m.deps.App.Query().MeGID(m.ctx)
 	p := &picker{kind: pickAssignee, title: fmt.Sprintf("%d 件の担当者", len(msg.tasks)), bulk: msg.tasks}
 	for _, u := range msg.users {
 		label := u.Name

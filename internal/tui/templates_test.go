@@ -107,7 +107,7 @@ func templateHarness(t *testing.T, online bool) (*harness, *templateFake, *store
 	if err := st.UpsertWorkspaces(context.Background(), []asana.Workspace{{GID: "w1", Name: "家"}}); err != nil {
 		t.Fatal(err)
 	}
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return now }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return now }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 160, Height: 50})
 	h.run(m.Init())

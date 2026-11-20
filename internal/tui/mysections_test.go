@@ -57,7 +57,7 @@ func TestMyTasksBySectionsAndMove(t *testing.T) {
 
 func newHarnessWith(t *testing.T, st *store.Store) *harness {
 	t.Helper()
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

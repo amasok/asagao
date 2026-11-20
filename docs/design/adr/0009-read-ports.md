@@ -29,3 +29,9 @@
 - **読み取りのインターフェースだけを app に置き、入り口が `*store.Store` をそのインターフェースとして持つ**: 使う側が入り口になり、ADR 0008 の考えと合わない。
 - **入り口ごとにインターフェースを置く**: 3 つの入り口で、ほとんど同じものが 3 つできる。
 - **領域ごとに `TaskQuery`・`ProjectQuery`・… と分ける**: 使う側が `Query` 1 つなので、分けても得るものがない。偽の store を作るテストが増えたら、そのとき分ける。
+
+## 追記 (#71)
+
+- 組み立て (d4) を行った。`internal/wire` が store から `app.UseCases` (ユースケースと `Query`) を組み立てて入り口に渡す。入り口は store も、たくさんのポートを埋め込んだ大きな `Store` インターフェースも持たない。
+- `Query` は `QueryStore` を埋め込み、store に渡すだけのメソッドをなくした。`Query` に残るメソッドは、入り口で重なっていた読み取りだけにした (受信箱が使えないときに最近の更新を出す `Inbox`、保存した検索の条件 `SavedSearchFilter`、プランの判定 `PlanOffIn`・`PlanOffEverywhere`・`StartDateOffered`・`TemplatesOffered`)。
+- 上の 2 で「ポートは分けない」としたとおり、読み取りのポートは `QueryStore` 1 つのまま。

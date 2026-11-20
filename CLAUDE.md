@@ -7,16 +7,16 @@ Asana をローカルの SQLite にキャッシュして扱う Go 製ツール�
 | パッケージ | 役割 |
 |---|---|
 | `cmd/asagao` | エントリポイント |
-| `internal/wire` | アダプター (store・Asana クライアント・トークンの保存先) を組み立てて入り口に渡す |
+| `internal/wire` | アダプター (store・Asana クライアント・トークンの保存先) と、その上のユースケース (`app.UseCases`)・同期を組み立てて入り口に渡す |
 | `internal/tui` / `internal/cli` / `internal/mcpserver` | 3 つの入り口 (Markdown⇔HTML 変換や `*Local` 直呼びは禁止、`archtest` で検証)。MCP は読み取りをキャッシュから、書き込みを outbox 経由で行う |
-| `internal/app` | ユースケース層 (入り口共通の書き込み・プラン判定) |
+| `internal/app` | ユースケース層 (入り口共通の書き込み・プラン判定・`Query` の共通の読み取り) |
 | `internal/domain` (`outbox`・`task`・`project`・`tag`・`plan`・`rich`・`gid`・`timetrack`・`commitref`) | 純粋ドメインロジック (`time.Now`・`os`・外部依存禁止、`archtest` で検証) |
 | `internal/readmodel` | store が表示用に返す DTO の型 |
 | `internal/ui/format` | 画面向けの日本語の表示名 (outbox の操作の説明など) |
 | `internal/asana` (`model`) | Asana REST クライアント (batch、events、custom fields、dependencies、レート制限と任意のリミッター)。`model` は API が返す型 |
 | `internal/auth` (`tokenstore`) | OAuth (PKCE)・PAT、トークンの保存先 (keychain / 1Password / ファイル) |
 | `internal/store` | SQLite キャッシュ。マイグレーションは `schema.go` の `migrations` (末尾に足すだけ)。outbox もここ |
-| `internal/sync` | Push (outbox 送信、照合) と Pull (Events API の差分、`modified_since`、全件)。push は flock で排他 |
+| `internal/sync` | Push (outbox 送信、照合) と Pull (Events API の差分、`modified_since`、全件)。push は flock で排他。部品 (`Pusher`・`Puller`・`Details`・`Goals`・`Templates`・`Search`・`Projects`) ごとに小さなポート、`Syncer` がまとめる |
 | `internal/richtext` | Asana の `html_text` ⇔ エディタ用 Markdown |
 | `internal/termsafe` | 端末の制御文字を取り除く |
 | `internal/imageview` | インライン画像 (kitty プレースホルダ)、添付を開く |

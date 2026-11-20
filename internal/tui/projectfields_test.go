@@ -15,7 +15,7 @@ import (
 func setupFieldHarness(t *testing.T, subtype string) (*harness, *store.Store) {
 	t.Helper()
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
+	st, ctx := storeOf(h.m), context.Background()
 	if err := st.UpsertWorkspaces(ctx, []asana.Workspace{{GID: "w1", Name: "WS"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func setupFieldHarness(t *testing.T, subtype string) (*harness, *store.Store) {
 
 func (h *harness) field(gid string) readmodel.CustomFieldView {
 	h.t.Helper()
-	d, err := h.m.deps.Store.GetTask(context.Background(), "t1")
+	d, err := storeOf(h.m).GetTask(context.Background(), "t1")
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -139,14 +139,14 @@ func TestProjectFieldsToggle(t *testing.T) {
 		t.Fatalf("no confirmation: %+v", h.m.picker)
 	}
 	h.pickLabel("やめる")
-	fields, _ := h.m.deps.Store.ProjectFields(context.Background(), "p1")
+	fields, _ := storeOf(h.m).ProjectFields(context.Background(), "p1")
 	if !fields[0].Attached {
 		t.Fatalf("removed without asking: %+v", fields)
 	}
 	h.run(h.m.loadProjectFields("p1"))
 	h.pickLabel("優先度")
 	h.pickLabel("外す")
-	fields, _ = h.m.deps.Store.ProjectFields(context.Background(), "p1")
+	fields, _ = storeOf(h.m).ProjectFields(context.Background(), "p1")
 	for _, f := range fields {
 		if f.GID == "cf" && f.Attached {
 			t.Fatalf("not removed: %+v", fields)

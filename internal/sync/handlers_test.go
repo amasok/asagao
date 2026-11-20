@@ -68,7 +68,7 @@ func TestHandlersAgreeWithSpecs(t *testing.T) {
 }
 
 func TestRegisterRefusesMistakes(t *testing.T) {
-	noop := func(*Syncer, context.Context, outbox.Op) (outcome, error) { return sent, nil }
+	noop := func(*Pusher, context.Context, outbox.Op) (outcome, error) { return sent, nil }
 	for _, tc := range []struct {
 		name string
 		kind outbox.Kind
@@ -99,12 +99,12 @@ func TestRegisterRefusesMistakes(t *testing.T) {
 func TestUnknownKindIsRefused(t *testing.T) {
 	s := &Syncer{}
 	op := outbox.Op{Kind: "from_the_future", TaskGID: "t1"}
-	out, err := s.sendOp(context.Background(), op)
+	out, err := s.Pusher().sendOp(context.Background(), op)
 	var apiErr *model.Error
 	if out != sent || !errors.As(err, &apiErr) || apiErr.Status != 400 {
 		t.Fatalf("sendOp = %v, %v", out, err)
 	}
-	out, m, err := s.find(context.Background(), op, s.clock())
+	out, m, err := s.Pusher().find(context.Background(), op, s.clock())
 	if out != sent || m != notFound || err != nil {
 		t.Fatalf("find = %v, %v, %v", out, m, err)
 	}

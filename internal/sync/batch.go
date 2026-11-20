@@ -53,7 +53,7 @@ type batchEntry struct {
 
 // batchGroup returns the entries at the start of ops (as listed when the pass began) that
 // can be sent together, at most model.MaxBatchActions. Fewer than two are not worth a batch.
-func (s *Syncer) batchGroup(ctx context.Context, ops []outbox.Op) ([]batchEntry, error) {
+func (s *Pusher) batchGroup(ctx context.Context, ops []outbox.Op) ([]batchEntry, error) {
 	var group []batchEntry
 	tasks := map[string]bool{}
 	for _, snapshot := range ops {
@@ -85,7 +85,7 @@ func (s *Syncer) batchGroup(ctx context.Context, ops []outbox.Op) ([]batchEntry,
 }
 
 // batchEntryFor builds the request for op if it can go out in a batch (ok).
-func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry, ok bool, err error) {
+func (s *Pusher) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry, ok bool, err error) {
 	task := op.TaskGID
 	if task == "" || localgid.IsLocal(task) {
 		return e, false, nil
@@ -111,7 +111,7 @@ type batchSent struct {
 // pushBatch sends group (see batchGroup) and records what happened to each entry like
 // pushEntry does. again lists the entries to handle once more right away (e.g. to check
 // Asana after a 5xx). An error stops the push, after every entry has been recorded.
-func (s *Syncer) pushBatch(ctx context.Context, group []batchEntry, res *PushResult, drops *dropState) (again map[int64]bool, err error) {
+func (s *Pusher) pushBatch(ctx context.Context, group []batchEntry, res *PushResult, drops *dropState) (again map[int64]bool, err error) {
 	var live []batchEntry
 	for _, e := range group {
 		if ok, err := s.Store.BeginSend(ctx, e.op.ID, s.clock()); err != nil {
@@ -160,7 +160,7 @@ func (s *Syncer) pushBatch(ctx context.Context, group []batchEntry, res *PushRes
 }
 
 // sendBatch sends entries (already marked "sending") and returns what each gave.
-func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSent {
+func (s *Pusher) sendBatch(ctx context.Context, entries []batchEntry) []batchSent {
 	results := make([]batchSent, len(entries))
 	alone := make([]bool, len(entries)) // to send on its own instead
 	for i, e := range entries {

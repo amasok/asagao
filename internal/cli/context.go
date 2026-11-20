@@ -67,7 +67,7 @@ func (a *app) contextCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			w := usecase.LookupWorkContext(ctx, query(st), c)
+			w := usecase.LookupWorkContext(ctx, st.App.Query(), c)
 			if a.json {
 				return a.printJSON(struct {
 					Found bool `json:"found"`

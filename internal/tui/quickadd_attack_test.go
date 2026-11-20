@@ -14,7 +14,7 @@ import (
 
 // failTags is a store whose tag edit fails, as when the task is gone or the disk is full.
 type failTags struct {
-	Store
+	localStore
 	calls int
 }
 
@@ -28,8 +28,8 @@ func (f *failTags) ApplyTagEdit(context.Context, string, task.TagEdit, time.Time
 func TestQuickAddAttackTagFailureStillCreatesTask(t *testing.T) {
 	st := quickAddStore(t)
 	h := projectHarness(t, st, nil)
-	ft := &failTags{Store: h.m.deps.Store}
-	h.m.deps.Store = ft
+	ft := &failTags{localStore: st}
+	h.m.deps = onStore(ft, h.m.deps)
 	h.key("a")
 	h.typeText("棚を買う 明日 #買い物")
 	h.key("enter")

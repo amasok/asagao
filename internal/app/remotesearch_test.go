@@ -81,7 +81,7 @@ func TestSearchWithAsanaAddsWhatAsanaFound(t *testing.T) {
 		{GID: "t8", Name: "古いタスク", Completed: true}, // only Asana matched it (its description)
 	}}
 	open := false
-	out, err := SearchWithAsana(ctx, Query{Store: cache}, f, readmodel.TaskFilter{Query: "牛乳"})
+	out, err := SearchWithAsana(ctx, Query{QueryStore: cache}, f, readmodel.TaskFilter{Query: "牛乳"})
 	if err != nil || out.RemoteErr != nil {
 		t.Fatal(err, out.RemoteErr)
 	}
@@ -92,7 +92,7 @@ func TestSearchWithAsanaAddsWhatAsanaFound(t *testing.T) {
 		t.Fatalf("asked limit %v completed %v", f.limits, f.complete)
 	}
 	// the rest of the filter applies to what Asana found
-	out, err = SearchWithAsana(ctx, Query{Store: cache}, f, readmodel.TaskFilter{Query: "牛乳", Completed: &open, Limit: 500})
+	out, err = SearchWithAsana(ctx, Query{QueryStore: cache}, f, readmodel.TaskFilter{Query: "牛乳", Completed: &open, Limit: 500})
 	if err != nil || !slices.Equal(taskGIDs(out.Tasks), []string{"t1", "t9"}) {
 		t.Fatalf("open only: %+v %v", out, err)
 	}
@@ -105,7 +105,7 @@ func TestSearchWithAsanaKeepsTheLimit(t *testing.T) {
 	ctx := context.Background()
 	cache := &searchCache{tasks: []readmodel.TaskSummary{{GID: "t1", Name: "牛乳 1"}}}
 	f := &fakeTaskFinder{cache: cache, found: []readmodel.TaskSummary{{GID: "t7", Name: "x"}, {GID: "t8", Name: "y"}, {GID: "t9", Name: "z"}}}
-	out, err := SearchWithAsana(ctx, Query{Store: cache}, f, readmodel.TaskFilter{Query: "牛乳", Limit: 2})
+	out, err := SearchWithAsana(ctx, Query{QueryStore: cache}, f, readmodel.TaskFilter{Query: "牛乳", Limit: 2})
 	if err != nil || !slices.Equal(taskGIDs(out.Tasks), []string{"t1", "t7"}) || out.Found != 3 {
 		t.Fatalf("out %+v %v", out, err)
 	}
@@ -113,7 +113,7 @@ func TestSearchWithAsanaKeepsTheLimit(t *testing.T) {
 		t.Fatalf("limit %v", f.limits)
 	}
 	// the cache alone fills the limit: Asana's are not listed
-	out, err = SearchWithAsana(ctx, Query{Store: cache}, f, readmodel.TaskFilter{Query: "牛乳", Limit: 1})
+	out, err = SearchWithAsana(ctx, Query{QueryStore: cache}, f, readmodel.TaskFilter{Query: "牛乳", Limit: 1})
 	if err != nil || !slices.Equal(taskGIDs(out.Tasks), []string{"t1"}) {
 		t.Fatalf("out %+v %v", out, err)
 	}
@@ -124,13 +124,13 @@ func TestSearchWithAsanaOffline(t *testing.T) {
 	cache := &searchCache{tasks: []readmodel.TaskSummary{{GID: "t1", Name: "牛乳"}}}
 	offline := errors.New("dial tcp: no route")
 	f := &fakeTaskFinder{cache: cache, err: offline}
-	out, err := SearchWithAsana(ctx, Query{Store: cache}, f, readmodel.TaskFilter{Query: "牛乳"})
+	out, err := SearchWithAsana(ctx, Query{QueryStore: cache}, f, readmodel.TaskFilter{Query: "牛乳"})
 	if err != nil || !errors.Is(out.RemoteErr, offline) || !slices.Equal(taskGIDs(out.Tasks), []string{"t1"}) {
 		t.Fatalf("out %+v %v", out, err)
 	}
 	// a cache error is an error
 	cache.err = errors.New("disk")
-	if _, err := SearchWithAsana(ctx, Query{Store: cache}, &fakeTaskFinder{cache: cache}, readmodel.TaskFilter{Query: "x"}); err == nil {
+	if _, err := SearchWithAsana(ctx, Query{QueryStore: cache}, &fakeTaskFinder{cache: cache}, readmodel.TaskFilter{Query: "x"}); err == nil {
 		t.Fatal("cache error lost")
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
-	"github.com/amasok/asagao/internal/sync"
 )
 
 type imagesReadyMsg struct {
@@ -74,10 +73,7 @@ func (m *Model) viewImages() tea.Cmd {
 		m.status = "画像を表示できません"
 		return nil
 	}
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = &sync.Syncer{Store: m.deps.Store, CacheDir: m.deps.CacheDir} // offline: cached files only
-	}
+	syncer := m.attachments(true) // offline: cached files only
 	taskGID := d.GID
 	m.status = fmt.Sprintf("画像を準備しています（%d 件）…", len(images))
 	return func() tea.Msg {

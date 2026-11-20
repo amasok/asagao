@@ -38,7 +38,7 @@ func TestInlineImageFromSignedURL(t *testing.T) {
 	_ = st.UpsertAttachment(ctx, "t1", asana.Attachment{GID: "1220507679870013", Name: name})
 	_ = st.SetAttachmentPath(ctx, "1220507679870013", path)
 
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }, InlineImages: true}))
 	m.cache.cellW, m.cache.cellH = 10, 20
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
@@ -71,7 +71,7 @@ func TestInlineImageFailureReason(t *testing.T) {
 	_ = st.UpsertAttachment(ctx, "t1", asana.Attachment{GID: "1220507679870013", Name: "shot.png"})
 	_ = st.SetAttachmentPath(ctx, "1220507679870013", path)
 
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }, InlineImages: true}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 40})
 	h.run(m.Init())

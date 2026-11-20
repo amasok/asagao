@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
@@ -20,7 +21,7 @@ func TestGetTaskCustomType(t *testing.T) {
 		CustomType:  &asana.Ref{GID: "ct1"}, CustomTypeStatusOption: &asana.Ref{GID: "cs2"}}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var out struct {
 		Task struct {
 			ResourceSubtype string                `json:"resource_subtype"`

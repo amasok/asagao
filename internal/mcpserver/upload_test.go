@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -106,7 +107,7 @@ func TestDefaultUploadFolders(t *testing.T) {
 func TestUploadAttachmentTool(t *testing.T) {
 	st := seed(t)
 	allowed, outside := t.TempDir(), t.TempDir()
-	cs := connect(t, &Server{Store: st, CacheDir: t.TempDir(), Upload: UploadPolicy{Allowed: []string{allowed}}})
+	cs := connect(t, &Server{App: wire.UseCases(st), CacheDir: t.TempDir(), Upload: UploadPolicy{Allowed: []string{allowed}}})
 	tools, err := cs.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)

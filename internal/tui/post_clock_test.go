@@ -17,7 +17,7 @@ func TestTUICommentAndStatusUseTheTimeOfTheKeyPress(t *testing.T) {
 	st := fixtureStore(t)
 	pressed := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	cur := pressed
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return cur }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return cur }}))
 	dir := t.TempDir()
 	write := func(name, s string) string {
 		p := filepath.Join(dir, name)

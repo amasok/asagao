@@ -8,14 +8,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amasok/asagao/internal/asana"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // Custom task types (#59): the type chooser offers the project's types, and a custom task
 // gets a chooser of its type's statuses.
 func TestCustomTypePickers(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	st, ctx := h.m.deps.Store.(*store.Store), context.Background()
+	st, ctx := storeOf(h.m), context.Background()
 	if err := st.ReplaceProjectCustomTypes(ctx, "p1", []asana.CustomType{{GID: "ct1", Name: "バグ", StatusOptions: []asana.CustomTypeStatusOption{
 		{GID: "cs1", Name: "対応中", CompletionState: "Incomplete"}, {GID: "cs2", Name: "修正済み", CompletionState: "Complete"}}}}); err != nil {
 		t.Fatal(err)

@@ -19,7 +19,7 @@ import (
 // Goals, portfolios and time periods (#7): read only. Online, they are fetched from Asana
 // first; offline (or with --offline) the cache is shown.
 
-func goalUseCases(st Store) *usecase.Goals { return &usecase.Goals{Store: st, Clock: time.Now} }
+func goalUseCases(st *Local) *usecase.Goals { return st.App.Goals(time.Now) }
 
 // staleNote tells that Asana could not be asked, so what is shown is the cache.
 func staleNote(w io.Writer, err error) {
@@ -242,7 +242,7 @@ func (a *app) portfolioCmd() *cobra.Command {
 }
 
 // fetch runs a refresh from Asana when online (nil when offline: the cache is shown).
-func (a *app) fetch(ctx context.Context, st Store, f func(*sync.Syncer, context.Context) error) error {
+func (a *app) fetch(ctx context.Context, st *Local, f func(*sync.Syncer, context.Context) error) error {
 	s, err := a.onlineSyncer(ctx, st)
 	if err != nil {
 		return nil

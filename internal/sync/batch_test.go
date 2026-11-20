@@ -185,7 +185,7 @@ func TestBatchEntryForIntentWrites(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e, ok, err := s.batchEntryFor(ctx, tc.op)
+			e, ok, err := s.Pusher().batchEntryFor(ctx, tc.op)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

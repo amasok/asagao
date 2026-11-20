@@ -30,7 +30,7 @@ func (a *app) sectionCreateCmd() *cobra.Command {
 			}
 			defer st.Close()
 			name := strings.Join(args, " ")
-			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			sections := st.App.Sections(time.Now)
 			gid, err := sections.Create(ctx, project, name, usecase.SectionPlace{Before: before, After: after})
 			if err != nil {
 				return err
@@ -63,7 +63,7 @@ func (a *app) sectionRmCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			sections := st.App.Sections(time.Now)
 			_, gid, err := sections.ResolveIn(ctx, project, args[0])
 			if err != nil {
 				return err
@@ -101,7 +101,7 @@ func (a *app) sectionMoveCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			sections := &usecase.Sections{Store: st, Clock: time.Now}
+			sections := st.App.Sections(time.Now)
 			if err := sections.Reorder(ctx, project, args[0], usecase.SectionPlace{Before: before, After: after}); err != nil {
 				return err
 			}
@@ -131,7 +131,7 @@ func (a *app) tagRenameCmd() *cobra.Command {
 			}
 			defer st.Close()
 			name := strings.Join(args[1:], " ")
-			if err := (&usecase.Tags{Store: st, Clock: time.Now}).Rename(ctx, args[0], name); err != nil {
+			if err := st.App.Tags(time.Now).Rename(ctx, args[0], name); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{}, "タグの名前を変えました: "+name)
@@ -158,7 +158,7 @@ func (a *app) tagColorCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			if err := (&usecase.Tags{Store: st, Clock: time.Now}).SetColor(ctx, args[0], args[1]); err != nil {
+			if err := st.App.Tags(time.Now).SetColor(ctx, args[0], args[1]); err != nil {
 				return err
 			}
 			return a.reportWrite(cmd, st, writeResult{}, "タグの色を変えました: "+args[1])
@@ -183,7 +183,7 @@ func (a *app) tagRmCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			tags := &usecase.Tags{Store: st, Clock: time.Now}
+			tags := st.App.Tags(time.Now)
 			t, err := tags.Resolve(ctx, args[0])
 			if err != nil {
 				return err
@@ -213,7 +213,7 @@ func (a *app) sectionMineCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			secs, err := (&usecase.Sections{Store: st, Clock: time.Now}).MySections(ctx, "")
+			secs, err := st.App.Sections(time.Now).MySections(ctx, "")
 			if err != nil {
 				return err
 			}

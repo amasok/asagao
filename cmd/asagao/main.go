@@ -14,8 +14,7 @@ func wiring() cli.Wiring {
 		MigrateLegacyDirs: config.MigrateLegacyDirs,
 		LoadSettings:      config.Load,
 		APIClient:         wire.APIClient,
-		Syncer:            wire.Syncer,
-		OpenStore:         cli.StoreOpener(wire.OpenStore),
+		OpenStore:         cli.StoreOpener(wire.OpenStore, wire.UseCases, wire.Syncer),
 		CheckPAT:          wire.CheckPAT,
 		Searches:          config.SearchFile{},
 	}

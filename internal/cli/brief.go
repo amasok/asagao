@@ -62,7 +62,7 @@ Asana の HTML のまま入っています。ブロックを残せば、その�
 				return err
 			}
 			defer st.Close()
-			gid, err := query(st).ResolveProject(ctx, args[0])
+			gid, err := st.App.Query().ResolveProject(ctx, args[0])
 			if err != nil {
 				return err
 			}
@@ -76,7 +76,7 @@ Asana の HTML のまま入っています。ブロックを残せば、その�
 					}
 				}
 			}
-			briefs := &usecase.Briefs{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			briefs := st.App.Briefs(time.Now)
 			if !writing {
 				return a.printBrief(cmd, st, gid)
 			}
@@ -135,7 +135,7 @@ func (a *app) projectBriefRmCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			briefs := &usecase.Briefs{Store: st, Text: richtext.Converter{}, Clock: time.Now}
+			briefs := st.App.Briefs(time.Now)
 			if _, err := briefs.Delete(ctx, args[0]); err != nil {
 				return err
 			}
@@ -147,8 +147,8 @@ func (a *app) projectBriefRmCmd() *cobra.Command {
 
 // printBrief prints a project's brief as editable Markdown (a title line first, if it has
 // one), or says why there is none.
-func (a *app) printBrief(cmd *cobra.Command, st Store, gid string) error {
-	o, err := query(st).ProjectOverview(cmd.Context(), gid)
+func (a *app) printBrief(cmd *cobra.Command, st *Local, gid string) error {
+	o, err := st.App.Query().ProjectOverview(cmd.Context(), gid)
 	if err != nil {
 		return err
 	}
@@ -204,8 +204,8 @@ func readBriefFile(cmd *cobra.Command, path string) (string, error) {
 
 // editBriefBody opens the brief's body in the editor and returns it as saved. The file is
 // left (and named in the error) when the editor fails.
-func (a *app) editBriefBody(ctx context.Context, st Store, gid string) (string, error) {
-	o, err := query(st).ProjectOverview(ctx, gid)
+func (a *app) editBriefBody(ctx context.Context, st *Local, gid string) (string, error) {
+	o, err := st.App.Query().ProjectOverview(ctx, gid)
 	if err != nil {
 		return "", err
 	}

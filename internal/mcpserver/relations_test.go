@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"slices"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
 	_ = st.UpsertUsers(ctx, []asana.User{{GID: "u2", Name: "Partner"}})
 	_ = st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}}, "me")
 	_ = st.ReplaceSections(ctx, "p2", []asana.Section{{GID: "s9", Name: "今月"}})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var w WriteOutput
 	res := call(t, cs, "update_task", map[string]any{
 		"gid": "t1", "add_projects": []string{"家計"}, "add_followers": []string{"Partner"},
@@ -66,7 +67,7 @@ func TestUpdateTaskRelationsNameTheArgument(t *testing.T) {
 	for _, arg := range []string{"add_dependencies", "remove_dependencies", "add_dependents", "remove_dependents"} {
 		t.Run(arg, func(t *testing.T) {
 			st := seed(t)
-			cs := connect(t, &Server{Store: st})
+			cs := connect(t, &Server{App: wire.UseCases(st)})
 			res := call(t, cs, "update_task", map[string]any{"gid": "t1", "name": "新しい名前", "add_tags": []string{"急ぎ"},
 				"add_followers": []string{"me"}, arg: []string{"t2", "no-such-task"}}, nil)
 			if msg := toolError(res); !strings.HasPrefix(msg, arg+": ") {

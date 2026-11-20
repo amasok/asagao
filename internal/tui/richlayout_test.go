@@ -24,7 +24,7 @@ var layoutTag = regexp.MustCompile(`(?i)<(h[1-6]|hr|img|table|tr|td|object)\b`)
 func TestTUICommentAndStatusWithoutLayoutTags(t *testing.T) {
 	ctx := context.Background()
 	st := fixtureStore(t)
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	md := "# 予定\n\n---\n\n![図](asana:42)"
 	run := func(cmd tea.Cmd) {
 		t.Helper()

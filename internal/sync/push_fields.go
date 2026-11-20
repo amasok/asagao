@@ -17,24 +17,24 @@ import (
 // added to or removed from a project.
 
 func init() {
-	register(outbox.KindSetCustomField, opHandler{send: (*Syncer).pushCustomField, batch: batchCustomField,
+	register(outbox.KindSetCustomField, opHandler{send: (*Pusher).pushCustomField, batch: batchCustomField,
 		fieldValues: func(op outbox.Op) map[string]any {
 			return map[string]any{payloadString(op, "field"): op.Payload["value"]}
 		}})
-	register(outbox.KindCreateEnumOption, opHandler{send: (*Syncer).pushCreateEnumOption, forbidden: enumOptionForbidden,
-		find: func(s *Syncer, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
+	register(outbox.KindCreateEnumOption, opHandler{send: (*Pusher).pushCreateEnumOption, forbidden: enumOptionForbidden,
+		find: func(s *Pusher, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
 			m, err := s.findEnumOption(ctx, op)
 			return sent, m, err
 		}})
-	register(outbox.KindAddFieldSetting, opHandler{send: sends((*Syncer).pushFieldSetting), forbidden: fieldSettingForbidden})
-	register(outbox.KindRemoveFieldSetting, opHandler{send: sends((*Syncer).pushFieldSetting), forbidden: fieldSettingForbidden})
+	register(outbox.KindAddFieldSetting, opHandler{send: sends((*Pusher).pushFieldSetting), forbidden: fieldSettingForbidden})
+	register(outbox.KindRemoveFieldSetting, opHandler{send: sends((*Pusher).pushFieldSetting), forbidden: fieldSettingForbidden})
 }
 
 // waitsForField reports whether a value of a custom field (set_custom_field, or a create
 // with values) uses an option created offline whose creation is still queued, or a field
 // whose adding to a project of the task is still queued. It waits, and goes out once that
 // is sent (the option's gid is then replaced in it) or is discarded with it.
-func (s *Syncer) waitsForField(ctx context.Context, op outbox.Op) (bool, error) {
+func (s *Pusher) waitsForField(ctx context.Context, op outbox.Op) (bool, error) {
 	valuesOf := handlers[op.Kind].fieldValues
 	if valuesOf == nil {
 		return false, nil
@@ -77,7 +77,7 @@ func optionGIDs(v any) []string {
 // pushCreateEnumOption adds an option to a field. An enabled option with the name that
 // Asana already has (added by someone else meanwhile, or by an earlier request of ours
 // whose answer was lost) is taken instead of creating a second one.
-func (s *Syncer) pushCreateEnumOption(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushCreateEnumOption(ctx context.Context, op outbox.Op) (outcome, error) {
 	if m, err := s.findEnumOption(ctx, op); err != nil || m == matched {
 		return sent, err
 	}
@@ -103,7 +103,7 @@ func (s *Syncer) pushCreateEnumOption(ctx context.Context, op outbox.Op) (outcom
 // findEnumOption looks in Asana for an enabled option of the field with the entry's name
 // that no other local entry took (the first, if there are several: they are the same
 // choice to the user). matched: it was recorded as the entry's result.
-func (s *Syncer) findEnumOption(ctx context.Context, op outbox.Op) (match, error) {
+func (s *Pusher) findEnumOption(ctx context.Context, op outbox.Op) (match, error) {
 	field, _ := op.Payload["field"].(string)
 	name, _ := op.Payload["name"].(string)
 	f, err := s.API.CustomField(ctx, field)
@@ -125,7 +125,7 @@ func (s *Syncer) findEnumOption(ctx context.Context, op outbox.Op) (match, error
 // pushFieldSetting adds a field to a project or removes it. If Asana refuses because the
 // project already is as wanted (someone else did it, or an earlier request whose answer
 // was lost), it is done. The project's fields are then fetched again.
-func (s *Syncer) pushFieldSetting(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushFieldSetting(ctx context.Context, op outbox.Op) error {
 	project, add := op.TaskGID, op.Kind == outbox.KindAddFieldSetting
 	field, _ := op.Payload["field"].(string)
 	var err error
@@ -184,7 +184,7 @@ func hasField(settings []model.CustomFieldSetting, field string) bool {
 
 // enumOptionForbidden records that Asana refused (403) to add an option to a field, so
 // that adding one is not offered again for that field, and says why.
-func enumOptionForbidden(s *Syncer, ctx context.Context, op outbox.Op, cause error) error {
+func enumOptionForbidden(s *Pusher, ctx context.Context, op outbox.Op, cause error) error {
 	_ = s.Store.SetFieldOptionsLocked(ctx, payloadString(op, "field"), s.clock())
 	return fmt.Errorf("Asana がこのフィールドへの選択肢の追加を許可しませんでした (選択肢の編集が制限されているか、権限がありません): %w", cause)
 }
@@ -192,7 +192,7 @@ func enumOptionForbidden(s *Syncer, ctx context.Context, op outbox.Op, cause err
 // fieldSettingForbidden records that Asana refused (403) to add a custom field to a
 // project or remove one from it, so that it is not offered again for that project, and
 // says why.
-func fieldSettingForbidden(s *Syncer, ctx context.Context, op outbox.Op, cause error) error {
+func fieldSettingForbidden(s *Pusher, ctx context.Context, op outbox.Op, cause error) error {
 	_ = s.Store.SetProjectFieldsLocked(ctx, op.TaskGID, s.clock())
 	return fmt.Errorf("Asana がこのプロジェクトのカスタムフィールドの変更を許可しませんでした (権限がありません): %w", cause)
 }
@@ -201,13 +201,13 @@ func fieldSettingForbidden(s *Syncer, ctx context.Context, op outbox.Op, cause e
 // project) with the poll, or if they were never fetched. Without custom fields (402: the
 // plan) or the right to list them (403) there are none to offer; any other failure is
 // retried on the next sync.
-func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID string, poll bool) error {
+func (s *Puller) syncWorkspaceCustomFields(ctx context.Context, workspaceGID string, poll bool) error {
 	if !poll {
 		if last, err := s.Store.WorkspaceCustomFieldsFetchedAt(ctx, workspaceGID); err != nil || last != "" {
 			return err
 		}
 	}
-	if hidden, err := s.planHidden(ctx, plan.CustomFields, workspaceGID); err != nil || hidden {
+	if hidden, err := planHidden(ctx, s.Store, s.clock(), plan.CustomFields, workspaceGID); err != nil || hidden {
 		return err // a recent 402: not asked for again yet
 	}
 	fields, err := s.API.WorkspaceCustomFields(ctx, workspaceGID)
@@ -221,7 +221,7 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 		if err := s.Store.ReplaceWorkspaceCustomFields(ctx, workspaceGID, nil); err != nil {
 			return err
 		}
-		if _, err := s.recordPlanRefusal(ctx, plan.CustomFields, workspaceGID, err); err != nil {
+		if _, err := recordPlanRefusal(ctx, s.Store, s.clock(), plan.CustomFields, workspaceGID, err); err != nil {
 			return err
 		}
 	case isForbidden(err):
@@ -237,7 +237,7 @@ func (s *Syncer) syncWorkspaceCustomFields(ctx context.Context, workspaceGID str
 // pushCustomField sets one custom field, after checking that nobody changed it in Asana
 // since it was edited here. A field the task no longer has is treated like a 404 (the
 // change is dropped and the user told).
-func (s *Syncer) pushCustomField(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushCustomField(ctx context.Context, op outbox.Op) (outcome, error) {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -311,7 +311,7 @@ func normalize(v any) any {
 }
 
 // batchCustomField is the batch request for a set_custom_field, checked against the task in Asana first.
-func batchCustomField(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchCustomField(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	if str("field") == "" {

@@ -16,7 +16,7 @@ import (
 
 // taskOps is the use cases that reorganize tasks, with a clock that reads now (see tasks).
 func (m *Model) taskOps(now time.Time) *app.TaskOps {
-	return &app.TaskOps{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.TaskOps(func() time.Time { return now })
 }
 
 type (
@@ -85,7 +85,7 @@ func (m *Model) openParentPicker() tea.Cmd {
 	if t == nil {
 		return nil
 	}
-	task, st := *t, m.deps.Store
+	task, st := *t, m.deps.App
 	return func() tea.Msg {
 		open := false
 		var tasks []readmodel.TaskSummary
@@ -94,14 +94,14 @@ func (m *Model) openParentPicker() tea.Cmd {
 			filters = append(filters, readmodel.TaskFilter{ProjectGID: ms.ProjectGID, Completed: &open, Limit: 200})
 		}
 		if len(filters) == 0 {
-			me, err := queryOf(st).MeGID(m.ctx)
+			me, err := st.Query().MeGID(m.ctx)
 			if err != nil {
 				return parentCandidatesMsg{err: err}
 			}
 			filters = append(filters, readmodel.TaskFilter{AssigneeGID: me, Completed: &open, Limit: 200})
 		}
 		for _, f := range filters {
-			found, err := queryOf(st).ListTasks(m.ctx, f)
+			found, err := st.Query().ListTasks(m.ctx, f)
 			if err != nil {
 				return parentCandidatesMsg{err: err}
 			}

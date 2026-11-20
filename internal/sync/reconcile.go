@@ -50,7 +50,7 @@ func settleTime(kind outbox.Kind) time.Duration {
 // reconcile checks Asana for the result of op (already marked "sending"). On a match it
 // records the result like the matching push function would. An error means Asana could
 // not be checked.
-func (s *Syncer) reconcile(ctx context.Context, op outbox.Op) (outcome, match, error) {
+func (s *Pusher) reconcile(ctx context.Context, op outbox.Op) (outcome, match, error) {
 	safe, err := s.Store.SafeToResend(ctx, op)
 	if err != nil || safe {
 		return sent, notFound, err // harmless to send again: no need to look
@@ -86,7 +86,7 @@ func (s *Syncer) reconcile(ctx context.Context, op outbox.Op) (outcome, match, e
 
 // find looks in Asana for the result of op (see reconcile) with the find function of
 // its kind; an entry without one has nothing to look for.
-func (s *Syncer) find(ctx context.Context, op outbox.Op, since time.Time) (outcome, match, error) {
+func (s *Pusher) find(ctx context.Context, op outbox.Op, since time.Time) (outcome, match, error) {
 	h := handlers[op.Kind]
 	if h.find == nil {
 		return sent, notFound, nil
@@ -110,7 +110,7 @@ func sameTaskFields(t model.Task, payload map[string]any) bool {
 // tasksCreatedUnder lists the tasks a new task could be among: the parent's subtasks, the
 // project's tasks, or the assignee's tasks (modified since since). ok is false when there
 // is no list to look in (no parent, project or assignee).
-func (s *Syncer) tasksCreatedUnder(ctx context.Context, parent, project, assignee, workspace string, since time.Time) ([]model.Task, bool, error) {
+func (s *Pusher) tasksCreatedUnder(ctx context.Context, parent, project, assignee, workspace string, since time.Time) ([]model.Task, bool, error) {
 	var tasks []model.Task
 	var err error
 	switch {

@@ -322,9 +322,9 @@ type tagsLoadedMsg struct {
 }
 
 func (m *Model) openTagPicker() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		tags, err := queryOf(st).ListTags(m.ctx)
+		tags, err := st.Query().ListTags(m.ctx)
 		return tagsLoadedMsg{tags: tags, err: err}
 	}
 }

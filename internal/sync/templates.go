@@ -64,7 +64,7 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 // TaskTemplates lists the task templates of a project (online). Names are made safe for
 // a terminal.
-func (s *Syncer) TaskTemplates(ctx context.Context, projectGID string) ([]model.TaskTemplate, error) {
+func (s *Templates) TaskTemplates(ctx context.Context, projectGID string) ([]model.TaskTemplate, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -80,7 +80,7 @@ func (s *Syncer) TaskTemplates(ctx context.Context, projectGID string) ([]model.
 
 // ProjectTemplates lists the project templates of the default workspace (online), or of
 // team teamGID. Names are made safe for a terminal.
-func (s *Syncer) ProjectTemplates(ctx context.Context, teamGID string) ([]model.ProjectTemplate, error) {
+func (s *Templates) ProjectTemplates(ctx context.Context, teamGID string) ([]model.ProjectTemplate, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -115,7 +115,7 @@ func (s *Syncer) ProjectTemplates(ctx context.Context, teamGID string) ([]model.
 }
 
 // teamProjectTemplates lists the project templates of every team I am in, each once.
-func (s *Syncer) teamProjectTemplates(ctx context.Context, ws string) ([]model.ProjectTemplate, error) {
+func (s *Templates) teamProjectTemplates(ctx context.Context, ws string) ([]model.ProjectTemplate, error) {
 	teams, err := s.API.MyTeams(ctx, ws)
 	if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func needsTeam(err error) bool {
 
 // projectWorkspace is the workspace of a project, whose plan a 402 for its task templates
 // is about (the default workspace when the project is not cached).
-func (s *Syncer) projectWorkspace(ctx context.Context, projectGID string) string {
+func (s *Templates) projectWorkspace(ctx context.Context, projectGID string) string {
 	if ws, err := s.Store.ProjectWorkspace(ctx, projectGID); err == nil && ws != "" {
 		return ws
 	}
@@ -168,12 +168,12 @@ func (s *Syncer) projectWorkspace(ctx context.Context, projectGID string) string
 // three helpers of plan.go): a 402 records that feature is refused there and is returned
 // as a TemplatePlanError, which says so; an answer forgets an earlier 402. Other errors are
 // returned as they are.
-func (s *Syncer) noteTemplatePlan(ctx context.Context, feature, workspaceGID string, err error) error {
+func (s *Templates) noteTemplatePlan(ctx context.Context, feature, workspaceGID string, err error) error {
 	if err == nil {
-		_ = s.clearPlanRefusal(ctx, feature, workspaceGID)
+		_ = s.Store.ClearPlanRefusal(ctx, feature, workspaceGID)
 		return nil
 	}
-	if refused, _ := s.recordPlanRefusal(ctx, feature, workspaceGID, err); refused {
+	if refused, _ := recordPlanRefusal(ctx, s.Store, s.clock(), feature, workspaceGID, err); refused {
 		return &TemplatePlanError{Feature: feature, Err: err}
 	}
 	return err
@@ -234,7 +234,7 @@ func PickTemplate[T any](list []T, key string, gid, name func(T) string) (T, err
 
 // InstantiateTask makes a task from template tmpl (from TaskTemplates) in its project,
 // named name ("" for the template's name), and stores it with its subtasks.
-func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, name string) (*Made, error) {
+func (s *Templates) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, name string) (*Made, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -275,7 +275,7 @@ func (s *Syncer) InstantiateTask(ctx context.Context, tmpl model.TaskTemplate, n
 		return nil, jobError(job, "タスク")
 	}
 	made := &Made{GID: job.NewTask.GID, Name: name, Pending: !done}
-	if err := s.FetchDetails(ctx, made.GID); err != nil && !isAttachmentsError(err) {
+	if err := s.Details.FetchDetails(ctx, made.GID); err != nil && !isAttachmentsError(err) {
 		return made, fmt.Errorf("タスクは作られましたが、取り込めませんでした (次の同期で取り込みます): %w", err)
 	}
 	if job.Status == model.JobFailed {
@@ -295,13 +295,13 @@ const jobAccepted = "Asana は作る処理を受け付けましたが、でき�
 // foundTask looks for the task that a failed or unfinished instantiateTask may have made
 // (findMadeTask) and stores it, as Pending: the job's state is unknown, so the subtasks
 // may still be coming.
-func (s *Syncer) foundTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*Made, error) {
+func (s *Templates) foundTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*Made, error) {
 	t, err := s.findMadeTask(ctx, projectGID, name, started, cause, notFound)
 	if err != nil {
 		return nil, err
 	}
 	made := &Made{GID: t.GID, Name: name, Pending: true}
-	if err := s.FetchDetails(ctx, t.GID); err != nil && !isAttachmentsError(err) {
+	if err := s.Details.FetchDetails(ctx, t.GID); err != nil && !isAttachmentsError(err) {
 		return made, fmt.Errorf("タスクは作られましたが、取り込めませんでした (次の同期で取り込みます): %w", err)
 	}
 	return made, nil
@@ -310,7 +310,7 @@ func (s *Syncer) foundTask(ctx context.Context, projectGID, name string, started
 // findMadeTask looks for the task of that name created in the project since started
 // (twice, projectSettle apart). Not found, it is not made again (that could make a
 // duplicate): the error is notFound wrapping cause (cause alone if notFound is "").
-func (s *Syncer) findMadeTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*model.Task, error) {
+func (s *Templates) findMadeTask(ctx context.Context, projectGID, name string, started time.Time, cause error, notFound string) (*model.Task, error) {
 	for try := 0; try < 2; try++ {
 		if try > 0 {
 			if err := s.wait(ctx, projectSettle); err != nil {
@@ -338,7 +338,7 @@ func (s *Syncer) findMadeTask(ctx context.Context, projectGID, name string, star
 
 // InstantiateProject makes a project from template tmpl (from ProjectTemplates) and
 // stores it with its sections and tasks.
-func (s *Syncer) InstantiateProject(ctx context.Context, tmpl model.ProjectTemplate, in ProjectInput) (*Made, error) {
+func (s *Templates) InstantiateProject(ctx context.Context, tmpl model.ProjectTemplate, in ProjectInput) (*Made, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -362,7 +362,7 @@ func (s *Syncer) InstantiateProject(ctx context.Context, tmpl model.ProjectTempl
 // DuplicateProject duplicates project projectGID (with its tasks, subtasks, members,
 // dates, …: asana.ProjectDuplicateIncludes) as name into team teamGID ("" for the
 // original's team), and stores the copy with its sections and tasks.
-func (s *Syncer) DuplicateProject(ctx context.Context, projectGID, name, teamGID string) (*Made, error) {
+func (s *Templates) DuplicateProject(ctx context.Context, projectGID, name, teamGID string) (*Made, error) {
 	if s.API == nil {
 		return nil, ErrOffline
 	}
@@ -376,7 +376,7 @@ func (s *Syncer) DuplicateProject(ctx context.Context, projectGID, name, teamGID
 
 // makeProject starts a job that makes a project named name, waits for it and stores the
 // project. feature is the plan feature a 402 marks ("" for none).
-func (s *Syncer) makeProject(ctx context.Context, name, feature string, start func() (*model.Job, error)) (*Made, error) {
+func (s *Templates) makeProject(ctx context.Context, name, feature string, start func() (*model.Job, error)) (*Made, error) {
 	ws, err := s.Store.DefaultWorkspace(ctx)
 	if err != nil {
 		return nil, err
@@ -391,7 +391,7 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 		if errors.As(err, &pe) {
 			return nil, err
 		}
-		p, rerr := s.recoverCreateProject(ctx, ws, name, started, err)
+		p, rerr := s.Projects.recoverCreateProject(ctx, ws, name, started, err)
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -402,7 +402,7 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 	if err != nil {
 		// Asana took the job but asagao does not know what it made yet: look for it.
 		err = fmt.Errorf("%s: %w", jobAccepted, err)
-		p, err := s.findCreatedProject(ctx, ws, name, started, err, "")
+		p, err := s.Projects.findCreatedProject(ctx, ws, name, started, err, "")
 		if err != nil {
 			return nil, err
 		}
@@ -420,12 +420,12 @@ func (s *Syncer) makeProject(ctx context.Context, name, feature string, start fu
 
 // storeMadeProject fetches a project that a job made, with its sections and tasks, and
 // stores it.
-func (s *Syncer) storeMadeProject(ctx context.Context, gid, name string, pending bool) (*Made, error) {
+func (s *Templates) storeMadeProject(ctx context.Context, gid, name string, pending bool) (*Made, error) {
 	made := &Made{GID: gid, Name: name, Pending: pending}
 	p, err := s.API.Project(ctx, gid)
 	if err == nil {
 		made.Name = termsafe.String(p.Name)
-		if err = s.saveProject(ctx, p); err == nil {
+		if err = saveProject(ctx, s.Store, p); err == nil {
 			var secs []model.Section
 			if secs, err = s.API.Sections(ctx, gid); err == nil {
 				err = s.Store.ReplaceSections(ctx, gid, secs)
@@ -447,7 +447,7 @@ func (s *Syncer) storeMadeProject(ctx context.Context, gid, name string, pending
 // waitJob looks at job until it is done, up to jobWait, and returns it as last seen.
 // has reports whether the job already names what it makes; a job that does is not waited
 // for past jobWait, one that does not yet is an error then. done is whether it ended.
-func (s *Syncer) waitJob(ctx context.Context, job *model.Job, has func(*model.Job) bool) (_ *model.Job, done bool, _ error) {
+func (s *Templates) waitJob(ctx context.Context, job *model.Job, has func(*model.Job) bool) (_ *model.Job, done bool, _ error) {
 	pause, waited := jobPoll, time.Duration(0)
 	for !job.Done() {
 		if job.GID == "" || waited >= jobWait {
@@ -491,7 +491,7 @@ func jobError(job *model.Job, what string) error {
 
 // requestedDates fills the template's requested dates: given ones (by gid or name) must
 // be dates YYYY-MM-DD, the others are today.
-func (s *Syncer) requestedDates(tmpl model.ProjectTemplate, given map[string]string) (map[string]string, error) {
+func (s *Templates) requestedDates(tmpl model.ProjectTemplate, given map[string]string) (map[string]string, error) {
 	out, err := byGIDOrName(tmpl.RequestedDates, given, func(d model.TemplateDate) (string, string) { return d.GID, d.Name }, "日付")
 	if err != nil {
 		return nil, err

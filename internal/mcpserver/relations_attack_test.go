@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,7 @@ func TestUpdateTaskUnresolvedNameWritesNothing(t *testing.T) {
 	} {
 		t.Run(tc.arg, func(t *testing.T) {
 			st := seed(t)
-			cs := connect(t, &Server{Store: st})
+			cs := connect(t, &Server{App: wire.UseCases(st)})
 			args := map[string]any{"gid": "t1", "name": "変えない", "add_tags": []string{"急ぎ"}, "add_dependencies": []string{"t2"}}
 			for k, v := range tc.args {
 				args[k] = v
@@ -44,7 +45,7 @@ func TestUpdateTaskUnresolvedNameWritesNothing(t *testing.T) {
 // A task that waits for itself, or the same change twice, does not crash or queue twice.
 func TestUpdateTaskDuplicateAndSelfDependency(t *testing.T) {
 	st := seed(t)
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	res := call(t, cs, "update_task", map[string]any{"gid": "t1", "add_dependencies": []string{"t2", "t2"}}, nil)
 	if res.IsError {
 		t.Logf("duplicate: %s", toolError(res))
@@ -73,7 +74,7 @@ func TestMoveAndRenameUnresolvedWriteNothing(t *testing.T) {
 	} {
 		t.Run(tc.tool+fmt.Sprint(tc.args), func(t *testing.T) {
 			st := seed(t)
-			cs := connect(t, &Server{Store: st})
+			cs := connect(t, &Server{App: wire.UseCases(st)})
 			res := call(t, cs, tc.tool, tc.args, nil)
 			if !res.IsError {
 				t.Errorf("should fail")

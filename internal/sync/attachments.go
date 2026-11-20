@@ -25,7 +25,7 @@ const maxAttachmentSize = 100 << 20
 // first use. Once downloaded, the file is reused (and is available offline). Attachments
 // not yet in the store (e.g. images pasted into the description) are looked up first, see
 // downloadUnknown.
-func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (string, error) {
+func (s *Details) DownloadAttachment(ctx context.Context, taskGID, gid string) (string, error) {
 	a, err := s.Store.GetAttachment(ctx, gid)
 	if errors.Is(err, readmodel.ErrNotFound) {
 		return s.downloadUnknown(ctx, gid)
@@ -73,7 +73,7 @@ func (s *Syncer) DownloadAttachment(ctx context.Context, taskGID, gid string) (s
 	return path, s.Store.SetAttachmentPath(ctx, gid, path)
 }
 
-func (s *Syncer) cacheDir() string {
+func (s *Details) cacheDir() string {
 	if s.CacheDir != "" {
 		return s.CacheDir
 	}
@@ -81,7 +81,7 @@ func (s *Syncer) cacheDir() string {
 }
 
 // saveDownload downloads url to path (through a temporary file).
-func (s *Syncer) saveDownload(ctx context.Context, url, name, path string) error {
+func (s *Details) saveDownload(ctx context.Context, url, name, path string) error {
 	download := s.Download
 	if download == nil {
 		download = httpDownload
@@ -108,7 +108,7 @@ var digits = regexp.MustCompile(`^[0-9]+$`)
 // Otherwise it is not recorded (it must not appear among the attachments of a task it does
 // not belong to), but it is still downloaded to the cache so it can be shown; offline, the
 // cached file is used.
-func (s *Syncer) downloadUnknown(ctx context.Context, gid string) (string, error) {
+func (s *Details) downloadUnknown(ctx context.Context, gid string) (string, error) {
 	if !digits.MatchString(gid) {
 		return "", fmt.Errorf("画像の gid が正しくありません: %q", gid)
 	}
@@ -152,7 +152,7 @@ func (s *Syncer) downloadUnknown(ctx context.Context, gid string) (string, error
 
 // cachedParent returns the gid of the task an attachment belongs to in Asana, if that task
 // is in the store, or "".
-func (s *Syncer) cachedParent(ctx context.Context, a *model.Attachment) string {
+func (s *Details) cachedParent(ctx context.Context, a *model.Attachment) string {
 	if a.Parent == nil || a.Parent.GID == "" {
 		return ""
 	}

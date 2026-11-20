@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"github.com/amasok/asagao/internal/wire"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,7 +27,7 @@ func TestSavedSearchTools(t *testing.T) {
 		readmodel.SavedSearch{Name: "手続き", Project: "新居", Section: "手続き"},
 		readmodel.SavedSearch{Name: "電気", Query: "電気"},
 	)
-	cs := connect(t, &Server{Store: seed(t), Searches: f})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t)), Searches: f})
 
 	var list SavedSearchesOutput
 	if res := call(t, cs, "list_saved_searches", nil, &list); res.IsError {
@@ -73,7 +74,7 @@ func TestSavedSearchTools(t *testing.T) {
 // error whose text has no control characters; the tools never write the file.
 func TestSavedSearchToolsFile(t *testing.T) {
 	var list SavedSearchesOutput
-	cs := connect(t, &Server{Store: seed(t)})
+	cs := connect(t, &Server{App: wire.UseCases(seed(t))})
 	if res := call(t, cs, "list_saved_searches", nil, &list); res.IsError || list.Searches == nil || len(list.Searches) != 0 {
 		t.Fatalf("no file: %s %+v", toolError(res), list)
 	}
@@ -83,7 +84,7 @@ func TestSavedSearchToolsFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cs = connect(t, &Server{Store: seed(t), Searches: config.SearchFile{Path: path}})
+	cs = connect(t, &Server{App: wire.UseCases(seed(t)), Searches: config.SearchFile{Path: path}})
 	for _, args := range []map[string]any{nil, {"name": "a"}} {
 		tool := "list_saved_searches"
 		if args != nil {

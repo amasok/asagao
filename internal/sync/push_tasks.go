@@ -17,29 +17,29 @@ import (
 // deletes and parent changes.
 
 func init() {
-	register(outbox.KindUpdateTask, opHandler{send: (*Syncer).pushUpdate, batch: batchUpdateTask, startOn: true})
-	register(outbox.KindCreateTask, opHandler{send: (*Syncer).pushCreate, find: findCreatedTask, startOn: true,
+	register(outbox.KindUpdateTask, opHandler{send: (*Pusher).pushUpdate, batch: batchUpdateTask, startOn: true})
+	register(outbox.KindCreateTask, opHandler{send: (*Pusher).pushCreate, find: findCreatedTask, startOn: true,
 		fieldValues: func(op outbox.Op) map[string]any {
 			cfs, _ := op.Payload["custom_fields"].(map[string]any)
 			return cfs
 		}})
 	// A duplicate is copied by a background job, so its result takes longer to show.
-	register(outbox.KindDuplicateTask, opHandler{send: sends((*Syncer).pushDuplicate), find: findDuplicate, settle: 5 * time.Minute})
-	register(outbox.KindMoveTask, opHandler{send: sends((*Syncer).pushMove), batch: batchMoveTask,
+	register(outbox.KindDuplicateTask, opHandler{send: sends((*Pusher).pushDuplicate), find: findDuplicate, settle: 5 * time.Minute})
+	register(outbox.KindMoveTask, opHandler{send: sends((*Pusher).pushMove), batch: batchMoveTask,
 		goneReason: func(op outbox.Op, cause error) string {
 			if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
 				return "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
 			}
 			return ""
 		}})
-	register(outbox.KindDeleteTask, opHandler{send: sends((*Syncer).pushDelete)})
-	register(outbox.KindSetParent, opHandler{send: sends((*Syncer).pushSetParent),
+	register(outbox.KindDeleteTask, opHandler{send: sends((*Pusher).pushDelete)})
+	register(outbox.KindSetParent, opHandler{send: sends((*Pusher).pushSetParent),
 		goneReason: func(_ outbox.Op, cause error) string {
 			return "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
 		}})
 }
 
-func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) {
 	if localgid.IsLocal(op.TaskGID) {
 		return sent, &model.Error{Status: 404} // its create failed
 	}
@@ -154,11 +154,11 @@ func updateConflicts(op outbox.Op, server *model.Task) map[string]any {
 
 // refresh stores a task as Asana returned it after a change. The change is already
 // recorded, so a failure here only leaves the cache stale until the next sync.
-func (s *Syncer) refresh(ctx context.Context, t model.Task) {
+func (s *Pusher) refresh(ctx context.Context, t model.Task) {
 	_ = s.Store.UpsertTasks(ctx, []model.Task{t})
 }
 
-func (s *Syncer) pushCreate(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushCreate(ctx context.Context, op outbox.Op) (outcome, error) {
 	fields := apiFields(op.Payload)
 	section, _ := fields["section"].(string)
 	project, _ := fields["project"].(string)
@@ -216,7 +216,7 @@ func sectionIn(t *model.Task, project string) string {
 	return ""
 }
 
-func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushMove(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
@@ -247,11 +247,11 @@ func (s *Syncer) pushMove(ctx context.Context, op outbox.Op) error {
 // move into it (#69: Asana emits no Events on intra-section reorders, so an external
 // reorder before our push would otherwise leave the cache out of order). Transient
 // failures queue section in PendingSectionOrders so the next sync retries it.
-func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, section string) {
+func (s *Pusher) refreshSectionOrderAfterMove(ctx context.Context, project, section string) {
 	if section == "" || localgid.IsLocal(section) {
 		return
 	}
-	completedSince := s.newMode(s.serverNow()).window
+	completedSince := s.Cfg.newMode(s.serverNow()).window
 	gids, err := s.API.SectionTaskOrder(ctx, section, completedSince)
 	if err == nil {
 		if gids != nil {
@@ -274,7 +274,7 @@ func (s *Syncer) refreshSectionOrderAfterMove(ctx context.Context, project, sect
 // position is where op puts its task (insert_before / insert_after), with the real gid of
 // a task created offline. One whose create has not gone out (it failed) is left out:
 // the task still goes to its section or parent.
-func (s *Syncer) position(ctx context.Context, op outbox.Op) (model.Position, error) {
+func (s *Pusher) position(ctx context.Context, op outbox.Op) (model.Position, error) {
 	var pos model.Position
 	for _, p := range []struct {
 		key string
@@ -299,7 +299,7 @@ func (s *Syncer) position(ctx context.Context, op outbox.Op) (model.Position, er
 // entry sent before, or by someone else): done either way. Push has checked that the
 // account is the one the store belongs to (checkPushAccount), so the 404 is not another
 // account's view.
-func (s *Syncer) pushDelete(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDelete(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
@@ -310,7 +310,7 @@ func (s *Syncer) pushDelete(ctx context.Context, op outbox.Op) error {
 }
 
 // pushSetParent sends a parent change. Repeating it is harmless.
-func (s *Syncer) pushSetParent(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushSetParent(ctx context.Context, op outbox.Op) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -338,7 +338,7 @@ func (s *Syncer) pushSetParent(ctx context.Context, op outbox.Op) error {
 	return nil
 }
 
-func (s *Syncer) pushDuplicate(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDuplicate(ctx context.Context, op outbox.Op) error {
 	source, _ := op.Payload["source"].(string)
 	name, _ := op.Payload["name"].(string)
 	created, err := s.API.DuplicateTask(ctx, source, name)
@@ -355,7 +355,7 @@ func (s *Syncer) pushDuplicate(ctx context.Context, op outbox.Op) error {
 }
 
 // findCreatedTask looks for the task a create_task made (see reconcile).
-func findCreatedTask(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), f.since)
 	if err != nil || !ok {
@@ -386,7 +386,7 @@ func findCreatedTask(s *Syncer, ctx context.Context, op outbox.Op, f finder) (ou
 }
 
 // findDuplicate looks for the copy a duplicate_task made (see reconcile).
-func findDuplicate(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+func findDuplicate(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	// The copy goes where the source is (same parent, or the source's first project).
 	src, err := s.API.Task(ctx, str("source"))
@@ -428,7 +428,7 @@ func findDuplicate(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outc
 }
 
 // batchUpdateTask is the batch request for an update_task: its fields, checked against the task in Asana first.
-func batchUpdateTask(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchUpdateTask(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	task := e.task
 	if domaintask.TouchesCustomType(op.Payload) {
 		return false, nil // sent alone: a 402 there records that the plan lacks custom types
@@ -441,7 +441,7 @@ func batchUpdateTask(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry
 }
 
 // batchMoveTask is the batch request for a move_task to a section without a place in it.
-func batchMoveTask(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchMoveTask(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
 	str := func(k string) string { return payloadString(op, k) }
 	task := e.task
 	section := str("section")

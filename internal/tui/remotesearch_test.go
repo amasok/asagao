@@ -65,7 +65,7 @@ func findHarness(t *testing.T, f *tuiFindAsana) (*harness, *store.Store) {
 	t.Cleanup(srv.Close)
 	api := asana.NewClient(srv.Client())
 	api.BaseURL, api.MaxRetries = srv.URL, 0
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	m.syncer = &sync.Syncer{API: api, Store: st}
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 160, Height: 30})

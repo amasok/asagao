@@ -27,7 +27,7 @@ func TestTUIRenderIsTerminalSafe(t *testing.T) {
 		CreatedBy: ref("u2", "Partner"+evil)}}, testNow); err != nil {
 		t.Fatal(err)
 	}
-	m := New(ctx, Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(ctx, onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 160, Height: 50})
 	h.run(m.Init())

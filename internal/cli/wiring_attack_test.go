@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"path/filepath"
 	"strings"
 	gosync "sync"
@@ -77,7 +78,7 @@ func TestNewRootPersistentPreRunErrors(t *testing.T) {
 		w := Wiring{
 			MigrateLegacyDirs: func() error { return errors.New("warn") },
 			LoadSettings:      func() (settings.Config, error) { return settings.Config{}, wantErr },
-			OpenStore: func(context.Context, string) (Store, error) {
+			OpenStore: func(context.Context, string) (*Local, error) {
 				openCalled.Store(true)
 				return nil, errors.New("must not be called")
 			},
@@ -126,11 +127,11 @@ func TestNewRootDryRunAndNormalConcurrentIsolation(t *testing.T) {
 		return Wiring{
 			MigrateLegacyDirs: func() error { return nil },
 			LoadSettings:      func() (settings.Config, error) { return settings.Config{}, nil },
-			OpenStore: func(ctx context.Context, path string) (Store, error) {
+			OpenStore: func(ctx context.Context, path string) (*Local, error) {
 				if !strings.Contains(path, dryRunPrefix) {
 					path = dbPath
 				}
-				return StoreOpener(store.Open)(ctx, path)
+				return StoreOpener(store.Open, wire.UseCases, wire.Syncer)(ctx, path)
 			},
 		}
 	}
@@ -218,8 +219,8 @@ func TestNewRootJSONAndTermSafeConcurrentIsolation(t *testing.T) {
 		return Wiring{
 			MigrateLegacyDirs: func() error { return nil },
 			LoadSettings:      func() (settings.Config, error) { return settings.Config{}, nil },
-			OpenStore: func(ctx context.Context, _ string) (Store, error) {
-				return StoreOpener(store.Open)(ctx, dbPath)
+			OpenStore: func(ctx context.Context, _ string) (*Local, error) {
+				return StoreOpener(store.Open, wire.UseCases, wire.Syncer)(ctx, dbPath)
 			},
 		}
 	}

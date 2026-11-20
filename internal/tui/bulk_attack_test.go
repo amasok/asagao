@@ -24,7 +24,7 @@ func (h *harness) dropFromList(gid string) {
 
 func (h *harness) completed(gid string) bool {
 	h.t.Helper()
-	d, err := h.m.deps.Store.GetTask(context.Background(), gid)
+	d, err := storeOf(h.m).GetTask(context.Background(), gid)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestBulkAttackReloadWhilePickerOpenDropsHiddenTask(t *testing.T) {
 		}
 	}
 	h.key("enter", "y")
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t3"); d.Assignee != nil && d.Assignee.GID == "u2" {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t3"); d.Assignee != nil && d.Assignee.GID == "u2" {
 		t.Fatal("hidden t3 got the assignee change")
 	}
 }
@@ -81,7 +81,7 @@ func TestBulkAttackReloadWhileDatePromptDropsHiddenTask(t *testing.T) {
 	h.dropFromList("t3")
 	h.typeText("2026-12-05")
 	h.key("enter", "y")
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t3"); d.DueOn == "2026-12-05" {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t3"); d.DueOn == "2026-12-05" {
 		t.Fatal("hidden t3 got the due date")
 	}
 }
@@ -107,7 +107,7 @@ func TestBulkAttackCancelledDatePromptDoesNotLeakIntoSingleDue(t *testing.T) {
 	if h.m.bulkAsk != nil {
 		t.Fatalf("single date entry must not ask about marked tasks: %q", h.footer())
 	}
-	if d, _ := h.m.deps.Store.GetTask(context.Background(), "t1"); d.DueOn != "2026-12-09" {
+	if d, _ := storeOf(h.m).GetTask(context.Background(), "t1"); d.DueOn != "2026-12-09" {
 		t.Fatalf("t1 due = %q", d.DueOn)
 	}
 }
@@ -147,7 +147,7 @@ func TestBulkAttackMixedCompletionCountsOnlyChanged(t *testing.T) {
 // Tasks that already have the chosen due date are not counted; none left says so, no question.
 func TestBulkAttackDueSkipsUnchanged(t *testing.T) {
 	h := newHarness(t, 140, 30)
-	d, _ := h.m.deps.Store.GetTask(context.Background(), "t1")
+	d, _ := storeOf(h.m).GetTask(context.Background(), "t1")
 	if d.DueOn == "" {
 		t.Skip("t1 has no due date in the fixture")
 	}

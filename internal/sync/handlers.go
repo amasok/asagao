@@ -17,20 +17,20 @@ import (
 // Only send is required.
 type opHandler struct {
 	// send sends the entry (already marked "sending").
-	send func(s *Syncer, ctx context.Context, op outbox.Op) (outcome, error)
+	send func(s *Pusher, ctx context.Context, op outbox.Op) (outcome, error)
 	// sendAlong, when set, is used by Push instead of send: it sends the entry together
 	// with others of its kind queued after it, and returns how many of those it sent.
-	sendAlong func(s *Syncer, ctx context.Context, op outbox.Op) (out outcome, alsoSent int, err error)
+	sendAlong func(s *Pusher, ctx context.Context, op outbox.Op) (out outcome, alsoSent int, err error)
 	// startOn: the payload may set a task's start date, which some plans lack (see
 	// startOnOutcome).
 	startOn bool
 	// batch fills in e for an entry that can go out in a POST /batch (ok); nil: always
 	// sent on its own. e.task is the entry's task, an Asana gid.
-	batch func(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (ok bool, err error)
+	batch func(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (ok bool, err error)
 	// find looks in Asana for the result of an entry that may have been applied (see
 	// reconcile) and records it like send would; nil: there is nothing to look for (the
 	// entry is harmless to send again).
-	find func(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error)
+	find func(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error)
 	// settle is how long after sending the entry its result may still be missing from
 	// Asana's lists (0: settleDefault).
 	settle time.Duration
@@ -42,16 +42,16 @@ type opHandler struct {
 	// an option or a field of the project still being created makes it wait.
 	fieldValues func(op outbox.Op) map[string]any
 	// waits is any other reason for the entry to wait (see waitsForCreate).
-	waits func(s *Syncer, ctx context.Context, op outbox.Op) (bool, error)
+	waits func(s *Pusher, ctx context.Context, op outbox.Op) (bool, error)
 	// forbidden turns a 403 to the entry into the error recorded for it (and may record
 	// that the user cannot make such a change); nil: the 403 as it is.
-	forbidden func(s *Syncer, ctx context.Context, op outbox.Op, cause error) error
+	forbidden func(s *Pusher, ctx context.Context, op outbox.Op, cause error) error
 	// goneReason says why the entry is dropped when Asana answers 404 although the task
 	// is there (something else it names is missing); nil or "": goneReasonDefault.
 	goneReason func(op outbox.Op, cause error) string
 	// planWorkspace returns the workspace a 402 to the entry is recorded for ("": the
 	// default workspace), as the app reads it before queuing one (app.planIn).
-	planWorkspace func(s *Syncer, ctx context.Context, op outbox.Op) string
+	planWorkspace func(s *Pusher, ctx context.Context, op outbox.Op) string
 }
 
 // localRef is where an entry holds the gid of a comment, attachment or time entry, and
@@ -84,8 +84,8 @@ func register(k outbox.Kind, h opHandler) {
 }
 
 // sends adapts a send function that has no outcome to report.
-func sends(f func(s *Syncer, ctx context.Context, op outbox.Op) error) func(*Syncer, context.Context, outbox.Op) (outcome, error) {
-	return func(s *Syncer, ctx context.Context, op outbox.Op) (outcome, error) {
+func sends(f func(s *Pusher, ctx context.Context, op outbox.Op) error) func(*Pusher, context.Context, outbox.Op) (outcome, error) {
+	return func(s *Pusher, ctx context.Context, op outbox.Op) (outcome, error) {
 		return sent, f(s, ctx, op)
 	}
 }
@@ -105,7 +105,7 @@ func (f finder) byMe(r *model.Ref) bool { return r == nil || f.me == "" || r.GID
 func (f finder) recent(t time.Time) bool { return !t.Before(f.since) }
 
 // taken returns the Asana gids already recorded as the results of other entries.
-func (s *Syncer) taken(ctx context.Context, kind readmodel.ResultKind) (map[string]bool, error) {
+func (s *Pusher) taken(ctx context.Context, kind readmodel.ResultKind) (map[string]bool, error) {
 	return s.Store.RecordedResults(ctx, kind)
 }
 

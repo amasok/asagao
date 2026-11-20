@@ -21,10 +21,10 @@ type layoutState struct {
 type layoutLoadedMsg layoutState
 
 func (m *Model) loadLayout() tea.Cmd {
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
 		var l layoutState
-		if v, err := st.LayoutState(m.ctx); err == nil && v != "" {
+		if v, err := st.ViewState().LayoutState(m.ctx); err == nil && v != "" {
 			_ = json.Unmarshal([]byte(v), &l)
 		}
 		return layoutLoadedMsg(l)
@@ -40,9 +40,9 @@ func (m *Model) applyLayout(l layoutLoadedMsg) {
 
 func (m *Model) saveLayout() tea.Cmd {
 	b, _ := json.Marshal(layoutState{DetailRatio: m.detailRatio, HideSidebar: m.hideSidebar})
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		_ = st.SetLayoutState(m.ctx, string(b))
+		_ = st.ViewState().SetLayoutState(m.ctx, string(b))
 		return nil
 	}
 }

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func seedInbox(t *testing.T, state store.InboxState) *store.Store {
 
 func TestListInbox(t *testing.T) {
 	st := seedInbox(t, store.InboxState{Status: store.InboxOK})
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var out InboxOutput
 	call(t, cs, "list_inbox", map[string]any{}, &out)
 	if !out.Available || out.Unread != 2 || len(out.Notifications) != 3 || out.Notice != "" {
@@ -57,7 +58,7 @@ func TestListInboxFallsBack(t *testing.T) {
 	if err := st.UpsertTasks(context.Background(), []asana.Task{{GID: "t9", Name: "最近のタスク", ModifiedAt: testNow.Add(-time.Hour)}}); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	var out InboxOutput
 	call(t, cs, "list_inbox", map[string]any{}, &out)
 	if out.Available || !strings.Contains(out.Notice, "プラン") || len(out.Notifications) != 0 || out.Notifications == nil {
@@ -74,7 +75,7 @@ func TestListInboxFallsBack(t *testing.T) {
 
 func TestMarkNotificationsOffline(t *testing.T) {
 	st := seedInbox(t, store.InboxState{Status: store.InboxOK})
-	cs := connect(t, &Server{Store: st}) // no syncer: queued only
+	cs := connect(t, &Server{App: wire.UseCases(st)}) // no syncer: queued only
 	ctx := context.Background()
 
 	var w MarkNotificationsOutput
@@ -120,7 +121,7 @@ func TestMarkNotificationsOffline(t *testing.T) {
 
 func TestReadOnlyHidesMarkNotifications(t *testing.T) {
 	st := seedInbox(t, store.InboxState{Status: store.InboxOK})
-	cs := connect(t, &Server{Store: st, ReadOnly: true})
+	cs := connect(t, &Server{App: wire.UseCases(st), ReadOnly: true})
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "mark_notifications", Arguments: map[string]any{"all": true}})
 	if err == nil && !res.IsError {
 		t.Fatal("mark_notifications callable in read-only mode")

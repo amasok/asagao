@@ -42,7 +42,7 @@ func myTasksHarness(t *testing.T, st *store.Store) *harness {
 	if err := st.UpsertWorkspaces(context.Background(), []asana.Workspace{{GID: "w1", Name: "家"}}); err != nil {
 		t.Fatal(err)
 	}
-	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }})
+	m := New(context.Background(), onStore(st, Deps{Now: func() time.Time { return testNow }}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -59,7 +59,7 @@ func TestCreateTaskInMyTasks(t *testing.T) {
 		t.Fatalf("status:\n%s", s)
 	}
 	want := map[string]any{"workspace": "w1", "name": "牛乳を買う", "due_on": "2026-11-14", "assignee": "me"}
-	if got := createdPayload(t, h.m.deps.Store.(*store.Store)); !samePayload(got, want) {
+	if got := createdPayload(t, storeOf(h.m)); !samePayload(got, want) {
 		t.Fatalf("payload = %v, want %v", got, want)
 	}
 }

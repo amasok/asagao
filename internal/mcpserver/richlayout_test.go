@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"github.com/amasok/asagao/internal/wire"
 	"regexp"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ var layoutTag = regexp.MustCompile(`(?i)<(h[1-6]|hr|img|table|tr|td|object)\b`)
 func TestMCPRichTextTagsPerTarget(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	md := "# 予定\n\n---\n\n![図](asana:42)"
 	var w WriteOutput
 	for _, c := range []struct {

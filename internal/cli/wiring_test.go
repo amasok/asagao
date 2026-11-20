@@ -13,8 +13,7 @@ func testWiring() Wiring {
 		MigrateLegacyDirs: config.MigrateLegacyDirs,
 		LoadSettings:      config.Load,
 		APIClient:         wire.APIClient,
-		Syncer:            wire.Syncer,
-		OpenStore:         StoreOpener(wire.OpenStore),
+		OpenStore:         StoreOpener(wire.OpenStore, wire.UseCases, wire.Syncer),
 		CheckPAT:          wire.CheckPAT,
 		Searches:          config.SearchFile{},
 	}

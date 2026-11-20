@@ -81,7 +81,7 @@ func sentNotSaved(err error) error {
 //
 // Changes to tasks that already exist in Asana, next to each other in the queue, go out
 // up to 10 per request (POST /batch); each is then handled as if sent alone (batch.go).
-func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
+func (s *Pusher) Push(ctx context.Context) (res PushResult, err error) {
 	if s.PullOnly {
 		return res, ErrPullOnly
 	}
@@ -103,8 +103,8 @@ func (s *Syncer) Push(ctx context.Context) (res PushResult, err error) {
 // another (after a login as someone else). Run checks this itself at its start. Before the
 // first sync there is no account to compare with. Once confirmed, it is not asked again
 // for this Syncer: its token source never switches to another user (auth.ErrLoginReplaced).
-func (s *Syncer) checkPushAccount(ctx context.Context) error {
-	if s.accountOK.Load() {
+func (s *Pusher) checkPushAccount(ctx context.Context) error {
+	if s.accountConfirmed() {
 		return nil
 	}
 	want, err := s.Store.SyncedMeGID(ctx)
@@ -118,12 +118,12 @@ func (s *Syncer) checkPushAccount(ctx context.Context) error {
 	if me.GID != want {
 		return fmt.Errorf("%w (%s / %s)", ErrAccountChanged, me.GID, want)
 	}
-	s.accountOK.Store(true)
+	s.confirmAccount()
 	return nil
 }
 
 // lock takes the store's push lock (held by Push, by all of Run, and by store.Reset).
-func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
+func (s *Pusher) lock(ctx context.Context, res *PushResult) (func(), error) {
 	unlock, err := s.Store.TryLockPush()
 	if errors.Is(err, readmodel.ErrPushBusy) {
 		res.Busy = true
@@ -138,7 +138,7 @@ func (s *Syncer) lock(ctx context.Context, res *PushResult) (func(), error) {
 //
 // drops is shared by every pass under the same lock (one per Push, one per Run), so the
 // account is checked once and maxDroppedTasks bounds the whole push or sync.
-func (s *Syncer) pushLocked(ctx context.Context, drops *dropState) (res PushResult, last int64, err error) {
+func (s *Pusher) pushLocked(ctx context.Context, drops *dropState) (res PushResult, last int64, err error) {
 	if res, last, err = s.pushPass(ctx, 0, drops); err != nil {
 		return res, last, err
 	}
@@ -146,7 +146,7 @@ func (s *Syncer) pushLocked(ctx context.Context, drops *dropState) (res PushResu
 }
 
 // catchUp sends entries queued after entry last (one more pass) and adds its result.
-func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops *dropState) (PushResult, int64, error) {
+func (s *Pusher) catchUp(ctx context.Context, res PushResult, last int64, drops *dropState) (PushResult, int64, error) {
 	more, last, err := s.pushPass(ctx, last, drops)
 	res.Sent += more.Sent
 	res.Conflicts += more.Conflicts
@@ -158,7 +158,7 @@ func (s *Syncer) catchUp(ctx context.Context, res PushResult, last int64, drops 
 }
 
 // pushPass sends the pending entries newer than entry after, in order.
-func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (res PushResult, last int64, err error) {
+func (s *Pusher) pushPass(ctx context.Context, after int64, drops *dropState) (res PushResult, last int64, err error) {
 	last = after
 	if _, _, err := s.Store.RecoverInterruptedOps(ctx); err != nil {
 		return res, last, err
@@ -225,7 +225,7 @@ func (s *Syncer) pushPass(ctx context.Context, after int64, drops *dropState) (r
 
 // pushEntry handles one entry (snapshot as listed when the pass began), from step first
 // on (a step already taken by pushBatch counts). An error stops the push.
-func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, verified map[int64]bool, res *PushResult, drops *dropState) error {
+func (s *Pusher) pushEntry(ctx context.Context, snapshot outbox.Op, first int, verified map[int64]bool, res *PushResult, drops *dropState) error {
 	// An entry is handled a bounded number of times per push, whatever happens: send,
 	// check + send again, the follow-up move of a create, and that move's retry. What is
 	// left over waits for the next push.
@@ -337,7 +337,7 @@ func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 // error err. again: handle the entry once more right away (a follow-up, or a check of
 // Asana). An error stops the push (offline, logged out, the store failing); op has been
 // put back in the queue as it should then.
-func (s *Syncer) handleOutcome(ctx context.Context, op outbox.Op, out outcome, err error, wasFollowUp bool, res *PushResult, drops *dropState) (again bool, stop error) {
+func (s *Pusher) handleOutcome(ctx context.Context, op outbox.Op, out outcome, err error, wasFollowUp bool, res *PushResult, drops *dropState) (again bool, stop error) {
 	switch {
 	case err == nil:
 		switch {
@@ -384,7 +384,7 @@ const maxStepsPerEntry = 4
 // waits instead of failing, and goes out once the create is sent (or is discarded with
 // it). An edit or delete of a comment or attachment not created in Asana yet waits for
 // its create too.
-func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
+func (s *Pusher) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
 	h := handlers[op.Kind]
 	if h.local.key != "" {
 		g := payloadString(op, h.local.key)
@@ -413,7 +413,7 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 
 // createQueued reports whether gid is a task created offline whose create (or duplicate)
 // is still in the outbox, in any state.
-func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
+func (s *Pusher) createQueued(ctx context.Context, gid string) (bool, error) {
 	if !localgid.IsLocal(gid) {
 		return false, nil
 	}
@@ -427,7 +427,7 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 // send sends one entry (already marked "sending"). An entry Asana refuses because the
 // workspace's plan lacks the feature (402) also hides that feature in the workspace for
 // plan.RecheckAfter.
-func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
 	withStart = withStart && handlers[op.Kind].startOn
 	var startWS string
@@ -448,9 +448,9 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 			ws, _ = s.Store.DefaultWorkspace(ctx)
 		}
 		if err == nil {
-			return out, s.clearPlanRefusal(ctx, feature, ws)
+			return out, s.Store.ClearPlanRefusal(ctx, feature, ws)
 		}
-		if refused, rerr := s.recordPlanRefusal(ctx, feature, ws, err); rerr != nil {
+		if refused, rerr := recordPlanRefusal(ctx, s.Store, s.clock(), feature, ws, err); rerr != nil {
 			return out, rerr
 		} else if refused {
 			err = fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(feature), err)
@@ -466,16 +466,16 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	case plan.TimeTracking:
 		if model.IsPaymentRequired(err) {
 			if ws, wsErr := s.Store.TaskWorkspace(ctx, op.TaskGID); wsErr == nil {
-				_, _ = s.recordPlanRefusal(ctx, feature, ws, err) // per workspace, for a while (plan.go)
+				_, _ = recordPlanRefusal(ctx, s.Store, s.clock(), feature, ws, err) // per workspace, for a while (plan.go)
 			}
 		}
 	case plan.Sections, plan.Tags, plan.MySection: // per workspace, for a while (#50)
 		switch {
 		case err == nil && out != conflicted:
 			// Asana took it: a failure to forget the 402 only hides the feature until it expires.
-			_ = s.clearPlanRefusal(ctx, feature, s.planWorkspace(ctx, op))
+			_ = s.Store.ClearPlanRefusal(ctx, feature, s.planWorkspace(ctx, op))
 		case model.IsPaymentRequired(err):
-			_, _ = s.recordPlanRefusal(ctx, feature, s.planWorkspace(ctx, op), err)
+			_, _ = recordPlanRefusal(ctx, s.Store, s.clock(), feature, s.planWorkspace(ctx, op), err)
 		}
 	}
 	// (the brief's 402 is recorded per workspace by brief.go)
@@ -486,15 +486,15 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 // start_on) to workspace ws said about its plan: a 402 hides start dates there for a while
 // (plan.StartOn), and the error says why; an answer that set one forgets an
 // earlier 402. err is returned, wrapped when it is a 402.
-func (s *Syncer) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
+func (s *Pusher) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
 	if err == nil {
 		if v, _ := op.Payload["start_on"].(string); v != "" && out != conflicted {
 			// Sent: a failure to forget the 402 only hides start dates until it expires.
-			_ = s.clearPlanRefusal(ctx, plan.StartOn, ws)
+			_ = s.Store.ClearPlanRefusal(ctx, plan.StartOn, ws)
 		}
 		return nil
 	}
-	if refused, rerr := s.recordPlanRefusal(ctx, plan.StartOn, ws, err); rerr != nil {
+	if refused, rerr := recordPlanRefusal(ctx, s.Store, s.clock(), plan.StartOn, ws, err); rerr != nil {
 		return errors.Join(err, rerr)
 	} else if refused {
 		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.StartOn), err: err}
@@ -522,7 +522,7 @@ func (e *startOnWithdrawn) Unwrap() error { return e.err }
 // decide: the start date is dropped (and reported in res.Discarded, with the reason), and
 // the rest of the entry, if any, is sent again right away. Asana did not apply the
 // request (a 402, or it was not sent), so sending the rest again repeats nothing.
-func (s *Syncer) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
+func (s *Pusher) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
 	rest, d, err := s.Store.WithdrawStartOn(ctx, op.ID, w.reason, s.clock())
 	if err != nil {
 		return false, err
@@ -531,7 +531,7 @@ func (s *Syncer) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWi
 	return rest != nil, nil
 }
 
-func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 	h, ok := handlers[op.Kind]
 	if !ok { // an entry of a newer version: Asana cannot be asked for it
 		return sent, &model.Error{Status: 400}
@@ -543,7 +543,7 @@ func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 // verified first if Asana may have received it and sending it twice would duplicate it.
 // A 429 or a 401 (the token is rejected, e.g. an expired PAT) was not processed: the entry
 // waits, unchanged, for the next push (after the user logs in again).
-func (s *Syncer) holdBack(ctx context.Context, op outbox.Op, cause error) error {
+func (s *Pusher) holdBack(ctx context.Context, op outbox.Op, cause error) error {
 	ctx = context.WithoutCancel(ctx) // record the state even if ctx was cancelled
 	if requestNotSent(cause) || isRateLimited(cause) || model.IsUnauthorized(cause) {
 		return s.Store.ReleaseNotSent(ctx, op.ID)
@@ -562,7 +562,7 @@ func (s *Syncer) holdBack(ctx context.Context, op outbox.Op, cause error) error 
 // change) or a broken response to a harmless entry marks it failed. A 5xx or a broken
 // response to a create, or a change Asana accepted but we could not save, may have been
 // applied: the entry is verified (verify = true).
-func (s *Syncer) handleError(ctx context.Context, op outbox.Op, cause error) (verify bool, err error) {
+func (s *Pusher) handleError(ctx context.Context, op outbox.Op, cause error) (verify bool, err error) {
 	var apiErr *model.Error
 	var notSaved *sentNotSavedError
 	switch {
@@ -602,7 +602,7 @@ func isNotFound(err error) bool {
 // otherwise only this change is (its section, project, tag, ... is gone). A create is
 // dropped with its local task (its parent or project is gone). Dropped changes are
 // recorded for the user and listed in res.Discarded.
-func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dropState) error {
+func (s *Pusher) dropGone(ctx context.Context, op outbox.Op, cause error, st *dropState) error {
 	res := st.res
 	// Asana also answers 404 when the logged-in account cannot see the object (another
 	// account or organization than the one the store was synced with). Make sure it is
@@ -707,11 +707,11 @@ var ErrAccountChanged = readmodel.ErrAccountChanged
 
 // checkAccount makes sure (once per push) that the API acts as the user the store was
 // synced with.
-func (s *Syncer) checkAccount(ctx context.Context, st *dropState) error {
+func (s *Pusher) checkAccount(ctx context.Context, st *dropState) error {
 	if st.checked {
 		return st.account
 	}
-	if s.accountOK.Load() { // confirmed by this Syncer already (Push or Run)
+	if s.accountConfirmed() { // confirmed by this Syncer already (Push or Run)
 		st.checked = true
 		return nil
 	}

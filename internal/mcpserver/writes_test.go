@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/amasok/asagao/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -50,7 +51,7 @@ func TestFailedWritesChangeNothing(t *testing.T) {
 	if err := st.UpsertProjects(ctx, "w1", []asana.Project{{GID: "p2", Name: "家計"}, {GID: "p3", Name: "家計簿"}}, "me"); err != nil {
 		t.Fatal(err)
 	}
-	cs := connect(t, &Server{Store: st}) // offline: writes are only queued
+	cs := connect(t, &Server{App: wire.UseCases(st)}) // offline: writes are only queued
 
 	valid := map[string]any{"gid": "t1", "name": "新しい名前", "due_on": "tomorrow", "completed": true,
 		"add_tags": []string{"新タグ"}, "add_followers": []string{"Partner"}, "add_projects": []string{"p2"}}
@@ -160,7 +161,7 @@ func TestUpdateProjectOrderAndPartialFailure(t *testing.T) {
 			_ = st.UpsertUsers(context.Background(), []asana.User{{GID: "u2", Name: "Partner"}})
 			api := &projectAPI{failPath: tc.failPath}
 			srv := api.server(t)
-			cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+			cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 				c := asana.NewClient(srv.Client())
 				c.BaseURL = srv.URL
 				return &sync.Syncer{API: c, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
@@ -183,7 +184,7 @@ func TestUpdateProjectOrderAndPartialFailure(t *testing.T) {
 func TestResolveOutboxStateRules(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
-	cs := connect(t, &Server{Store: st})
+	cs := connect(t, &Server{App: wire.UseCases(st)})
 	_ = st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "ローカル"}, testNow)
 	_ = st.RenameSectionLocal(ctx, "s1", "家具2", testNow)
 	ops, _ := st.ListOps(ctx)
@@ -218,7 +219,7 @@ func TestPushBusyIsNotOffline(t *testing.T) {
 	st := seed(t)
 	ctx := context.Background()
 	srv := fakeAsana(t)
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
@@ -261,7 +262,7 @@ func TestAccountChangedIsExplained(t *testing.T) {
 		fmt.Fprint(w, `{"errors":[{"message":"Not Found"}]}`)
 	}))
 	t.Cleanup(srv.Close)
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil
@@ -295,7 +296,7 @@ func TestSyncBusyIsNotAnError(t *testing.T) {
 		t.Errorf("nothing else should be requested: %s %s", r.Method, r.URL)
 	}))
 	t.Cleanup(srv.Close)
-	cs := connect(t, &Server{Store: st, NewSyncer: func(context.Context) (*sync.Syncer, error) {
+	cs := connect(t, &Server{App: wire.UseCases(st), NewSyncer: func(context.Context) (*sync.Syncer, error) {
 		api := asana.NewClient(srv.Client())
 		api.BaseURL = srv.URL
 		return &sync.Syncer{API: api, Store: st, Cfg: sync.Config{CompletedDays: 14}}, nil

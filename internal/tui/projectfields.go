@@ -20,11 +20,11 @@ import (
 const newOptionValue = "\x00new"
 
 func (m *Model) fieldOptions(now time.Time) *app.FieldOptions {
-	return &app.FieldOptions{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.FieldOptions(func() time.Time { return now })
 }
 
 func (m *Model) projectFields(now time.Time) *app.ProjectFields {
-	return &app.ProjectFields{Store: m.deps.Store, Clock: func() time.Time { return now }}
+	return m.deps.App.ProjectFields(func() time.Time { return now })
 }
 
 // startNewOption asks for the name of an option to add to field f and set on task t.

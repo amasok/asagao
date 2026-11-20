@@ -67,7 +67,7 @@ type goalDetailMsg struct {
 	fetch   error
 }
 
-func (m *Model) goalUseCases() *app.Goals { return &app.Goals{Store: m.deps.Store, Clock: m.deps.Now} }
+func (m *Model) goalUseCases() *app.Goals { return m.deps.App.Goals(m.deps.Now) }
 
 func (m *Model) openGoals() tea.Cmd { return m.openGoalScreen(false) }
 

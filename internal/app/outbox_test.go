@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +19,21 @@ type outboxStore struct {
 	getErr error
 	err    error // returned by the writes
 	calls  []string
+	// the dropped changes not announced yet, and why reading or marking them fails
+	discards   []readmodel.Discard
+	discardErr error
+	markErr    error
+	marked     []int64
+}
+
+func (f *outboxStore) PendingDiscards(context.Context) ([]readmodel.Discard, error) {
+	return f.discards, f.discardErr
+}
+
+func (f *outboxStore) MarkDiscardsNotified(_ context.Context, ids []int64) error {
+	f.calls = append(f.calls, "mark")
+	f.marked = append(f.marked, ids...)
+	return f.markErr
 }
 
 func (f *outboxStore) GetOp(_ context.Context, id int64) (*outbox.Op, error) {
@@ -187,5 +203,37 @@ func TestOutboxRefreshTargetEveryKind(t *testing.T) {
 		if got := refreshTarget(outbox.Op{Kind: k, TaskGID: "1200"}); got != want {
 			t.Errorf("%s: %q, want %q", k, got, want)
 		}
+	}
+}
+
+func TestTakeDiscards(t *testing.T) {
+	ctx := context.Background()
+	reset := readmodel.Discard{ID: 2, Reason: readmodel.DiscardReasonReset}
+	st := &outboxStore{discards: []readmodel.Discard{{ID: 1, Reason: "gone"}, reset, {ID: 3, Reason: "gone"}}}
+	got, err := (&Outbox{Store: st}).TakeDiscards(ctx)
+	if err != nil || got.MarkErr != nil {
+		t.Fatal(err, got.MarkErr)
+	}
+	if len(got.All) != 3 || len(got.Announce) != 2 || got.Announce[0].ID != 1 || got.Announce[1].ID != 3 {
+		t.Errorf("taken = %+v, want all 3, announcing 1 and 3 (2 was reset)", got)
+	}
+	if !reflect.DeepEqual(st.marked, []int64{1, 2, 3}) {
+		t.Errorf("marked %v, want every one", st.marked)
+	}
+
+	boom := errors.New("busy")
+	st = &outboxStore{discards: []readmodel.Discard{{ID: 1}}, markErr: boom}
+	if got, err := (&Outbox{Store: st}).TakeDiscards(ctx); err != nil || got.MarkErr != boom || len(got.Announce) != 1 {
+		t.Errorf("mark failing: %+v, %v; want the change with MarkErr", got, err)
+	}
+
+	st = &outboxStore{discardErr: boom}
+	if got, err := (&Outbox{Store: st}).TakeDiscards(ctx); err != boom || got.All != nil || len(st.calls) != 0 {
+		t.Errorf("read failing: %+v, %v, calls %v; want the error and nothing marked", got, err, st.calls)
+	}
+
+	st = &outboxStore{}
+	if _, err := (&Outbox{Store: st}).TakeDiscards(ctx); err != nil || len(st.calls) != 0 {
+		t.Errorf("none pending: %v, calls %v; want nothing marked", err, st.calls)
 	}
 }

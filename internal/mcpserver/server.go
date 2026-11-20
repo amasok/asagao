@@ -48,9 +48,14 @@ const instructions = `Asana tasks from a local cache that asagao keeps in sync.
 
 // Server holds the dependencies of the MCP tools.
 type Server struct {
-	Store Store
+	// App is the use cases over the local cache (internal/wire builds them): the tools
+	// read and write through them, never the store itself.
+	App *app.UseCases
 	// NewSyncer creates an authenticated syncer; nil means offline-only.
 	NewSyncer func(ctx context.Context) (*sync.Syncer, error)
+	// LocalSyncer is a syncer without an Asana client, over the same cache: what is cached
+	// only (attachments downloaded before). nil: none.
+	LocalSyncer func() *sync.Syncer
 	// ReadOnly hides the write tools (create_task, update_task, add_comment, ...).
 	ReadOnly bool
 	// CacheDir is where files to upload are copied before sending.
@@ -71,8 +76,8 @@ type Server struct {
 	syncer *sync.Syncer
 }
 
-// query reads the local cache (app.Query over the store).
-func (s *Server) query() app.Query { return app.Query{Store: s.Store} }
+// query reads the local cache.
+func (s *Server) query() app.Query { return s.App.Query() }
 
 // New builds the MCP server with all tools registered.
 func (s *Server) New() *mcp.Server {
@@ -622,7 +627,7 @@ func (s *Server) sync(ctx context.Context, _ *mcp.CallToolRequest, in SyncInput)
 // --- write tools ---
 
 func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in CreateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now, Names: finder{s}}
+	tasks := s.App.Tasks(s.Now, finder{s})
 	gid, err := tasks.Create(ctx, app.CreateTaskInput{
 		Name: in.Name, Parent: in.Parent, Project: in.Project, Section: in.Section,
 		Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee, Notes: in.Notes, Tags: in.Tags,
@@ -647,7 +652,7 @@ func (s *Server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in Crea
 // name (tag, follower, project) does not leave half of the update saved.
 func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
 	now := s.Now()
-	tasks := app.Tasks{Store: s.Store, Text: richtext.Converter{}, Clock: func() time.Time { return now }, Names: finder{s}}
+	tasks := s.App.Tasks(func() time.Time { return now }, finder{s})
 	changes, err := tasks.ResolveUpdateFor(ctx, in.GID, app.UpdateTaskInput{
 		Name: in.Name, Notes: in.Notes, Due: in.DueOn, Start: in.StartOn, Assignee: in.Assignee,
 		Subtype: in.ResourceSubtype, Approval: in.ApprovalStatus, Completed: in.Completed, Liked: in.Liked,
@@ -668,7 +673,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	relations := app.Relations{Store: s.Store, Clock: func() time.Time { return now }}
+	relations := s.App.Relations(func() time.Time { return now })
 	edit, err := relations.Resolve(ctx, in.GID, app.RelationsInput{
 		AddTags: in.AddTags, RemoveTags: in.RemoveTags,
 		AddFollowers: in.AddFollowers, RemoveFollowers: in.RemoveFollowers,
@@ -701,7 +706,7 @@ func (s *Server) updateTask(ctx context.Context, _ *mcp.CallToolRequest, in Upda
 }
 
 func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	sections := s.App.Sections(s.Now)
 	if in.MyTasks {
 		if in.Project != "" {
 			return nil, WriteOutput{}, fmt.Errorf("my_tasks and project cannot be used together")
@@ -721,7 +726,7 @@ func (s *Server) moveTask(ctx context.Context, _ *mcp.CallToolRequest, in MoveTa
 }
 
 func (s *Server) renameSection(ctx context.Context, _ *mcp.CallToolRequest, in RenameSectionInput) (*mcp.CallToolResult, WriteOutput, error) {
-	sections := app.Sections{Store: s.Store, Clock: s.Now}
+	sections := s.App.Sections(s.Now)
 	if err := sections.Rename(ctx, in.Project, in.Section, in.Name); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -730,7 +735,7 @@ func (s *Server) renameSection(ctx context.Context, _ *mcp.CallToolRequest, in R
 }
 
 func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddCommentInput) (*mcp.CallToolResult, WriteOutput, error) {
-	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	comments := s.App.Comments(s.Now)
 	if _, err := comments.Add(ctx, in.GID, in.Text); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -738,7 +743,7 @@ func (s *Server) addComment(ctx context.Context, _ *mcp.CallToolRequest, in AddC
 }
 
 func (s *Server) updateComment(ctx context.Context, _ *mcp.CallToolRequest, in UpdateCommentInput) (*mcp.CallToolResult, WriteOutput, error) {
-	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	comments := s.App.Comments(s.Now)
 	if err := comments.Edit(ctx, in.GID, in.Text); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -746,7 +751,7 @@ func (s *Server) updateComment(ctx context.Context, _ *mcp.CallToolRequest, in U
 }
 
 func (s *Server) deleteComment(ctx context.Context, _ *mcp.CallToolRequest, in DeleteInput) (*mcp.CallToolResult, WriteOutput, error) {
-	comments := app.Comments{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	comments := s.App.Comments(s.Now)
 	if err := comments.Delete(ctx, in.GID); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -754,7 +759,7 @@ func (s *Server) deleteComment(ctx context.Context, _ *mcp.CallToolRequest, in D
 }
 
 func (s *Server) deleteAttachment(ctx context.Context, _ *mcp.CallToolRequest, in DeleteInput) (*mcp.CallToolResult, WriteOutput, error) {
-	copies := app.Copies{Store: s.Store, Clock: s.Now}
+	copies := s.App.Copies("", s.Now)
 	if err := copies.Detach(ctx, in.GID); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -781,7 +786,7 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 
 // pushTarget is push for a write that names what it made (a section, a time entry).
 func (s *Server) pushTarget(ctx context.Context, t app.PushTarget) WriteOutput {
-	pushNow := app.PushNow{Store: s.Store, LoginHelp: auth.LoginHelp}
+	pushNow := s.App.PushNow(auth.LoginHelp)
 	// The syncer is made before the push's timeout starts, with the call's context: it is
 	// kept for later calls, and making it (a 1Password prompt) does not use up the push's time.
 	syncer, err := s.getSyncer(ctx)
@@ -880,7 +885,7 @@ func (s *Server) resolveOutbox(ctx context.Context, _ *mcp.CallToolRequest, in R
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	r, err := (&app.Outbox{Store: s.Store}).Resolve(ctx, in.ID, action)
+	r, err := s.App.Outbox().Resolve(ctx, in.ID, action)
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -902,7 +907,10 @@ const maxImageBytes = 4 << 20
 func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in GetAttachmentInput) (*mcp.CallToolResult, AttachmentOutput, error) {
 	syncer, err := s.getSyncer(ctx)
 	if err != nil {
-		syncer = &sync.Syncer{Store: s.Store} // offline: cached files only
+		if s.LocalSyncer == nil {
+			return nil, AttachmentOutput{}, err
+		}
+		syncer = s.LocalSyncer() // offline: cached files only
 	}
 	path, err := syncer.DownloadAttachment(ctx, in.TaskGID, in.GID)
 	if err != nil {
@@ -939,7 +947,7 @@ func (s *Server) getAttachment(ctx context.Context, _ *mcp.CallToolRequest, in G
 }
 
 func (s *Server) duplicateTask(ctx context.Context, _ *mcp.CallToolRequest, in DuplicateTaskInput) (*mcp.CallToolResult, WriteOutput, error) {
-	copies := app.Copies{Store: s.Store, CacheDir: s.CacheDir, Clock: s.Now}
+	copies := s.App.Copies(s.CacheDir, s.Now)
 	gid, err := copies.Duplicate(ctx, in.GID, in.Name)
 	if err != nil {
 		return nil, WriteOutput{}, err
@@ -952,7 +960,7 @@ func (s *Server) uploadAttachment(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	copies := app.Copies{Store: s.Store, CacheDir: s.CacheDir, Clock: s.Now}
+	copies := s.App.Copies(s.CacheDir, s.Now)
 	if _, err := copies.Attach(ctx, in.TaskGID, path); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -1038,7 +1046,7 @@ func (s *Server) getProject(ctx context.Context, _ *mcp.CallToolRequest, in Proj
 	if out.Members, err = s.query().ProjectMembers(ctx, gid); err != nil {
 		return nil, out, err
 	}
-	fields, err := s.Store.ProjectFields(ctx, gid)
+	fields, err := s.query().ProjectFields(ctx, gid)
 	if err != nil {
 		return nil, out, err
 	}
@@ -1070,7 +1078,7 @@ type CreateStatusInput struct {
 }
 
 func (s *Server) createStatus(ctx context.Context, _ *mcp.CallToolRequest, in CreateStatusInput) (*mcp.CallToolResult, WriteOutput, error) {
-	statuses := app.Status{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	statuses := s.App.Status(s.Now)
 	if _, err := statuses.Create(ctx, app.StatusInput{Project: in.Project, Status: in.Status, Title: in.Title, Text: in.Text}); err != nil {
 		return nil, WriteOutput{}, err
 	}
@@ -1133,7 +1141,7 @@ func (s *Server) updateProject(ctx context.Context, _ *mcp.CallToolRequest, in U
 	if err != nil {
 		return nil, ProjectWriteOutput{}, fmt.Errorf("remove_members: %w", err)
 	}
-	projects := app.Projects{Store: s.Store, Text: richtext.Converter{}, Clock: s.Now}
+	projects := s.App.Projects(s.Now)
 	fields, err := projects.ResolveUpdate(ctx, app.UpdateProjectInput{Notes: in.Notes, Owner: in.Owner, StartOn: in.StartOn, DueOn: in.DueOn, Color: in.Color})
 	if err != nil {
 		return nil, ProjectWriteOutput{}, err

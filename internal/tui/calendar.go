@@ -56,18 +56,18 @@ func (m *Model) loadCalendar() tea.Cmd {
 	default:
 		f.Completed = boolPtr(false)
 	}
-	sc, st := m.currentScope(), m.deps.Store
+	sc, st := m.currentScope(), m.deps.App
 	return func() tea.Msg {
 		if sc.kind == scopeProject {
 			f.ProjectGID = sc.project
 		} else {
-			me, err := queryOf(st).MeGID(m.ctx)
+			me, err := st.Query().MeGID(m.ctx)
 			if err != nil {
 				return calendarLoadedMsg{err: err}
 			}
 			f.AssigneeGID = me
 		}
-		tasks, err := queryOf(st).ListTasks(m.ctx, f)
+		tasks, err := st.Query().ListTasks(m.ctx, f)
 		byDay := map[string][]readmodel.TaskSummary{}
 		for _, t := range tasks {
 			byDay[t.DueOn] = append(byDay[t.DueOn], t)

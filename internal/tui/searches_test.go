@@ -17,7 +17,7 @@ import (
 
 func savedSearchHarness(t *testing.T, f SearchFile) *harness {
 	t.Helper()
-	m := New(context.Background(), Deps{Store: fixtureStore(t), Now: func() time.Time { return testNow }, Searches: f})
+	m := New(context.Background(), onStore(fixtureStore(t), Deps{Now: func() time.Time { return testNow }, Searches: f}))
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())

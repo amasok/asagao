@@ -11,7 +11,6 @@ import (
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/richtext"
 )
 
 // The project overview (O): the project's description, owner, dates, color, progress,
@@ -42,9 +41,9 @@ func (m *Model) openOverview() tea.Cmd {
 // loadOverview shows the cached overview, then (if fetch and online) refreshes it from
 // Asana and shows it again.
 func (m *Model) loadOverview(project string, fetch bool) tea.Cmd {
-	st, syncer := m.deps.Store, m.syncer
+	st, syncer := m.deps.App, m.syncer
 	load := func() overviewLoadedMsg {
-		o, err := queryOf(st).ProjectOverview(m.ctx, project)
+		o, err := st.Query().ProjectOverview(m.ctx, project)
 		return overviewLoadedMsg{project: project, overview: o, err: err}
 	}
 	cached := func() tea.Msg { return load() }
@@ -275,16 +274,16 @@ func (m *Model) editProject() tea.Cmd {
 	if project == "" || m.deps.RunEditor == nil {
 		return nil
 	}
-	st := m.deps.Store
+	st := m.deps.App
 	return func() tea.Msg {
-		o, err := queryOf(st).ProjectOverview(m.ctx, project)
+		o, err := st.Query().ProjectOverview(m.ctx, project)
 		if err != nil {
 			return projectEditReadyMsg{err: err}
 		}
 		doc := projectDoc{StartOn: o.StartOn, DueOn: o.DueOn, Color: o.Color, Body: editableBody(o.HTMLNotes, o.Notes, nil)}
 		if o.Owner != nil {
 			doc.Owner = o.Owner.Name
-			if me, _ := queryOf(st).MeGID(m.ctx); me == o.Owner.GID {
+			if me, _ := st.Query().MeGID(m.ctx); me == o.Owner.GID {
 				doc.Owner = "me"
 			}
 		}
@@ -314,7 +313,7 @@ func (m *Model) applyProjectEdit(msg projectEditDoneMsg) tea.Cmd {
 		m.status = "変更はありません"
 		return nil
 	}
-	projects := &app.Projects{Store: m.deps.Store, Text: richtext.Converter{}, Clock: m.deps.Now}
+	projects := m.deps.App.Projects(m.deps.Now)
 	path, gid := msg.path, msg.project
 	return func() tea.Msg {
 		u, err := projects.ResolveUpdate(m.ctx, in)

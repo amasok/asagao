@@ -77,7 +77,7 @@ func TestAPIClientWithoutLogin(t *testing.T) {
 func TestSyncer(t *testing.T) {
 	cfg := config.Default()
 	cfg.Sync = config.SyncConfig{CompletedDays: 30, AllProjects: true}
-	s := Syncer(nil, nil, cfg)
+	s := Syncer[sync.LocalStore](nil, nil, cfg)
 	if s.API != nil || s.RichText == nil || s.Cfg != (sync.Config{CompletedDays: 30, AllProjects: true}) {
 		t.Fatalf("Syncer = %+v", s)
 	}
@@ -88,7 +88,7 @@ func TestSyncer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := Syncer(api, nil, cfg); s.API != api {
+	if s := Syncer[sync.LocalStore](api, nil, cfg); s.API != api {
 		t.Fatalf("Syncer.API = %v", s.API)
 	}
 }
@@ -171,3 +171,6 @@ func TestOpenStoreRecordsDiscardSummary(t *testing.T) {
 		}
 	}
 }
+
+// The store fills every port of the use cases (#71).
+var _ UseCaseStore = (*store.Store)(nil)

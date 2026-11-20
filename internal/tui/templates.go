@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/sync"
@@ -95,10 +94,10 @@ func (m *Model) fetchTaskTemplates(project string, open bool) tea.Cmd {
 		m.tmpl.fetching = map[string]bool{}
 	}
 	m.tmpl.fetching[key] = true
-	syncer, ctx, st, now := m.syncer, m.ctx, m.deps.Store, m.deps.Now()
+	syncer, ctx, st, now := m.syncer, m.ctx, m.deps.App, m.deps.Now()
 	return func() tea.Msg {
 		// A 402 in the project's workspace less than a day ago: not asked again yet.
-		if ws, _ := st.ProjectWorkspace(ctx, project); !open && !app.TemplatesOffered(ctx, st, plan.TaskTemplates, ws, now) {
+		if ws, _ := st.Query().ProjectWorkspace(ctx, project); !open && !st.Query().TemplatesOffered(ctx, plan.TaskTemplates, ws, now) {
 			return taskTemplatesMsg{project: project, err: &sync.TemplatePlanError{Feature: plan.TaskTemplates}, open: open}
 		}
 		list, err := syncer.TaskTemplates(ctx, project)
