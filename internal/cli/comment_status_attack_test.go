@@ -146,7 +146,7 @@ func TestCommentAndStatusPostSameAsBeforeA4(t *testing.T) {
 			if ea != nil && ea.Error() != eb.Error() {
 				t.Fatalf("error text differs:\n legacy %q\n new    %q", ea, eb)
 			}
-			if ea == nil && !strings.HasPrefix(out, map[bool]string{true: "コメントしました", false: "ステータスを投稿しました"}[c.args[0] == "comment"]+"（オフラインのため未送信") {
+			if ea == nil && !strings.HasPrefix(out, map[bool]string{true: "コメントしました", false: "ステータスを投稿しました"}[c.args[0] == "comment"]+"（ログインが必要なため未送信") {
 				t.Fatalf("output = %q", out)
 			}
 			if da, db := dumpCommentStatus(t, pa), dumpCommentStatus(t, pb); da != db {

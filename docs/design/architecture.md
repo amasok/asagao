@@ -119,5 +119,5 @@ e1 で「直す」の行がなくなり、依存の向きのテストの許可�
 - (c2・d4b・#73 で済んだ。今は入り口は `app.Query` を通して読み、`store` を import しない。以下は決めたときの経緯と現在の整理。)
 - 読み取り (一覧、検索、詳細) は、段階 a では今のまま入り口から `store` を呼んでよい。書き込みと違って、同じ手順が入り口ごとに重なっている量が少なく、振る舞いの違いの原因にもなっていない。
 - 入り口が読む型は、`asana/model` の型ではなく、**store が定義した表示用の型** (`store.TaskSummary`・`store.TaskDetail`・`store.CustomFieldView`・`store.ProjectView` など) と、表示の文言の関数 (`StatusLabel`・`ConflictLines`・`DescribeOp`・`AccountChangedHelp` など) と、エラーの値 (`ErrNotFound`・`ErrPushBusy`・`ErrUnsentChanges` など)。tui だけで約 50 種類ある。
-- 段階 c2 でこれらを `internal/readmodel` に移し、段階 e1 を経て、`app` に読み取りのユースケース `Query` とポート `QueryStore` を置いた (ADR 0009)。さらに #73 で非 DTO 責務（プラン判定 `domain/plan`・日本語表示整形 `ui/format`・Asana 値変換 `asana/model`・`sync_state` 生キー隠蔽 `internal/store`）を分離し、`readmodel` は純粋な表示・問い合わせ DTO と `ResultKind`・エラー値のみを持つ。
+- 段階 c2 でこれらを `internal/readmodel` に移し、段階 e1 を経て、`app` に読み取りのユースケース `Query` とポート `QueryStore` を置いた (ADR 0009)。さらに #73 で非 DTO 責務（プラン判定 `domain/plan`・日本語表示整形 `ui/format`・Asana 値変換 `asana/model`・`sync_state` 生キー隠蔽 `internal/store`）を分離し、`readmodel` は純粋な表示・問い合わせ DTO と `ResultKind`・エラー値のみを持つ。#75 で、書き込みのあとの即時送信の判定 (`app.PushNow`) が読む `PushResult` と `ErrAccountChanged` も `readmodel` に移した (ADR 0010)。
 - `asana/model` の型 (ADR 0005) は、キャッシュと同期が Asana の応答を扱うための型で、入り口の表示には `readmodel`、日本語文言の整形には `ui/format` を使う。

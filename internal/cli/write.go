@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +14,7 @@ import (
 
 	usecase "github.com/amasok/asagao/internal/app" // the cli package has its own type app
 	"github.com/amasok/asagao/internal/asana/model"
-	localgid "github.com/amasok/asagao/internal/domain/gid"
+	"github.com/amasok/asagao/internal/auth"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
@@ -106,57 +105,56 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 	if d, ok := st.(*dryRunStore); ok {
 		return a.reportDryRun(cmd, d, r)
 	}
-	push, err := a.pushNow(cmd.Context(), st)
-	r.Push = push
-	if err != nil {
-		r.Error = err.Error()
-	} else {
-		r.Sent = push.Remaining == 0 && push.Failed == 0 && push.Conflicts == 0 && !push.InboxReadOnly
+	ctx := cmd.Context()
+	var tasks []string
+	if r.TaskGID != "" {
+		tasks = strings.Split(r.TaskGID, ",")
 	}
+	rep := a.pushUseCase(st).Run(ctx, func(ctx context.Context) (usecase.Pusher, error) {
+		api, err := a.apiClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return a.syncer(api, st), nil
+	}, usecase.PushTarget{TaskGIDs: tasks, SectionGID: r.SectionGID, TimeEntryGID: r.TimeEntryID})
 	out := cmd.OutOrStdout()
-	r.Discarded = takeDiscards(cmd.Context(), st, out, !a.json)
-	dropped := false
-	for _, d := range r.Discarded {
-		if slices.Contains(strings.Split(r.TaskGID, ","), d.TaskGID) {
-			dropped, r.Sent = true, false
-		}
+	// The discards not shown yet: this push's and those of an earlier push or another
+	// process's (which may have dropped this change while it sent the outbox).
+	r.Discarded = takeDiscards(ctx, st, out, !a.json)
+	rep.Drop(r.Discarded)
+	r.Push, r.Sent = rep.Result, rep.Sent
+	if rep.Err != nil {
+		r.Error = rep.Err.Error()
 	}
-	// The gid may have changed from local:... to the real one.
-	if r.TaskGID != "" && localgid.IsLocal(r.TaskGID) && r.Sent {
-		r.TaskGID = ""
-	}
-	if localgid.IsLocal(r.SectionGID) {
-		if real, err := st.RealSectionGID(cmd.Context(), r.SectionGID); err == nil {
-			r.SectionGID = real
-		}
-	}
-	// A sent time entry has its real gid, as add_time_entry gives it (found on the real
-	// Asana, #31): the local one can not be used with `time edit` / `time delete`.
-	if localgid.IsLocal(r.TimeEntryID) {
-		if real, waiting, err := st.LocalResult(cmd.Context(), readmodel.ResultTimeEntry, r.TimeEntryID); err == nil && real != "" && !waiting {
-			r.TimeEntryID = real
-		}
-	}
+	r.TaskGID = strings.Join(rep.TaskGIDs, ",")
+	r.SectionGID, r.TimeEntryID = rep.SectionGID, rep.TimeEntryGID
 	if a.json {
 		return a.printJSON(r)
 	}
 	switch {
-	case push != nil && push.InboxReadOnly:
+	case rep.Outcome == usecase.PushInboxReadOnly:
 		fmt.Fprintf(out, "%s。ただし Asana が受け付けなかったため、元に戻しました\n%s\n", done, sync.InboxReadOnlyMessage(a.cfg.Auth.Scopes))
-	case errors.Is(err, sync.ErrAccountChanged):
-		fmt.Fprintf(out, "%s（まだ送っていません）\n%v\n", done, accountChanged(cmd.Context(), st))
-	case dropped:
+	case rep.Outcome == usecase.PushAccountChanged:
+		fmt.Fprintf(out, "%s（まだ送っていません）\n%v\n", done, accountChanged(ctx, st))
+	case rep.Dropped:
 		fmt.Fprintf(out, "%s。ただし対象のタスクが Asana で削除されていたため、変更は破棄されました\n", done)
-	case errors.Is(err, sync.ErrPushBusy):
+	case rep.Outcome == usecase.PushBusy:
 		fmt.Fprintf(out, "%s（別の asagao が送信中です。この変更もそちらで送られます）\n", done)
-	case err != nil:
-		fmt.Fprintf(out, "%s（オフラインのため未送信。次の sync で送ります: %v）\n", done, err)
-	case !r.Sent:
+	case rep.Outcome == usecase.PushNotLoggedIn || rep.Outcome == usecase.PushLoginRejected:
+		fmt.Fprintf(out, "%s（ログインが必要なため未送信。ログインしたあとの sync で送ります: %s）\n", done, rep.LoginHelp)
+	case rep.Err != nil:
+		fmt.Fprintf(out, "%s（オフラインのため未送信。次の sync で送ります: %v）\n", done, rep.Err)
+	case !rep.Sent:
 		fmt.Fprintf(out, "%s（送信できなかった変更があります。`asagao outbox list` で確認してください）\n", done)
 	default:
 		fmt.Fprintf(out, "%s（Asana に送信しました）\n", done)
 	}
 	return nil
+}
+
+// pushUseCase is the use case that sends the outbox right after a write.
+func (a *app) pushUseCase(st Store) usecase.PushNow {
+	return usecase.PushNow{Store: st, LoginHelp: auth.LoginHelp}
 }
 
 func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {

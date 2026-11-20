@@ -8,7 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/amasok/asagao/internal/app"
-	"github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -72,14 +71,7 @@ func (s *Server) createSection(ctx context.Context, _ *mcp.CallToolRequest, in C
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	out := s.push(ctx, "")
-	out.SectionGID = g
-	if gid.IsLocal(g) {
-		if real, err := s.Store.RealSectionGID(ctx, g); err == nil {
-			out.SectionGID = real
-		}
-	}
-	return nil, out, nil
+	return nil, s.pushTarget(ctx, app.PushTarget{SectionGID: g}), nil
 }
 
 func (s *Server) moveSection(ctx context.Context, _ *mcp.CallToolRequest, in MoveSectionInput) (*mcp.CallToolResult, WriteOutput, error) {

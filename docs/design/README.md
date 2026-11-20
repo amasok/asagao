@@ -24,6 +24,7 @@ DDD の考え方で、ドメイン・アプリケーション層・リポジト�
 | [0007](adr/0007-migration-order-and-dependency-checks.md) | アプリ層 → ドメイン → リポジトリ → ポートの順に移し、依存の向きは go list のテストで守る |
 | [0008](adr/0008-sending-stays-in-entry-points.md) | 送り方はポートにせず入り口に残し、TUI は解決済みの gid を受ける CreateHere で作成する |
 | [0009](adr/0009-read-ports.md) | 入り口の読み取りは app.Query を通し、ポートは QueryStore 1 つにする |
+| [0010](adr/0010-push-now-use-case.md) | 書き込みのあとの即時送信の判定は app.PushNow にまとめ、送る手段は入り口が渡す |
 
 ## 仕様 (OpenSpec)
 

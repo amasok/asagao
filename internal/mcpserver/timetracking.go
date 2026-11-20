@@ -93,12 +93,7 @@ func (s *Server) addTimeEntry(ctx context.Context, _ *mcp.CallToolRequest, in Ad
 	if err != nil {
 		return nil, WriteOutput{}, err
 	}
-	out := s.push(ctx, in.Task)
-	out.TimeEntryGID = g
-	if real, waiting, err := s.Store.LocalResult(ctx, readmodel.ResultTimeEntry, g); err == nil && real != "" && !waiting {
-		out.TimeEntryGID = real
-	}
-	return nil, out, nil
+	return nil, s.pushTarget(ctx, app.PushTarget{TaskGIDs: []string{in.Task}, TimeEntryGID: g}), nil
 }
 
 func (s *Server) updateTimeEntry(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTimeEntryInput) (*mcp.CallToolResult, WriteOutput, error) {
