@@ -28,7 +28,8 @@ type Client struct {
 	// OnRetry, if set, is called before waiting to retry a request that got status.
 	OnRetry func(status int, wait time.Duration)
 	// Limiter, if set, paces the requests: its Wait is called before each HTTP request
-	// (each retry and each upload too), so that a long run (a full sync, scripts/realcheck)
+	// (each retry and each upload too; a POST /batch waits once per action in it, as Asana
+	// counts each of them against the rate limit), so that a long run (a full sync, scripts/realcheck)
 	// stays under Asana's rate limit instead of running into 429s. Nil: no pacing, the
 	// requests go out as fast as they are made (the default). *rate.Limiter of
 	// golang.org/x/time/rate satisfies it.
@@ -57,15 +58,46 @@ type Limiter interface {
 	Wait(ctx context.Context) error
 }
 
-// pace waits for c.Limiter, if one is set, before a request is sent.
-func (c *Client) pace(ctx context.Context) error {
+// LimiterError is the error of a request that was not sent because Limiter's Wait failed
+// (ctx canceled, or *rate.Limiter's "would exceed context deadline", which does not wrap
+// ctx's error). It unwraps to Wait's error, and says by RequestNotSent that nothing reached
+// Asana, so the sync engine leaves the entry to be sent later instead of marking it failed
+// or checking a create against Asana (as for auth.TokenError).
+type LimiterError struct{ Err error }
+
+func (e *LimiterError) Error() string { return "asana: rate limiter: " + e.Err.Error() }
+func (e *LimiterError) Unwrap() error { return e.Err }
+
+// RequestNotSent reports that the request did not reach Asana.
+func (e *LimiterError) RequestNotSent() bool { return true }
+
+// pace waits for c.Limiter, if one is set, cost times before the request method u is
+// sent. A failed Wait is returned as a *url.Error holding a *LimiterError, like the errors
+// of http.Client.Do: a network error, and one that says the request was not sent.
+func (c *Client) pace(ctx context.Context, method, u string, cost int) error {
 	if c.Limiter == nil {
 		return nil
 	}
-	if err := c.Limiter.Wait(ctx); err != nil {
-		return fmt.Errorf("asana: rate limiter: %w", err)
+	for range max(cost, 1) {
+		if err := c.Limiter.Wait(ctx); err != nil {
+			return &url.Error{Op: method, URL: u, Err: &LimiterError{Err: err}}
+		}
 	}
 	return nil
+}
+
+// requestCost is how many requests Asana counts for sending body to path: one for each
+// action of a POST /batch, else one.
+func requestCost(path string, body any) int {
+	if path != batchPath {
+		return 1
+	}
+	if m, ok := body.(map[string]any); ok {
+		if acts, ok := m["actions"].([]batchAction); ok && len(acts) > 0 {
+			return len(acts)
+		}
+	}
+	return 1
 }
 
 // Requests is how many HTTP requests the client has sent to Asana (each retry counts), to
@@ -154,7 +186,7 @@ func (c *Client) doWith(ctx context.Context, method, path string, q url.Values, 
 			return nil, err
 		}
 	}
-	rep, err := c.send(ctx, c.HTTP, method, u, payload, retry)
+	rep, err := c.send(ctx, c.HTTP, method, u, payload, requestCost(path, body), retry)
 	if err != nil {
 		return nil, err
 	}
@@ -180,8 +212,9 @@ type reply struct {
 }
 
 // send sends one request to u through hc and returns the response, retrying (at most
-// MaxRetries times, after retryDelay) while retry says the status may be retried.
-func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, payload []byte, retry func(status int) bool) (*reply, error) {
+// MaxRetries times, after retryDelay) while retry says the status may be retried. Each
+// attempt first waits for Limiter cost times (see requestCost).
+func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, payload []byte, cost int, retry func(status int) bool) (*reply, error) {
 	for attempt := 0; ; attempt++ {
 		var rd io.Reader
 		if payload != nil {
@@ -195,7 +228,7 @@ func (c *Client) send(ctx context.Context, hc *http.Client, method, u string, pa
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		if err := c.pace(ctx); err != nil {
+		if err := c.pace(ctx, method, u, cost); err != nil {
 			return nil, err
 		}
 		c.requests.Add(1)
