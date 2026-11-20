@@ -36,7 +36,7 @@ type TemplateDate struct {
 type Job struct {
 	GID             string `json:"gid"`
 	ResourceSubtype string `json:"resource_subtype"`
-	// Status is one of the JobStatus values.
+	// Status is one of the Job* constants below (JobNotStarted, ...).
 	Status     string `json:"status"`
 	NewTask    *Ref   `json:"new_task"`
 	NewProject *Ref   `json:"new_project"`

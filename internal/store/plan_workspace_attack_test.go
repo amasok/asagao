@@ -15,7 +15,7 @@ import (
 
 // #68 attack: build a genuine user_version=24 SQLite database (no tags.workspace_gid column
 // at all), populate tags attached via tasks.workspace_gid only, via task_memberships ->
-// projects.workspace_gid only (tasks.workspace_gid=''), via a mix of empty-ws and
+// projects.workspace_gid only (tasks.workspace_gid=”), via a mix of empty-ws and
 // project-ws tasks, across multiple tasks, and unused tags; then run migration 25 via Open.
 func TestMigrate25FromRealV24SchemaAttack(t *testing.T) {
 	ctx := context.Background()

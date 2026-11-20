@@ -48,9 +48,6 @@ func AccountChangedHelp(unsent int, resetHow string) string {
 	return format.AccountChangedHelp(unsent, resetHow)
 }
 
-// FieldLabel is format.FieldLabel.
-func FieldLabel(k string) string { return format.FieldLabel(k) }
-
 // ConflictLines is format.ConflictLines.
 func ConflictLines(op Op) []string { return format.ConflictLines(op) }
 
@@ -60,13 +57,7 @@ func DescribeOp(op Op) string { return format.DescribeOp(op) }
 // DescribeChange is format.DescribeChange.
 func DescribeChange(op Op) string { return format.DescribeChange(op) }
 
-// SubtypeLabel is task.SubtypeLabel (kept here until the entry points stop using store).
-func SubtypeLabel(s string) string { return task.SubtypeLabel(s) }
-
-// ApprovalLabel is task.ApprovalLabel.
-func ApprovalLabel(s string) string { return task.ApprovalLabel(s) }
-
-// ParseSubtype is task.ParseSubtype.
+// ParseSubtype is task.ParseSubtype (kept here until the entry points stop using store).
 func ParseSubtype(s string) (string, error) { return task.ParseSubtype(s) }
 
 // ParseApprovalStatus is task.ParseApprovalStatus.

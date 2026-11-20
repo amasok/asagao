@@ -31,9 +31,11 @@ Asana をローカルの SQLite にキャッシュして扱う Go 製ツール�
 ## 確認コマンド
 
 ```sh
+gofmt -l ./cmd ./internal   # 何も出なければよい
 go build ./... && go vet ./... && go test -race ./...
 ```
 
+- **コミットの前に `gofmt -w` をかける。** CI は gofmt を検査しないので、通っていないファイルがそのまま入ってしまう (PR #81 のあと 10 ファイルで見つかった)。`gofmt -l ./cmd ./internal` が空になってからコミットする。
 - 出力を読むときは `| grep -v '^ok\|no test files'` で失敗だけに絞る。
 - 仕様を変更したときは `npm run -s spec:validate` も通す。
 - CI は PR のときだけ ubuntu で回る (文書のみでは回らない)。CI 枠節約のため、PR はいくつかの作業をまとめて 1 つにする。

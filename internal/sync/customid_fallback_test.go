@@ -255,8 +255,8 @@ func TestTaskByCustomID500FallbackNotFoundClearsCache(t *testing.T) {
 	}
 }
 
-// When PlanSearch is already hidden (402) or the fallback SearchTasks answers 402,
-// PlanSearch is recorded/kept, PlanCustomID is NOT marked 402, typeahead is NOT used, the
+// When plan.Search is already hidden (402) or the fallback SearchTasks answers 402,
+// plan.Search is recorded/kept, plan.CustomID is NOT marked 402, typeahead is NOT used, the
 // original 500 error is returned, and any cached custom_id gid is kept.
 func TestTaskByCustomID500FallbackSearchPlan402(t *testing.T) {
 	t.Run("PlanSearch already hidden", func(t *testing.T) {
@@ -403,8 +403,8 @@ func TestTaskByCustomIDNon500DoesNotFallbackToSearch(t *testing.T) {
 	}
 }
 
-// When an expired (>24h) PlanCustomID 402 record is retried and TaskByCustomID returns 500,
-// a successful fallback resolution clears the stale PlanCustomID refusal, while a failed
+// When an expired (>24h) plan.CustomID 402 record is retried and TaskByCustomID returns 500,
+// a successful fallback resolution clears the stale plan.CustomID refusal, while a failed
 // fallback leaves it alone.
 func TestTaskByCustomID500FallbackClearsExpiredPlanCustomID(t *testing.T) {
 	t.Run("clears expired PlanCustomID when fallback resolves", func(t *testing.T) {
