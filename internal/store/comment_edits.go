@@ -145,10 +145,8 @@ func (s *Store) EditCommentLocal(ctx context.Context, storyGID, text, htmlText s
 				return err
 			}
 			if create != nil { // not sent yet: send the new text instead
-				create.Payload["text"] = text
-				delete(create.Payload, "html_text")
-				if htmlText != "" {
-					create.Payload["html_text"] = htmlText
+				if err := outbox.EditPayload(create, func(p *outbox.AddComment) { p.Text, p.HTMLText = text, htmlText }); err != nil {
+					return err
 				}
 				return saveOp(ctx, tx, create)
 			}
@@ -169,7 +167,9 @@ func (s *Store) EditCommentLocal(ctx context.Context, storyGID, text, htmlText s
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
-		op.Payload = map[string]any{"story": storyGID, "text": text, "html_text": htmlText}
+		if err := outbox.SetPayload(op, outbox.UpdateStory{Story: storyGID, Text: text, HTMLText: htmlText}); err != nil {
+			return err
+		}
 		op.State, op.LastError = OpPending, ""
 		return saveOp(ctx, tx, op)
 	})
@@ -201,9 +201,8 @@ func (s *Store) DeleteCommentLocal(ctx context.Context, storyGID string, now tim
 		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", storyGID); err != nil {
 			return err
 		}
-		payload := map[string]any{"story": storyGID, "text": row.Text}
-		return saveOp(ctx, tx, &Op{Kind: OpDeleteStory, TaskGID: row.TaskGID, Payload: payload, Base: row.base(),
-			State: OpPending, CreatedAt: formatTime(now)})
+		op := &Op{Kind: OpDeleteStory, TaskGID: row.TaskGID, Base: row.base(), State: OpPending, CreatedAt: formatTime(now)}
+		return savePayload(ctx, tx, op, outbox.DeleteStory{Story: storyGID, Text: row.Text})
 	})
 }
 
@@ -222,21 +221,23 @@ func (s *Store) DeleteAttachmentLocal(ctx context.Context, gid string, now time.
 			return err
 		}
 		path, _ := row["local_path"].(string)
-		payload := map[string]any{"attachment": gid, "name": row["name"]}
+		name, _ := row["name"].(string)
+		payload := outbox.DeleteAttachment{Attachment: gid, Name: name}
 		if IsLocalGID(gid) {
 			create, err := unsentCreate(ctx, tx, OpUploadAttachment, "attachment", gid)
 			if err != nil {
 				return err
 			}
 			if create != nil { // never uploaded: forget it, and its copy
-				remove, _ = create.Payload["path"].(string)
+				up, _ := outbox.BestEffortPayload[outbox.UploadAttachment](*create)
+				remove = up.Path
 				return discardOpTx(ctx, tx, create)
 			}
 			if err := ensureStoryCreateQueued(ctx, tx, OpUploadAttachment, "attachment", gid); err != nil {
 				return err
 			}
 			if path != "" { // the upload may be sent again from it
-				payload["path"] = path
+				payload.Path = path
 				path = ""
 			}
 		}
@@ -246,8 +247,8 @@ func (s *Store) DeleteAttachmentLocal(ctx context.Context, gid string, now time.
 		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
 			return err
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpDeleteAttachment, TaskGID: row["parent_gid"].(string), Payload: payload, Base: row,
-			State: OpPending, CreatedAt: formatTime(now)})
+		op := &Op{Kind: OpDeleteAttachment, TaskGID: row["parent_gid"].(string), Base: row, State: OpPending, CreatedAt: formatTime(now)}
+		return savePayload(ctx, tx, op, payload)
 	})
 	if err == nil && remove != "" {
 		if rerr := s.RemoveAttachmentFile(remove); rerr != nil {

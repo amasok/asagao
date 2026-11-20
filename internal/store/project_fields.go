@@ -65,10 +65,13 @@ func (s *Store) UpdateProjectLocal(ctx context.Context, gid string, changes map[
 			return err
 		}
 		if op == nil {
-			op = &Op{Kind: OpUpdateProject, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
-				State: OpPending, CreatedAt: formatTime(now)}
+			op = &Op{Kind: OpUpdateProject, TaskGID: gid, Base: map[string]any{}, State: OpPending, CreatedAt: formatTime(now)}
 		}
 		keepSameColor(changes, op.Base, cur)
+		// The changes are fields of the project, folded in key by key (outbox.Fold).
+		if err := outbox.CheckFields(OpUpdateProject, changes); err != nil {
+			return err
+		}
 		folded, deleteOp := outbox.Fold(*op, cur, changes)
 		if err := applyProjectFields(ctx, tx, gid, changes); err != nil {
 			return err

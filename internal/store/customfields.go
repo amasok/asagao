@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -644,20 +643,17 @@ func (s *Store) SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID strin
 				return err
 			}
 			if op != nil { // not sent yet: create it with the value
-				cfs, _ := op.Payload["custom_fields"].(map[string]any)
-				cfs = maps.Clone(cfs)
-				if cfs == nil {
-					cfs = map[string]any{}
-				}
-				if value == nil {
-					delete(cfs, fieldGID)
-				} else {
-					cfs[fieldGID] = CustomFieldAPIValue(d.Type, value) // sent as is with the create
-				}
-				if len(cfs) == 0 {
-					delete(op.Payload, "custom_fields")
-				} else {
-					op.Payload["custom_fields"] = cfs
+				if err := outbox.EditPayload(op, func(p *outbox.CreateTask) {
+					if value == nil {
+						delete(p.CustomFields, fieldGID)
+						return
+					}
+					if p.CustomFields == nil {
+						p.CustomFields = map[string]any{}
+					}
+					p.CustomFields[fieldGID] = CustomFieldAPIValue(d.Type, value) // sent as is with the create
+				}); err != nil {
+					return err
 				}
 				return saveOp(ctx, tx, op)
 			}
@@ -683,8 +679,7 @@ func (s *Store) SetCustomFieldLocal(ctx context.Context, taskGID, fieldGID strin
 			}
 			return nil
 		}
-		op.Payload = map[string]any{"field": fieldGID, "field_name": d.Name, "type": d.Type, "value": value, "display": display}
-		return saveOp(ctx, tx, op)
+		return savePayload(ctx, tx, op, outbox.SetCustomField{Field: fieldGID, FieldName: d.Name, Type: d.Type, Value: value, Display: display})
 	})
 	return display, err
 }

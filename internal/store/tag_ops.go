@@ -98,11 +98,11 @@ func (s *Store) UpdateTagLocal(ctx context.Context, tagGID string, changes map[s
 			return err
 		}
 		if op == nil {
-			op = &Op{Kind: OpUpdateTag, TaskGID: tagGID, Payload: map[string]any{}, Base: map[string]any{},
-				State: OpPending, CreatedAt: formatTime(now)}
+			op = &Op{Kind: OpUpdateTag, TaskGID: tagGID, Base: map[string]any{}, State: OpPending, CreatedAt: formatTime(now)}
 		}
 		keepSameColor(clean, op.Base, current)
 		changed := false
+		sent := map[string]string{} // the changes to send (name, color)
 		for k, v := range clean {
 			if current[k] == v {
 				continue
@@ -111,7 +111,7 @@ func (s *Store) UpdateTagLocal(ctx context.Context, tagGID string, changes map[s
 			if _, ok := op.Base[k]; !ok {
 				op.Base[k] = current[k]
 			}
-			op.Payload[k] = v
+			sent[k] = v.(string)
 			if _, err := tx.ExecContext(ctx, "UPDATE tags SET "+k+" = ? WHERE gid = ?", v, tagGID); err != nil {
 				return err
 			}
@@ -119,11 +119,18 @@ func (s *Store) UpdateTagLocal(ctx context.Context, tagGID string, changes map[s
 		if !changed {
 			return nil
 		}
-		for k, v := range op.Payload { // changed back: nothing to send for it
-			if op.Base[k] == v {
-				delete(op.Payload, k)
-				delete(op.Base, k)
+		if err := outbox.EditPayload(op, func(p *outbox.UpdateTag) {
+			for k, f := range map[string]**string{"name": &p.Name, "color": &p.Color} {
+				if v, ok := sent[k]; ok {
+					*f = &v
+				}
+				if *f != nil && op.Base[k] == **f { // changed back: nothing to send for it
+					*f = nil
+					delete(op.Base, k)
+				}
 			}
+		}); err != nil {
+			return err
 		}
 		if len(op.Payload) == 0 {
 			if op.ID == 0 {
@@ -183,8 +190,8 @@ func (s *Store) DeleteTagLocal(ctx context.Context, tagGID string, now time.Time
 			}
 			tagGID = real
 		}
-		return saveOp(ctx, tx, &Op{Kind: OpDeleteTag, TaskGID: tagGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"name": name, "color": color, "workspace": workspace, "tasks": tasks}})
+		return savePayload(ctx, tx, &Op{Kind: OpDeleteTag, TaskGID: tagGID, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.DeleteTag{Name: name, Color: color, Workspace: workspace, Tasks: tasks})
 	})
 }
 

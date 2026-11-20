@@ -96,7 +96,7 @@ func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op, p outbox.C
 				existing = append(existing, sec.GID)
 			}
 		}
-		if err := s.Store.SetOpPayload(ctx, op.ID, "existing", existing); err != nil {
+		if err := s.Store.SetSectionsExisting(ctx, op.ID, existing); err != nil {
 			return sent, err
 		}
 	}

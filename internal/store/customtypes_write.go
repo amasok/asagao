@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -179,18 +180,23 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 		if err != nil {
 			return err
 		}
-		withdrawn := Op{ID: op.ID, Kind: OpUpdateTask, TaskGID: op.TaskGID, Payload: map[string]any{}, Base: map[string]any{}}
-		keys := slices.Clone(customTypeKeys)
-		if op.Payload["resource_subtype"] == task.SubtypeCustom {
-			keys = append(keys, "resource_subtype")
-		}
-		for _, k := range keys {
-			if v, ok := op.Payload[k]; ok {
-				withdrawn.Payload[k] = v
-				withdrawn.Base[k] = op.Base[k]
-				delete(op.Payload, k)
-				delete(op.Conflict, k)
+		withdrawn := Op{ID: op.ID, Kind: OpUpdateTask, TaskGID: op.TaskGID, Base: map[string]any{}}
+		var w outbox.UpdateTask // what goes: the custom type and status, and the type "custom"
+		if err := outbox.EditPayload(op, func(p *outbox.UpdateTask) {
+			w.CustomType, p.CustomType = p.CustomType, nil
+			w.CustomTypeStatusOption, p.CustomTypeStatusOption = p.CustomTypeStatusOption, nil
+			if outbox.Str(p.ResourceSubtype) == task.SubtypeCustom {
+				w.ResourceSubtype, p.ResourceSubtype = p.ResourceSubtype, nil
 			}
+		}); err != nil {
+			return err
+		}
+		if err := outbox.SetPayload(&withdrawn, w); err != nil {
+			return err
+		}
+		for k := range withdrawn.Payload {
+			withdrawn.Base[k] = op.Base[k]
+			delete(op.Conflict, k)
 		}
 		if len(withdrawn.Payload) == 0 { // nothing of a custom type: leave the entry as it is
 			rest = op
@@ -203,7 +209,7 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 		// Back to the base: the kind of task, its custom type and status, and completed
 		// unless the entry changes it itself (a status completes the task locally).
 		restore := map[string]any{}
-		for _, k := range append(keys, "resource_subtype", "custom_type", "custom_type_status_option") {
+		for _, k := range append(slices.Clone(customTypeKeys), "resource_subtype") {
 			if v, ok := op.Base[k]; ok {
 				if _, still := op.Payload[k]; !still {
 					restore[k] = v

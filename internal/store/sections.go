@@ -52,7 +52,7 @@ func (s *Store) RenameSectionLocal(ctx context.Context, sectionGID, name string,
 			return err
 		}
 		if op == nil {
-			op = &Op{Kind: OpRenameSection, TaskGID: sectionGID, Payload: map[string]any{},
+			op = &Op{Kind: OpRenameSection, TaskGID: sectionGID,
 				Base: map[string]any{"name": current}, State: OpPending, CreatedAt: formatTime(now)}
 		}
 		if op.Base["name"] == name { // renamed back
@@ -62,7 +62,9 @@ func (s *Store) RenameSectionLocal(ctx context.Context, sectionGID, name string,
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
-		op.Payload["name"] = name
+		if err := outbox.EditPayload(op, func(p *outbox.RenameSection) { p.Name = name }); err != nil {
+			return err
+		}
 		return saveOp(ctx, tx, op)
 	})
 }

@@ -98,8 +98,8 @@ func (s *Store) AddTimeEntryLocal(ctx context.Context, taskGID string, minutes i
 			VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, gid, taskGID, minutes, enteredOn, me.GID, me.Name, me.GID, me.Name); err != nil {
 			return err
 		}
-		payload := map[string]any{"entry": gid, "duration_minutes": minutes, "entered_on": enteredOn}
-		return saveOp(ctx, tx, &Op{Kind: OpAddTimeEntry, TaskGID: taskGID, Payload: payload, State: OpPending, CreatedAt: formatTime(now)})
+		return savePayload(ctx, tx, &Op{Kind: OpAddTimeEntry, TaskGID: taskGID, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.TimeEntry{Entry: gid, DurationMinutes: minutes, EnteredOn: enteredOn})
 	})
 	return gid, err
 }
@@ -128,7 +128,9 @@ func (s *Store) UpdateTimeEntryLocal(ctx context.Context, gid string, minutes in
 				return err
 			}
 			if create != nil { // not sent yet: send the new values instead
-				create.Payload["duration_minutes"], create.Payload["entered_on"] = minutes, enteredOn
+				if err := outbox.EditPayload(create, func(p *outbox.TimeEntry) { p.DurationMinutes, p.EnteredOn = minutes, enteredOn }); err != nil {
+					return err
+				}
 				return saveOp(ctx, tx, create)
 			}
 			if err := ensureStoryCreateQueued(ctx, tx, OpAddTimeEntry, "entry", gid); err != nil {
@@ -148,9 +150,8 @@ func (s *Store) UpdateTimeEntryLocal(ctx context.Context, gid string, minutes in
 			_, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE id = ?", op.ID)
 			return err
 		}
-		op.Payload = map[string]any{"entry": gid, "duration_minutes": minutes, "entered_on": enteredOn}
 		op.State, op.LastError = OpPending, ""
-		return saveOp(ctx, tx, op)
+		return savePayload(ctx, tx, op, outbox.TimeEntry{Entry: gid, DurationMinutes: minutes, EnteredOn: enteredOn})
 	})
 }
 
@@ -177,9 +178,8 @@ func (s *Store) DeleteTimeEntryLocal(ctx context.Context, gid string, now time.T
 		if _, err := tx.ExecContext(ctx, "DELETE FROM time_entries WHERE gid = ?", gid); err != nil {
 			return err
 		}
-		payload := map[string]any{"entry": gid, "duration_minutes": row.Minutes, "entered_on": row.EnteredOn}
-		return saveOp(ctx, tx, &Op{Kind: OpDeleteTimeEntry, TaskGID: row.TaskGID, Payload: payload, Base: row.base(),
-			State: OpPending, CreatedAt: formatTime(now)})
+		return savePayload(ctx, tx, &Op{Kind: OpDeleteTimeEntry, TaskGID: row.TaskGID, Base: row.base(), State: OpPending, CreatedAt: formatTime(now)},
+			outbox.TimeEntry{Entry: gid, DurationMinutes: row.Minutes, EnteredOn: row.EnteredOn})
 	})
 }
 

@@ -164,11 +164,11 @@ type PushStore interface {
 	SectionCreateQueued(ctx context.Context, gid string) (bool, error)
 	SetFieldOptionsLocked(ctx context.Context, fieldGID string, at time.Time) error
 	SetInboxWriteForbidden(ctx context.Context, forbidden bool) error
-	SetOpPayload(ctx context.Context, id int64, key string, value any) error
 	SetPendingSectionOrders(ctx context.Context, projectGID string, value string) error
 	SetProjectCustomFieldsFetchedAt(ctx context.Context, projectGID string, at time.Time) error
 	SetProjectFieldsLocked(ctx context.Context, projectGID string, at time.Time) error
 	SetSectionTaskOrder(ctx context.Context, sectionGID string, gids []string) error
+	SetSectionsExisting(ctx context.Context, id int64, existing []string) error
 	SyncedMeGID(ctx context.Context) (string, error)
 	TagCreateQueued(ctx context.Context, tag string) (bool, error)
 	TagWorkspace(ctx context.Context, tagGID string) (string, error)

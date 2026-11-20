@@ -80,26 +80,29 @@ func (s *Store) UpdateProjectBriefLocal(ctx context.Context, projectGID string, 
 			return err
 		}
 		if op == nil {
-			op = &Op{Kind: OpUpdateBrief, TaskGID: projectGID, Payload: map[string]any{},
+			op = &Op{Kind: OpUpdateBrief, TaskGID: projectGID,
 				Base:  map[string]any{"state": cur.state, "title": cur.title, "text": cur.text, "html_text": cur.html},
 				State: OpPending, CreatedAt: formatTime(now)}
 		}
 		next := cachedBrief{state: BriefNone}
 		baseState := briefStr(op.Base, "state")
+		var p outbox.UpdateProjectBrief
 		switch {
 		case e.Delete:
-			op.Payload = map[string]any{"delete": true}
+			p.Delete = true
 		case baseState != BriefAvailable: // a new brief: all of it
-			op.Payload = map[string]any{"title": e.Title, "html_text": e.HTMLText, "text": e.Text}
+			p.Title, p.HTMLText, p.Text = &e.Title, &e.HTMLText, &e.Text
 		default: // only what differs from the base, so that a change of the other part in
 			// Asana is kept (and is no conflict)
-			op.Payload = map[string]any{}
 			if e.Title != briefStr(op.Base, "title") {
-				op.Payload["title"] = e.Title
+				p.Title = &e.Title
 			}
 			if e.HTMLText != briefStr(op.Base, "html_text") {
-				op.Payload["html_text"], op.Payload["text"] = e.HTMLText, e.Text
+				p.HTMLText, p.Text = &e.HTMLText, &e.Text
 			}
+		}
+		if err := outbox.SetPayload(op, p); err != nil {
+			return err
 		}
 		if !e.Delete {
 			next = cachedBrief{state: BriefAvailable, title: e.Title, text: e.Text, html: e.HTMLText}
@@ -229,7 +232,7 @@ func (s *Store) CompleteBriefOp(ctx context.Context, id int64, projectGID string
 // becomes Asana's brief): a change of part of a brief that Asana deleted meanwhile makes
 // the whole brief again, as it is shown here.
 func keepLocalBrief(ctx context.Context, tx *sql.Tx, op *Op) error {
-	if op.Payload["delete"] == true || briefStr(op.Conflict, "state") == BriefAvailable {
+	if p, _ := outbox.BestEffortPayload[outbox.UpdateProjectBrief](*op); p.Delete || briefStr(op.Conflict, "state") == BriefAvailable {
 		return nil
 	}
 	cur, err := readBrief(ctx, tx, op.TaskGID)
@@ -237,7 +240,7 @@ func keepLocalBrief(ctx context.Context, tx *sql.Tx, op *Op) error {
 		return err
 	}
 	if cur.state == BriefAvailable {
-		op.Payload = map[string]any{"title": cur.title, "html_text": cur.html, "text": cur.text}
+		return outbox.SetPayload(op, outbox.UpdateProjectBrief{Title: &cur.title, HTMLText: &cur.html, Text: &cur.text})
 	}
 	return nil
 }

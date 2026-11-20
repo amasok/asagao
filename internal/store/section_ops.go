@@ -132,14 +132,8 @@ func (s *Store) CreateSectionLocal(ctx context.Context, projectGID, name, before
 		if err := writeSectionOrder(ctx, tx, placeSection(order, gid, before, after)); err != nil {
 			return err
 		}
-		payload := map[string]any{"project": projectGID, "name": name}
-		if before != "" {
-			payload["before"] = before
-		}
-		if after != "" {
-			payload["after"] = after
-		}
-		return saveOp(ctx, tx, &Op{Kind: OpCreateSection, TaskGID: gid, Payload: payload, State: OpPending, CreatedAt: formatTime(now)})
+		return savePayload(ctx, tx, &Op{Kind: OpCreateSection, TaskGID: gid, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.CreateSection{Project: projectGID, Name: name, Before: before, After: after})
 	})
 	if err != nil {
 		return "", err
@@ -178,15 +172,11 @@ func (s *Store) MoveSectionLocal(ctx context.Context, sectionGID, before, after 
 		if err := writeSectionOrder(ctx, tx, next); err != nil {
 			return err
 		}
-		payload := map[string]any{"project": projectGID, "name": name}
-		if before != "" {
-			payload["before"] = before
-		} else {
-			payload["after"] = after
-		}
-		// Every move is kept, in order: a later move may be placed relative to this one.
-		return saveOp(ctx, tx, &Op{Kind: OpInsertSection, TaskGID: sectionGID, Payload: payload,
-			Base: map[string]any{"position": slices.Index(order, sectionGID)}, State: OpPending, CreatedAt: formatTime(now)})
+		// Every move is kept, in order: a later move may be placed relative to this one
+		// (exactly one of before / after, checked above).
+		return savePayload(ctx, tx, &Op{Kind: OpInsertSection, TaskGID: sectionGID,
+			Base: map[string]any{"position": slices.Index(order, sectionGID)}, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.InsertSection{Project: projectGID, Name: name, Before: before, After: after})
 	})
 }
 
@@ -234,8 +224,8 @@ func (s *Store) DeleteSectionLocal(ctx context.Context, sectionGID string, now t
 		}
 		// Its unsent rename and moves stay queued (sent before the delete), so that
 		// discarding the delete leaves them as they were.
-		return saveOp(ctx, tx, &Op{Kind: OpDeleteSection, TaskGID: sectionGID, State: OpPending, CreatedAt: formatTime(now),
-			Payload: map[string]any{"project": projectGID, "name": name, "position": position}})
+		return savePayload(ctx, tx, &Op{Kind: OpDeleteSection, TaskGID: sectionGID, State: OpPending, CreatedAt: formatTime(now)},
+			outbox.DeleteSection{Project: projectGID, Name: name, Position: position})
 	})
 }
 
@@ -250,22 +240,25 @@ func forgetLocalSection(ctx context.Context, tx *sql.Tx, gid string) error {
 	}
 	for i := len(ops) - 1; i >= 0; i-- { // undo the latest first
 		op := &ops[i]
+		var err error
 		switch op.Kind {
-		case OpCreateTask, OpAddProject:
-			delete(op.Payload, "section")
-			if err := saveOp(ctx, tx, op); err != nil {
-				return err
-			}
+		case OpCreateTask:
+			err = outbox.EditPayload(op, func(p *outbox.CreateTask) { p.Section = nil })
+		case OpAddProject:
+			err = outbox.EditPayload(op, func(p *outbox.ProjectMembership) { p.Section = nil })
 		case OpCreateSection: // another new section placed next to it: it goes last instead
-			delete(op.Payload, "before")
-			delete(op.Payload, "after")
-			if err := saveOp(ctx, tx, op); err != nil {
-				return err
-			}
+			err = outbox.EditPayload(op, func(p *outbox.CreateSection) { p.Before, p.After = "", "" })
 		default:
 			if err := discardOpTx(ctx, tx, op); err != nil {
 				return err
 			}
+			continue
+		}
+		if err == nil {
+			err = saveOp(ctx, tx, op)
+		}
+		if err != nil {
+			return err
 		}
 	}
 	for _, q := range []string{
@@ -467,14 +460,21 @@ func findOpAnyState(ctx context.Context, tx *sql.Tx, kind Kind, gid string) (*Op
 	return getOpTx(ctx, tx, id)
 }
 
-// SetOpPayload sets one key of an entry's payload (e.g. what sending it found out first).
-func (s *Store) SetOpPayload(ctx context.Context, id int64, key string, value any) error {
+// SetSectionsExisting records in the create_section entry id the sections of its project
+// that already had its name before it is first sent (outbox.CreateSection.Existing; empty,
+// not nil, for none).
+func (s *Store) SetSectionsExisting(ctx context.Context, id int64, existing []string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		op, err := getOpTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		op.Payload[key] = value
+		if op.Kind != OpCreateSection {
+			return fmt.Errorf("outbox entry %d is %s, not %s", id, op.Kind, OpCreateSection)
+		}
+		if err := outbox.EditPayload(op, func(p *outbox.CreateSection) { p.Existing = existing }); err != nil {
+			return err
+		}
 		return saveOp(ctx, tx, op)
 	})
 }

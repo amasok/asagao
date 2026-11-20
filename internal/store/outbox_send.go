@@ -193,7 +193,9 @@ func (s *Store) CompleteCreate(ctx context.Context, id int64, local, real string
 		var name string
 		_ = tx.QueryRowContext(ctx, "SELECT name FROM sections WHERE gid = ?", move.Section).Scan(&name)
 		op.Kind, op.TaskGID, op.State, op.LastError = OpMoveTask, real, OpPending, ""
-		op.Payload = map[string]any{"project": move.Project, "section": move.Section, "section_name": name}
+		if err := outbox.SetPayload(op, outbox.MoveTask{Project: move.Project, Section: move.Section, SectionName: name}); err != nil {
+			return err
+		}
 		op.Base = map[string]any{"section": move.From}
 		// A new change: not verified, and its own attempts.
 		if _, err := tx.ExecContext(ctx, "UPDATE outbox SET kind = ?, task_gid = ?, verify = 0, attempts = 0 WHERE id = ?", op.Kind, op.TaskGID, id); err != nil {
