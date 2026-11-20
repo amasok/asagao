@@ -15,7 +15,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/task"
-	"github.com/amasok/asagao/internal/domain/timetrack"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -209,11 +208,9 @@ func ConflictLines(op outbox.Op) []string {
 // or duplicating a task, renaming a section) are not prefixed.
 func DescribeOp(op outbox.Op) string {
 	what := DescribeChange(op)
-	switch op.Kind {
-	case outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindRenameSection,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection,
-		outbox.KindUpdateTag, outbox.KindDeleteTag, outbox.KindCreateEnumOption:
-		return what
+	switch outbox.SubjectOf(op.Kind) {
+	case outbox.SubjectNewTask, outbox.SubjectSection, outbox.SubjectTag, outbox.SubjectEnumOption:
+		return what // the change names the task, section, tag or option
 	}
 	name := op.TaskName
 	if name == "" {
@@ -228,206 +225,6 @@ func DescribeOp(op outbox.Op) string {
 // the wiring gives it to the store as Store.DescribeChange).
 func DescribeChange(op outbox.Op) string {
 	return termsafe.String(describeChange(op))
-}
-
-func describeChange(op outbox.Op) string {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	switch op.Kind {
-	case outbox.KindCreateTask:
-		if str("parent") != "" {
-			return fmt.Sprintf("サブタスク「%s」の作成", str("name"))
-		}
-		return fmt.Sprintf("タスク「%s」の作成", str("name"))
-	case outbox.KindDuplicateTask:
-		return fmt.Sprintf("複製「%s」の作成", str("name"))
-	case outbox.KindAddComment:
-		return fmt.Sprintf("コメント「%s」", clip(str("text"), 40))
-	case outbox.KindMoveTask:
-		if str("insert_before") != "" || str("insert_after") != "" {
-			return fmt.Sprintf("セクション「%s」への移動 (並び順の指定あり)", str("section_name"))
-		}
-		return fmt.Sprintf("セクション「%s」への移動", str("section_name"))
-	case outbox.KindDeleteTask:
-		return "タスクの削除"
-	case outbox.KindSetParent:
-		if str("parent") == "" {
-			return "親タスクから外す"
-		}
-		return fmt.Sprintf("「%s」のサブタスクにする", str("parent_name"))
-	case outbox.KindAddTag:
-		return fmt.Sprintf("タグ「%s」の追加", str("tag_name"))
-	case outbox.KindRemoveTag:
-		if str("tag_name") != "" {
-			return fmt.Sprintf("タグ「%s」の削除", str("tag_name"))
-		}
-		return "タグの削除"
-	case outbox.KindAddFollower:
-		return fmt.Sprintf("フォロワー %s の追加", str("user_name"))
-	case outbox.KindRemoveFollower:
-		return fmt.Sprintf("フォロワー %s の削除", str("user_name"))
-	case outbox.KindAddProject:
-		return fmt.Sprintf("プロジェクト「%s」への追加", str("project_name"))
-	case outbox.KindRemoveProject:
-		return fmt.Sprintf("プロジェクト「%s」からの削除", str("project_name"))
-	case outbox.KindUploadAttachment:
-		return fmt.Sprintf("添付「%s」", str("name"))
-	case outbox.KindUpdateStory:
-		return fmt.Sprintf("コメントを「%s」に編集", clip(str("text"), 40))
-	case outbox.KindDeleteStory:
-		return fmt.Sprintf("コメント「%s」の削除", clip(str("text"), 40))
-	case outbox.KindDeleteAttachment:
-		return fmt.Sprintf("添付「%s」の削除", str("name"))
-	case outbox.KindAddTimeEntry:
-		return fmt.Sprintf("作業時間 %s (%s) の記録", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
-	case outbox.KindUpdateTimeEntry:
-		return fmt.Sprintf("作業時間を %s (%s) に変更", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
-	case outbox.KindDeleteTimeEntry:
-		return fmt.Sprintf("作業時間 %s (%s) の削除", timetrack.Format(intOf(op.Payload["duration_minutes"])), str("entered_on"))
-	case outbox.KindAddDependency:
-		return fmt.Sprintf("「%s」を待つ", dependencyName(op))
-	case outbox.KindRemoveDependency:
-		return fmt.Sprintf("「%s」を待つのをやめる", dependencyName(op))
-	case outbox.KindSetCustomField:
-		if op.Payload["value"] == nil {
-			return fmt.Sprintf("「%s」を空にする", str("field_name"))
-		}
-		return fmt.Sprintf("「%s」を「%s」に変更", str("field_name"), clip(str("display"), 40))
-	case outbox.KindCreateStatus:
-		if str("title") == "" {
-			return fmt.Sprintf("ステータス更新（%s）", StatusLabel(str("status_type")))
-		}
-		return fmt.Sprintf("ステータス更新「%s」", str("title"))
-	case outbox.KindMarkNotification:
-		if op.Payload["read"] == true {
-			return "通知を既読にする"
-		}
-		return "通知を未読に戻す"
-	case outbox.KindCreateSection:
-		return fmt.Sprintf("セクション「%s」の作成", str("name"))
-	case outbox.KindDeleteSection:
-		return fmt.Sprintf("セクション「%s」の削除", str("name"))
-	case outbox.KindInsertSection:
-		return fmt.Sprintf("セクション「%s」の並べ替え", str("name"))
-	case outbox.KindUpdateTag:
-		old, _ := op.Base["name"].(string)
-		if old == "" {
-			old, _ = op.Payload["name"].(string)
-		}
-		var parts []string
-		if v, ok := op.Payload["name"].(string); ok {
-			parts = append(parts, fmt.Sprintf("名前を「%s」に変更", v))
-		}
-		if v, ok := op.Payload["color"].(string); ok {
-			if v == "" {
-				v = "なし"
-			}
-			parts = append(parts, fmt.Sprintf("色を %s に変更", v))
-		}
-		return fmt.Sprintf("タグ「%s」の%s", old, strings.Join(parts, "、"))
-	case outbox.KindDeleteTag:
-		return fmt.Sprintf("タグ「%s」の削除", str("name"))
-	case outbox.KindMoveMySection:
-		return fmt.Sprintf("マイタスクのセクション「%s」への移動", str("section_name"))
-	case outbox.KindCreateEnumOption:
-		return fmt.Sprintf("カスタムフィールド「%s」に選択肢「%s」を追加", str("field_name"), str("name"))
-	case outbox.KindAddFieldSetting:
-		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトに追加", str("field_name"))
-	case outbox.KindRemoveFieldSetting:
-		return fmt.Sprintf("カスタムフィールド「%s」をプロジェクトから外す", str("field_name"))
-	case outbox.KindUpdateProjectBrief:
-		if op.Payload["delete"] == true {
-			return "ブリーフの削除"
-		}
-		if state, _ := op.Base["state"].(string); state != readmodel.BriefAvailable {
-			return fmt.Sprintf("ブリーフ「%s」の作成", clip(str("title"), 40))
-		}
-		if _, ok := op.Payload["title"]; !ok { // the body only
-			return "ブリーフの本文の変更"
-		}
-		return fmt.Sprintf("ブリーフ「%s」の変更", clip(str("title"), 40))
-	case outbox.KindUpdateProject:
-		var parts []string
-		for _, k := range []string{"notes", "html_notes", "owner", "start_on", "due_on", "color"} {
-			v, ok := op.Payload[k]
-			if !ok {
-				continue
-			}
-			label := project.FieldLabel(k)
-			switch {
-			case k == "html_notes":
-				if _, plain := op.Payload["notes"]; !plain {
-					parts = append(parts, "説明の変更")
-				}
-			case k == "notes", k == "owner" && v != "":
-				parts = append(parts, label+"の変更")
-			case v == "":
-				parts = append(parts, label+"を外す")
-			default:
-				parts = append(parts, fmt.Sprintf("%sを %v に変更", label, v))
-			}
-		}
-		return "プロジェクトの" + strings.Join(parts, "、")
-	case outbox.KindRenameSection:
-		if old, _ := op.Base["name"].(string); old != "" {
-			return fmt.Sprintf("セクション名を「%s」から「%s」に変更", old, str("name"))
-		}
-		return fmt.Sprintf("セクション名を「%s」に変更", str("name"))
-	case outbox.KindUpdateTask:
-		var parts []string
-		for _, k := range []string{"name", "completed", "start_on", "due_on", "assignee", "notes", "liked", "resource_subtype", "approval_status", "custom_type", "custom_type_status_option"} {
-			v, ok := op.Payload[k]
-			if !ok {
-				continue
-			}
-			switch k {
-			case "name":
-				parts = append(parts, fmt.Sprintf("名前を「%s」に変更", v))
-			case "completed":
-				parts = append(parts, map[bool]string{true: "完了にする", false: "未完了に戻す"}[v == true])
-			case "due_on":
-				if v == "" {
-					parts = append(parts, "期日を削除")
-				} else {
-					parts = append(parts, fmt.Sprintf("期日を %s に変更", v))
-				}
-			case "start_on":
-				if v == "" {
-					parts = append(parts, "開始日を削除")
-				} else {
-					parts = append(parts, fmt.Sprintf("開始日を %s に変更", v))
-				}
-			case "assignee":
-				if v == "" {
-					parts = append(parts, "担当者を外す")
-				} else {
-					parts = append(parts, "担当者の変更")
-				}
-			case "notes":
-				parts = append(parts, "説明の変更")
-			case "resource_subtype":
-				if _, typ := op.Payload["custom_type"]; !typ || v != task.SubtypeCustom { // else said by custom_type
-					parts = append(parts, fmt.Sprintf("種類を「%s」に変更", task.SubtypeLabel(fmt.Sprint(v))))
-				}
-			case "custom_type":
-				parts = append(parts, "種類をカスタムタイプに変更")
-			case "custom_type_status_option":
-				parts = append(parts, "ステータスの変更")
-			case "approval_status":
-				parts = append(parts, fmt.Sprintf("承認を「%s」に変更", task.ApprovalLabel(fmt.Sprint(v))))
-			case "liked":
-				if v == true {
-					parts = append(parts, "いいね")
-				} else {
-					parts = append(parts, "いいねを外す")
-				}
-			}
-		}
-		if len(parts) == 0 && op.Payload["html_notes"] != nil {
-			parts = append(parts, "説明の変更")
-		}
-		return strings.Join(parts, "、")
-	}
-	return string(op.Kind)
 }
 
 func dependencyName(op outbox.Op) string {
