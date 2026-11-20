@@ -27,7 +27,8 @@ type Store struct {
 }
 
 // ErrNewerSchema reports that the local store uses a newer schema version than this build supports.
-var ErrNewerSchema = errors.New("ローカルのストアがより新しいバージョンのスキーマです")
+// The message says what to do: this build is older than the one that wrote the store.
+var ErrNewerSchema = errors.New("ローカルのストアが、この asagao より新しい版で作られています。asagao を最新の版に更新してください")
 
 // Open opens (creating if needed) the database at path with 0600 permissions and migrates it.
 func Open(ctx context.Context, path string) (*Store, error) {
