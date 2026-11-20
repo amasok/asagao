@@ -607,6 +607,10 @@ func clip(s string, n int) string {
 func intOf(v any) int {
 	switch n := v.(type) {
 	case float64:
+		// int(NaN) and out-of-range conversions are platform-dependent in Go.
+		if math.IsNaN(n) || n > math.MaxInt32 || n < math.MinInt32 {
+			return 0
+		}
 		return int(n)
 	case int:
 		return n

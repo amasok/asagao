@@ -25,9 +25,9 @@ func TestGoalMetricProgress(t *testing.T) {
 		{&readmodel.GoalMetric{Kind: "percentage", Initial: f64(0), Target: f64(1), Current: f64(0.4)}, "40% / 100%（40%）"},
 		{&readmodel.GoalMetric{Kind: "percentage", Initial: f64(0), Target: f64(1), Current: f64(0), Display: "0%"}, "0% / 100%（0%）"},
 		{&readmodel.GoalMetric{Kind: "percentage", Initial: f64(0), Target: f64(1), Current: f64(0), Display: "0.00"}, "0% / 100%（0%）"}, // POST's answer
-		{&readmodel.GoalMetric{Kind: "percentage", Target: f64(1), Display: "40%"}, "40% / 100%"},                                  // no value: the display
-		{&readmodel.GoalMetric{Kind: "number", Initial: f64(100), Target: f64(50), Current: f64(75)}, "75 / 50（50%）"},             // going down
-		{&readmodel.GoalMetric{Kind: "number", Initial: f64(10), Target: f64(10), Current: f64(10)}, "10 / 10"},                   // no span
+		{&readmodel.GoalMetric{Kind: "percentage", Target: f64(1), Display: "40%"}, "40% / 100%"},                                       // no value: the display
+		{&readmodel.GoalMetric{Kind: "number", Initial: f64(100), Target: f64(50), Current: f64(75)}, "75 / 50（50%）"},                   // going down
+		{&readmodel.GoalMetric{Kind: "number", Initial: f64(10), Target: f64(10), Current: f64(10)}, "10 / 10"},                         // no span
 		{&readmodel.GoalMetric{Kind: "currency", Currency: "JPY", Target: f64(1000), Current: f64(-5)}, "JPY -5 / JPY 1000（0%）"},
 		{&readmodel.GoalMetric{Kind: "number", Precision: 2, Target: f64(1), Current: f64(0.333)}, "0.33 / 1.00（33%）"},
 		{&readmodel.GoalMetric{Kind: "number", Target: f64(math.Inf(1)), Current: f64(1)}, "1 / +Inf"},

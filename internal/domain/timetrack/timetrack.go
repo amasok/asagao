@@ -105,15 +105,18 @@ func digits(s string) (int, error) {
 
 // Format writes minutes as "1h30m", "2h" or "45m" (ParseDuration reads it back).
 func Format(minutes int) string {
+	sign, u := "", uint64(minutes)
 	if minutes < 0 {
-		return "-" + Format(-minutes)
+		// Negated as unsigned: -math.MinInt overflows back to itself as an int, and
+		// recursing on it never ended (a NaN duration became math.MinInt on amd64).
+		sign, u = "-", -u
 	}
-	h, m := minutes/60, minutes%60
+	h, m := u/60, u%60
 	switch {
 	case h == 0:
-		return fmt.Sprintf("%dm", m)
+		return fmt.Sprintf("%s%dm", sign, m)
 	case m == 0:
-		return fmt.Sprintf("%dh", h)
+		return fmt.Sprintf("%s%dh", sign, h)
 	}
-	return fmt.Sprintf("%dh%02dm", h, m)
+	return fmt.Sprintf("%s%dh%02dm", sign, h, m)
 }

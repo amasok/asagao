@@ -32,3 +32,18 @@ func TestFormatRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// The most negative int is its own negation: Format must not recurse on it forever (a NaN
+// duration converted to int is math.MinInt on amd64; CI caught the stack overflow).
+func TestFormatNegativeExtremes(t *testing.T) {
+	for in, want := range map[int]string{
+		-1:                   "-1m",
+		-90:                  "-1h30m",
+		-120:                 "-2h",
+		-9223372036854775808: "-153722867280912930h08m",
+	} {
+		if got := Format(in); got != want {
+			t.Errorf("Format(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
