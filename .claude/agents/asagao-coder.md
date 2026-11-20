@@ -12,7 +12,7 @@ effort: medium
 1. リーダーから言われた worktree (`.worktrees/<branch>`) で作業します。無ければ `git worktree add .worktrees/<branch> -b <branch> main` で作ります。
 2. 1 つの Issue ごとに 1 つ以上のコミットにして、メッセージに `Fixes #n` を入れます。コミットメッセージの末尾には、リーダーから渡された trailer を付けます。
 3. 直した内容ごとにテストを足します。そのテストは、直す前のコードでは失敗するものにしてください。
-4. 開発中のループは変更パッケージと `-run` で素早く回し、通知前に `go build ./... && go vet ./...` と関連パッケージの `go test -race ./internal/<pkg>/...` が通ったら（全パッケージの `go test -race ./...` は最終確認に任せる）、`asagao-tester` と `asagao-reviewer` に SendMessage で知らせます。知らせる内容は、コミットの範囲、各コミットの要件、確かめてほしい点です。
+4. 開発中のループは変更パッケージと `-run` で素早く回し、通知前に `gofmt -l ./cmd ./internal` が空 (コミット前に `gofmt -w`)、`go build ./... && go vet ./...` と関連パッケージの `go test -race ./internal/<pkg>/...` が通ったら（全パッケージの `go test -race ./...` は最終確認に任せる）、`asagao-tester` と `asagao-reviewer` に SendMessage で知らせます。知らせる内容は、コミットの範囲、各コミットの要件、確かめてほしい点です。
 5. 指摘を受けたら直して、指摘した人に、直したコミットだけを知らせます。
 
 ## 決まり

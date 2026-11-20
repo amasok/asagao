@@ -39,6 +39,7 @@ description: >-
 - **ルール**:
   - `AGENTS.md` / `CLAUDE.md` の厳守事項（本物 Asana・`store.db` 禁止、`termsafe`、`archtest`）を守る。
   - 修正前なら失敗するテストを必ず追加する。
+  - コミット前に必ず `gofmt -w` をかけ、`gofmt -l ./cmd ./internal` が空であることを確かめる (CI は gofmt を検査しない)。
   - 開発中の確認は変更パッケージ＋`-run '<Pattern>'` のみで回す。完了前も `go build ./... && go vet ./...` と **関連パッケージの `go test -race ./internal/<pkg>/...`** までとし、全パッケージの `go test -race ./...` は回さない。
   - `search_web` は最大 2〜3 回に絞り、まず既存コード・`openspec/`・既存テストを確認する。
   - `git add -A` 禁止、`push` 禁止。コミットメッセージ末尾には必ず `Co-Authored-By: Gemini (Antigravity) <noreply@google.com>` を付ける。
