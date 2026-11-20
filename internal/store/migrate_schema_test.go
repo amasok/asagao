@@ -153,6 +153,27 @@ func (m *raceMigrator) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.T
 	return m.db.BeginTx(ctx, opts)
 }
 
+func readSchemaSQL(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), "SELECT type, name, COALESCE(sql, '') FROM sqlite_master ORDER BY type, name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var typ, name, sqlText string
+		if err := rows.Scan(&typ, &name, &sqlText); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&b, "%s:%s:%s\n", typ, name, sqlText)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
 func TestMigrateRaceNewerSchemaRollsBack(t *testing.T) {
 	ctx := context.Background()
 	future := len(migrations) + 1
@@ -206,6 +227,8 @@ func TestMigrateRaceNewerSchemaRollsBack(t *testing.T) {
 		db := st.db
 		defer st.Close()
 
+		beforeSchema := readSchemaSQL(t, db)
+
 		m := &raceMigrator{
 			db: db,
 			onBegin: func() error {
@@ -217,13 +240,8 @@ func TestMigrateRaceNewerSchemaRollsBack(t *testing.T) {
 		if !errors.Is(err, ErrNewerSchema) {
 			t.Fatalf("err = %v, want errors.Is(_, ErrNewerSchema)", err)
 		}
-		// Last migration adds tags.workspace_gid; verify it was NOT run.
-		var hasCol int
-		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('tags') WHERE name = 'workspace_gid'").Scan(&hasCol); err != nil {
-			t.Fatal(err)
-		}
-		if hasCol != 0 {
-			t.Fatalf("last migration ran despite newer schema version inside BeginTx")
+		if afterSchema := readSchemaSQL(t, db); afterSchema != beforeSchema {
+			t.Fatalf("schema changed despite newer schema version inside BeginTx:\nbefore:\n%s\nafter:\n%s", beforeSchema, afterSchema)
 		}
 		var ver int
 		if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&ver); err != nil {
