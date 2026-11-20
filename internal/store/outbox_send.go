@@ -10,7 +10,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Sending outbox entries (used by sync.Push).
@@ -26,7 +25,7 @@ import (
 // status update, tag). Such an entry goes back to pending with verify set: the next Push
 // first looks in Asana for what it would have created since sent_at, and either records
 // that (no resend) or sends it again. Only when Asana cannot tell (e.g. several candidates)
-// is the entry marked failed for the user.
+// is the entry marked failed for the user (sync's ambiguousMessage).
 
 // OpSending is the state of an entry while Push is sending it (outbox.StateSending).
 const OpSending = outbox.StateSending
@@ -34,10 +33,6 @@ const OpSending = outbox.StateSending
 // ErrOpSending is returned when an entry that is being sent is retried or discarded (an
 // alias of readmodel.ErrOpSending, so that internal/app can match it).
 var ErrOpSending = readmodel.ErrOpSending
-
-// AmbiguousMessage is the last_error of an entry that may have reached Asana, when Asana
-// has several candidates for what it created (format's).
-const AmbiguousMessage = format.AmbiguousMessage
 
 // BeginSend marks a pending entry as being sent at now. It returns false if the entry is no
 // longer pending (sent, discarded or resolved by someone else in the meantime). An entry

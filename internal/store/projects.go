@@ -10,18 +10,12 @@ import (
 
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // OpCreateStatus posts a project status update (outbox.KindCreateStatus).
 const OpCreateStatus = outbox.KindCreateStatus
-
-// StatusTypes is format.StatusTypes.
-var StatusTypes = format.StatusTypes
-
-// StatusLabel is format.StatusLabel.
-func StatusLabel(t string) string { return format.StatusLabel(t) }
 
 // StatusUpdateView is readmodel.StatusUpdateView.
 type StatusUpdateView = readmodel.StatusUpdateView
@@ -69,11 +63,7 @@ func (s *Store) StatusUpdates(ctx context.Context, projectGID string) ([]StatusU
 
 // CreateStatusLocal adds a status update to a project and queues it (offline too).
 func (s *Store) CreateStatusLocal(ctx context.Context, projectGID, statusType, title, text, htmlText string, author UserRef, now time.Time) (string, error) {
-	valid := false
-	for _, t := range StatusTypes {
-		valid = valid || t.Value == statusType
-	}
-	if !valid {
+	if !project.IsStatusType(statusType) {
 		return "", fmt.Errorf("status は on_track / at_risk / off_track / on_hold / complete のどれかです（%q）", statusType)
 	}
 	if strings.TrimSpace(text) == "" {

@@ -175,7 +175,7 @@ func (s *Syncer) briefRefusal(ctx context.Context, projectGID string, err error)
 				return serr
 			}
 		}
-		return fmt.Errorf("%s: %w", plan.UnavailableMessage(plan.ProjectBrief), err)
+		return fmt.Errorf("%s: %w", readmodel.PlanUnavailableMessage(plan.ProjectBrief), err)
 	case isForbidden(err):
 		if serr := s.Store.SaveProjectOverview(ctx, projectGID, nil, readmodel.BriefUnavailable, nil, s.clock()); serr != nil {
 			return serr

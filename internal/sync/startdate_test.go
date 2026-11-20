@@ -16,6 +16,7 @@ import (
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // #57: a task's start date is sent with a due date (Asana requires one of due_on / due_at
@@ -183,6 +184,7 @@ func TestPushStartOnSendsDueDate(t *testing.T) {
 
 func TestPushStartOn402(t *testing.T) {
 	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
+	st.SetDescribeChange(format.DescribeChange) // as wire.OpenStore does
 	ctx := context.Background()
 	s.now = func() time.Time { return now }
 	f.plan402 = true

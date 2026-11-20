@@ -17,6 +17,7 @@ import (
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/store"
 	"github.com/amasok/asagao/internal/sync"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // APIClient is the Asana client for the login in the token store of cfg (ASANA_TOKEN
@@ -57,9 +58,15 @@ func Syncer(api sync.AsanaAPI, st sync.LocalStore, cfg config.Config) *sync.Sync
 	return &sync.Syncer{API: api, Store: st, Cfg: sync.Config(cfg.Sync), RichText: richtext.Converter{}}
 }
 
-// OpenStore opens (creating it if need be) the local store at path.
+// OpenStore opens (creating it if need be) the local store at path. Dropped changes are
+// recorded with the display's description of them (format.DescribeChange).
 func OpenStore(ctx context.Context, path string) (*store.Store, error) {
-	return store.Open(ctx, path)
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	st.SetDescribeChange(format.DescribeChange)
+	return st, nil
 }
 
 // CheckPAT asks Asana who a Personal Access Token belongs to (GET /users/me), for a login.

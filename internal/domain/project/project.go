@@ -104,3 +104,10 @@ func FieldLabel(k string) string {
 	return map[string]string{"notes": "説明", "html_notes": "説明", "owner": "オーナー", "start_on": "開始日",
 		"due_on": "期日", "color": "色"}[k]
 }
+
+// StatusTypes are the values of a project status update's status_type, in the order the
+// front ends offer them.
+var StatusTypes = []string{"on_track", "at_risk", "off_track", "on_hold", "complete"}
+
+// IsStatusType reports whether t is one of StatusTypes.
+func IsStatusType(t string) bool { return slices.Contains(StatusTypes, t) }

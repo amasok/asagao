@@ -92,7 +92,7 @@ func (m *Model) loadOutboxOnly() tea.Cmd {
 			ids := make([]int64, len(pending))
 			for i, d := range pending {
 				ids[i] = d.ID
-				if !format.IsResetDiscard(d) {
+				if !d.IsReset() {
 					discards = append(discards, d)
 				}
 			}

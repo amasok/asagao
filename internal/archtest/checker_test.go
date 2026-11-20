@@ -130,6 +130,12 @@ func TestCheckerCatches(t *testing.T) {
 				m["internal/testguard"] = append(m["internal/testguard"], "github.com/zalando/go-keyring")
 			},
 			[]string{"internal/testguard → github.com/zalando/go-keyring: external modules are used only"}},
+		{"the store imports the display text",
+			func(m map[string][]string) {
+				m["internal/ui/format"] = nil
+				m["internal/store"] = append(m["internal/store"], "internal/ui/format")
+			},
+			[]string{"internal/store → internal/ui/format: adapters do not import the display text"}},
 		{"domain imports an adapter",
 			func(m map[string][]string) { m["internal/domain/task"] = []string{"internal/store"} },
 			[]string{"internal/domain/task → internal/store: domain imports only"}},

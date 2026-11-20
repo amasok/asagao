@@ -11,8 +11,8 @@ import (
 	glamourstyles "charm.land/glamour/v2/styles"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/amasok/asagao/internal/domain/rich"
 	"github.com/amasok/asagao/internal/imageview"
-	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/richtext"
 	"github.com/amasok/asagao/internal/sync"
 )
@@ -28,7 +28,7 @@ func textMarkdown(htmlText, plain string) string {
 	if htmlText != "" {
 		return richtext.ToMarkdown(htmlText)
 	}
-	plain = readmodel.ReplaceInlineAssets(plain, func(gid string) string {
+	plain = rich.ReplaceInlineAssets(plain, func(gid string) string {
 		return "\n\n" + richtext.ImageToken(gid) + "\n\n"
 	})
 	return richtext.FromPlain(plain)

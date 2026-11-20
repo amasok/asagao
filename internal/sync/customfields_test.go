@@ -14,6 +14,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/store"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // fieldServer is a fake Asana with one task t1 that has an enum field cf1 (options o1, o2),
@@ -145,7 +146,7 @@ func TestPushCustomFieldConflict(t *testing.T) {
 		t.Fatalf("push = %+v, %v, puts %v", res, err, fs.puts)
 	}
 	ops, _ := st.ListOps(ctx)
-	if lines := store.ConflictLines(ops[0]); len(lines) != 1 || lines[0] != "優先度: こちら=中 / Asana=（空）" {
+	if lines := format.ConflictLines(ops[0]); len(lines) != 1 || lines[0] != "優先度: こちら=中 / Asana=（空）" {
 		t.Fatalf("conflict lines = %q", lines)
 	}
 }
