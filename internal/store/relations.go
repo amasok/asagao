@@ -93,14 +93,16 @@ func applyRelation(ctx context.Context, tx *sql.Tx, op Op, undo bool) error {
 		user, _ := op.Payload["user"].(string)
 		q, args = "DELETE FROM task_followers WHERE task_gid = ? AND user_gid = ?", []any{op.TaskGID, user}
 		if add {
-			q = "INSERT OR IGNORE INTO task_followers(task_gid, user_gid) VALUES(?, ?)"
+			// A task gone from the cache has nothing to put back (#87).
+			q, args = "INSERT OR IGNORE INTO task_followers(task_gid, user_gid) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM tasks WHERE gid = ?1)", []any{op.TaskGID, user}
 		}
 	default:
 		project, _ := op.Payload["project"].(string)
 		section, _ := op.Payload["section"].(string)
 		q, args = "DELETE FROM task_memberships WHERE task_gid = ? AND project_gid = ?", []any{op.TaskGID, project}
 		if add {
-			q, args = "INSERT OR IGNORE INTO task_memberships(task_gid, project_gid, section_gid) VALUES(?, ?, ?)", []any{op.TaskGID, project, section}
+			q, args = `INSERT OR IGNORE INTO task_memberships(task_gid, project_gid, section_gid)
+				SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM tasks WHERE gid = ?1)`, []any{op.TaskGID, project, section}
 		}
 	}
 	_, err := tx.ExecContext(ctx, q, args...)
