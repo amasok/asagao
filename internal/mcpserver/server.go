@@ -772,51 +772,61 @@ func (s *Server) accountChangedNote(ctx context.Context) string {
 		"This MCP server cannot reset. (%s)", n, format.AccountChangedHelp(n, "asagao reset"))
 }
 
-// push sends the outbox now. A failure is reported in the output, not as a tool error:
-// the change is saved and will be sent by the next sync.
+// push sends the outbox now, after a write to task taskGID ("" for none). A failure is
+// reported in the output, not as a tool error: the change is saved and will be sent by
+// the next sync.
 func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
-	out := WriteOutput{TaskGID: taskGID}
+	return s.pushTarget(ctx, app.PushTarget{TaskGIDs: []string{taskGID}}) // "" is left out
+}
+
+// pushTarget is push for a write that names what it made (a section, a time entry).
+func (s *Server) pushTarget(ctx context.Context, t app.PushTarget) WriteOutput {
+	pushNow := app.PushNow{Store: s.Store, LoginHelp: auth.LoginHelp}
+	// The syncer is made before the push's timeout starts, with the call's context: it is
+	// kept for later calls, and making it (a 1Password prompt) does not use up the push's time.
 	syncer, err := s.getSyncer(ctx)
-	if err != nil {
-		out.Note = "saved locally; will be sent on the next sync (" + err.Error() + ")"
-		if help := auth.LoginHelp(err); help != "" {
-			out.Note = "saved locally but NOT sent: not logged in to Asana. Tell the user to log in (in a terminal); " +
-				"the change is sent by the next sync after that: " + help
+	rep := pushNow.Run(ctx, func(context.Context) (app.Pusher, error) {
+		if err != nil {
+			return nil, err
 		}
-		return out
+		return syncer, nil
+	}, t)
+	s.dropSyncerOn(rep.Err)
+	out := WriteOutput{TaskGID: rep.TaskGID(), SectionGID: rep.SectionGID, TimeEntryGID: rep.TimeEntryGID, Sent: rep.Sent}
+	if rep.Result != nil {
+		out.Discarded = rep.Result.Discarded
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	res, err := syncer.Push(ctx)
-	s.dropSyncerOn(err)
-	out.Discarded = res.Discarded
-	if len(res.Discarded) > 0 {
-		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(res.Discarded))
+	if len(out.Discarded) > 0 {
+		out.Note = fmt.Sprintf("%d change(s) to items deleted in Asana were discarded; ", len(out.Discarded))
 	}
-	switch {
-	case errors.Is(err, sync.ErrAccountChanged):
+	switch rep.Outcome {
+	case app.PushNotLoggedIn:
+		out.Note += "saved locally but NOT sent: not logged in to Asana. Tell the user to log in (in a terminal); " +
+			"the change is sent by the next sync after that: " + rep.LoginHelp
+	case app.PushNotConnected:
+		out.Note += "saved locally; will be sent on the next sync (" + rep.Err.Error() + ")"
+	case app.PushAccountChanged:
 		out.Note += "saved locally but NOT sent: " + s.accountChangedNote(ctx)
-	case auth.LoginHelp(err) != "":
+	case app.PushLoginRejected:
 		out.Note += "saved locally but NOT sent: Asana rejected the login token. Tell the user to log in again (in a terminal); " +
-			"the change is sent by the next sync after that: " + auth.LoginHelp(err)
-	case errors.Is(err, sync.ErrPushBusy):
+			"the change is sent by the next sync after that: " + rep.LoginHelp
+	case app.PushBusy:
 		out.Note += "saved locally; another asagao process is sending the outbox right now and will send this change too"
-	case err != nil:
-		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + err.Error() + ")"
-	case res.InboxReadOnly:
+	case app.PushOffline:
+		out.Note += "saved locally; Asana could not be reached, will be sent on the next sync (" + rep.Err.Error() + ")"
+	case app.PushInboxReadOnly:
 		out.Note += "Asana refused to mark notifications read / unread, so the change was undone: " + sync.InboxReadOnlyMessage(s.AuthScopes)
-	case res.Conflicts > 0 || res.Failed > 0:
-		out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
-	default:
-		out.Sent = true
-	}
-	if real, err := s.query().RealGID(ctx, taskGID); err == nil {
-		out.TaskGID = real
-	}
-	for _, d := range res.Discarded {
-		if d.TaskGID == taskGID || d.TaskGID == out.TaskGID {
-			out.Sent = false // this change was dropped, not sent
+	case app.PushIncomplete:
+		res := rep.Result
+		if res.Conflicts > 0 || res.Failed > 0 {
+			out.Note += fmt.Sprintf("%d conflict(s) / %d failure(s) in the outbox; see sync_status", res.Conflicts, res.Failed)
+		} else {
+			out.Note += fmt.Sprintf("%d change(s) still queued (offline, waiting or to be checked in Asana); "+
+				"they will be sent on the next sync, see sync_status", res.Remaining)
 		}
+	}
+	if rep.Dropped && rep.Outcome == app.PushSent {
+		out.Note += "this change was discarded: what it changes was deleted in Asana"
 	}
 	return out
 }

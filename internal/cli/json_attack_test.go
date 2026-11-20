@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/store"
 )
 
 // --json must be exactly one JSON document on stdout, nothing on stderr from the command's
@@ -102,8 +101,9 @@ func TestWriteJSONCreateAndDeletedTask(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
 		t.Fatalf("%q: %v", stdout, err)
 	}
-	if !r.Sent || store.IsLocalGID(r.TaskGID) {
-		t.Errorf("create online: %+v (sent, and no local gid)", r)
+	// The created task's gid is Asana's (it was left empty before #75, as if unknown).
+	if !r.Sent || r.TaskGID != "real1" {
+		t.Errorf("create online: %+v (sent, with the gid Asana gave)", r)
 	}
 
 	deleted = true
