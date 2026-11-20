@@ -63,21 +63,22 @@ func Window(refusedAt, now time.Time) (from, until time.Time, off bool) {
 	return refusedAt, refusedAt.Add(RecheckAfter), true
 }
 
-// FeatureOf returns the feature an outbox kind belongs to ("" for none).
-func FeatureOf(kind string) string {
-	switch kind {
-	case outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection:
-		return Sections
-	case outbox.KindUpdateTag, outbox.KindDeleteTag:
-		return Tags
-	case outbox.KindMoveMySection:
-		return MySection
-	case outbox.KindAddTimeEntry, outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
-		return TimeTracking
-	case outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
-		return CustomFields
-	case outbox.KindUpdateProjectBrief:
-		return ProjectBrief
-	}
-	return ""
+// features maps the outbox kinds that belong to a feature some plans lack to it.
+var features = map[outbox.Kind]string{
+	outbox.KindCreateSection:      Sections,
+	outbox.KindDeleteSection:      Sections,
+	outbox.KindInsertSection:      Sections,
+	outbox.KindUpdateTag:          Tags,
+	outbox.KindDeleteTag:          Tags,
+	outbox.KindMoveMySection:      MySection,
+	outbox.KindAddTimeEntry:       TimeTracking,
+	outbox.KindUpdateTimeEntry:    TimeTracking,
+	outbox.KindDeleteTimeEntry:    TimeTracking,
+	outbox.KindCreateEnumOption:   CustomFields,
+	outbox.KindAddFieldSetting:    CustomFields,
+	outbox.KindRemoveFieldSetting: CustomFields,
+	outbox.KindUpdateProjectBrief: ProjectBrief,
 }
+
+// FeatureOf returns the feature an outbox kind belongs to ("" for none).
+func FeatureOf(kind outbox.Kind) string { return features[kind] }

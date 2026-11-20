@@ -54,6 +54,9 @@ func IsLocalGID(g string) bool { return gid.IsLocal(g) }
 // Op is an outbox entry (an alias of outbox.Op).
 type Op = outbox.Op
 
+// Kind is the kind of an outbox entry (an alias of outbox.Kind).
+type Kind = outbox.Kind
+
 // NewTask is the input for CreateTaskLocal (an alias of task.NewTask; see TagEdit).
 type NewTask = task.NewTask
 
@@ -1047,7 +1050,7 @@ func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
 		return err
 	}
 	type entry struct {
-		kind          string
+		kind          Kind
 		payload, base map[string]any
 	}
 	var entries []entry
@@ -1088,7 +1091,7 @@ func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
 	return nil
 }
 
-func findOp(ctx context.Context, tx *sql.Tx, kind, gid string) (*Op, error) {
+func findOp(ctx context.Context, tx *sql.Tx, kind Kind, gid string) (*Op, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending' ORDER BY id DESC LIMIT 1", kind, gid).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {

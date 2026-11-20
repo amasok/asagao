@@ -218,7 +218,7 @@ func TestPushEditWaitsForComment(t *testing.T) {
 func TestStoryEditsSafeToResend(t *testing.T) {
 	_, _, _, st := setupPush(t)
 	ctx := context.Background()
-	for _, kind := range []string{store.OpUpdateStory, store.OpDeleteStory, store.OpDeleteAttachment} {
+	for _, kind := range []store.Kind{store.OpUpdateStory, store.OpDeleteStory, store.OpDeleteAttachment} {
 		safe, err := st.SafeToResend(ctx, store.Op{Kind: kind})
 		if err != nil || !safe {
 			t.Errorf("%s: SafeToResend = %v, %v", kind, safe, err)

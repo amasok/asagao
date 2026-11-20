@@ -35,7 +35,7 @@ func TestWindow(t *testing.T) {
 }
 
 func TestFeatureOf(t *testing.T) {
-	cases := map[string]string{
+	cases := map[outbox.Kind]string{
 		outbox.KindCreateSection:      Sections,
 		outbox.KindDeleteSection:      Sections,
 		outbox.KindInsertSection:      Sections,

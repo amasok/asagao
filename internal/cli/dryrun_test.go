@@ -182,7 +182,7 @@ func TestDryRunJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
 		t.Fatalf("json %q: %v", stdout, err)
 	}
-	if !r.DryRun || r.TaskGID != "t1,t2" || len(r.Planned) != 2 || r.Planned[0].Kind != store.OpUpdateTask ||
+	if !r.DryRun || r.TaskGID != "t1,t2" || len(r.Planned) != 2 || r.Planned[0].Kind != string(store.OpUpdateTask) ||
 		r.Planned[0].TaskGID != "t1" || r.Planned[0].Payload["completed"] != true || r.Planned[1].TaskGID != "t2" {
 		t.Fatalf("result %s", stdout)
 	}
@@ -195,7 +195,7 @@ func TestDryRunJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
 		t.Fatalf("json %q: %v", stdout, err)
 	}
-	if !r.DryRun || r.TaskGID != "" || len(r.Planned) != 1 || r.Planned[0].Kind != store.OpCreateTask || r.Planned[0].TaskGID != "" {
+	if !r.DryRun || r.TaskGID != "" || len(r.Planned) != 1 || r.Planned[0].Kind != string(store.OpCreateTask) || r.Planned[0].TaskGID != "" {
 		t.Fatalf("result %s", stdout)
 	}
 	if strings.Contains(stdout, "local:") {

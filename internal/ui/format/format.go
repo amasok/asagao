@@ -427,7 +427,7 @@ func describeChange(op outbox.Op) string {
 		}
 		return strings.Join(parts, "、")
 	}
-	return op.Kind
+	return string(op.Kind)
 }
 
 func dependencyName(op outbox.Op) string {

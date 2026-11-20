@@ -1409,7 +1409,7 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 
 // storyTarget returns, for an edit or a delete of a comment, attachment or time entry, the payload key
 // of its gid and the ResultKind under which a local one's result is recorded ("" otherwise).
-func storyTarget(kind string) (key string, result readmodel.ResultKind) {
+func storyTarget(kind outbox.Kind) (key string, result readmodel.ResultKind) {
 	switch kind {
 	case outbox.KindUpdateStory, outbox.KindDeleteStory:
 		return "story", readmodel.ResultStory

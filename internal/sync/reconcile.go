@@ -42,7 +42,7 @@ const clockSkew = 2 * time.Minute
 
 // settleTime is how long after sending an entry its result may still be missing from
 // Asana's lists. A duplicate is copied by a background job, so it takes longer.
-func settleTime(kind string) time.Duration {
+func settleTime(kind outbox.Kind) time.Duration {
 	if kind == outbox.KindDuplicateTask {
 		return 5 * time.Minute
 	}

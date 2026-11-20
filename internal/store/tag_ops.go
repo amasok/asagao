@@ -226,8 +226,9 @@ func reapplyTagEdits(ctx context.Context, tx *sql.Tx, gids ...string) error {
 		return err
 	}
 	type edit struct {
-		kind, gid string
-		payload   map[string]any
+		kind    Kind
+		gid     string
+		payload map[string]any
 	}
 	var edits []edit
 	for rows.Next() {

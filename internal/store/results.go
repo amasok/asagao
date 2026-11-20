@@ -27,7 +27,7 @@ const ResultGrace = 30 * 24 * time.Hour
 // reconcile) relies on the recorded results to not take an Asana item that already
 // belongs to another local entry (RecordedResults). While any of them is queued, no
 // mapping of that prefix is deleted.
-var resultKinds = map[string][]string{
+var resultKinds = map[string][]Kind{
 	resultPrefixTask:       {OpCreateTask, OpDuplicateTask},
 	resultPrefixStory:      {OpAddComment},
 	resultPrefixAttachment: {OpUploadAttachment},

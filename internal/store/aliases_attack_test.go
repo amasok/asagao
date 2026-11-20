@@ -10,7 +10,7 @@ func TestE1AliasesKeepValues(t *testing.T) {
 	for got, want := range map[string]string{
 		keyLastSync: "last_sync", keyEvents: "events:", keyCustomFields: "custom_fields:",
 		resultPrefixTask: "gid:", resultPrefixStory: "story:", resultPrefixAttachment: "att:", resultPrefixStatus: "status:", resultPrefixTag: "tag:",
-		OpUpdateTask: "update_task", OpCreateTask: "create_task", OpAddComment: "add_comment", OpMoveTask: "move_task",
+		string(OpUpdateTask): "update_task", string(OpCreateTask): "create_task", string(OpAddComment): "add_comment", string(OpMoveTask): "move_task",
 		OpPending: "pending", OpConflict: "conflict", OpFailed: "failed", OpSending: "sending",
 	} {
 		if got != want {

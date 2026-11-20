@@ -19,7 +19,7 @@ func opList(t *testing.T, st *store.Store) []string {
 	t.Helper()
 	var out []string
 	for _, op := range opsOf(t, st) {
-		out = append(out, op.Kind+":"+op.TaskGID)
+		out = append(out, string(op.Kind)+":"+op.TaskGID)
 	}
 	return out
 }
@@ -35,7 +35,7 @@ func TestSetDependencyQueues(t *testing.T) {
 	}
 	h.run(h.m.setDependency(d.TaskSummary, "t2", false, true))
 	h.run(h.m.setDependency(d.TaskSummary, "t3", true, true))
-	want := []string{store.OpAddDependency + ":t1", store.OpAddDependency + ":t3"}
+	want := []string{string(store.OpAddDependency) + ":t1", string(store.OpAddDependency) + ":t3"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -83,7 +83,7 @@ func TestSubmitFieldReadsAndQueues(t *testing.T) {
 	}
 	h.m.prompt.fieldTask, h.m.prompt.fieldEdit = d.TaskSummary, field("cf-date")
 	h.run(h.m.submitField("+7d"))
-	if got := opList(t, st); !slices.Equal(got, []string{store.OpSetCustomField + ":t1"}) {
+	if got := opList(t, st); !slices.Equal(got, []string{string(store.OpSetCustomField) + ":t1"}) {
 		t.Fatalf("ops = %v", got)
 	}
 	d, _ = st.GetTask(ctx, "t1")
@@ -114,7 +114,7 @@ func TestToggleFollowerAndTagQueue(t *testing.T) {
 	h.run(h.m.toggleTag(d.TaskSummary, pickerItem{value: "g1"}))
 	h.m.prompt.tagTask = d.TaskSummary
 	h.run(h.m.submitNewTag("新しいタグ"))
-	want := []string{store.OpAddFollower + ":t1", store.OpAddTag + ":t1", store.OpAddTag + ":t1"}
+	want := []string{string(store.OpAddFollower) + ":t1", string(store.OpAddTag) + ":t1", string(store.OpAddTag) + ":t1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}

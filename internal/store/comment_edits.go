@@ -78,7 +78,7 @@ func ownComment(ctx context.Context, tx *sql.Tx, gid, me string) (*storyRow, err
 
 // unsentCreate returns the create (kind) of a comment or attachment with a local gid, as
 // long as it was never sent: until then it can be rewritten or dropped.
-func unsentCreate(ctx context.Context, tx *sql.Tx, kind, key, gid string) (*Op, error) {
+func unsentCreate(ctx context.Context, tx *sql.Tx, kind Kind, key, gid string) (*Op, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?
 		AND state IN ('pending', 'failed') AND verify = 0 AND sent_at = '' AND attempts = 0`, kind, key, gid).Scan(&id)
@@ -251,7 +251,7 @@ func getAttachmentRow(ctx context.Context, tx *sql.Tx, gid string) (map[string]a
 
 // ensureStoryCreateQueued checks that a comment or attachment with a local gid still has
 // its create in the outbox (in any state): a change queued for it waits for that.
-func ensureStoryCreateQueued(ctx context.Context, tx *sql.Tx, kind, key, gid string) error {
+func ensureStoryCreateQueued(ctx context.Context, tx *sql.Tx, kind Kind, key, gid string) error {
 	var n int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?",
 		kind, key, gid).Scan(&n); err != nil {
@@ -265,7 +265,7 @@ func ensureStoryCreateQueued(ctx context.Context, tx *sql.Tx, kind, key, gid str
 
 // findStoryOp returns the newest entry of kind whose payload key is gid, in one of states
 // (a SQL list).
-func findStoryOp(ctx context.Context, tx *sql.Tx, kind, key, gid, states string) (*Op, error) {
+func findStoryOp(ctx context.Context, tx *sql.Tx, kind Kind, key, gid, states string) (*Op, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?
 		AND state IN (`+states+`) ORDER BY id DESC LIMIT 1`, kind, key, gid).Scan(&id)
@@ -378,7 +378,7 @@ func undoAttachmentDelete(ctx context.Context, tx *sql.Tx, op *Op) error {
 
 // dropChangesOf removes the queued changes (kinds) to a comment or attachment whose create
 // is discarded: there is nothing left in Asana for them to change.
-func dropChangesOf(ctx context.Context, tx *sql.Tx, key, gid string, kinds ...string) error {
+func dropChangesOf(ctx context.Context, tx *sql.Tx, key, gid string, kinds ...Kind) error {
 	if gid == "" {
 		return nil
 	}

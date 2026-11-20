@@ -34,8 +34,8 @@ func typeText(h *harness, s string) {
 	}
 }
 
-func opKindsOf(h *harness) []string {
-	var out []string
+func opKindsOf(h *harness) []store.Kind {
+	var out []store.Kind
 	for _, op := range h.ops() {
 		out = append(out, op.Kind)
 	}
@@ -51,7 +51,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 	h.key("space", "n")
 	typeText(h, "保留")
 	h.key("enter")
-	if got := opKindsOf(h); !slices.Equal(got, []string{store.OpCreateSection}) {
+	if got := opKindsOf(h); !slices.Equal(got, []store.Kind{store.OpCreateSection}) {
 		t.Fatalf("ops = %v (status %q)", got, h.m.status)
 	}
 	s := h.screen()
@@ -131,7 +131,7 @@ func TestTUITagManager(t *testing.T) {
 	if _, err := st.GetTag(ctx, "g1"); err == nil {
 		t.Fatal("tag not deleted")
 	}
-	if got := opKindsOf(h); !slices.Equal(got, []string{store.OpDeleteTag}) {
+	if got := opKindsOf(h); !slices.Equal(got, []store.Kind{store.OpDeleteTag}) {
 		t.Errorf("ops = %v (the unsent color change goes with the tag)", got)
 	}
 }

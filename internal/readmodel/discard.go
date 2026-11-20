@@ -1,13 +1,15 @@
 package readmodel
 
+import "github.com/amasok/asagao/internal/domain/outbox"
+
 // Discard is a local change dropped because its target was deleted in Asana, or because
 // the user reset the local data (IsReset).
 type Discard struct {
-	ID       int64  `json:"id"`
-	Kind     string `json:"kind"`
-	TaskGID  string `json:"task_gid,omitempty"`
-	TaskName string `json:"task_name,omitempty"`
-	Summary  string `json:"summary"` // what the change was, e.g. 「名前を「…」に変更」
+	ID       int64       `json:"id"`
+	Kind     outbox.Kind `json:"kind"`
+	TaskGID  string      `json:"task_gid,omitempty"`
+	TaskName string      `json:"task_name,omitempty"`
+	Summary  string      `json:"summary"` // what the change was, e.g. 「名前を「…」に変更」
 	// Reason is why it was dropped: "reset" (DiscardReasonReset) for an unsent change
 	// deleted by a reset, or else a message saying what Asana answered (e.g. that the task
 	// was deleted there). The JSON output of the CLI and the MCP tools carries it as is.

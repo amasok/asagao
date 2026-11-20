@@ -126,7 +126,7 @@ func TestDeleteLocalTagForgets(t *testing.T) {
 	}
 }
 
-func firstOp(t *testing.T, s *Store, kind string) Op {
+func firstOp(t *testing.T, s *Store, kind Kind) Op {
 	t.Helper()
 	ops, err := s.ListOps(context.Background())
 	if err != nil {

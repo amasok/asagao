@@ -977,7 +977,7 @@ func TestEditTaskInEditor(t *testing.T) {
 		t.Fatalf("html_notes = %q", d.HTMLNotes)
 	}
 	ops, _ := st.ListOps(ctx)
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 		if op.Kind == store.OpUpdateTask {
@@ -1153,11 +1153,11 @@ func TestTagEditor(t *testing.T) {
 		t.Fatalf("tags = %v", names)
 	}
 	ops, _ := st.ListOps(ctx)
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 	}
-	if !slices.Equal(kinds, []string{store.OpAddTag, store.OpRemoveTag, store.OpAddTag}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpAddTag, store.OpRemoveTag, store.OpAddTag}) {
 		t.Fatalf("ops = %v", kinds)
 	}
 	// Toggling back cancels instead of queueing another change.

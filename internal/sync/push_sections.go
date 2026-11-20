@@ -13,7 +13,7 @@ import (
 // Sending changes to sections and tags themselves (#33).
 
 // sectionKinds are the kinds whose task_gid is a section gid.
-var sectionKinds = []string{outbox.KindRenameSection, outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection}
+var sectionKinds = []outbox.Kind{outbox.KindRenameSection, outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection}
 
 // waitsForSection reports whether op names a section created offline whose creation is
 // still queued (pending, being verified or failed): it waits, and goes out once the

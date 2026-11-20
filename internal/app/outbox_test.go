@@ -130,7 +130,8 @@ func TestOutboxResolveErrors(t *testing.T) {
 
 func TestOutboxRefreshTarget(t *testing.T) {
 	for _, tc := range []struct {
-		kind, task, want string
+		kind       outbox.Kind
+		task, want string
 	}{
 		{outbox.KindUpdateTask, "1200", "1200"},
 		{outbox.KindMoveTask, "1200", "1200"},

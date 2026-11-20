@@ -167,7 +167,10 @@ func reapplyTagOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	type op struct{ kind, tag string }
+	type op struct {
+		kind Kind
+		tag  string
+	}
 	var ops []op
 	for rows.Next() {
 		var o op
