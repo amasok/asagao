@@ -16,7 +16,8 @@
 
 1. **`app.PushNow.Run(ctx, connect, PushTarget)` が、接続、push、結果の分類、gid の解決を行い、`PushReport` を返す。** 入り口は、`PushReport` を自分の形 (CLI のテキストと `--json`、MCP の `WriteOutput`) に直すだけにする。
 2. **送る手段は、入り口が `connect` で渡す。** `connect` は `app.Pusher` (`Push(ctx) (readmodel.PushResult, error)`) を返す。`*sync.Syncer` がそのまま満たす。`internal/app` は今までどおり `internal/sync` を import しない。
-   - 期限 (`DefaultPushTimeout`、20 秒) は接続と push の両方にかかる (CLI の今の形)。MCP は syncer をあとの呼び出しでも使うので、`connect` に渡る期限付きの context ではなく、呼び出しの context で作る。
+   - 期限 (`DefaultPushTimeout`、20 秒) は接続と push の両方にかかる (CLI の今の形)。MCP は syncer をあとの呼び出しでも使うので、`Run` の前に呼び出しの context で作り、`connect` はそれを返すだけにする (作るのに時間がかかっても、push の時間は減らない。今までと同じ)。
+   - CLI の `outbox retry` / `keep-local` (MCP の `resolve_outbox` と同じ操作) と `git scan` の送信も `PushNow` を通す。`git scan` のフックは `Timeout` を短くする (`hookPushTimeout`)。
    - ログインの問題かどうかは `LoginHelp` (入り口が `auth.LoginHelp` を渡す) で分ける。
 3. **共有の型を readmodel に移す。** `PushResult` と `ErrAccountChanged` を `internal/readmodel` に置き、`internal/sync` には同じ名前の別名を残す (`ErrPushBusy` と同じ形)。
 4. **判定は正しい方にそろえる。**

@@ -782,10 +782,14 @@ func (s *Server) push(ctx context.Context, taskGID string) WriteOutput {
 // pushTarget is push for a write that names what it made (a section, a time entry).
 func (s *Server) pushTarget(ctx context.Context, t app.PushTarget) WriteOutput {
 	pushNow := app.PushNow{Store: s.Store, LoginHelp: auth.LoginHelp}
+	// The syncer is made before the push's timeout starts, with the call's context: it is
+	// kept for later calls, and making it (a 1Password prompt) does not use up the push's time.
+	syncer, err := s.getSyncer(ctx)
 	rep := pushNow.Run(ctx, func(context.Context) (app.Pusher, error) {
-		// The syncer is kept for later calls: it is made with the call's context, not
-		// with the push's timeout.
-		return s.getSyncer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return syncer, nil
 	}, t)
 	s.dropSyncerOn(rep.Err)
 	out := WriteOutput{TaskGID: rep.TaskGID(), SectionGID: rep.SectionGID, TimeEntryGID: rep.TimeEntryGID, Sent: rep.Sent}

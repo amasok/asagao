@@ -85,22 +85,6 @@ func takeDiscards(ctx context.Context, st Store, w io.Writer, print bool) []read
 	return ds
 }
 
-// pushNow tries to send the outbox right away. Failure is not an error for the command:
-// the change is saved locally and will be sent by the next sync.
-func (a *app) pushNow(ctx context.Context, st Store) (*sync.PushResult, error) {
-	if a.dryRun {
-		return nil, errDryRunSend
-	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	api, err := a.apiClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	res, err := a.syncer(api, st).Push(ctx)
-	return &res, err
-}
-
 func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done string) error {
 	if d, ok := st.(*dryRunStore); ok {
 		return a.reportDryRun(cmd, d, r)
@@ -110,13 +94,7 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 	if r.TaskGID != "" {
 		tasks = strings.Split(r.TaskGID, ",")
 	}
-	rep := a.pushUseCase(st).Run(ctx, func(ctx context.Context) (usecase.Pusher, error) {
-		api, err := a.apiClient(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return a.syncer(api, st), nil
-	}, usecase.PushTarget{TaskGIDs: tasks, SectionGID: r.SectionGID, TimeEntryGID: r.TimeEntryID})
+	rep := a.pushUseCase(st).Run(ctx, a.pushConnect(st), usecase.PushTarget{TaskGIDs: tasks, SectionGID: r.SectionGID, TimeEntryGID: r.TimeEntryID})
 	out := cmd.OutOrStdout()
 	// The discards not shown yet: this push's and those of an earlier push or another
 	// process's (which may have dropped this change while it sent the outbox).
@@ -152,9 +130,24 @@ func (a *app) reportWrite(cmd *cobra.Command, st Store, r writeResult, done stri
 	return nil
 }
 
-// pushUseCase is the use case that sends the outbox right after a write.
+// pushUseCase is the use case that sends the outbox right after a write. Failing to send
+// is not an error for the command: the change is saved locally and the next sync sends it.
 func (a *app) pushUseCase(st Store) usecase.PushNow {
 	return usecase.PushNow{Store: st, LoginHelp: auth.LoginHelp}
+}
+
+// pushConnect connects to Asana for pushUseCase. A dry run never gets there.
+func (a *app) pushConnect(st Store) func(context.Context) (usecase.Pusher, error) {
+	return func(ctx context.Context) (usecase.Pusher, error) {
+		if a.dryRun {
+			return nil, errDryRunSend
+		}
+		api, err := a.apiClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return a.syncer(api, st), nil
+	}
 }
 
 func (a *app) taskCompleteCmd(use string, completed bool) *cobra.Command {
@@ -866,22 +859,22 @@ func (a *app) resolve(ctx context.Context, st Store, out io.Writer, id int64, ac
 		return "", err
 	}
 	if r.Push {
-		push, err := a.pushNow(ctx, st)
-		if ds := takeDiscards(ctx, st, out, true); len(ds) > 0 {
-			for _, d := range ds {
-				if d.TaskGID == r.Op.TaskGID {
-					return fmt.Sprintf("#%d: 対象が Asana で削除されていたため、破棄しました", id), nil
-				}
-			}
-		}
+		rep := a.pushUseCase(st).Run(ctx, a.pushConnect(st), usecase.PushTarget{TaskGIDs: []string{r.Op.TaskGID}})
+		rep.Drop(takeDiscards(ctx, st, out, true))
 		switch {
-		case errors.Is(err, sync.ErrAccountChanged):
+		case rep.Outcome == usecase.PushInboxReadOnly:
+			return fmt.Sprintf("#%d: Asana が受け付けなかったため、元に戻しました\n%s", id, sync.InboxReadOnlyMessage(a.cfg.Auth.Scopes)), nil
+		case rep.Outcome == usecase.PushAccountChanged:
 			return fmt.Sprintf("#%d: まだ送っていません。%v", id, accountChanged(ctx, st)), nil
-		case errors.Is(err, sync.ErrPushBusy):
+		case rep.Dropped:
+			return fmt.Sprintf("#%d: 対象が Asana で削除されていたため、破棄しました", id), nil
+		case rep.Outcome == usecase.PushBusy:
 			return fmt.Sprintf("#%d: 別の asagao が送信中です。そちらで送られます", id), nil
-		case err != nil:
-			return fmt.Sprintf("#%d: 次の sync で送ります（オフライン: %v）", id, err), nil
-		case push.Remaining > 0 || push.Failed > 0 || push.Conflicts > 0:
+		case rep.Outcome == usecase.PushNotLoggedIn || rep.Outcome == usecase.PushLoginRejected:
+			return fmt.Sprintf("#%d: ログインが必要なため未送信。ログインしたあとの sync で送ります: %s", id, rep.LoginHelp), nil
+		case rep.Err != nil:
+			return fmt.Sprintf("#%d: 次の sync で送ります（オフライン: %v）", id, rep.Err), nil
+		case !rep.Sent:
 			return fmt.Sprintf("#%d: 送信できなかった変更があります。`asagao outbox list` で確認してください", id), nil
 		case act == usecase.KeepLocal:
 			return fmt.Sprintf("#%d: こちらの値で上書きしました", id), nil

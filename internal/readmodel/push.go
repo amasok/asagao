@@ -1,7 +1,5 @@
 package readmodel
 
-import "errors"
-
 // PushResult is what one push of the outbox did (sync.Syncer.Push). It is here, not in
 // internal/sync, so that the use case that sends a change right away (app.PushNow) can
 // read it.
@@ -20,8 +18,3 @@ type PushResult struct {
 	// notifications:write scope): those changes were dropped (see pushMarkNotification).
 	InboxReadOnly bool `json:"inbox_read_only,omitempty"`
 }
-
-// ErrAccountChanged is returned by Push when the logged-in Asana account is not the one
-// the local data belongs to: Asana answers 404 for everything, which must not be taken as
-// deletions.
-var ErrAccountChanged = errors.New("ログイン中の Asana アカウントが、ローカルのデータを同期したアカウントと違うため送れません")

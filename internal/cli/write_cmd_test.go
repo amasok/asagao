@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -283,5 +285,34 @@ func TestFormatDue(t *testing.T) {
 		if got := formatDue(store.TaskSummary{DueOn: tc.due}); got != tc.want {
 			t.Errorf("formatDue(%q) = %q, want %q", tc.due, got, tc.want)
 		}
+	}
+}
+
+// `outbox retry` words the push like the other writes (#75): without a login it says so,
+// instead of calling it offline (the MCP server's resolve_outbox already did).
+func TestOutboxRetryWithoutLogin(t *testing.T) {
+	path := writeCLIEnv(t)
+	ctx := context.Background()
+	st, err := store.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"completed": true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := st.ListOps(ctx)
+	if err != nil || len(ops) != 1 {
+		t.Fatalf("ops = %v, %v", ops, err)
+	}
+	if err := st.MarkOpFailed(ctx, ops[0].ID, errors.New("boom")); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	out, err := runCLI(t, "outbox", "retry", strconv.FormatInt(ops[0].ID, 10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ログインが必要なため未送信") || strings.Contains(out, "オフライン") {
+		t.Fatalf("output = %q", out)
 	}
 }

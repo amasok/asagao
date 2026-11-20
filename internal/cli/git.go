@@ -187,21 +187,20 @@ func (a *app) gitScan(cmd *cobra.Command, dir string, revs []string, offline, ho
 	}
 	var pushErr error
 	if wrote && !dryRun && !offline {
-		pctx := ctx
+		push := a.pushUseCase(st)
 		if hook {
 			// One short try: a commit is not held up by a slow network. What is not sent
 			// stays queued for the next sync (a request cut off is checked then).
-			var cancel context.CancelFunc
-			pctx, cancel = context.WithTimeout(ctx, hookPushTimeout)
-			defer cancel()
+			push.Timeout = hookPushTimeout
 		}
-		res.Push, pushErr = a.pushNow(pctx, st)
+		rep := push.Run(ctx, a.pushConnect(st), usecase.PushTarget{})
+		res.Push, pushErr = rep.Result, rep.Err
 		if pushErr != nil {
 			res.Error = pushErr.Error()
-		} else {
-			p := res.Push
-			res.Sent = p.Remaining == 0 && p.Failed == 0 && p.Conflicts == 0 && !p.InboxReadOnly
 		}
+		// The commits' changes are told apart from one another by the discards shown below,
+		// not by the target (the scan names many tasks).
+		res.Sent = rep.Outcome == usecase.PushSent
 	}
 	if wrote && !dryRun {
 		res.Discarded = takeDiscards(ctx, st, out, !a.json)
