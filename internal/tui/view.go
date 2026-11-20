@@ -35,21 +35,22 @@ func (m *Model) render() string {
 	footer := m.renderFooter()
 	bodyH := max(3, m.height-2)
 	var body string
-	if m.showHelp {
+	switch {
+	case m.showing(overlayHelp):
 		body = m.renderHelp(m.width, bodyH)
-	} else if m.showOutbox {
+	case m.showing(overlayOutbox):
 		body = m.renderOutbox(m.width, bodyH)
-	} else if m.statusView {
+	case m.showing(overlayStatuses):
 		body = m.renderStatuses(m.width, bodyH)
-	} else if m.overviewView && m.picker == nil { // (a confirmation of the overview is shown over it)
+	case m.showing(overlayOverview) && m.picker == nil: // (a confirmation of the overview is shown over it)
 		body = m.renderOverview(m.width, bodyH)
-	} else if m.goals.open {
+	case m.showing(overlayGoals):
 		body = m.renderGoals(m.width, bodyH)
-	} else if m.picker != nil {
+	case m.picker != nil:
 		body = m.renderPicker(m.width, bodyH)
-	} else if m.leader {
+	case m.showing(overlayMenu):
 		body = m.renderMenuPane(bodyH)
-	} else {
+	default:
 		body = m.renderBody(bodyH)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -287,7 +288,7 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	if m.leader {
+	if m.showing(overlayMenu) {
 		hint := "メニュー: キーを押してください（esc で閉じる）"
 		if _, _, n, _ := m.currentMenuPage(); n > 1 {
 			hint = "メニュー: キーを押してください（tab / j・k でページを切り替え・esc で閉じる）"

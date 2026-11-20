@@ -91,7 +91,7 @@ func (m *Model) updateReset(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		// Show the empty store; tasks are loaded again when the sync (as the logged-in
 		// account) is done. Loading them now would only report that no account is set yet.
-		m.syncErr, m.ops, m.discards, m.opCursor, m.scopeCursor = nil, nil, nil, 0, 0
+		m.syncErr, m.outboxView.ops, m.outboxView.discards, m.outboxView.cursor, m.scopeCursor = nil, nil, nil, 0, 0
 		m.rows, m.allRows, m.detail, m.taskSeq = nil, nil, nil, m.taskSeq+1
 		m.saved = nil
 		return tea.Batch(m.loadScopes(), m.loadOutbox(), m.requestSync()), true

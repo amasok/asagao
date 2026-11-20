@@ -31,10 +31,10 @@ func (m *Model) openOverview() tea.Cmd {
 	if project == "" {
 		return nil
 	}
-	m.overviewView = true
-	m.overviewOffset = 0
-	if m.overview != nil && m.overview.GID != project {
-		m.overview = nil
+	m.openOverlay(overlayOverview)
+	m.overviewView.offset = 0
+	if m.overviewView.data != nil && m.overviewView.data.GID != project {
+		m.overviewView.data = nil
 	}
 	return m.loadOverview(project, true)
 }
@@ -66,17 +66,17 @@ func (m *Model) handleOverviewKey(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc", "q", "O":
-		m.overviewView = false
+		m.closeOverlay(overlayOverview)
 	case "j", "down":
-		m.overviewOffset++
+		m.overviewView.offset++
 	case "k", "up":
-		m.overviewOffset = max(0, m.overviewOffset-1)
+		m.overviewView.offset = max(0, m.overviewView.offset-1)
 	case "g", "home":
-		m.overviewOffset = 0
+		m.overviewView.offset = 0
 	case "ctrl+d", "pgdown":
-		m.overviewOffset += 10
+		m.overviewView.offset += 10
 	case "ctrl+u", "pgup":
-		m.overviewOffset = max(0, m.overviewOffset-10)
+		m.overviewView.offset = max(0, m.overviewView.offset-10)
 	case "e":
 		return m, m.editProject()
 	case "b":
@@ -84,17 +84,17 @@ func (m *Model) handleOverviewKey(key string) (tea.Model, tea.Cmd) {
 	case "B":
 		return m, m.confirmDeleteBrief()
 	case "U":
-		m.overviewView = false
+		m.closeOverlay(overlayOverview)
 		return m, m.openStatuses()
 	case "W":
-		m.overviewView = false
+		m.closeOverlay(overlayOverview)
 		return m, m.writeStatus()
 	}
 	return m, nil
 }
 
 func (m *Model) renderOverview(w, h int) string {
-	o := m.overview
+	o := m.overviewView.data
 	help := "j/k スクロール  e 編集（エディタ）  U ステータス更新  W ステータスを書く  esc 閉じる"
 	if o != nil && o.BriefState != readmodel.BriefUnavailable { // Asana gives the brief
 		help = "j/k スクロール  e 編集（エディタ）  b ブリーフを書く  B ブリーフを削除  U ステータス更新  W ステータスを書く  esc 閉じる"
@@ -156,8 +156,8 @@ func (m *Model) renderOverview(w, h int) string {
 	case o.BriefState == readmodel.BriefNone:
 		lines = append(lines, "", m.st.headerScope.Render("ブリーフ"), m.st.dim.Render("（ブリーフはありません。b で書けます）"))
 	}
-	m.overviewOffset = clamp(m.overviewOffset, 0, max(0, len(lines)-(h-3)))
-	return m.pane("プロジェクトの概要（"+o.Name+"）", lines[m.overviewOffset:], w, h, true)
+	m.overviewView.offset = clamp(m.overviewView.offset, 0, max(0, len(lines)-(h-3)))
+	return m.pane("プロジェクトの概要（"+o.Name+"）", lines[m.overviewView.offset:], w, h, true)
 }
 
 // progressBar is "■■■□□□ 12 / 30 件完了（40%）" (and the milestones, if any).
@@ -351,8 +351,8 @@ func (m *Model) updateOverview(msg tea.Msg) (tea.Cmd, bool) {
 			m.status = msg.err.Error()
 			return nil, true
 		}
-		m.overview = msg.overview
-		if msg.fetchErr != nil && m.overviewView {
+		m.overviewView.data = msg.overview
+		if msg.fetchErr != nil && m.showing(overlayOverview) {
 			m.status = "Asana から取れなかったため、一部はキャッシュの内容です: " + msg.fetchErr.Error()
 		}
 		return nil, true

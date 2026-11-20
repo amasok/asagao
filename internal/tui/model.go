@@ -15,7 +15,6 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
@@ -175,8 +174,11 @@ type Model struct {
 	fetchingFor string // gid whose details are being fetched
 	opening     string // project whose tasks are being fetched (lazy.go)
 
-	status   string // transient message for the footer
-	showHelp bool
+	status string // transient message for the footer
+
+	// overlay is the screen shown over the panes, one at a time (overlay.go)
+	overlay  overlayKind
+	menuPage int // the page of the menu shown, when it is too high for the screen
 
 	// writes (write.go)
 	prompt      textinput.Model
@@ -184,13 +186,9 @@ type Model struct {
 	selectAfter string // gid to select after the next list load (e.g. a created task)
 	syncAgain   bool   // a write happened during a sync; sync again when it finishes
 	outbox      outboxCounts
-	showOutbox  bool
-	ops         []outbox.Op
-	opCursor    int
+	outboxView  outboxScreen
 	inbox       readmodel.InboxState // whether the notifications can be shown (inbox.go)
 	inboxUnread int
-	discards    []readmodel.Discard // recently dropped changes, newest first (shown in full in the outbox)
-	outboxTop   int                 // first line of the outbox overlay on screen (it scrolls)
 
 	// views (board.go)
 	zoom           bool // detail pane fills the screen
@@ -245,14 +243,10 @@ type Model struct {
 	tlFollow string    // the task the timeline last scrolled to
 
 	// projects (projects.go)
-	statusView         bool
-	statusOffset       int
-	statuses           []readmodel.StatusUpdateView
+	statusView         statusScreen
 	selectProjectAfter string
 	// the project overview (project_overview.go)
-	overviewView   bool
-	overviewOffset int
-	overview       *readmodel.ProjectOverview
+	overviewView   overviewScreen
 	newProjectName string // pickTeam: the project to create
 	// goals and portfolios (goals.go)
 	goals goalScreen
@@ -269,8 +263,6 @@ type Model struct {
 	commentGID   string       // task the comment prompt posts to
 
 	// keys (keymap.go) and choosers (pickers.go)
-	leader         bool                    // space was pressed: the menu is open
-	menuPage       int                     // the page of the menu shown, when it is too high for the screen
 	renderedActive bool                    // the detail was last rendered with selectable items
 	dueTask        readmodel.TaskSummary   // task for promptDue and promptStart
 	startOffered   bool                    // the detail's task can be given a start date (startdate.go)
@@ -746,19 +738,19 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleBulkKey(key)
 	case m.promptMode != promptNone:
 		return m.handlePromptKey(msg)
-	case m.showOutbox:
+	case m.showing(overlayOutbox):
 		return m.handleOutboxKey(key)
-	case m.statusView:
+	case m.showing(overlayStatuses):
 		return m.handleStatusKey(key)
-	case m.overviewView:
+	case m.showing(overlayOverview):
 		return m.handleOverviewKey(key)
-	case m.goals.open:
+	case m.showing(overlayGoals):
 		return m.handleGoalKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
 	case m.searching:
 		return m.handleSearchKey(msg)
-	case m.leader:
+	case m.showing(overlayMenu):
 		switch {
 		case slices.Contains(menuNext, key):
 			m.turnMenuPage(+1)
@@ -767,21 +759,21 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.turnMenuPage(-1)
 			return m, nil
 		}
-		m.leader = false
+		m.closeOverlay(overlayMenu)
 		return m, m.runMenuKey(key)
-	case m.showHelp:
-		m.showHelp = false
+	case m.showing(overlayHelp):
+		m.closeOverlay(overlayHelp)
 		return m, nil
 	}
 
 	// keys that mean the same everywhere
 	switch key {
 	case "space":
-		m.leader = true
+		m.openOverlay(overlayMenu)
 		m.menuPage = 0
 		return m, tea.Batch(m.loadPlan(), m.prefetchTemplates()) // recheck 402 marks (#68) and templates when opening the menu
 	case "?":
-		m.showHelp = true
+		m.openOverlay(overlayHelp)
 		return m, nil
 	case "/":
 		m.searching = true

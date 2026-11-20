@@ -1046,7 +1046,7 @@ func TestWhichKeyMenu(t *testing.T) {
 		t.Fatalf("space d should open the due chooser:\n%s", h.screen())
 	}
 	h.key("esc", "space", "esc")
-	if h.m.leader || h.m.picker != nil {
+	if h.m.showing(overlayMenu) || h.m.picker != nil {
 		t.Fatal("esc should close the menu")
 	}
 

@@ -191,9 +191,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case outboxLoadedMsg:
 		if msg.err == nil {
-			m.outbox, m.ops = msg.counts, msg.ops
-			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
-			m.discards = msg.recent
+			m.outbox, m.outboxView.ops = msg.counts, msg.ops
+			m.outboxView.cursor = clamp(m.outboxView.cursor, 0, max(0, len(m.outboxView.ops)-1))
+			m.outboxView.discards = msg.recent
 			if len(msg.discards) > 0 {
 				m.status = m.discardStatus(msg.discards)
 			}
@@ -292,7 +292,8 @@ func (m *Model) writeKey(key string) tea.Cmd {
 		m.commentGID = t.GID
 		return m.prompt.Focus()
 	case "!":
-		m.showOutbox, m.outboxTop = true, 0
+		m.openOverlay(overlayOutbox)
+		m.outboxView.top = 0
 		return m.loadOutbox()
 	}
 	return nil
@@ -464,8 +465,8 @@ func (m *Model) addComment(taskGID, text string) tea.Cmd {
 
 func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	var op *outbox.Op
-	if m.opCursor < len(m.ops) {
-		op = &m.ops[m.opCursor]
+	if m.outboxView.cursor < len(m.outboxView.ops) {
+		op = &m.outboxView.ops[m.outboxView.cursor]
 	}
 	resolve := func(action app.ResolveAction, status string) tea.Cmd {
 		if op == nil {
@@ -487,17 +488,17 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc", "q", "!":
-		m.showOutbox = false
+		m.closeOverlay(overlayOutbox)
 	case "j", "down":
-		m.opCursor = clamp(m.opCursor+1, 0, max(0, len(m.ops)-1))
+		m.outboxView.cursor = clamp(m.outboxView.cursor+1, 0, max(0, len(m.outboxView.ops)-1))
 		m.showOpCursor()
 	case "k", "up":
-		m.opCursor = clamp(m.opCursor-1, 0, max(0, len(m.ops)-1))
+		m.outboxView.cursor = clamp(m.outboxView.cursor-1, 0, max(0, len(m.outboxView.ops)-1))
 		m.showOpCursor()
 	case "ctrl+d", "pgdown": // scroll, e.g. through the full text of dropped changes
-		m.outboxTop += max(1, m.outboxHeight()/2)
+		m.outboxView.top += max(1, m.outboxHeight()/2)
 	case "ctrl+u", "pgup":
-		m.outboxTop = max(0, m.outboxTop-max(1, m.outboxHeight()/2))
+		m.outboxView.top = max(0, m.outboxView.top-max(1, m.outboxHeight()/2))
 	case "l":
 		return m, resolve(app.KeepLocal, "こちらの値で上書きします")
 	case "s":
@@ -548,17 +549,17 @@ func (m *Model) outboxHeight() int { return max(1, max(3, m.height-2)-3) }
 // showOpCursor scrolls the overlay so that the selected entry is on screen.
 func (m *Model) showOpCursor() {
 	line := m.outboxCursorLine()
-	if line < m.outboxTop {
-		m.outboxTop = line
-	} else if line >= m.outboxTop+m.outboxHeight() {
-		m.outboxTop = line - m.outboxHeight() + 1
+	if line < m.outboxView.top {
+		m.outboxView.top = line
+	} else if line >= m.outboxView.top+m.outboxHeight() {
+		m.outboxView.top = line - m.outboxHeight() + 1
 	}
 }
 
 // outboxCursorLine is the overlay line of the selected entry (see outboxLines).
 func (m *Model) outboxCursorLine() int {
 	line := 2 // help, blank
-	for _, op := range m.ops[:min(m.opCursor, len(m.ops))] {
+	for _, op := range m.outboxView.ops[:min(m.outboxView.cursor, len(m.outboxView.ops))] {
 		line++
 		line += len(format.ConflictLines(op))
 		if _, text := format.OpNote(op); text != "" {
@@ -571,8 +572,8 @@ func (m *Model) outboxCursorLine() int {
 func (m *Model) renderOutbox(w, h int) string {
 	lines := m.outboxLines(w - 4)
 	visible := max(1, h-3)
-	m.outboxTop = clamp(m.outboxTop, 0, max(0, len(lines)-visible))
-	return m.pane("未送信の変更", lines[m.outboxTop:], w, h, true)
+	m.outboxView.top = clamp(m.outboxView.top, 0, max(0, len(lines)-visible))
+	return m.pane("未送信の変更", lines[m.outboxView.top:], w, h, true)
 }
 
 // outboxLines are all the lines of the outbox overlay for an inner width.
@@ -581,10 +582,10 @@ func (m *Model) outboxLines(inner int) []string {
 		m.st.dim.Render("j/k 移動   l こちらの値で上書き（競合）   s Asana の値を採用（競合）   d 取り消し   R 再送（失敗）   ctrl+d/u スクロール   esc 閉じる"),
 		"",
 	}
-	if len(m.ops) == 0 {
+	if len(m.outboxView.ops) == 0 {
 		lines = append(lines, "未送信の変更はありません")
 	}
-	for i, op := range m.ops {
+	for i, op := range m.outboxView.ops {
 		style := m.st.dim // pending, sending (Push has it; nothing to resolve)
 		switch op.State {
 		case outbox.StateConflict:
@@ -593,7 +594,7 @@ func (m *Model) outboxLines(inner int) []string {
 			style = m.st.errorText
 		}
 		line := style.Render(padRight("["+format.OpLabel(op)+"]", opStateWidth)) + " " + format.DescribeOp(op)
-		lines = append(lines, m.highlight(line, inner, i == m.opCursor, true))
+		lines = append(lines, m.highlight(line, inner, i == m.outboxView.cursor, true))
 		for _, c := range format.ConflictLines(op) {
 			lines = append(lines, opDetailIndent+c)
 		}
@@ -605,9 +606,9 @@ func (m *Model) outboxLines(inner int) []string {
 			lines = append(lines, note.Render(opDetailIndent+text))
 		}
 	}
-	if len(m.discards) > 0 {
+	if len(m.outboxView.discards) > 0 {
 		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
-		for _, d := range m.discards {
+		for _, d := range m.outboxView.discards {
 			lines = append(lines, "  "+format.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
 			for _, dt := range format.DiscardDetails(d, richtext.ToEditableMarkdown) {
 				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))

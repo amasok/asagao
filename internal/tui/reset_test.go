@@ -157,8 +157,8 @@ func TestOutboxOpensWhenDiscardsCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.key("!")
-	if len(h.m.ops) != 1 || !strings.Contains(h.screen(), "ローカル") || !strings.Contains(h.m.status, "破棄した変更の記録を読み込めませんでした") {
-		t.Fatalf("ops=%d status=%q\n%s", len(h.m.ops), h.m.status, h.screen())
+	if len(h.m.outboxView.ops) != 1 || !strings.Contains(h.screen(), "ローカル") || !strings.Contains(h.m.status, "破棄した変更の記録を読み込めませんでした") {
+		t.Fatalf("ops=%d status=%q\n%s", len(h.m.outboxView.ops), h.m.status, h.screen())
 	}
 }
 
