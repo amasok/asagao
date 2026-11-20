@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
@@ -92,7 +91,6 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		return e, false, nil
 	}
 	e = batchEntry{op: op, task: task}
-	taskPath := "/tasks/" + url.PathEscape(task)
 	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	real := func(gid string) bool { return gid != "" && !localgid.IsLocal(gid) }
 	switch op.Kind {
@@ -100,7 +98,7 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if domaintask.TouchesCustomType(op.Payload) {
 			return e, false, nil // sent alone: a 402 there records that the plan lacks custom types
 		}
-		e.write = model.BatchWrite{Method: http.MethodPut, Path: taskPath, Data: taskUpdateFields(op), Task: true}
+		e.write = model.BatchUpdateTask(task, taskUpdateFields(op))
 		e.check = true
 	case outbox.KindSetCustomField:
 		if str("field") == "" {
@@ -109,7 +107,7 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if wait, err := s.waitsForField(ctx, op); err != nil || wait {
 			return e, false, err // an option or a field of the project is created first
 		}
-		e.write = model.BatchWrite{Method: http.MethodPut, Path: taskPath, Data: customFieldUpdate(op), Task: true}
+		e.write = model.BatchUpdateTask(task, customFieldUpdate(op))
 		e.check = true
 	case outbox.KindMoveTask:
 		section := str("section")
@@ -121,7 +119,7 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 			// the batch keeps the order of one task's changes only. Sent alone, in order.
 			return e, false, nil
 		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: "/sections/" + url.PathEscape(section) + "/addTask", Data: map[string]any{"task": task}}
+		e.write = model.BatchMoveTaskToSection(section, task)
 		e.project, e.section = str("project"), section
 		e.refresh = true
 	case outbox.KindAddTag, outbox.KindRemoveTag:
@@ -132,37 +130,33 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if !real(tag) {
 			return e, false, nil // a tag created offline is created in Asana first
 		}
-		action := "/addTag"
 		if op.Kind == outbox.KindRemoveTag {
-			action = "/removeTag"
+			e.write = model.BatchRemoveTag(task, tag)
+		} else {
+			e.write = model.BatchAddTag(task, tag)
 		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: taskPath + action, Data: map[string]any{"tag": tag}}
 	case outbox.KindAddFollower, outbox.KindRemoveFollower:
 		user := str("user")
 		if !real(user) {
 			return e, false, nil
 		}
-		action := "/addFollowers"
 		if op.Kind == outbox.KindRemoveFollower {
-			action = "/removeFollowers"
+			e.write = model.BatchRemoveFollower(task, user)
+		} else {
+			e.write = model.BatchAddFollower(task, user)
 		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: taskPath + action, Data: map[string]any{"followers": []string{user}}}
 	case outbox.KindAddProject:
 		project, section := str("project"), str("section")
 		if !real(project) || (section != "" && !real(section)) {
 			return e, false, nil
 		}
-		data := map[string]any{"project": project}
-		if section != "" {
-			data["section"] = section
-		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: taskPath + "/addProject", Data: data}
+		e.write = model.BatchAddProject(task, project, section)
 	case outbox.KindRemoveProject:
 		project := str("project")
 		if !real(project) {
 			return e, false, nil
 		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: taskPath + "/removeProject", Data: map[string]any{"project": project}}
+		e.write = model.BatchRemoveProject(task, project)
 	case outbox.KindAddDependency, outbox.KindRemoveDependency:
 		dep, err := s.Store.RealGID(ctx, str("dependency"))
 		if err != nil {
@@ -171,11 +165,11 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		if !real(dep) {
 			return e, false, nil
 		}
-		action := "/addDependencies"
 		if op.Kind == outbox.KindRemoveDependency {
-			action = "/removeDependencies"
+			e.write = model.BatchRemoveDependency(task, dep)
+		} else {
+			e.write = model.BatchAddDependency(task, dep)
 		}
-		e.write = model.BatchWrite{Method: http.MethodPost, Path: taskPath + action, Data: map[string]any{"dependencies": []string{dep}}}
 	default:
 		return e, false, nil
 	}
