@@ -769,6 +769,11 @@ func applyCustomFieldOp(ctx context.Context, tx *sql.Tx, op Op, undo bool) error
 	src := op.Payload
 	if undo {
 		src = op.Base
+		// A task gone from the cache has no value to put back (#87).
+		var n int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", op.TaskGID).Scan(&n); err != nil || n == 0 {
+			return err
+		}
 	}
 	display, _ := src["display"].(string)
 	return applyCustomField(ctx, tx, op.TaskGID, field, src["value"], display)
