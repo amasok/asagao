@@ -212,9 +212,9 @@ func (m *Model) chooseProjectTemplate(gid string) tea.Cmd {
 		if t.GID == gid {
 			m.tmpl.chosen = t
 			m.openPrompt(promptTemplateProject)
-			m.prompt.SetValue(t.Name)
-			m.prompt.CursorEnd()
-			return m.prompt.Focus()
+			m.prompt.input.SetValue(t.Name)
+			m.prompt.input.CursorEnd()
+			return m.prompt.input.Focus()
 		}
 	}
 	return nil
@@ -243,9 +243,9 @@ func (m *Model) startDuplicateProject() tea.Cmd {
 	}
 	m.tmpl.dupProject = p
 	m.openPrompt(promptDuplicateProject)
-	m.prompt.SetValue(m.currentScope().name + " のコピー")
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.input.SetValue(m.currentScope().name + " のコピー")
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) duplicateProject(name string) tea.Cmd {

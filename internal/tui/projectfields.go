@@ -30,14 +30,14 @@ func (m *Model) projectFields(now time.Time) *app.ProjectFields {
 // startNewOption asks for the name of an option to add to field f and set on task t.
 func (m *Model) startNewOption(t readmodel.TaskSummary, f readmodel.CustomFieldView) tea.Cmd {
 	m.openPrompt(promptFieldOption)
-	m.fieldTask, m.fieldEdit = t, f
-	m.prompt.Prompt = "新しい選択肢（" + f.Name + "）: "
-	m.prompt.Placeholder = "名前（Enter で選択肢に足して設定する / Esc で取り消し）"
-	return m.prompt.Focus()
+	m.prompt.fieldTask, m.prompt.fieldEdit = t, f
+	m.prompt.input.Prompt = "新しい選択肢（" + f.Name + "）: "
+	m.prompt.input.Placeholder = "名前（Enter で選択肢に足して設定する / Esc で取り消し）"
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) submitNewOption(name string) tea.Cmd {
-	options, t, f := m.fieldOptions(m.deps.Now()), m.fieldTask, m.fieldEdit
+	options, t, f := m.fieldOptions(m.deps.Now()), m.prompt.fieldTask, m.prompt.fieldEdit
 	return func() tea.Msg {
 		display, err := options.SetWithNewOption(m.ctx, t.GID, f, name)
 		if err != nil {

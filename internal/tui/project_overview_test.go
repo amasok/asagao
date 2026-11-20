@@ -88,7 +88,7 @@ func TestProjectOverviewAndEdit(t *testing.T) {
 		t.Fatalf("the overview was not reloaded:\n%s", screen)
 	}
 	h.key("esc")
-	if h.m.overviewView {
+	if h.m.showing(overlayOverview) {
 		t.Fatal("esc did not close the overview")
 	}
 }

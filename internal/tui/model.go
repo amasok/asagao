@@ -15,7 +15,6 @@ import (
 
 	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/auth"
-	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/imageview"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
@@ -144,154 +143,68 @@ type Model struct {
 	deps Deps
 	ctx  context.Context
 	st   styles
+	dark bool // terminal background
 
 	width, height int
 	focus         pane
+	zoom          bool // detail pane fills the screen
+	detailRatio   int  // detail pane width in % of the area right of the sidebar (layout.go)
+	hideSidebar   bool
 
+	// the sidebar
 	scopes      []scope
 	scopeCursor int
-
-	rows       []row
-	listCursor int // index into rows; always on a task row when any exist
-	listOffset int
-	taskSeq    int // drops stale task loads
-
-	detail     *readmodel.TaskDetail
-	detailMe   string // the logged-in user when detail was loaded: their comments can be changed
-	detailView viewport.Model
-
-	search    textinput.Model
-	searching bool // input has focus
-	query     string
-	remote    remoteFound // what Asana found for a search (remotesearch.go)
-	filter    filterMode
-
-	syncer      *sync.Syncer
-	syncing     bool
-	syncErr     error
-	syncBusy    bool // the last sync found another process syncing; retrying soon
-	busyRetries int  // busy syncs in a row (the retry waits longer each time)
-	lastSync    time.Time
-	fetchingFor string // gid whose details are being fetched
 	opening     string // project whose tasks are being fetched (lazy.go)
 
-	status   string // transient message for the footer
-	showHelp bool
+	// the panes: the task list (shown as a list, a board, a timeline or a calendar) and
+	// the detail
+	list   listState     // list.go
+	mode   viewMode      // viewmode.go
+	board  boardState    // board.go
+	cal    calendarState // calendar.go
+	tl     timelineState // timeline.go
+	detail detailState   // detailnav.go
+	cache  renderCache   // the detail's Markdown and images (markdown.go)
 
-	// writes (write.go)
-	prompt      textinput.Model
-	promptMode  promptKind
-	selectAfter string // gid to select after the next list load (e.g. a created task)
-	syncAgain   bool   // a write happened during a sync; sync again when it finishes
-	outbox      outboxCounts
-	showOutbox  bool
-	ops         []outbox.Op
-	opCursor    int
-	inbox       readmodel.InboxState // whether the notifications can be shown (inbox.go)
-	inboxUnread int
-	discards    []readmodel.Discard // recently dropped changes, newest first (shown in full in the outbox)
-	outboxTop   int                 // first line of the outbox overlay on screen (it scrolls)
+	// overlay is the screen shown over the panes, one at a time (overlay.go)
+	overlay      overlayKind
+	menuPage     int // the page of the menu shown, when it is too high for the screen
+	outboxView   outboxScreen
+	statusView   statusScreen
+	overviewView overviewScreen
+	goals        goalScreen
 
-	// views (board.go)
-	zoom           bool // detail pane fills the screen
-	board          bool // project tasks as a board (sections = columns)
-	boardCol       int
-	boardRow       int
-	boardColOffset int
-	tagFilter      string
-	picker         *picker
-	saved          *readmodel.SavedSearch // the saved search shown (searches.go)
+	// layers over the panes and the overlay: a chooser, and the inputs in the footer
+	picker   *picker
+	choosing chooserState // pickers.go
+	prompt   promptState  // write.go
+	search   searchState
+	bulkAsk  *bulkPlan // a change to the marked tasks waiting for y/n (bulk.go)
+	status   string    // transient message for the footer
 
-	// collapsible groups (collapse.go)
-	allRows   []row           // every row; rows is allRows minus collapsed groups
-	collapsed map[string]bool // keys of collapsed groups in the current scope
-	renameGID string          // section being renamed (promptRenameSection)
-	// sections and tags (sectiontags.go)
-	planOff         map[string]planWindow // features the workspace's plan lacks (402), and until when
-	planSeq         uint64                // latest loadPlan in flight
-	newSectionAfter string                // promptNewSection: the section to add it after
-	tagList         []readmodel.TagCount  // the tags the tag manager shows
-	tagTarget       readmodel.TagCount    // the tag being changed
-	// time tracking (timetracking.go): the task whose entries are shown, the entry edited
-	timeTask  readmodel.TaskSummary
-	timeEntry string
-	// collapsedScope is the scope whose collapsed groups are loaded into collapsed.
-	collapsedScope string
-	// rowsScope is the scope whose tasks are in allRows (to tell a reload from a switch).
-	rowsScope string
+	// sync and writes
+	syncer             *sync.Syncer
+	syncState          syncState
+	outbox             outboxCounts
+	inbox              readmodel.InboxState // whether the notifications can be shown (inbox.go)
+	inboxUnread        int
+	selectProjectAfter string                  // a project created: select it when the projects load
+	fieldSaving        map[string]bool         // fieldKey: a multi_enum toggle of it is being saved (fields.go)
+	fieldQueued        map[string]*queuedField // fieldKey: its latest toggle made meanwhile
+	tmpl               templateState           // templates.go
 
-	// detail rendering (markdown.go)
-	dark         bool // terminal background
-	mdCache      map[mdKey]string
-	inline       map[string]*inlineImage // by attachment gid
-	inlineDirty  bool
-	nextImageID  int
-	cellW, cellH int // terminal cell size in pixels (0 if unknown)
+	planOff map[string]planWindow // features the workspace's plan lacks (402), and until when
+	planSeq uint64                // latest loadPlan in flight
+}
 
-	// layout (layout.go)
-	detailRatio int // detail pane width in % of the area right of the sidebar
-	hideSidebar bool
-
-	// calendar (calendar.go)
-	calendar bool
-	calDay   time.Time // selected day
-	calMonth time.Time // month of calTasks
-	calTasks map[string][]readmodel.TaskSummary
-
-	// timeline (timeline.go)
-	timeline bool
-	tlStart  time.Time // first day shown (zero: a week before today)
-	tlDayW   int       // columns per day (0: the default)
-	tlFollow string    // the task the timeline last scrolled to
-
-	// projects (projects.go)
-	statusView         bool
-	statusOffset       int
-	statuses           []readmodel.StatusUpdateView
-	selectProjectAfter string
-	// the project overview (project_overview.go)
-	overviewView   bool
-	overviewOffset int
-	overview       *readmodel.ProjectOverview
-	newProjectName string // pickTeam: the project to create
-	// goals and portfolios (goals.go)
-	goals goalScreen
-
-	// subtasks (subtasks.go)
-	expanded      map[string]bool // tasks whose subtasks are shown under them
-	subtaskParent string          // parent for promptSubtask
-
-	// detail navigation (detailnav.go)
-	detailStack  []string     // tasks opened from the detail view (subtasks); top is shown
-	detailCursor int          // selected item in the detail view
-	detailItems  []detailItem // items of the rendered detail (fields, subtasks, add rows)
-	returnTo     string       // subtask to reselect after going back to its parent
-	commentGID   string       // task the comment prompt posts to
-
-	// keys (keymap.go) and choosers (pickers.go)
-	leader         bool                    // space was pressed: the menu is open
-	menuPage       int                     // the page of the menu shown, when it is too high for the screen
-	renderedActive bool                    // the detail was last rendered with selectable items
-	dueTask        readmodel.TaskSummary   // task for promptDue and promptStart
-	startOffered   bool                    // the detail's task can be given a start date (startdate.go)
-	bulkDueTasks   []readmodel.TaskSummary // promptDue for the marked tasks (bulk.go)
-	marked         map[string]bool         // gids of the tasks marked in the list (bulk.go)
-	bulkAsk        *bulkPlan               // a change to the marked tasks waiting for y/n
-	tagTask        readmodel.TaskSummary   // task for promptNewTag
-	// custom fields (fields.go)
-	fieldTask   readmodel.TaskSummary     // task for promptField
-	fieldEdit   readmodel.CustomFieldView // field for promptField
-	fieldFilter fieldFilter
-	fieldSaving map[string]bool         // fieldKey: a multi_enum toggle of it is being saved
-	fieldQueued map[string]*queuedField // fieldKey: its latest toggle made meanwhile
-	// dependencies (deps.go)
-	depTask       readmodel.TaskSummary // task for promptDepSearch
-	depDependents bool
-	// extras.go
-	dupSource      string        // task to duplicate (promptDuplicate)
-	attachTask     string        // task to attach a file to (promptAttach)
-	sectionProject string        // project whose sections to choose from (detail project line)
-	tmpl           templateState // templates.go
+// syncState is how the background sync is doing.
+type syncState struct {
+	running     bool
+	err         error
+	busy        bool // the last sync found another process syncing; retrying soon
+	busyRetries int  // busy syncs in a row (the retry waits longer each time)
+	last        time.Time
+	again       bool // a write happened during a sync; sync again when it finishes
 }
 
 func New(ctx context.Context, deps Deps) *Model {
@@ -307,14 +220,14 @@ func New(ctx context.Context, deps Deps) *Model {
 		st:          newStyles(true, deps.Accent),
 		focus:       paneList,
 		scopes:      []scope{{kind: scopeMyTasks, name: "My Tasks"}},
-		detailView:  viewport.New(),
-		search:      ti,
-		prompt:      newInput(),
+		detail:      detailState{view: viewport.New()},
+		search:      searchState{input: ti},
+		prompt:      promptState{input: newInput()},
 		dark:        true,
 		detailRatio: defaultDetailRatio,
 	}
 	if deps.InlineImages {
-		m.cellW, m.cellH = imageview.CellSize()
+		m.cache.cellW, m.cache.cellH = imageview.CellSize()
 	}
 	if deps.Theme == "light" {
 		m.dark = false
@@ -398,13 +311,13 @@ func (m *Model) loadTasks() tea.Cmd {
 }
 
 func (m *Model) loadList() tea.Cmd {
-	m.taskSeq++
-	seq, sc, query, filter, tag, field, saved := m.taskSeq, m.currentScope(), m.query, m.filter, m.tagFilter, m.fieldFilter, m.saved
-	found := m.remote.foundFor(query)
+	m.list.seq++
+	seq, sc, query, filter, tag, field, saved := m.list.seq, m.currentScope(), m.search.query, m.list.filter, m.list.tagFilter, m.list.fieldFilter, m.list.saved
+	found := m.search.remote.foundFor(query)
 	st, now, scopeKey := m.deps.Store, m.deps.Now(), m.scopeKey()
-	needCollapsed := scopeKey != m.collapsedScope
-	expanded := make(map[string]bool, len(m.expanded))
-	for k, v := range m.expanded {
+	needCollapsed := scopeKey != m.list.collapsedScope
+	expanded := make(map[string]bool, len(m.list.expanded))
+	for k, v := range m.list.expanded {
 		expanded[k] = v
 	}
 	var subCompleted *bool
@@ -445,10 +358,10 @@ func (m *Model) loadDetail(gid string) tea.Cmd {
 }
 
 func (m *Model) startSync() tea.Cmd {
-	if m.syncing || m.deps.NewSyncer == nil {
+	if m.syncState.running || m.deps.NewSyncer == nil {
 		return nil
 	}
-	m.syncing = true
+	m.syncState.running = true
 	syncer, newSyncer, now := m.syncer, m.deps.NewSyncer, m.deps.Now
 	return func() tea.Msg {
 		if syncer == nil {
@@ -492,10 +405,10 @@ func (m *Model) scheduleSync() tea.Cmd {
 }
 
 func (m *Model) fetchDetails(gid string) tea.Cmd {
-	if m.syncer == nil || m.fetchingFor == gid {
+	if m.syncer == nil || m.detail.fetchingFor == gid {
 		return nil
 	}
-	m.fetchingFor = gid
+	m.detail.fetchingFor = gid
 	syncer := m.syncer
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, 15*time.Second)
@@ -523,7 +436,7 @@ func (m *Model) openURL(url string) tea.Cmd {
 // sends any inline images that need (re)sending.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
-	if m.inDetail() != m.renderedActive {
+	if m.inDetail() != m.detail.renderedActive {
 		m.refreshDetailView() // items appear / disappear with the detail focus
 	}
 	m.syncDetailWidth()
@@ -596,17 +509,17 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tasksLoadedMsg:
-		if msg.seq != m.taskSeq {
+		if msg.seq != m.list.seq {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.rows, m.allRows = nil, nil
+			m.list.rows, m.list.all = nil, nil
 			m.pruneMarks()
 			m.status = msg.err.Error()
 			return m, nil
 		}
 		if msg.collapsed != nil && msg.scope == m.scopeKey() {
-			m.collapsed, m.collapsedScope = msg.collapsed, msg.scope
+			m.list.collapsed, m.list.collapsedScope = msg.collapsed, msg.scope
 		}
 		return m, m.setRows(msg.rows)
 
@@ -615,19 +528,19 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.detail = nil
+			m.detail.task = nil
 			m.status = msg.err.Error()
 			if errors.Is(msg.err, readmodel.ErrNotFound) && m.selectedNotification() != nil {
 				m.status = "通知のタスクはまだ取得していません（オンラインなら自動で取得します）"
 			}
 		} else {
-			keepScroll := m.detail != nil && m.detail.GID == msg.gid
-			m.detail, m.detailMe, m.startOffered = msg.d, msg.me, msg.startOffered
+			keepScroll := m.detail.task != nil && m.detail.task.GID == msg.gid
+			m.detail.task, m.detail.me, m.detail.startOffered = msg.d, msg.me, msg.startOffered
 			m.placeCursorAfterLoad(keepScroll)
 			m.refreshDetailView()
-			m.detailCursor = clamp(m.detailCursor, 0, len(m.detailItems)-1)
+			m.detail.cursor = clamp(m.detail.cursor, 0, len(m.detail.items)-1)
 			if !keepScroll {
-				m.detailView.GotoTop()
+				m.detail.view.GotoTop()
 			}
 			m.scrollToCursor()
 			return m, m.prepareInline()
@@ -643,8 +556,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case remoteSearchMsg:
 		return m, m.remoteSearchDone(msg)
 	case detailFetchedMsg:
-		if m.fetchingFor == msg.gid {
-			m.fetchingFor = ""
+		if m.detail.fetchingFor == msg.gid {
+			m.detail.fetchingFor = ""
 		}
 		var attErr *sync.AttachmentsError
 		if errors.As(msg.err, &attErr) {
@@ -654,7 +567,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmds []tea.Cmd
-		if m.expanded[msg.gid] {
+		if m.list.expanded[msg.gid] {
 			cmds = append(cmds, m.loadTasks()) // its subtasks may have just arrived
 		}
 		if msg.gid == m.detailGID() {
@@ -663,7 +576,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case syncDoneMsg:
-		m.syncing = false
+		m.syncState.running = false
 		if msg.syncer != nil {
 			m.syncer = msg.syncer
 		}
@@ -674,19 +587,19 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncer = nil
 		}
 		if errors.Is(msg.err, auth.ErrLoginReplaced) {
-			m.syncAgain = true // check the new login's account now, not in 5 minutes
+			m.syncState.again = true // check the new login's account now, not in 5 minutes
 		}
 		// Another asagao (CLI, MCP server, another TUI) is syncing or sending: not an
 		// error and not offline. Keep the last state and quietly try again soon.
-		m.syncBusy = errors.Is(msg.err, sync.ErrPushBusy)
-		if m.syncBusy {
-			m.syncAgain = false // the retry covers a sync requested meanwhile
-			delay := busyRetryDelay(m.busyRetries)
-			m.busyRetries++
+		m.syncState.busy = errors.Is(msg.err, sync.ErrPushBusy)
+		if m.syncState.busy {
+			m.syncState.again = false // the retry covers a sync requested meanwhile
+			delay := busyRetryDelay(m.syncState.busyRetries)
+			m.syncState.busyRetries++
 			return m, tea.Batch(m.retrySyncAfter(delay), m.loadOutbox())
 		}
-		m.busyRetries = 0
-		m.syncErr = msg.err
+		m.syncState.busyRetries = 0
+		m.syncState.err = msg.err
 		if errors.Is(msg.err, sync.ErrAccountChanged) {
 			m.status = m.accountChangedStatus()
 		} else if loginHelp != "" {
@@ -695,12 +608,12 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.scheduleSync(), m.loadOutbox()}
 		if msg.err == nil && msg.res.CompletedPending {
 			cmds = append(cmds, m.fetchCompleted()) // syncs again (syncAgain) after it
-		} else if m.syncAgain {
-			m.syncAgain = false
+		} else if m.syncState.again {
+			m.syncState.again = false
 			cmds = append(cmds, m.startSync())
 		}
 		if msg.err == nil {
-			m.lastSync = msg.at
+			m.syncState.last = msg.at
 			cmds = append(cmds, m.loadScopes(), m.loadTasks(), m.prefetchTemplates())
 			if gid := m.detailGID(); gid != "" {
 				cmds = append(cmds, m.loadDetail(gid), m.debounceDetail(gid))
@@ -725,9 +638,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return model, cmd
 	}
 
-	if m.searching {
+	if m.search.active {
 		var cmd tea.Cmd
-		m.search, cmd = m.search.Update(msg)
+		m.search.input, cmd = m.search.input.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -744,21 +657,21 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.bulkAsk != nil:
 		return m.handleBulkKey(key)
-	case m.promptMode != promptNone:
+	case m.prompt.mode != promptNone:
 		return m.handlePromptKey(msg)
-	case m.showOutbox:
+	case m.showing(overlayOutbox):
 		return m.handleOutboxKey(key)
-	case m.statusView:
+	case m.showing(overlayStatuses):
 		return m.handleStatusKey(key)
-	case m.overviewView:
+	case m.showing(overlayOverview):
 		return m.handleOverviewKey(key)
-	case m.goals.open:
+	case m.showing(overlayGoals):
 		return m.handleGoalKey(key)
 	case m.picker != nil:
 		return m.handlePickerKey(key)
-	case m.searching:
+	case m.search.active:
 		return m.handleSearchKey(msg)
-	case m.leader:
+	case m.showing(overlayMenu):
 		switch {
 		case slices.Contains(menuNext, key):
 			m.turnMenuPage(+1)
@@ -767,27 +680,27 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.turnMenuPage(-1)
 			return m, nil
 		}
-		m.leader = false
+		m.closeOverlay(overlayMenu)
 		return m, m.runMenuKey(key)
-	case m.showHelp:
-		m.showHelp = false
+	case m.showing(overlayHelp):
+		m.closeOverlay(overlayHelp)
 		return m, nil
 	}
 
 	// keys that mean the same everywhere
 	switch key {
 	case "space":
-		m.leader = true
+		m.openOverlay(overlayMenu)
 		m.menuPage = 0
 		return m, tea.Batch(m.loadPlan(), m.prefetchTemplates()) // recheck 402 marks (#68) and templates when opening the menu
 	case "?":
-		m.showHelp = true
+		m.openOverlay(overlayHelp)
 		return m, nil
 	case "/":
-		m.searching = true
-		m.search.SetValue(m.query)
-		m.search.CursorEnd()
-		return m, m.search.Focus()
+		m.search.active = true
+		m.search.input.SetValue(m.search.query)
+		m.search.input.CursorEnd()
+		return m, m.search.input.Focus()
 	case "esc", "backspace", "q":
 		return m, m.back(key)
 	case "tab", "shift+tab":
@@ -848,16 +761,16 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+u", "pgup":
 			return m, m.moveList(-half)
 		case "g", "home":
-			return m, m.moveList(-len(m.rows))
+			return m, m.moveList(-len(m.list.rows))
 		case "G", "end":
-			return m, m.moveList(len(m.rows))
+			return m, m.moveList(len(m.list.rows))
 		case "enter":
 			if m.selectedNotification() != nil {
 				return m, m.openNotification()
 			}
 			if m.selectedTask() != nil {
 				return m, m.openDetail()
-			} else if m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].collapsed {
+			} else if m.list.cursor >= 0 && m.list.cursor < len(m.list.rows) && m.list.rows[m.list.cursor].collapsed {
 				return m, m.toggleGroup() // expand
 			}
 		case "l", "right":
@@ -884,16 +797,16 @@ func (m *Model) back(key string) tea.Cmd {
 	case m.zoom:
 		m.zoom = false
 		m.focus = paneList
-		if t := m.selectedTask(); t == nil || len(m.detailStack) > 0 {
-			m.detailStack = nil // opened from the calendar or a subtask: back to the list's task
+		if t := m.selectedTask(); t == nil || len(m.detail.stack) > 0 {
+			m.detail.stack = nil // opened from the calendar or a subtask: back to the list's task
 			if t != nil {
 				return m.loadDetail(t.GID)
 			}
 		}
 		return nil
-	case key != "q" && m.query != "":
-		m.query = ""
-		m.search.Reset()
+	case key != "q" && m.search.query != "":
+		m.search.query = ""
+		m.search.input.Reset()
 		return m.loadTasks()
 	case m.focus == paneDetail:
 		m.focus = paneList
@@ -907,20 +820,28 @@ func (m *Model) back(key string) tea.Cmd {
 	return nil
 }
 
+// searchState is the search in the footer (/): the text typed and what Asana found for it.
+type searchState struct {
+	input  textinput.Model
+	active bool // input has focus
+	query  string
+	remote remoteFound // what Asana found for a search (remotesearch.go)
+}
+
 func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key := msg.String(); key {
 	case "esc":
-		m.searching = false
-		m.search.Blur()
-		m.search.Reset()
-		if m.query != "" {
-			m.query = ""
+		m.search.active = false
+		m.search.input.Blur()
+		m.search.input.Reset()
+		if m.search.query != "" {
+			m.search.query = ""
 			return m, m.loadTasks()
 		}
 		return m, nil
 	case "enter":
-		m.searching = false
-		m.search.Blur()
+		m.search.active = false
+		m.search.input.Blur()
 		m.focus = paneList
 		return m, nil
 	case "up", "ctrl+p":
@@ -929,9 +850,9 @@ func (m *Model) handleSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveList(1)
 	}
 	var cmd tea.Cmd
-	m.search, cmd = m.search.Update(msg)
-	if q := m.search.Value(); q != m.query {
-		m.query = q
+	m.search.input, cmd = m.search.input.Update(msg)
+	if q := m.search.input.Value(); q != m.search.query {
+		m.search.query = q
 		return m, tea.Batch(cmd, m.loadTasks())
 	}
 	return m, cmd
@@ -977,9 +898,9 @@ func (m *Model) moveScope(delta int) tea.Cmd {
 		return nil
 	}
 	m.scopeCursor = next
-	m.saved = nil // the sidebar leaves a saved search
-	m.listCursor, m.listOffset = 0, 0
-	m.boardCol, m.boardRow, m.boardColOffset = 0, 0, 0
+	m.list.saved = nil // the sidebar leaves a saved search
+	m.list.cursor, m.list.offset = 0, 0
+	m.board.col, m.board.row, m.board.colOffset = 0, 0, 0
 	return tea.Batch(m.loadTasks(), m.openProjectLater())
 }
 
@@ -990,24 +911,24 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 		prev = t.GID
 	}
 	prevRow := prev
-	if !m.boardActive() && m.listCursor >= 0 && m.listCursor < len(m.rows) && m.rows[m.listCursor].notif != nil {
-		prevRow = m.rows[m.listCursor].id()
+	if !m.boardActive() && m.list.cursor >= 0 && m.list.cursor < len(m.list.rows) && m.list.rows[m.list.cursor].notif != nil {
+		prevRow = m.list.rows[m.list.cursor].id()
 	}
 	// When a reload of the same scope drops the selected task (completed, moved away), keep
 	// the cursor where it was instead of going back to the top.
 	near := 0
-	if key := m.scopeKey(); m.rowsScope == key {
-		near = m.listCursor
+	if key := m.scopeKey(); m.list.scope == key {
+		near = m.list.cursor
 	} else {
-		m.rowsScope = key
+		m.list.scope = key
 	}
-	m.allRows = rows
+	m.list.all = rows
 	m.showRows()
 	target := prevRow
-	if m.selectAfter != "" && m.listed(m.selectAfter) {
-		target = m.selectAfter
+	if m.list.selectAfter != "" && m.listed(m.list.selectAfter) {
+		target = m.list.selectAfter
 	}
-	m.selectAfter = ""
+	m.list.selectAfter = ""
 	m.selectInListNear(target, near)
 	if m.boardActive() {
 		m.selectInBoard(target)
@@ -1017,11 +938,11 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 	}
 	t := m.selectedTask()
 	if t == nil {
-		m.detail = nil
+		m.detail.task = nil
 		m.refreshDetailView()
 		return nil
 	}
-	if gid := m.detailGID(); gid != t.GID || (t.GID == prev && m.detail != nil) {
+	if gid := m.detailGID(); gid != t.GID || (t.GID == prev && m.detail.task != nil) {
 		return m.loadDetail(gid) // refresh in place (or the subtask opened in the detail)
 	}
 	return tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
@@ -1029,7 +950,7 @@ func (m *Model) setRows(rows []row) tea.Cmd {
 
 // listed reports whether gid is in the task list (or on the board).
 func (m *Model) listed(gid string) bool {
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.task != nil && r.task.GID == gid {
 			return true
 		}
@@ -1043,44 +964,44 @@ func (m *Model) selectInList(gid string) { m.selectInListNear(gid, 0) }
 // selectInListNear puts the list cursor on gid, or, if gid is not listed, on the first task
 // at or after row near (the last task before it when there is none after).
 func (m *Model) selectInListNear(gid string, near int) {
-	m.listCursor = -1
-	for i, r := range m.rows {
+	m.list.cursor = -1
+	for i, r := range m.list.rows {
 		if gid != "" && r.id() == gid {
-			m.listCursor = i
+			m.list.cursor = i
 			break
 		}
 	}
-	for i, r := range m.rows {
-		if m.listCursor < 0 && r.task != nil && r.task.GID == gid {
-			m.listCursor = i
+	for i, r := range m.list.rows {
+		if m.list.cursor < 0 && r.task != nil && r.task.GID == gid {
+			m.list.cursor = i
 		}
 	}
-	if m.listCursor < 0 && len(m.rows) > 0 {
-		near = clamp(near, 0, len(m.rows)-1)
-		if m.listCursor = m.nextTaskRow(near, 1); m.listCursor < 0 {
-			m.listCursor = m.nextTaskRow(near, -1)
+	if m.list.cursor < 0 && len(m.list.rows) > 0 {
+		near = clamp(near, 0, len(m.list.rows)-1)
+		if m.list.cursor = m.nextTaskRow(near, 1); m.list.cursor < 0 {
+			m.list.cursor = m.nextTaskRow(near, -1)
 		}
 	}
 	m.ensureListVisible()
 }
 
 func (m *Model) moveList(delta int) tea.Cmd {
-	if len(m.rows) == 0 {
+	if len(m.list.rows) == 0 {
 		return nil
 	}
 	dir := 1
 	if delta < 0 {
 		dir = -1
 	}
-	target := clamp(m.listCursor+delta, 0, len(m.rows)-1)
+	target := clamp(m.list.cursor+delta, 0, len(m.list.rows)-1)
 	next := m.nextTaskRow(target, dir)
 	if next < 0 {
 		next = m.nextTaskRow(target, -dir)
 	}
-	if next < 0 || next == m.listCursor {
+	if next < 0 || next == m.list.cursor {
 		return nil
 	}
-	m.listCursor = next
+	m.list.cursor = next
 	m.ensureListVisible()
 	m.resetDetailNav()
 	t := m.selectedTask()
@@ -1092,8 +1013,8 @@ func (m *Model) moveList(delta int) tea.Cmd {
 
 // nextTaskRow returns the first task row at or after i in direction dir, or -1.
 func (m *Model) nextTaskRow(i, dir int) int {
-	for ; i >= 0 && i < len(m.rows); i += dir {
-		if m.rows[i].selectable() {
+	for ; i >= 0 && i < len(m.list.rows); i += dir {
+		if m.list.rows[i].selectable() {
 			return i
 		}
 	}
@@ -1104,10 +1025,10 @@ func (m *Model) selectedTask() *readmodel.TaskSummary {
 	if m.boardActive() {
 		return m.boardSelected()
 	}
-	if m.listCursor < 0 || m.listCursor >= len(m.rows) {
+	if m.list.cursor < 0 || m.list.cursor >= len(m.list.rows) {
 		return nil
 	}
-	return m.rows[m.listCursor].task
+	return m.list.rows[m.list.cursor].task
 }
 
 func (m *Model) debounceDetail(gid string) tea.Cmd {
@@ -1118,10 +1039,10 @@ func (m *Model) debounceDetail(gid string) tea.Cmd {
 }
 
 func (m *Model) needsDetailFetch() bool {
-	if m.detail == nil || m.detail.DetailsFetchedAt == "" {
+	if m.detail.task == nil || m.detail.task.DetailsFetchedAt == "" {
 		return true
 	}
-	t, err := time.Parse(time.RFC3339, m.detail.DetailsFetchedAt)
+	t, err := time.Parse(time.RFC3339, m.detail.task.DetailsFetchedAt)
 	return err != nil || m.deps.Now().Sub(t) > detailRefreshAge
 }
 
@@ -1137,26 +1058,26 @@ func clamp(v, lo, hi int) int {
 // syncStatus is shown in the header.
 func (m *Model) syncStatus() (string, bool) {
 	switch {
-	case m.syncing:
+	case m.syncState.running:
 		return "⟳ 同期中", true
-	case m.syncBusy:
+	case m.syncState.busy:
 		return "⟳ 別の asagao が同期中（少し後にもう一度同期します）", true
-	case errors.Is(m.syncErr, sync.ErrAccountChanged):
+	case errors.Is(m.syncState.err, sync.ErrAccountChanged):
 		return "○ アカウントが違うため同期を停止中", false
 	case m.deps.NewSyncer == nil:
 		return "○ オフライン", false
-	case errors.Is(m.syncErr, auth.ErrNotLoggedIn):
+	case errors.Is(m.syncState.err, auth.ErrNotLoggedIn):
 		return "○ 未ログイン（asagao auth login --pat）", false
-	case auth.LoginHelp(m.syncErr) != "":
+	case auth.LoginHelp(m.syncState.err) != "":
 		return "○ ログインし直してください（案内は下の行）", false
-	case m.syncErr != nil:
-		if errors.Is(m.syncErr, context.Canceled) {
+	case m.syncState.err != nil:
+		if errors.Is(m.syncState.err, context.Canceled) {
 			return "", true
 		}
 
-		return "○ オフライン（" + shortErr(m.syncErr) + "）", false
-	case !m.lastSync.IsZero():
-		return "● 同期済み " + m.lastSync.Format("15:04"), true
+		return "○ オフライン（" + shortErr(m.syncState.err) + "）", false
+	case !m.syncState.last.IsZero():
+		return "● 同期済み " + m.syncState.last.Format("15:04"), true
 	}
 	return "", true
 }

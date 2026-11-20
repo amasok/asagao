@@ -17,7 +17,7 @@ import (
 
 // isMyComment reports whether c was written by the logged-in user.
 func (m *Model) isMyComment(c readmodel.StoryView) bool {
-	return c.Type == "comment" && c.CreatedBy != nil && m.detailMe != "" && c.CreatedBy.GID == m.detailMe
+	return c.Type == "comment" && c.CreatedBy != nil && m.detail.me != "" && c.CreatedBy.GID == m.detail.me
 }
 
 func storyIndex(stories []readmodel.StoryView, gid string) int {
@@ -55,7 +55,7 @@ func (m *Model) handleItemPicker(p *picker, item pickerItem) (tea.Cmd, bool) {
 	switch p.kind {
 	case pickItemAction:
 		action, gid, _ := strings.Cut(item.value, "\x00")
-		d := m.detail
+		d := m.detail.task
 		if d == nil {
 			return nil, true
 		}
@@ -121,7 +121,7 @@ func (m *Model) rewriteComment(c readmodel.StoryView) tea.Cmd {
 	}
 	return func() tea.Msg {
 		path, err := writeTemp("asagao-comment-*.md", commentTemplate+md+"\n")
-		return commentReadyMsg{gid: m.detail.GID, story: c.GID, original: md, path: path, err: err}
+		return commentReadyMsg{gid: m.detail.task.GID, story: c.GID, original: md, path: path, err: err}
 	}
 }
 

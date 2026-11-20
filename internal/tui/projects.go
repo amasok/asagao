@@ -46,8 +46,8 @@ func (m *Model) openStatuses() tea.Cmd {
 	if project == "" {
 		return nil
 	}
-	m.statusView = true
-	m.statusOffset = 0
+	m.openOverlay(overlayStatuses)
+	m.statusView.offset = 0
 	st, syncer := m.deps.Store, m.syncer
 	load := func() tea.Msg {
 		updates, err := queryOf(st).StatusUpdates(m.ctx, project)
@@ -65,19 +65,19 @@ func (m *Model) openStatuses() tea.Cmd {
 func (m *Model) handleStatusKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc", "q", "U":
-		m.statusView = false
+		m.closeOverlay(overlayStatuses)
 	case "j", "down":
-		m.statusOffset++
+		m.statusView.offset++
 	case "k", "up":
-		m.statusOffset = max(0, m.statusOffset-1)
+		m.statusView.offset = max(0, m.statusView.offset-1)
 	case "g", "home":
-		m.statusOffset = 0
+		m.statusView.offset = 0
 	case "ctrl+d", "pgdown":
-		m.statusOffset += 10
+		m.statusView.offset += 10
 	case "ctrl+u", "pgup":
-		m.statusOffset = max(0, m.statusOffset-10)
+		m.statusView.offset = max(0, m.statusView.offset-10)
 	case "W", "a":
-		m.statusView = false
+		m.closeOverlay(overlayStatuses)
 		return m, m.writeStatus()
 	}
 	return m, nil
@@ -85,10 +85,10 @@ func (m *Model) handleStatusKey(key string) (tea.Model, tea.Cmd) {
 
 func (m *Model) renderStatuses(w, h int) string {
 	lines := []string{m.st.dim.Render("j/k スクロール  W 新しいステータスを書く  esc 閉じる"), ""}
-	if len(m.statuses) == 0 {
+	if len(m.statusView.updates) == 0 {
 		lines = append(lines, "ステータス更新はまだありません（W で書く）")
 	}
-	for i, u := range m.statuses {
+	for i, u := range m.statusView.updates {
 		if i > 0 {
 			lines = append(lines, m.st.dim.Render(strings.Repeat("─", max(1, w-4))))
 		}
@@ -100,8 +100,8 @@ func (m *Model) renderStatuses(w, h int) string {
 		lines = append(lines, meta)
 		lines = append(lines, strings.Split(m.markdown(textMarkdown(u.HTMLText, u.Text), max(10, w-6)), "\n")...)
 	}
-	m.statusOffset = clamp(m.statusOffset, 0, max(0, len(lines)-(h-3)))
-	return m.pane("ステータス更新（"+m.currentScope().name+"）", lines[m.statusOffset:], w, h, true)
+	m.statusView.offset = clamp(m.statusView.offset, 0, max(0, len(lines)-(h-3)))
+	return m.pane("ステータス更新（"+m.currentScope().name+"）", lines[m.statusView.offset:], w, h, true)
 }
 
 func (m *Model) statusBadge(t string) string {
@@ -182,7 +182,7 @@ func (m *Model) updateProjects(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case statusesLoadedMsg:
 		if msg.err == nil && msg.project == m.currentProject() {
-			m.statuses = msg.updates
+			m.statusView.updates = msg.updates
 		}
 		return nil, true
 	case statusEditReadyMsg:
@@ -208,7 +208,7 @@ func (m *Model) updateProjects(msg tea.Msg) (tea.Cmd, bool) {
 			m.scopeCursor = 0
 		}
 		if msg.selectProject != "" || msg.toMyTasks {
-			m.saved = nil // the sidebar moves: leave a saved search (searches.go)
+			m.list.saved = nil // the sidebar moves: leave a saved search (searches.go)
 		}
 		return tea.Batch(m.loadScopes(), m.loadTasks()), true
 	case membersMsg:
@@ -265,7 +265,7 @@ func (m *Model) startNewProject() tea.Cmd {
 		return nil
 	}
 	m.openPrompt(promptNewProject)
-	return m.prompt.Focus()
+	return m.prompt.input.Focus()
 }
 
 // createProject creates a project in the only team there is, or asks which team when

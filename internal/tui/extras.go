@@ -109,8 +109,8 @@ func (m *Model) showProjects(task readmodel.TaskSummary) {
 		cursor = m.picker.cursor
 	}
 	in := map[string]bool{}
-	if m.detail != nil && m.detail.GID == task.GID {
-		task = m.detail.TaskSummary // freshest memberships
+	if m.detail.task != nil && m.detail.task.GID == task.GID {
+		task = m.detail.task.TaskSummary // freshest memberships
 	}
 	for _, ms := range task.Memberships {
 		in[ms.ProjectGID] = true
@@ -156,14 +156,14 @@ func (m *Model) startDuplicate() tea.Cmd {
 		return nil
 	}
 	m.openPrompt(promptDuplicate)
-	m.dupSource = t.GID
-	m.prompt.SetValue(t.Name + " のコピー")
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.dupSource = t.GID
+	m.prompt.input.SetValue(t.Name + " のコピー")
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) duplicate(name string) tea.Cmd {
-	copies, src := m.copies(m.deps.Now()), m.dupSource
+	copies, src := m.copies(m.deps.Now()), m.prompt.dupSource
 	return func() tea.Msg {
 		gid, err := copies.Duplicate(m.ctx, src, name)
 		if err != nil {
@@ -181,8 +181,8 @@ func (m *Model) startAttach() tea.Cmd {
 		return nil
 	}
 	m.openPrompt(promptAttach)
-	m.attachTask = t.GID
-	return m.prompt.Focus()
+	m.prompt.attachTask = t.GID
+	return m.prompt.input.Focus()
 }
 
 func expandHome(p string) string {
@@ -195,7 +195,7 @@ func expandHome(p string) string {
 }
 
 func (m *Model) attach(path string) tea.Cmd {
-	copies, task := m.copies(m.deps.Now()), m.attachTask
+	copies, task := m.copies(m.deps.Now()), m.prompt.attachTask
 	path = expandHome(strings.Trim(path, `"'`))
 	return func() tea.Msg {
 		if _, err := copies.Attach(m.ctx, task, path); err != nil {
@@ -214,7 +214,7 @@ func (m *Model) openAttachment(a readmodel.AttachmentView) tea.Cmd {
 	if syncer == nil {
 		syncer = &sync.Syncer{Store: m.deps.Store}
 	}
-	taskGID := m.detail.GID
+	taskGID := m.detail.task.GID
 	return func() tea.Msg {
 		path, err := syncer.DownloadAttachment(m.ctx, taskGID, a.GID)
 		if err != nil {

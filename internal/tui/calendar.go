@@ -17,7 +17,7 @@ import (
 
 func (m *Model) calendarActive() bool {
 	k := m.currentScope().kind
-	return m.calendar && k != scopeRecent && k != scopeInbox && m.query == ""
+	return m.mode == viewCalendar && k != scopeRecent && k != scopeInbox && m.search.query == ""
 }
 
 type calendarLoadedMsg struct {
@@ -43,13 +43,13 @@ func (m *Model) loadCalendar() tea.Cmd {
 	if !m.calendarActive() {
 		return nil
 	}
-	if m.calDay.IsZero() {
-		m.calDay = m.deps.Now()
+	if m.cal.day.IsZero() {
+		m.cal.day = m.deps.Now()
 	}
-	month := monthStart(m.calDay)
+	month := monthStart(m.cal.day)
 	start, end := calendarRange(month)
-	f := readmodel.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.tagFilter, Field: m.fieldFilter.field, FieldValue: m.fieldFilter.value}
-	switch m.filter {
+	f := readmodel.TaskFilter{DueAfter: start.Format(time.DateOnly), DueBefore: end.Format(time.DateOnly), Tag: m.list.tagFilter, Field: m.list.fieldFilter.field, FieldValue: m.list.fieldFilter.value}
+	switch m.list.filter {
 	case filterCompleted:
 		f.Completed = boolPtr(true)
 	case filterAll:
@@ -81,7 +81,7 @@ func (m *Model) onCalendarLoaded(msg calendarLoadedMsg) {
 		m.status = msg.err.Error()
 		return
 	}
-	m.calMonth, m.calTasks = msg.month, msg.tasks
+	m.cal.month, m.cal.tasks = msg.month, msg.tasks
 }
 
 // addMonths moves t by n months, keeping the day but not past the end of the target month
@@ -94,12 +94,12 @@ func addMonths(t time.Time, n int) time.Time {
 
 // moveCalendar moves the selected day and reloads when the month changes.
 func (m *Model) moveCalendar(days, months int) tea.Cmd {
-	before := monthStart(m.calDay)
+	before := monthStart(m.cal.day)
 	if months != 0 {
-		m.calDay = addMonths(m.calDay, months)
+		m.cal.day = addMonths(m.cal.day, months)
 	}
-	m.calDay = m.calDay.AddDate(0, 0, days)
-	if !monthStart(m.calDay).Equal(before) {
+	m.cal.day = m.cal.day.AddDate(0, 0, days)
+	if !monthStart(m.cal.day).Equal(before) {
 		return m.loadCalendar()
 	}
 	return nil
@@ -120,9 +120,9 @@ func (m *Model) handleCalendarKey(key string) (tea.Model, tea.Cmd) {
 	case "p", "[":
 		return m, m.moveCalendar(0, -1)
 	case ".":
-		before := monthStart(m.calDay)
-		m.calDay = m.deps.Now()
-		if !monthStart(m.calDay).Equal(before) {
+		before := monthStart(m.cal.day)
+		m.cal.day = m.deps.Now()
+		if !monthStart(m.cal.day).Equal(before) {
 			return m, m.loadCalendar()
 		}
 	case "enter":
@@ -133,8 +133,8 @@ func (m *Model) handleCalendarKey(key string) (tea.Model, tea.Cmd) {
 
 // openDayPicker lists the selected day's tasks; choosing one opens its detail.
 func (m *Model) openDayPicker() {
-	day := m.calDay.Format(time.DateOnly)
-	tasks := m.calTasks[day]
+	day := m.cal.day.Format(time.DateOnly)
+	tasks := m.cal.tasks[day]
 	if len(tasks) == 0 {
 		m.status = longDue(day, "") + " のタスクはありません（a で追加）"
 		return
@@ -156,18 +156,18 @@ func (m *Model) openDayPicker() {
 
 // openTaskDetail shows any task full screen (from the calendar or recent updates).
 func (m *Model) openTaskDetail(gid string) tea.Cmd {
-	m.detailStack = []string{gid}
+	m.detail.stack = []string{gid}
 	m.zoom = true
 	m.focus = paneDetail
-	m.detailCursor = 0
+	m.detail.cursor = 0
 	return tea.Batch(m.loadDetail(gid), m.debounceDetail(gid))
 }
 
 func (m *Model) renderCalendar(w, h int) string {
-	if m.calDay.IsZero() {
-		m.calDay = m.deps.Now()
+	if m.cal.day.IsZero() {
+		m.cal.day = m.deps.Now()
 	}
-	month := monthStart(m.calDay)
+	month := monthStart(m.cal.day)
 	start, end := calendarRange(month)
 	weeks := int(end.Sub(start).Hours()/24+1) / 7
 	inner := w - 4
@@ -175,7 +175,7 @@ func (m *Model) renderCalendar(w, h int) string {
 	gridW := cellW*7 + 6
 	cellH := max(2, (h-3-2-weeks)/max(1, weeks)) // title, weekday row, rules
 	today := m.deps.Now().Format(time.DateOnly)
-	selected := m.calDay.Format(time.DateOnly)
+	selected := m.cal.day.Format(time.DateOnly)
 
 	var lines []string
 	noDue := ""
@@ -203,7 +203,7 @@ func (m *Model) renderCalendar(w, h int) string {
 			if key == today {
 				label += " 今日"
 			}
-			tasks := m.calTasks[key]
+			tasks := m.cal.tasks[key]
 			var cell []string
 			style := m.st.label
 			if d.Month() != month.Month() {

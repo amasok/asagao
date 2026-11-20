@@ -31,7 +31,7 @@ func TestDeleteTaskAsksFirst(t *testing.T) {
 		t.Fatalf("outbox %+v", ops)
 	}
 	h.screen()
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil && r.task.GID == gid {
 			t.Errorf("%s still listed:\n%s", name, h.screen())
 		}

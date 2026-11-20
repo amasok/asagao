@@ -165,7 +165,7 @@ func (m *Model) applyBriefEdit(msg briefEditDoneMsg) tea.Cmd {
 
 // confirmDeleteBrief asks before deleting the current project's brief.
 func (m *Model) confirmDeleteBrief() tea.Cmd {
-	o := m.overview
+	o := m.overviewView.data
 	if o == nil || o.Brief == nil {
 		m.status = "このプロジェクトにはブリーフがありません"
 		return nil

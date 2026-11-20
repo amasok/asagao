@@ -200,11 +200,11 @@ func TestSearchAndFilter(t *testing.T) {
 		t.Fatalf("search across all tasks expected:\n%s", s)
 	}
 	h.key("enter")
-	if h.m.searching || h.m.query != "契約" {
+	if h.m.search.active || h.m.search.query != "契約" {
 		t.Fatalf("enter should keep the query and leave the input")
 	}
 	h.key("esc")
-	if h.m.query != "" || !strings.Contains(h.screen(), "期限切れ") {
+	if h.m.search.query != "" || !strings.Contains(h.screen(), "期限切れ") {
 		t.Fatalf("esc should clear the search")
 	}
 
@@ -278,7 +278,7 @@ func TestToggleCompleteOffline(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	h.key("x") // complete 転居届を出す (t2)
 	s := h.screen()
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil && r.task.GID == "t2" {
 			t.Fatalf("completed task should leave the open-tasks list:\n%s", s)
 		}
@@ -342,7 +342,7 @@ func TestPromptEscCancels(t *testing.T) {
 	h.key("a")
 	h.typeText("やめる")
 	h.key("esc")
-	if h.m.promptMode != promptNone || strings.Contains(h.screen(), "やめる") {
+	if h.m.prompt.mode != promptNone || strings.Contains(h.screen(), "やめる") {
 		t.Fatal("esc should cancel without creating")
 	}
 }
@@ -405,8 +405,8 @@ func TestBoardViewAndCardMoves(t *testing.T) {
 	if s := h.screen(); !strings.Contains(s, "家具 (0)") || !strings.Contains(s, "手続き (4)") || !strings.Contains(s, "↑ 未送信 1") {
 		t.Fatalf("card should move to the next column:\n%s", s)
 	}
-	if h.selected() != "t1" || h.m.boardCol != 1 {
-		t.Fatalf("cursor should follow the moved card: %q col %d", h.selected(), h.m.boardCol)
+	if h.selected() != "t1" || h.m.board.col != 1 {
+		t.Fatalf("cursor should follow the moved card: %q col %d", h.selected(), h.m.board.col)
 	}
 	h.key("H") // and back: the move cancels out
 	if s := h.screen(); !strings.Contains(s, "家具 (1)") || strings.Contains(s, "未送信") {
@@ -452,13 +452,13 @@ func TestTagFilter(t *testing.T) {
 		t.Fatalf("tag picker:\n%s", s)
 	}
 	h.key("j", "enter") // #手続き系 sorts before #買い物? order is by name: 手続き系, 買い物
-	tag := h.m.tagFilter
+	tag := h.m.list.tagFilter
 	if tag == "" {
 		t.Fatal("tag filter should be set")
 	}
 	h.key("h", "j", "j", "l") // project view shows all assignees
 	var gids []string
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil {
 			gids = append(gids, r.task.GID)
 		}
@@ -468,7 +468,7 @@ func TestTagFilter(t *testing.T) {
 		t.Fatalf("tag %q: rows %v", tag, gids)
 	}
 	h.key("T", "g", "enter") // "（すべてのタスク）"
-	if h.m.tagFilter != "" {
+	if h.m.list.tagFilter != "" {
 		t.Fatal("first picker item should clear the filter")
 	}
 }
@@ -519,7 +519,7 @@ func projectHarness(t *testing.T, st *store.Store, viewImages func([]string) tea
 
 func (h *harness) visibleGIDs() []string {
 	var out []string
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.task != nil {
 			out = append(out, r.task.GID)
 		}
@@ -538,7 +538,7 @@ func TestCollapseSections(t *testing.T) {
 	if !strings.Contains(s, "▸ 家具 (1)") || slices.Contains(h.visibleGIDs(), "t1") {
 		t.Fatalf("家具 should be collapsed:\n%s", s)
 	}
-	if h.selected() != "" || h.m.rows[h.m.listCursor].key != "s1" {
+	if h.selected() != "" || h.m.list.rows[h.m.list.cursor].key != "s1" {
 		t.Fatal("cursor should sit on the collapsed header")
 	}
 	h.key("j")
@@ -573,8 +573,8 @@ func TestRenameSectionFromListAndBoard(t *testing.T) {
 	st := fixtureStore(t)
 	h := projectHarness(t, st, nil)
 	h.key("j", "E") // cursor in 手続き
-	if h.m.prompt.Value() != "手続き" {
-		t.Fatalf("prompt should be prefilled, got %q", h.m.prompt.Value())
+	if h.m.prompt.input.Value() != "手続き" {
+		t.Fatalf("prompt should be prefilled, got %q", h.m.prompt.input.Value())
 	}
 	h.typeText("（役所）")
 	h.key("enter")
@@ -582,8 +582,8 @@ func TestRenameSectionFromListAndBoard(t *testing.T) {
 		t.Fatalf("renamed section:\n%s", s)
 	}
 	h.key("v", "E") // board opens on the selected task's column (手続き（役所）)
-	if h.m.prompt.Value() != "手続き（役所）" {
-		t.Fatalf("board rename should target the column, got %q", h.m.prompt.Value())
+	if h.m.prompt.input.Value() != "手続き（役所）" {
+		t.Fatalf("board rename should target the column, got %q", h.m.prompt.input.Value())
 	}
 	h.key("esc")
 	h.key("!")
@@ -726,7 +726,7 @@ func TestInlineImagePlaceholders(t *testing.T) {
 	_ = st.SetAttachmentPath(ctx, "9", path)
 
 	m := New(context.Background(), Deps{Store: st, Now: func() time.Time { return testNow }, InlineImages: true})
-	m.cellW, m.cellH = 10, 20
+	m.cache.cellW, m.cache.cellH = 10, 20
 	h := &harness{t: t, m: m}
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
@@ -740,7 +740,7 @@ func TestInlineImagePlaceholders(t *testing.T) {
 	if strings.Index(plain, "上") > strings.Index(plain, "\U0010EEEE") || strings.Index(plain, "\U0010EEEE") > strings.Index(plain, "下") {
 		t.Fatal("image should be drawn between 上 and 下")
 	}
-	got := h.m.inline["9"]
+	got := h.m.cache.inline["9"]
 	if got == nil || got.sentCols != 20 || got.sentRows != 5 { // 200x100 px with 10x20 cells
 		t.Fatalf("placement = %+v", got)
 	}
@@ -1046,7 +1046,7 @@ func TestWhichKeyMenu(t *testing.T) {
 		t.Fatalf("space d should open the due chooser:\n%s", h.screen())
 	}
 	h.key("esc", "space", "esc")
-	if h.m.leader || h.m.picker != nil {
+	if h.m.showing(overlayMenu) || h.m.picker != nil {
 		t.Fatal("esc should close the menu")
 	}
 
@@ -1095,7 +1095,7 @@ func TestDetailFieldsAreChosenFromLists(t *testing.T) {
 	}
 	cursorTo(itemDue)
 	h.key("enter", "G", "k", "enter") // 日付を入力…
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText("2026-12-24")
 	h.key("enter")
 	if d, _ := st.GetTask(ctx, "t1"); d.DueOn != "2026-12-24" {
@@ -1218,8 +1218,8 @@ func TestCalendarView(t *testing.T) {
 		t.Fatal("esc should go back to the calendar")
 	}
 	h.key("j") // +7 days: 11/20
-	if h.m.calDay.Format(time.DateOnly) != "2026-11-20" {
-		t.Fatalf("j should move a week, got %s", h.m.calDay.Format(time.DateOnly))
+	if h.m.cal.day.Format(time.DateOnly) != "2026-11-20" {
+		t.Fatalf("j should move a week, got %s", h.m.cal.day.Format(time.DateOnly))
 	}
 	h.key("a")
 	h.typeText("内見")
@@ -1392,7 +1392,7 @@ func TestProjectStatusInTUI(t *testing.T) {
 		t.Fatalf("members offline:\n%s", h.screen())
 	}
 	h.key("space", "N")
-	if h.m.promptMode != promptNone {
+	if h.m.prompt.mode != promptNone {
 		t.Fatal("new project must not prompt while offline")
 	}
 }
@@ -1431,14 +1431,14 @@ func TestBoardRightEdge(t *testing.T) {
 		t.Fatalf("board should have an その他 column:\n%s", s)
 	}
 	h.key("l", "j") // 手続き, second card
-	if h.m.boardCol != 1 || h.selected() != "t3" {
-		t.Fatalf("col %d selected %q, want col 1 t3", h.m.boardCol, h.selected())
+	if h.m.board.col != 1 || h.selected() != "t3" {
+		t.Fatalf("col %d selected %q, want col 1 t3", h.m.board.col, h.selected())
 	}
 
 	// L into "その他" (no section gid) is refused: no move, cursor stays.
 	h.key("L")
-	if h.m.boardCol != 1 || h.selected() != "t3" || pendingOps(t, st) != 0 {
-		t.Fatalf("L into その他 should do nothing: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	if h.m.board.col != 1 || h.selected() != "t3" || pendingOps(t, st) != 0 {
+		t.Fatalf("L into その他 should do nothing: col %d selected %q pending %d", h.m.board.col, h.selected(), pendingOps(t, st))
 	}
 	if s := h.screen(); !strings.Contains(s, "手続き (3)") || !strings.Contains(s, "その他 (1)") {
 		t.Fatalf("columns changed:\n%s", s)
@@ -1446,54 +1446,54 @@ func TestBoardRightEdge(t *testing.T) {
 
 	// l to the last column, then l / L there do nothing.
 	h.key("l")
-	if h.m.boardCol != 2 || h.selected() != "t6" {
-		t.Fatalf("l should reach その他: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 2 || h.selected() != "t6" {
+		t.Fatalf("l should reach その他: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("l", "right")
-	if h.m.boardCol != 2 || h.selected() != "t6" {
-		t.Fatalf("l on the last column should stay: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 2 || h.selected() != "t6" {
+		t.Fatalf("l on the last column should stay: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("L")
-	if h.m.boardCol != 2 || h.selected() != "t6" || pendingOps(t, st) != 0 {
-		t.Fatalf("L on the last column should do nothing: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	if h.m.board.col != 2 || h.selected() != "t6" || pendingOps(t, st) != 0 {
+		t.Fatalf("L on the last column should do nothing: col %d selected %q pending %d", h.m.board.col, h.selected(), pendingOps(t, st))
 	}
 
 	// H out of その他 moves the card into a real section.
 	h.key("H")
-	if h.m.boardCol != 1 || h.selected() != "t6" || pendingOps(t, st) != 1 {
-		t.Fatalf("H should move the card to 手続き: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	if h.m.board.col != 1 || h.selected() != "t6" || pendingOps(t, st) != 1 {
+		t.Fatalf("H should move the card to 手続き: col %d selected %q pending %d", h.m.board.col, h.selected(), pendingOps(t, st))
 	}
 	if s := h.screen(); !strings.Contains(s, "手続き (4)") || strings.Contains(s, "その他") {
 		t.Fatalf("その他 should disappear once empty:\n%s", s)
 	}
 	// With その他 gone, 手続き is the last column: L does nothing.
 	h.key("L")
-	if h.m.boardCol != 1 || pendingOps(t, st) != 1 {
-		t.Fatalf("L on the last section should do nothing: col %d pending %d", h.m.boardCol, pendingOps(t, st))
+	if h.m.board.col != 1 || pendingOps(t, st) != 1 {
+		t.Fatalf("L on the last section should do nothing: col %d pending %d", h.m.board.col, pendingOps(t, st))
 	}
 }
 
 func TestBoardLeftEdgeAndRows(t *testing.T) {
 	h, st := boardHarness(t)
 	h.key("H") // first column: nothing to the left
-	if h.m.boardCol != 0 || h.selected() != "t1" || pendingOps(t, st) != 0 {
-		t.Fatalf("H on the first column should do nothing: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 0 || h.selected() != "t1" || pendingOps(t, st) != 0 {
+		t.Fatalf("H on the first column should do nothing: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("l", "G")
 	if h.selected() != "t4" {
 		t.Fatalf("G should go to the last card, got %q", h.selected())
 	}
 	h.key("j") // past the end: stays
-	if h.selected() != "t4" || h.m.boardRow != 2 {
-		t.Fatalf("j past the last card: row %d selected %q", h.m.boardRow, h.selected())
+	if h.selected() != "t4" || h.m.board.row != 2 {
+		t.Fatalf("j past the last card: row %d selected %q", h.m.board.row, h.selected())
 	}
 	h.key("h") // into 家具, which has one card: the row is clamped
-	if h.m.boardCol != 0 || h.m.boardRow != 0 || h.selected() != "t1" {
-		t.Fatalf("h into a shorter column: col %d row %d selected %q", h.m.boardCol, h.m.boardRow, h.selected())
+	if h.m.board.col != 0 || h.m.board.row != 0 || h.selected() != "t1" {
+		t.Fatalf("h into a shorter column: col %d row %d selected %q", h.m.board.col, h.m.board.row, h.selected())
 	}
 	h.key("k", "g")
-	if h.selected() != "t1" || h.m.boardRow != 0 {
-		t.Fatalf("k/g at the top: row %d", h.m.boardRow)
+	if h.selected() != "t1" || h.m.board.row != 0 {
+		t.Fatalf("k/g at the top: row %d", h.m.board.row)
 	}
 	h.key("h") // h on the first column goes to the sidebar
 	if h.m.focus != paneSidebar {
@@ -1506,8 +1506,8 @@ func TestBoardCursorAfterComplete(t *testing.T) {
 	h, _ := boardHarness(t)
 	h.key("l", "G") // 手続き: t2 t3 t4, on t4 (last)
 	h.key("x")
-	if h.m.boardCol != 1 || h.selected() != "t3" {
-		t.Fatalf("completing the last card should select the one above: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 1 || h.selected() != "t3" {
+		t.Fatalf("completing the last card should select the one above: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("g", "x") // complete t2 (first)
 	if h.selected() != "t3" {
@@ -1538,7 +1538,7 @@ func TestListCursorAfterComplete(t *testing.T) {
 	if len(h.visibleGIDs()) != 0 || h.selected() != "" {
 		t.Fatalf("empty list should select nothing: %v %q", h.visibleGIDs(), h.selected())
 	}
-	if h.m.detail != nil {
+	if h.m.detail.task != nil {
 		t.Fatal("detail should be cleared when nothing is selected")
 	}
 }
@@ -1562,8 +1562,8 @@ func TestListCursorAfterScopeChange(t *testing.T) {
 func TestListCursorAfterArchiveToMyTasks(t *testing.T) {
 	h := projectHarness(t, fixtureStore(t), nil) // 家具 t1 | 手続き t2 t3 t4
 	h.key("j", "j", "j")
-	if h.selected() != "t4" || h.m.listCursor != 5 {
-		t.Fatalf("selected %q at row %d, want t4 at row 5", h.selected(), h.m.listCursor)
+	if h.selected() != "t4" || h.m.list.cursor != 5 {
+		t.Fatalf("selected %q at row %d, want t4 at row 5", h.selected(), h.m.list.cursor)
 	}
 	h.send(projectDoneMsg{status: "アーカイブしました", toMyTasks: true})
 	if h.m.scopeKey() != "my" {
@@ -1599,10 +1599,10 @@ func TestSelectInListNear(t *testing.T) {
 		{"no selectable rows", []row{hdr}, "x", 0, -1},
 		{"empty list", nil, "x", 0, -1},
 	} {
-		m.rows = tc.rows
+		m.list.rows = tc.rows
 		m.selectInListNear(tc.gid, tc.near)
-		if m.listCursor != tc.want {
-			t.Errorf("%s: cursor %d, want %d", tc.name, m.listCursor, tc.want)
+		if m.list.cursor != tc.want {
+			t.Errorf("%s: cursor %d, want %d", tc.name, m.list.cursor, tc.want)
 		}
 	}
 }
@@ -1619,9 +1619,9 @@ func TestCalendarMonthMoves(t *testing.T) {
 	}
 	h := projectHarness(t, st, nil)
 	h.key("h", "g", "l", "v") // My Tasks calendar
-	day := func() string { return h.m.calDay.Format(time.DateOnly) }
-	month := func() string { return h.m.calMonth.Format("2006-01") }
-	loaded := func(due string) bool { return len(h.m.calTasks[due]) > 0 }
+	day := func() string { return h.m.cal.day.Format(time.DateOnly) }
+	month := func() string { return h.m.cal.month.Format("2006-01") }
+	loaded := func(due string) bool { return len(h.m.cal.tasks[due]) > 0 }
 
 	if month() != "2026-11" || !loaded("2026-11-13") {
 		t.Fatalf("calendar should open on November: %s", month())
@@ -1644,7 +1644,7 @@ func TestCalendarMonthMoves(t *testing.T) {
 	}
 
 	// Moving by days across a month boundary reloads too.
-	h.m.calDay = time.Date(2026, 11, 30, 10, 0, 0, 0, time.Local)
+	h.m.cal.day = time.Date(2026, 11, 30, 10, 0, 0, 0, time.Local)
 	h.key("l")
 	if day() != "2026-12-01" || month() != "2026-12" {
 		t.Fatalf("l on the 30th: day %s month %s", day(), month())
@@ -1668,7 +1668,7 @@ func TestCalendarMonthMoves(t *testing.T) {
 		{"2027-01-15", "p", "2026-12-15"},
 	} {
 		from, _ := time.ParseInLocation(time.DateOnly, tc.from, time.Local)
-		h.m.calDay = from
+		h.m.cal.day = from
 		h.key(tc.key)
 		if day() != tc.want || month() != tc.want[:7] {
 			t.Errorf("%s from %s: day %s month %s, want %s", tc.key, tc.from, day(), month(), tc.want)

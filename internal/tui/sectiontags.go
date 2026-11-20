@@ -174,15 +174,15 @@ func (m *Model) startNewSection() tea.Cmd {
 	}
 	_, section, name := m.sectionHere()
 	m.openPrompt(promptNewSection)
-	m.newSectionAfter = section
+	m.prompt.newSectionAfter = section
 	if section != "" {
-		m.prompt.Placeholder = "「" + name + "」の後に追加（Enter で追加 / Esc で取り消し）"
+		m.prompt.input.Placeholder = "「" + name + "」の後に追加（Enter で追加 / Esc で取り消し）"
 	}
-	return m.prompt.Focus()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) createSection(name string) tea.Cmd {
-	project, after := m.currentProject(), m.newSectionAfter
+	project, after := m.currentProject(), m.prompt.newSectionAfter
 	if project == "" {
 		return nil
 	}
@@ -217,7 +217,7 @@ func (m *Model) moveSection(by int) tea.Cmd {
 	}
 	sections := m.sections(m.deps.Now())
 	if m.boardActive() {
-		m.boardCol = j // keep the moved column selected
+		m.board.col = j // keep the moved column selected
 	}
 	return func() tea.Msg {
 		if err := sections.ReorderHere(m.ctx, section, before, after); err != nil {
@@ -276,21 +276,21 @@ func (m *Model) showTagManager(tags []readmodel.TagCount) {
 		}
 		items = append(items, pickerItem{label: "#" + t.Name, value: t.GID, hint: hint})
 	}
-	m.tagList = tags
+	m.choosing.tags = tags
 	m.picker = &picker{kind: pickTagManage, title: "どのタグを変えますか", items: items}
 }
 
 // tagByGID returns the tag gid from the list shown by showTagManager.
 func (m *Model) tagByGID(gid string) (readmodel.TagCount, bool) {
-	i := slices.IndexFunc(m.tagList, func(t readmodel.TagCount) bool { return t.GID == gid })
+	i := slices.IndexFunc(m.choosing.tags, func(t readmodel.TagCount) bool { return t.GID == gid })
 	if i < 0 {
 		return readmodel.TagCount{}, false
 	}
-	return m.tagList[i], true
+	return m.choosing.tags[i], true
 }
 
 func (m *Model) openTagActions(t readmodel.TagCount) {
-	m.tagTarget = t
+	m.choosing.tag = t
 	m.picker = &picker{kind: pickTagAction, title: "#" + t.Name, items: []pickerItem{
 		{label: "名前を変える", value: "rename"},
 		{label: "色を変える", value: "color"},
@@ -357,13 +357,13 @@ func (m *Model) handleSectionTagPicker(p *picker, item pickerItem) (tea.Cmd, boo
 		}
 		return nil, true
 	case pickTagAction:
-		t := m.tagTarget
+		t := m.choosing.tag
 		switch item.value {
 		case "rename":
 			m.openPrompt(promptRenameTag)
-			m.prompt.SetValue(t.Name)
-			m.prompt.CursorEnd()
-			return m.prompt.Focus(), true
+			m.prompt.input.SetValue(t.Name)
+			m.prompt.input.CursorEnd()
+			return m.prompt.input.Focus(), true
 		case "color":
 			m.openTagColors(t)
 		case "delete":
@@ -377,15 +377,15 @@ func (m *Model) handleSectionTagPicker(p *picker, item pickerItem) (tea.Cmd, boo
 		if label == "none" {
 			label = "色なし"
 		}
-		return m.updateTag(m.tagTarget, map[string]any{"color": item.value}, "タグの色を変えました: #"+m.tagTarget.Name+" → "+label), true
+		return m.updateTag(m.choosing.tag, map[string]any{"color": item.value}, "タグの色を変えました: #"+m.choosing.tag.Name+" → "+label), true
 	case pickDeleteTag:
-		if item.value == "" || item.value != m.tagTarget.GID {
+		if item.value == "" || item.value != m.choosing.tag.GID {
 			return nil, true // やめる
 		}
-		if m.tagFilter == m.tagTarget.GID {
-			m.tagFilter = "" // the list filtered by it would be empty
+		if m.list.tagFilter == m.choosing.tag.GID {
+			m.list.tagFilter = "" // the list filtered by it would be empty
 		}
-		return m.deleteTag(m.tagTarget), true
+		return m.deleteTag(m.choosing.tag), true
 	}
 	return nil, false
 }
@@ -393,8 +393,8 @@ func (m *Model) handleSectionTagPicker(p *picker, item pickerItem) (tea.Cmd, boo
 // submitTagName renames the tag chosen in the tag manager.
 func (m *Model) submitTagName(name string) tea.Cmd {
 	name = strings.TrimSpace(name)
-	if name == m.tagTarget.Name {
+	if name == m.choosing.tag.Name {
 		return nil
 	}
-	return m.updateTag(m.tagTarget, map[string]any{"name": name}, "タグの名前を変えました: #"+name)
+	return m.updateTag(m.choosing.tag, map[string]any{"name": name}, "タグの名前を変えました: #"+name)
 }

@@ -76,12 +76,12 @@ func TestSubmitFieldReadsAndQueues(t *testing.T) {
 		t.Fatalf("no field %s", gid)
 		return store.CustomFieldView{}
 	}
-	h.m.fieldTask, h.m.fieldEdit = d.TaskSummary, field("cf-num")
+	h.m.prompt.fieldTask, h.m.prompt.fieldEdit = d.TaskSummary, field("cf-num")
 	h.run(h.m.submitField("数")) // not a number
 	if got := opList(t, st); len(got) != 0 {
 		t.Fatalf("an unreadable value was queued: %v", got)
 	}
-	h.m.fieldTask, h.m.fieldEdit = d.TaskSummary, field("cf-date")
+	h.m.prompt.fieldTask, h.m.prompt.fieldEdit = d.TaskSummary, field("cf-date")
 	h.run(h.m.submitField("+7d"))
 	if got := opList(t, st); !slices.Equal(got, []string{store.OpSetCustomField + ":t1"}) {
 		t.Fatalf("ops = %v", got)
@@ -112,7 +112,7 @@ func TestToggleFollowerAndTagQueue(t *testing.T) {
 	}
 	h.run(h.m.toggleFollower(d.TaskSummary, pickerItem{value: "u2"}))
 	h.run(h.m.toggleTag(d.TaskSummary, pickerItem{value: "g1"}))
-	h.m.tagTask = d.TaskSummary
+	h.m.prompt.tagTask = d.TaskSummary
 	h.run(h.m.submitNewTag("新しいタグ"))
 	want := []string{store.OpAddFollower + ":t1", store.OpAddTag + ":t1", store.OpAddTag + ":t1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
@@ -134,13 +134,13 @@ func TestDuplicateAndAttachQueue(t *testing.T) {
 	h.send(tea.WindowSizeMsg{Width: 140, Height: 30})
 	h.run(m.Init())
 	st, ctx := m.deps.Store.(*store.Store), context.Background()
-	m.dupSource = "t1"
+	m.prompt.dupSource = "t1"
 	h.run(m.duplicate("ソファを買う (2)"))
 	file := filepath.Join(t.TempDir(), "図面.png")
 	if err := os.WriteFile(file, []byte("png"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m.attachTask = "t1"
+	m.prompt.attachTask = "t1"
 	h.run(m.attach(`"` + file + `"`))
 	ops := opsOf(t, st)
 	if len(ops) != 2 || ops[0].Kind != store.OpDuplicateTask || !store.IsLocalGID(ops[0].TaskGID) ||

@@ -57,7 +57,7 @@ func taskImages(d *readmodel.TaskDetail) []string {
 // viewImages downloads (or reuses cached copies of) the selected task's images and then
 // hands the terminal to the image viewer.
 func (m *Model) viewImages() tea.Cmd {
-	d := m.detail
+	d := m.detail.task
 	if d == nil {
 		return nil
 	}

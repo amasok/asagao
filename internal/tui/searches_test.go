@@ -73,32 +73,32 @@ func TestSavedSearchPicker(t *testing.T) {
 	h.key("j", "enter")
 	got = h.visibleGIDs()
 	slices.Sort(got)
-	if !slices.Equal(got, []string{"t3", "t4"}) || h.m.filter != filterOpen {
-		t.Fatalf("契約: %v (filter %v)", got, h.m.filter)
+	if !slices.Equal(got, []string{"t3", "t4"}) || h.m.list.filter != filterOpen {
+		t.Fatalf("契約: %v (filter %v)", got, h.m.list.filter)
 	}
 
 	h.key("space", "/", "g", "enter") // 解除
-	if h.m.saved != nil || strings.Contains(h.screen(), "保存:") {
+	if h.m.list.saved != nil || strings.Contains(h.screen(), "保存:") {
 		t.Fatalf("解除:\n%s", h.screen())
 	}
 
 	h.key("space", "/", "enter")
-	if h.m.saved == nil {
+	if h.m.list.saved == nil {
 		t.Fatal("not shown")
 	}
 	h.m.moveScope(1)
-	if h.m.saved != nil {
+	if h.m.list.saved != nil {
 		t.Fatal("moving in the sidebar should leave the saved search")
 	}
 
 	// A project made or archived moves the sidebar too.
 	for _, msg := range []projectDoneMsg{{selectProject: "p1"}, {toMyTasks: true}} {
 		h.key("space", "/", "enter")
-		if h.m.saved == nil {
+		if h.m.list.saved == nil {
 			t.Fatal("not shown")
 		}
 		h.send(msg)
-		if h.m.saved != nil || strings.Contains(h.screen(), "保存:") {
+		if h.m.list.saved != nil || strings.Contains(h.screen(), "保存:") {
 			t.Fatalf("%+v should leave the saved search:\n%s", msg, h.screen())
 		}
 	}

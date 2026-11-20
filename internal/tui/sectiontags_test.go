@@ -74,7 +74,7 @@ func TestTUIAddSelectAndDeleteSection(t *testing.T) {
 	if got := opKindsOf(h); len(got) != 0 {
 		t.Fatalf("ops = %v, want none (created and deleted offline)", got)
 	}
-	for _, r := range h.m.rows {
+	for _, r := range h.m.list.rows {
 		if r.header == "保留" {
 			t.Error("deleted section still shown")
 		}
@@ -176,8 +176,8 @@ func TestTUIHidesUnavailableFeatures(t *testing.T) {
 		t.Errorf("other entries gone:\n%s", s)
 	}
 	h.key("space", "n")
-	if got := opKindsOf(h); len(got) != 0 || h.m.promptMode != promptNone {
-		t.Errorf("n still works: ops %v, prompt %v", got, h.m.promptMode)
+	if got := opKindsOf(h); len(got) != 0 || h.m.prompt.mode != promptNone {
+		t.Errorf("n still works: ops %v, prompt %v", got, h.m.prompt.mode)
 	}
 }
 
@@ -244,8 +244,8 @@ func TestTUIPlanMenuReappearsAfterRecheckWithoutWrites(t *testing.T) {
 		}
 	}
 	h.key("space", "n")
-	if h.m.promptMode != promptNone {
-		t.Fatalf("before 24h: space n opened prompt %v", h.m.promptMode)
+	if h.m.prompt.mode != promptNone {
+		t.Fatalf("before 24h: space n opened prompt %v", h.m.prompt.mode)
 	}
 
 	// At 24h, without any write or manual loadPlan/loadOutbox: opening the menu re-offers all of them.
@@ -258,8 +258,8 @@ func TestTUIPlanMenuReappearsAfterRecheckWithoutWrites(t *testing.T) {
 	}
 	// And the menu action itself works again.
 	h.key("space", "n")
-	if h.m.promptMode != promptNewSection {
-		t.Fatalf("after 24h: space n did not open promptNewSection (got %v, status %q)", h.m.promptMode, h.m.status)
+	if h.m.prompt.mode != promptNewSection {
+		t.Fatalf("after 24h: space n did not open promptNewSection (got %v, status %q)", h.m.prompt.mode, h.m.status)
 	}
 }
 

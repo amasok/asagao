@@ -123,14 +123,14 @@ func TestAccountChangedStatus(t *testing.T) {
 // scheduled quietly.
 func TestSyncBusyIsNotOffline(t *testing.T) {
 	h, _ := resetHarness(t)
-	h.m.lastSync = testNow
-	h.m.syncing = true
+	h.m.syncState.last = testNow
+	h.m.syncState.running = true
 	_, cmd := h.m.Update(syncDoneMsg{err: fmt.Errorf("x: %w", sync.ErrPushBusy), at: testNow.Add(time.Minute)})
 	if cmd == nil {
 		t.Fatal("a retry should be scheduled")
 	}
-	if h.m.syncErr != nil || !h.m.lastSync.Equal(testNow) {
-		t.Fatalf("busy must not count as an error or a sync: err=%v last=%v", h.m.syncErr, h.m.lastSync)
+	if h.m.syncState.err != nil || !h.m.syncState.last.Equal(testNow) {
+		t.Fatalf("busy must not count as an error or a sync: err=%v last=%v", h.m.syncState.err, h.m.syncState.last)
 	}
 	s, ok := h.m.syncStatus()
 	if !ok || !strings.Contains(s, "別の asagao が同期中") || strings.Contains(s, "オフライン") {
@@ -157,8 +157,8 @@ func TestOutboxOpensWhenDiscardsCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.key("!")
-	if len(h.m.ops) != 1 || !strings.Contains(h.screen(), "ローカル") || !strings.Contains(h.m.status, "破棄した変更の記録を読み込めませんでした") {
-		t.Fatalf("ops=%d status=%q\n%s", len(h.m.ops), h.m.status, h.screen())
+	if len(h.m.outboxView.ops) != 1 || !strings.Contains(h.screen(), "ローカル") || !strings.Contains(h.m.status, "破棄した変更の記録を読み込めませんでした") {
+		t.Fatalf("ops=%d status=%q\n%s", len(h.m.outboxView.ops), h.m.status, h.screen())
 	}
 }
 
@@ -177,11 +177,11 @@ func TestBusyRetryBacksOff(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		h.m.Update(busy)
 	}
-	if h.m.busyRetries != 3 {
-		t.Fatalf("busyRetries = %d", h.m.busyRetries)
+	if h.m.syncState.busyRetries != 3 {
+		t.Fatalf("busyRetries = %d", h.m.syncState.busyRetries)
 	}
 	h.m.Update(syncDoneMsg{at: testNow})
-	if h.m.busyRetries != 0 {
-		t.Fatalf("a sync should reset the back-off: %d", h.m.busyRetries)
+	if h.m.syncState.busyRetries != 0 {
+		t.Fatalf("a sync should reset the back-off: %d", h.m.syncState.busyRetries)
 	}
 }

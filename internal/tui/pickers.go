@@ -13,6 +13,16 @@ import (
 // Choosers for fields that have a fixed set of values, so nothing has to be typed:
 // due date (common dates + "日付を入力…"), the list filter and the task's tags.
 
+// chooserState is what a chooser acts on that outlives it: the next chooser or prompt of
+// the same change reads it.
+type chooserState struct {
+	tags           []readmodel.TagCount  // the tags the tag manager shows (sectiontags.go)
+	tag            readmodel.TagCount    // the tag being changed
+	timeTask       readmodel.TaskSummary // the task whose time entries are shown (timetracking.go)
+	newProjectName string                // pickTeam: the project to create (projects.go)
+	sectionProject string                // project whose sections to choose from (detail project line)
+}
+
 // --- due date ---
 
 func (m *Model) openDuePicker() tea.Cmd {
@@ -68,31 +78,33 @@ func (m *Model) setDue(t readmodel.TaskSummary, due string) tea.Cmd {
 
 func (m *Model) startDuePrompt(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptDue)
-	m.dueTask, m.bulkDueTasks = t, nil
-	m.prompt.SetValue(t.DueOn)
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.dueTask, m.prompt.bulkDue = t, nil
+	m.prompt.input.SetValue(t.DueOn)
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) submitDue(input string) tea.Cmd {
+	// the prompt is closed: its marked tasks are done with even if the date is wrong
+	tasks := m.prompt.bulkDue
+	m.prompt.bulkDue = nil
 	due, err := app.ParseDue(input, m.deps.Now())
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
 	}
-	if tasks := m.bulkDueTasks; tasks != nil {
-		m.bulkDueTasks = nil
+	if tasks != nil {
 		return m.askDue(tasks, due)
 	}
-	return m.setDue(m.dueTask, due)
+	return m.setDue(m.prompt.dueTask, due)
 }
 
 // --- list filter ---
 
 func (m *Model) openFilterPicker() tea.Cmd {
-	p := &picker{kind: pickFilter, title: "絞り込み", cursor: int(m.filter)}
+	p := &picker{kind: pickFilter, title: "絞り込み", cursor: int(m.list.filter)}
 	for f := range filterCount {
 		item := pickerItem{label: f.String(), value: fmt.Sprint(int(f))}
-		if f == m.filter {
+		if f == m.list.filter {
 			item.hint = "現在"
 		}
 		p.items = append(p.items, item)
@@ -166,12 +178,12 @@ type tagToggledMsg struct{ task readmodel.TaskSummary }
 
 func (m *Model) startNewTag(t readmodel.TaskSummary) tea.Cmd {
 	m.openPrompt(promptNewTag)
-	m.tagTask = t
-	return m.prompt.Focus()
+	m.prompt.tagTask = t
+	return m.prompt.input.Focus()
 }
 
 func (m *Model) submitNewTag(name string) tea.Cmd {
-	relations, t := m.relations(m.deps.Now()), m.tagTask
+	relations, t := m.relations(m.deps.Now()), m.prompt.tagTask
 	return func() tea.Msg {
 		if err := relations.AddNewTag(m.ctx, t.GID, name); err != nil {
 			return writeDoneMsg{err: err}

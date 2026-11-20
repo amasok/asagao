@@ -103,7 +103,7 @@ func TestInboxUnavailableShowsRecentWithNotice(t *testing.T) {
 	if !strings.Contains(s, "最近の更新") || !strings.Contains(s, "受信トレイ（Asana の通知）を見る権限がありません") {
 		t.Fatalf("screen should explain the fallback:\n%s", s)
 	}
-	if c := h.m.listCursor; c >= 0 && h.m.rows[c].note {
+	if c := h.m.list.cursor; c >= 0 && h.m.list.rows[c].note {
 		t.Fatal("the notice must not take the cursor")
 	}
 	h.key("space", "R")
@@ -120,7 +120,7 @@ func TestInboxUncachedTaskAndReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.key("h", "j", "l")
-	if r := h.m.rows[0]; !r.note || !strings.Contains(r.header, "notifications:write") {
+	if r := h.m.list.rows[0]; !r.note || !strings.Contains(r.header, "notifications:write") {
 		t.Fatalf("the inbox should say why notifications cannot be marked: %+v", r)
 	}
 	if n := h.m.selectedNotification(); n == nil || n.GID != "n9" || h.selected() != "" {

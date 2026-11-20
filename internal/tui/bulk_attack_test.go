@@ -10,7 +10,7 @@ import (
 func (h *harness) dropFromList(gid string) {
 	h.t.Helper()
 	var rows []row
-	for _, r := range h.m.allRows {
+	for _, r := range h.m.list.all {
 		if r.task != nil && r.task.GID == gid {
 			continue
 		}
@@ -75,7 +75,7 @@ func TestBulkAttackReloadWhileDatePromptDropsHiddenTask(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	h.markRows("t2", "t3")
 	h.key(" ", "d", "G", "k", "enter")
-	if h.m.promptMode != promptDue {
+	if h.m.prompt.mode != promptDue {
 		t.Fatal("should prompt")
 	}
 	h.dropFromList("t3")
@@ -91,17 +91,17 @@ func TestBulkAttackCancelledDatePromptDoesNotLeakIntoSingleDue(t *testing.T) {
 	h := newHarness(t, 140, 30)
 	h.markRows("t2", "t3")
 	h.key(" ", "d", "G", "k", "enter")
-	if h.m.promptMode != promptDue {
+	if h.m.prompt.mode != promptDue {
 		t.Fatal("should prompt")
 	}
 	h.key("esc")
 	h.key("esc") // clear marks
 	h.m.selectInList("t1")
 	h.key(" ", "d", "G", "k", "enter") // single-task date entry
-	if h.m.promptMode != promptDue {
+	if h.m.prompt.mode != promptDue {
 		t.Fatal("should prompt")
 	}
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText("2026-12-09")
 	h.key("enter")
 	if h.m.bulkAsk != nil {
@@ -153,7 +153,7 @@ func TestBulkAttackDueSkipsUnchanged(t *testing.T) {
 	}
 	h.markRows("t1", "t2")
 	h.key(" ", "d", "G", "k", "enter")
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText(d.DueOn)
 	h.key("enter")
 	if f := h.footer(); !strings.Contains(f, "1 件の期日を") {
@@ -162,7 +162,7 @@ func TestBulkAttackDueSkipsUnchanged(t *testing.T) {
 	h.key("n", "esc")
 	h.markRows("t1")
 	h.key(" ", "d", "G", "k", "enter")
-	h.m.prompt.SetValue("")
+	h.m.prompt.input.SetValue("")
 	h.typeText(d.DueOn)
 	h.key("enter")
 	if h.m.bulkAsk != nil || !strings.Contains(h.footer(), "すべてすでに期日が") {

@@ -77,9 +77,9 @@ func (m *Model) syncDetailWidth() {
 	if dw == 0 {
 		return
 	}
-	if m.detailView.Width() != dw-4 || m.detailView.Height() != m.listHeight() {
-		m.detailView.SetWidth(max(1, dw-4))
-		m.detailView.SetHeight(m.listHeight())
+	if m.detail.view.Width() != dw-4 || m.detail.view.Height() != m.listHeight() {
+		m.detail.view.SetWidth(max(1, dw-4))
+		m.detail.view.SetHeight(m.listHeight())
 		m.refreshDetailView()
 	}
 }

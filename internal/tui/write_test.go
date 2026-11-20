@@ -41,7 +41,7 @@ func TestInlineCommentIsRichText(t *testing.T) {
 func outboxAction(t *testing.T, h *harness, i int, key string) writeDoneMsg {
 	t.Helper()
 	h.run(h.m.loadOutbox())
-	h.m.opCursor = i
+	h.m.outboxView.cursor = i
 	_, cmd := h.m.handleOutboxKey(key)
 	if cmd == nil {
 		t.Fatalf("%q gave no command", key)
@@ -122,7 +122,7 @@ func TestOutboxShowsSendingAndVerify(t *testing.T) {
 		}
 	}
 	// the resolve keys do nothing on the entry being sent
-	h.m.opCursor = 0
+	h.m.outboxView.cursor = 0
 	for _, key := range []string{"l", "s", "d", "R"} {
 		h.m.status = ""
 		if _, cmd := h.m.handleOutboxKey(key); cmd != nil || !strings.Contains(h.m.status, "送信中") {
@@ -245,8 +245,8 @@ func TestOutboxShowsDroppedTextInFull(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		h.m.handleOutboxKey("ctrl+u")
 	}
-	if h.m.outboxTop != 0 {
-		t.Fatalf("ctrl+u should scroll back to the top: %d", h.m.outboxTop)
+	if h.m.outboxView.top != 0 {
+		t.Fatalf("ctrl+u should scroll back to the top: %d", h.m.outboxView.top)
 	}
 }
 

@@ -83,8 +83,8 @@ func TestAttackGoalsFailedDetailEscapes(t *testing.T) {
 	h.send(goalDetailMsg{seq: m.goals.seq, fetched: true, err: context.DeadlineExceeded})
 	mustShow(t, h.screen(), "deadline")
 	h.key("esc")
-	if m.goals.goal != nil || len(m.goals.stack) != 0 || !m.goals.open {
-		t.Fatalf("not back at the list: goal=%v stack=%v open=%v", m.goals.goal, m.goals.stack, m.goals.open)
+	if m.goals.goal != nil || len(m.goals.stack) != 0 || !m.showing(overlayGoals) {
+		t.Fatalf("not back at the list: goal=%v stack=%v open=%v", m.goals.goal, m.goals.stack, m.showing(overlayGoals))
 	}
 	mustShow(t, h.screen(), "売上を伸ばす")
 }

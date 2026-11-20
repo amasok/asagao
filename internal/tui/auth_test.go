@@ -81,7 +81,7 @@ func TestLoginReplacedSyncsAgainAtOnce(t *testing.T) {
 	h.send(tea.WindowSizeMsg{Width: 220, Height: 30})
 	built := &sync.Syncer{}
 	m.syncer = built
-	m.syncing = true
+	m.syncState.running = true
 	h.send(syncDoneMsg{syncer: built, err: fmt.Errorf("push: %w", auth.ErrLoginReplaced), at: testNow})
 	if m.syncer == built {
 		t.Fatal("the syncer should be dropped")

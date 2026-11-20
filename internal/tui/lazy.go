@@ -56,11 +56,11 @@ func (m *Model) openProjectLater() tea.Cmd {
 func (m *Model) openProject(gid string, completed bool) tea.Cmd {
 	m.opening = gid
 	st, syncer := m.deps.Store, m.syncer
-	if m.syncing || syncer == nil {
+	if m.syncState.running || syncer == nil {
 		// The sync running (or the next one, once online) fetches it.
-		syncing := m.syncing
+		syncing := m.syncState.running
 		if syncing {
-			m.syncAgain = true
+			m.syncState.again = true
 		}
 		return func() tea.Msg {
 			_, err := st.WantProject(m.ctx, gid)
@@ -103,13 +103,13 @@ func (m *Model) updateLazy(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, tea.Batch(cmds...), true
 
 	case completedFetchedMsg:
-		m.syncing = false
+		m.syncState.running = false
 		if msg.err != nil && !errors.Is(msg.err, sync.ErrPushBusy) {
-			m.syncErr = msg.err // the next sync fetches them
+			m.syncState.err = msg.err // the next sync fetches them
 		}
 		cmds := []tea.Cmd{m.loadScopes(), m.loadTasks()}
-		if m.syncAgain {
-			m.syncAgain = false
+		if m.syncState.again {
+			m.syncState.again = false
 			cmds = append(cmds, m.startSync())
 		}
 		return m, tea.Batch(cmds...), true
@@ -124,7 +124,7 @@ func (m *Model) fetchCompleted() tea.Cmd {
 	if syncer == nil {
 		return nil
 	}
-	m.syncing = true
+	m.syncState.running = true
 	return func() tea.Msg {
 		res, err := syncer.FetchCompleted(m.ctx)
 		return completedFetchedMsg{res: res, err: err}
