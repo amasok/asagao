@@ -8,8 +8,9 @@ type Discard struct {
 	TaskGID  string `json:"task_gid,omitempty"`
 	TaskName string `json:"task_name,omitempty"`
 	Summary  string `json:"summary"` // what the change was, e.g. 「名前を「…」に変更」
-	// Reason is why it was dropped: DiscardReasonReset, or a message saying what Asana
-	// answered (e.g. that the task was deleted there).
+	// Reason is why it was dropped: "reset" (DiscardReasonReset) for an unsent change
+	// deleted by a reset, or else a message saying what Asana answered (e.g. that the task
+	// was deleted there). The JSON output of the CLI and the MCP tools carries it as is.
 	Reason      string `json:"reason,omitempty"`
 	DiscardedAt string `json:"discarded_at"`
 	// Payload is the dropped change as it was queued (e.g. the full comment text, the new
