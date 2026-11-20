@@ -25,7 +25,8 @@ func init() {
 func undoTaskTag(ctx context.Context, tx *sql.Tx, op *Op, tag string) error {
 	q := "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
 	if op.Kind == OpRemoveTag {
-		q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
+		// A task gone from the cache has nothing to put back (#87).
+		q = "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM tasks WHERE gid = ?1)"
 	}
 	_, err := tx.ExecContext(ctx, q, op.TaskGID, tag)
 	return err
