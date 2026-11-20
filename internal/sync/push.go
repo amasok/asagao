@@ -246,6 +246,11 @@ func (s *Pusher) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 		if op.State != outbox.StatePending || (op.Verify && verified[op.ID]) {
 			break // sent again during this push already: verify on the next one
 		}
+		if held, err := s.holdUnreadable(ctx, *op); err != nil {
+			return err
+		} else if held {
+			break
+		}
 		if wait, err := s.waitsForCreate(ctx, *op); err != nil {
 			return err
 		} else if wait {
@@ -356,6 +361,8 @@ func (s *Pusher) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 		return false, err // offline, cancelled or logged out: keep the rest for later
 	case isNotFound(err): // what it changes was deleted in Asana
 		return false, s.dropGone(ctx, op, err, drops)
+	case errors.As(err, new(*unreadableError)): // not sent: held for a version that reads it
+		return false, s.holdBackUnreadable(ctx, op, err)
 	case errors.As(err, new(*customTypeWithdrawn)): // Asana did not take the custom type (#59)
 		var w *customTypeWithdrawn
 		errors.As(err, &w)
@@ -386,10 +393,11 @@ const maxStepsPerEntry = 4
 // its create too.
 func (s *Pusher) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
 	h := handlers[op.Kind]
-	if h.local.key != "" {
-		g := payloadString(op, h.local.key)
-		if _, waiting, err := s.Store.LocalResult(ctx, h.local.result, g); err != nil || waiting {
-			return waiting, err
+	if h.local != nil {
+		if g, result, ok := h.local(op); ok {
+			if _, waiting, err := s.Store.LocalResult(ctx, result, g); err != nil || waiting {
+				return waiting, err
+			}
 		}
 	}
 	if wait, err := s.waitsForSection(ctx, op); err != nil || wait {
@@ -428,8 +436,12 @@ func (s *Pusher) createQueued(ctx context.Context, gid string) (bool, error) {
 // workspace's plan lacks the feature (402) also hides that feature in the workspace for
 // plan.RecheckAfter.
 func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
-	_, withStart := op.Payload["start_on"]
-	withStart = withStart && handlers[op.Kind].startOn
+	h := handlers[op.Kind]
+	var start string
+	var withStart bool
+	if h.startOn != nil {
+		start, withStart = h.startOn(op)
+	}
 	var startWS string
 	if withStart {
 		// before sending: a create gives the task its Asana gid
@@ -439,14 +451,11 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 	}
 	out, err := s.sendOp(ctx, op)
-	if h := handlers[op.Kind]; isForbidden(err) && h.forbidden != nil {
+	if isForbidden(err) && h.forbidden != nil {
 		err = h.forbidden(s, ctx, op, err)
 	}
 	if feature := plan.FeatureOf(op.Kind); feature == plan.CustomFields { // recorded per workspace
-		ws, _ := op.Payload["workspace"].(string)
-		if ws == "" {
-			ws, _ = s.Store.DefaultWorkspace(ctx)
-		}
+		ws := s.planWorkspace(ctx, op)
 		if err == nil {
 			return out, s.Store.ClearPlanRefusal(ctx, feature, ws)
 		}
@@ -460,7 +469,7 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	if withStart && !errors.As(err, new(*customTypeWithdrawn)) {
 		// A 402 to an entry with a custom type takes out the custom type first (#59),
 		// the more likely cause: the start date is tried again with the rest.
-		return out, s.startOnOutcome(ctx, startWS, op, out, err)
+		return out, s.startOnOutcome(ctx, startWS, start, out, err)
 	}
 	switch feature := plan.FeatureOf(op.Kind); feature {
 	case plan.TimeTracking:
@@ -482,13 +491,13 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	return out, err
 }
 
-// startOnOutcome records what sending a task's start date (an update or create with
-// start_on) to workspace ws said about its plan: a 402 hides start dates there for a while
+// startOnOutcome records what sending a task's start date start (of an update or create
+// with start_on, "" when it clears it) to workspace ws said about its plan: a 402 hides start dates there for a while
 // (plan.StartOn), and the error says why; an answer that set one forgets an
 // earlier 402. err is returned, wrapped when it is a 402.
-func (s *Pusher) startOnOutcome(ctx context.Context, ws string, op outbox.Op, out outcome, err error) error {
+func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outcome, err error) error {
 	if err == nil {
-		if v, _ := op.Payload["start_on"].(string); v != "" && out != conflicted {
+		if start != "" && out != conflicted {
 			// Sent: a failure to forget the 402 only hides start dates until it expires.
 			_ = s.Store.ClearPlanRefusal(ctx, plan.StartOn, ws)
 		}
@@ -533,8 +542,8 @@ func (s *Pusher) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWi
 
 func (s *Pusher) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
 	h, ok := handlers[op.Kind]
-	if !ok { // an entry of a newer version: Asana cannot be asked for it
-		return sent, &model.Error{Status: 400}
+	if !ok { // an entry of a newer version (held before it gets here: holdUnreadable)
+		return sent, &unreadableError{err: outbox.Readable(op)}
 	}
 	return h.send(s, ctx, op)
 }

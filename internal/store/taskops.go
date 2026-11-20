@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	registerUndo(OpSetParent, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpSetParent, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.SetParent) error {
 		parent, ok := op.Base["parent"].(string)
 		if !ok {
 			return nil

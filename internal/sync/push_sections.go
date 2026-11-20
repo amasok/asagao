@@ -13,21 +13,31 @@ import (
 // Sending changes to sections themselves (#33).
 
 func init() {
-	register(outbox.KindRenameSection, opHandler{send: (*Pusher).pushRenameSection})
-	register(outbox.KindCreateSection, opHandler{send: (*Pusher).pushCreateSection, planWorkspace: sectionWorkspace,
-		find: func(s *Pusher, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
-			return s.findCreatedSection(ctx, op)
+	registerOf(outbox.KindRenameSection, handlerOf[outbox.RenameSection]{send: (*Pusher).pushRenameSection})
+	registerOf(outbox.KindCreateSection, handlerOf[outbox.CreateSection]{send: (*Pusher).pushCreateSection,
+		planWorkspace: func(s *Pusher, ctx context.Context, _ outbox.Op, p outbox.CreateSection) string {
+			return s.projectWorkspace(ctx, p.Project)
+		},
+		find: func(s *Pusher, ctx context.Context, op outbox.Op, p outbox.CreateSection, _ finder) (outcome, match, error) {
+			return s.findCreatedSection(ctx, op, p)
 		}})
-	register(outbox.KindDeleteSection, opHandler{send: sends((*Pusher).pushDeleteSection), planWorkspace: sectionWorkspace,
-		waits: func(s *Pusher, ctx context.Context, op outbox.Op) (bool, error) {
+	registerOf(outbox.KindDeleteSection, handlerOf[outbox.DeleteSection]{send: sends((*Pusher).pushDeleteSection),
+		planWorkspace: func(s *Pusher, ctx context.Context, _ outbox.Op, p outbox.DeleteSection) string {
+			return s.projectWorkspace(ctx, p.Project)
+		},
+		waits: func(s *Pusher, ctx context.Context, op outbox.Op, _ outbox.DeleteSection) (bool, error) {
 			return s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID) // Asana deletes only an empty section
 		}})
-	register(outbox.KindInsertSection, opHandler{send: sends((*Pusher).pushInsertSection), planWorkspace: sectionWorkspace})
+	registerOf(outbox.KindInsertSection, handlerOf[outbox.InsertSection]{send: sends((*Pusher).pushInsertSection),
+		planWorkspace: func(s *Pusher, ctx context.Context, _ outbox.Op, p outbox.InsertSection) string {
+			return s.projectWorkspace(ctx, p.Project)
+		}})
 }
 
-// sectionWorkspace is the workspace of the project of a section entry.
-func sectionWorkspace(s *Pusher, ctx context.Context, op outbox.Op) string {
-	ws, _ := s.Store.ProjectWorkspace(ctx, payloadString(op, "project"))
+// projectWorkspace is the workspace of a project ("" if not known), the one a section
+// entry's 402 is recorded for.
+func (s *Pusher) projectWorkspace(ctx context.Context, project string) string {
+	ws, _ := s.Store.ProjectWorkspace(ctx, project)
 	return ws
 }
 
@@ -39,11 +49,7 @@ func (s *Pusher) waitsForSection(ctx context.Context, op outbox.Op) (bool, error
 	if spec, _ := outbox.SpecOf(op.Kind); spec.Subject == outbox.SubjectSection && !spec.Creates {
 		refs = append(refs, op.TaskGID)
 	}
-	for _, k := range outbox.SectionRefKeys {
-		if g, _ := op.Payload[k].(string); g != "" {
-			refs = append(refs, g)
-		}
-	}
+	refs = append(refs, outbox.SectionRefs(op)...)
 	for _, g := range refs {
 		if !localgid.IsLocal(g) {
 			continue
@@ -78,16 +84,15 @@ func (s *Pusher) realSection(ctx context.Context, gid string) (string, error) {
 // pushCreateSection creates a section. Creating twice would make two sections, so before
 // the request the gids of the sections that already have that name are recorded: if the
 // answer is lost, reconcile takes a new section with the name as ours.
-func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, error) {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	secs, err := s.API.Sections(ctx, str("project"))
+func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op, p outbox.CreateSection) (outcome, error) {
+	secs, err := s.API.Sections(ctx, p.Project)
 	if err != nil {
 		return sent, err
 	}
-	if _, ok := op.Payload["existing"]; !ok {
+	if p.Existing == nil {
 		existing := []string{}
 		for _, sec := range secs {
-			if sec.Name == str("name") {
+			if sec.Name == p.Name {
 				existing = append(existing, sec.GID)
 			}
 		}
@@ -97,13 +102,13 @@ func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 	}
 	var before, after string
 	for _, a := range []struct {
-		key string
+		gid string
 		dst *string
-	}{{"before", &before}, {"after", &after}} {
-		if str(a.key) == "" {
+	}{{p.Before, &before}, {p.After, &after}} {
+		if a.gid == "" {
 			continue
 		}
-		if *a.dst, err = s.realSection(ctx, str(a.key)); isNotFound(err) {
+		if *a.dst, err = s.realSection(ctx, a.gid); isNotFound(err) {
 			*a.dst = "" // the section next to it was never created: put it last
 		} else if err != nil {
 			return sent, err
@@ -112,7 +117,7 @@ func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 			*a.dst = "" // deleted in Asana meanwhile: put it last rather than fail the create
 		}
 	}
-	created, err := s.API.CreateSection(ctx, str("project"), str("name"), before, after)
+	created, err := s.API.CreateSection(ctx, p.Project, p.Name, before, after)
 	if err != nil {
 		return sent, err
 	}
@@ -124,19 +129,12 @@ func (s *Pusher) pushCreateSection(ctx context.Context, op outbox.Op) (outcome, 
 
 // findCreatedSection looks for the section a create_section entry may have created: a
 // section of the project with its name that was not there before the request.
-func (s *Pusher) findCreatedSection(ctx context.Context, op outbox.Op) (outcome, match, error) {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	raw, ok := op.Payload["existing"].([]any)
-	if !ok {
+func (s *Pusher) findCreatedSection(ctx context.Context, op outbox.Op, p outbox.CreateSection) (outcome, match, error) {
+	existing := p.Existing
+	if existing == nil {
 		return sent, notFound, nil // the request was never made
 	}
-	var existing []string
-	for _, v := range raw {
-		if g, ok := v.(string); ok {
-			existing = append(existing, g)
-		}
-	}
-	secs, err := s.API.Sections(ctx, str("project"))
+	secs, err := s.API.Sections(ctx, p.Project)
 	if err != nil {
 		return sent, notFound, err
 	}
@@ -145,7 +143,7 @@ func (s *Pusher) findCreatedSection(ctx context.Context, op outbox.Op) (outcome,
 		return sent, notFound, err
 	}
 	sec, m := pick(secs, func(sec model.Section) bool {
-		return sec.Name == str("name") && !slices.Contains(existing, sec.GID) && !used[sec.GID]
+		return sec.Name == p.Name && !slices.Contains(existing, sec.GID) && !used[sec.GID]
 	})
 	if m != matched {
 		return sent, m, nil
@@ -154,7 +152,7 @@ func (s *Pusher) findCreatedSection(ctx context.Context, op outbox.Op) (outcome,
 }
 
 // pushDeleteSection deletes a section. One that is already gone is done.
-func (s *Pusher) pushDeleteSection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDeleteSection(ctx context.Context, op outbox.Op, _ outbox.DeleteSection) error {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return err
@@ -166,27 +164,26 @@ func (s *Pusher) pushDeleteSection(ctx context.Context, op outbox.Op) error {
 }
 
 // pushInsertSection moves a section before or after another one.
-func (s *Pusher) pushInsertSection(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushInsertSection(ctx context.Context, op outbox.Op, p outbox.InsertSection) error {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return err
 	}
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	var before, after string
-	if str("before") != "" {
-		if before, err = s.realSection(ctx, str("before")); err != nil {
+	if p.Before != "" {
+		if before, err = s.realSection(ctx, p.Before); err != nil {
 			return err
 		}
-	} else if after, err = s.realSection(ctx, str("after")); err != nil {
+	} else if after, err = s.realSection(ctx, p.After); err != nil {
 		return err
 	}
-	if err := s.API.InsertSection(ctx, str("project"), gid, before, after); err != nil {
+	if err := s.API.InsertSection(ctx, p.Project, gid, before, after); err != nil {
 		return err
 	}
 	return sentNotSaved(s.Store.CompleteOp(ctx, op.ID))
 }
 
-func (s *Pusher) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushRenameSection(ctx context.Context, op outbox.Op, p outbox.RenameSection) (outcome, error) {
 	gid, err := s.realSection(ctx, op.TaskGID)
 	if err != nil {
 		return sent, err
@@ -196,7 +193,7 @@ func (s *Pusher) pushRenameSection(ctx context.Context, op outbox.Op) (outcome, 
 	if err != nil {
 		return sent, err
 	}
-	name, _ := op.Payload["name"].(string)
+	name := p.Name
 	if !same(server.Name, op.Base["name"]) && !same(server.Name, name) {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, map[string]any{"name": server.Name})
 	}

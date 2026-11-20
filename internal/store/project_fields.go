@@ -18,7 +18,7 @@ import (
 
 func init() {
 	// Restore the values from before the local edit.
-	registerUndo(OpUpdateProject, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+	registerUndo(OpUpdateProject, func(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.UpdateProject) error {
 		return applyProjectFields(ctx, tx, op.TaskGID, op.Base)
 	})
 }

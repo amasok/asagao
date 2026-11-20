@@ -110,7 +110,7 @@ func (s *Store) UpdateProjectBriefLocal(ctx context.Context, projectGID string, 
 		reverted := e.Delete && baseState != BriefAvailable || // made here and deleted again
 			len(op.Payload) == 0 // changed back to the base
 		if reverted { // nothing left to send: the brief as it was
-			if err := undoBriefOp(ctx, tx, op); err != nil {
+			if err := undoBriefOp(ctx, tx, op, outbox.UpdateProjectBrief{}); err != nil {
 				return err
 			}
 			if op.ID != 0 {
@@ -193,7 +193,7 @@ func briefWith(cur cachedBrief, p map[string]any) cachedBrief {
 // conflict, as Asana has it), with the project's
 // other brief changes still queued (a later one made while it was failed or being sent)
 // applied over it.
-func undoBriefOp(ctx context.Context, tx *sql.Tx, op *Op) error {
+func undoBriefOp(ctx context.Context, tx *sql.Tx, op *Op, _ outbox.UpdateProjectBrief) error {
 	was := op.Base
 	if op.State == OpConflict && briefStr(op.Conflict, "state") != "" {
 		// Asana's brief, as the conflict found it: newer than the base, and what the next

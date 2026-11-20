@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
@@ -23,13 +26,13 @@ func TestEveryKindHasAnUndo(t *testing.T) {
 
 func TestRegisterUndoRefusesMistakes(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		kind Kind
-		f    undoFunc
+		name     string
+		register func()
 	}{
-		{"twice", OpUpdateTask, nothingToUndo},
-		{"unknown kind", "made_up", nothingToUndo},
-		{"nil", OpUpdateTask, nil},
+		{"twice", func() { registerUndo(OpUpdateTask, nothingToUndo[outbox.UpdateTask]) }},
+		{"unknown kind", func() { registerUndo("made_up", nothingToUndo[outbox.UpdateTask]) }},
+		{"nil", func() { registerUndo[outbox.UpdateTask](OpUpdateTask, nil) }},
+		{"another kind's payload", func() { registerUndo(OpAddTag, nothingToUndo[outbox.RemoveTag]) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := len(undoers)
@@ -41,7 +44,7 @@ func TestRegisterUndoRefusesMistakes(t *testing.T) {
 					t.Errorf("undoers changed: %d → %d", before, len(undoers))
 				}
 			}()
-			registerUndo(tc.kind, tc.f)
+			tc.register()
 		})
 	}
 }
@@ -64,5 +67,51 @@ func TestDiscardUnknownKind(t *testing.T) {
 	}
 	if ops, err := s.ListOps(ctx); err != nil || len(ops) != 0 {
 		t.Fatalf("left %+v %v", ops, err)
+	}
+}
+
+// An entry this version cannot send (its payload has a key or a type of a newer version)
+// is still undone as far as its payload reads when it is discarded.
+func TestDiscardUnreadablePayloadUndoes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	if err := s.UpsertProjects(ctx, "w1", []model.Project{{GID: "p1", Name: "P"}}, "me"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTasks(ctx, []model.Task{{GID: "t1", Name: "A", Workspace: &model.Ref{GID: "w1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertTags(ctx, []model.Tag{{GID: "g1", Name: "タグ", Workspace: &model.Ref{GID: "w1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddTagLocal(ctx, "t1", "g1", "", now); err != nil {
+		t.Fatal(err)
+	}
+	local, err := s.CreateTaskLocal(ctx, NewTask{WorkspaceGID: "w1", ProjectGID: "p1", Name: "新しい"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// as a newer version would have written them
+	if _, err := s.db.ExecContext(ctx, `UPDATE outbox SET payload = json_set(payload, '$.due_at', '2026-11-20T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := s.ListOps(ctx)
+	if err != nil || len(ops) != 2 {
+		t.Fatalf("ops %+v %v", ops, err)
+	}
+	for _, op := range ops {
+		if outbox.Readable(op) == nil {
+			t.Fatalf("%s still reads: %v", op.Kind, op.Payload)
+		}
+		if err := s.DiscardOp(ctx, op.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.GetTask(ctx, local); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the local task of a discarded create is still there: %v", err)
+	}
+	if d, err := s.GetTask(ctx, "t1"); err != nil || len(d.Tags) != 0 {
+		t.Errorf("the tag of a discarded add_tag is still on the task: %+v, %v", d, err)
 	}
 }

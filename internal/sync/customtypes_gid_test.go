@@ -92,17 +92,21 @@ func TestCustomTypeReadWithGid(t *testing.T) {
 func TestCustomTypeAppliedWithoutGid(t *testing.T) {
 	op := outbox.Op{Kind: outbox.KindUpdateTask, TaskGID: "t1",
 		Payload: map[string]any{"custom_type_status_option": "cs-done"}, Base: map[string]any{"custom_type": "ct1"}}
+	p, err := outbox.PayloadOf[outbox.UpdateTask](op)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, task := range []*model.Task{
 		{ResourceSubtype: "custom", CustomType: &model.Ref{Name: "バグ"}, CustomTypeStatusOption: &model.Ref{GID: "cs-done"}},
 		{ResourceSubtype: "custom", CustomType: &model.Ref{GID: "ct1"}, CustomTypeStatusOption: &model.Ref{Name: "完了"}},
 	} {
-		if err := customTypeApplied(op, task); err != nil {
+		if err := customTypeApplied(op, p, task); err != nil {
 			t.Errorf("%+v: %v", task, err)
 		}
 	}
 	// With the gids, a status Asana did not apply is still caught.
 	ignored := &model.Task{ResourceSubtype: "custom", CustomType: &model.Ref{GID: "ct1"}, CustomTypeStatusOption: &model.Ref{GID: "cs-doing"}}
-	if customTypeApplied(op, ignored) == nil {
+	if customTypeApplied(op, p, ignored) == nil {
 		t.Error("an ignored status is not caught")
 	}
 }

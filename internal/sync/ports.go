@@ -137,6 +137,8 @@ type PushStore interface {
 	FieldSettingQueued(ctx context.Context, taskGID string, fieldGID string) (bool, error)
 	FitQueuedRichText(ctx context.Context, fit func(target rich.Target, html string) (fitted string, plain string, changed bool)) (int, error)
 	GetOp(ctx context.Context, id int64) (*outbox.Op, error)
+	// HoldOp leaves a pending entry this version cannot send in the queue with note.
+	HoldOp(ctx context.Context, id int64, note string) error
 	InboxState(ctx context.Context) (readmodel.InboxState, error)
 	LocalResult(ctx context.Context, kind readmodel.ResultKind, gid string) (real string, waiting bool, err error)
 	MarkOpConflict(ctx context.Context, id int64, server map[string]any) error

@@ -17,29 +17,28 @@ import (
 // deletes and parent changes.
 
 func init() {
-	register(outbox.KindUpdateTask, opHandler{send: (*Pusher).pushUpdate, batch: batchUpdateTask, startOn: true})
-	register(outbox.KindCreateTask, opHandler{send: (*Pusher).pushCreate, find: findCreatedTask, startOn: true,
-		fieldValues: func(op outbox.Op) map[string]any {
-			cfs, _ := op.Payload["custom_fields"].(map[string]any)
-			return cfs
-		}})
+	registerOf(outbox.KindUpdateTask, handlerOf[outbox.UpdateTask]{send: (*Pusher).pushUpdate, batch: batchUpdateTask,
+		startOn: func(p outbox.UpdateTask) *string { return p.StartOn }})
+	registerOf(outbox.KindCreateTask, handlerOf[outbox.CreateTask]{send: (*Pusher).pushCreate, find: findCreatedTask,
+		startOn:     func(p outbox.CreateTask) *string { return p.StartOn },
+		fieldValues: func(p outbox.CreateTask) map[string]any { return p.CustomFields }})
 	// A duplicate is copied by a background job, so its result takes longer to show.
-	register(outbox.KindDuplicateTask, opHandler{send: sends((*Pusher).pushDuplicate), find: findDuplicate, settle: 5 * time.Minute})
-	register(outbox.KindMoveTask, opHandler{send: sends((*Pusher).pushMove), batch: batchMoveTask,
-		goneReason: func(op outbox.Op, cause error) string {
-			if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
+	registerOf(outbox.KindDuplicateTask, handlerOf[outbox.DuplicateTask]{send: sends((*Pusher).pushDuplicate), find: findDuplicate, settle: 5 * time.Minute})
+	registerOf(outbox.KindMoveTask, handlerOf[outbox.MoveTask]{send: sends((*Pusher).pushMove), batch: batchMoveTask,
+		goneReason: func(_ outbox.Op, p outbox.MoveTask, cause error) string {
+			if p.InsertBefore != "" || p.InsertAfter != "" {
 				return "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
 			}
 			return ""
 		}})
-	register(outbox.KindDeleteTask, opHandler{send: sends((*Pusher).pushDelete)})
-	register(outbox.KindSetParent, opHandler{send: sends((*Pusher).pushSetParent),
-		goneReason: func(_ outbox.Op, cause error) string {
+	registerOf(outbox.KindDeleteTask, handlerOf[outbox.DeleteTask]{send: sends((*Pusher).pushDelete)})
+	registerOf(outbox.KindSetParent, handlerOf[outbox.SetParent]{send: sends((*Pusher).pushSetParent),
+		goneReason: func(_ outbox.Op, _ outbox.SetParent, cause error) string {
 			return "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
 		}})
 }
 
-func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) {
+func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op, p outbox.UpdateTask) (outcome, error) {
 	if localgid.IsLocal(op.TaskGID) {
 		return sent, &model.Error{Status: 404} // its create failed
 	}
@@ -47,13 +46,13 @@ func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	if err != nil {
 		return sent, err
 	}
-	if conflicts := updateConflicts(op, server); conflicts != nil {
+	if conflicts := updateConflicts(op, p, server); conflicts != nil {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
-	if reason := startOnBlocked(op.Payload, server); reason != "" {
+	if reason := startOnBlocked(p, server); reason != "" {
 		return sent, &startOnWithdrawn{reason: reason}
 	}
-	fields := withDue(taskUpdateFields(op), server)
+	fields := withDue(taskUpdateFields(op, p), server)
 	if len(fields) == 0 { // only cleared a start date Asana does not have
 		if err := s.Store.CompleteOp(ctx, op.ID); err != nil {
 			return sent, sentNotSaved(err)
@@ -62,9 +61,9 @@ func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) 
 	}
 	t, err := s.API.UpdateTask(ctx, op.TaskGID, fields)
 	if err != nil {
-		return sent, s.customTypeRefused(ctx, op, err)
+		return sent, s.customTypeRefused(ctx, op, p, err)
 	}
-	if err := customTypeApplied(op, t); err != nil {
+	if err := customTypeApplied(op, p, t); err != nil {
 		s.refresh(ctx, *t) // the rest was applied: show Asana's task
 		return sent, err
 	}
@@ -89,9 +88,9 @@ func serverDueDay(t *model.Task) string {
 // startOnBlocked says why an update's start date cannot be sent when it keeps the due
 // date and the due date in Asana no longer allows it (removed, or moved before the start
 // date since the edit): Asana would refuse it with a 400. "" when it can be sent.
-func startOnBlocked(payload map[string]any, server *model.Task) string {
-	start, _ := payload["start_on"].(string)
-	if _, due := payload["due_on"]; start == "" || due {
+func startOnBlocked(p outbox.UpdateTask, server *model.Task) string {
+	start := outbox.Str(p.StartOn)
+	if start == "" || p.DueOn != nil {
 		return ""
 	}
 	switch due := serverDueDay(server); {
@@ -131,10 +130,10 @@ func withDue(fields map[string]any, server *model.Task) map[string]any {
 
 // updateConflicts compares an update with the task in Asana: the server's values of the
 // fields that were changed there too (nil if none).
-func updateConflicts(op outbox.Op, server *model.Task) map[string]any {
+func updateConflicts(op outbox.Op, p outbox.UpdateTask, server *model.Task) map[string]any {
 	current := model.TaskFieldValues(server)
 	conflicts := map[string]any{}
-	for k, local := range op.Payload {
+	for k, local := range p.Fields() {
 		if k == "html_notes" {
 			continue // the server normalizes HTML; "notes" (plain) is compared instead
 		}
@@ -158,8 +157,8 @@ func (s *Pusher) refresh(ctx context.Context, t model.Task) {
 	_ = s.Store.UpsertTasks(ctx, []model.Task{t})
 }
 
-func (s *Pusher) pushCreate(ctx context.Context, op outbox.Op) (outcome, error) {
-	fields := apiFields(op.Payload)
+func (s *Pusher) pushCreate(ctx context.Context, op outbox.Op, p outbox.CreateTask) (outcome, error) {
+	fields := apiFields(p.Fields())
 	section, _ := fields["section"].(string)
 	project, _ := fields["project"].(string)
 	parent, _ := fields["parent"].(string)
@@ -216,16 +215,15 @@ func sectionIn(t *model.Task, project string) string {
 	return ""
 }
 
-func (s *Pusher) pushMove(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushMove(ctx context.Context, op outbox.Op, p outbox.MoveTask) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
-	section, _ := op.Payload["section"].(string)
-	section, err := s.realSection(ctx, section)
+	section, err := s.realSection(ctx, p.Section)
 	if err != nil {
 		return err
 	}
-	pos, err := s.position(ctx, op)
+	pos, err := s.position(ctx, p.InsertBefore, p.InsertAfter)
 	if err != nil {
 		return err
 	}
@@ -238,8 +236,7 @@ func (s *Pusher) pushMove(ctx context.Context, op outbox.Op) error {
 	if t, err := s.API.Task(ctx, op.TaskGID); err == nil { // else the next sync refreshes it
 		s.refresh(ctx, *t)
 	}
-	project, _ := op.Payload["project"].(string)
-	s.refreshSectionOrderAfterMove(ctx, project, section)
+	s.refreshSectionOrderAfterMove(ctx, p.Project, section)
 	return nil
 }
 
@@ -271,16 +268,16 @@ func (s *Pusher) refreshSectionOrderAfterMove(ctx context.Context, project, sect
 	})
 }
 
-// position is where op puts its task (insert_before / insert_after), with the real gid of
-// a task created offline. One whose create has not gone out (it failed) is left out:
-// the task still goes to its section or parent.
-func (s *Pusher) position(ctx context.Context, op outbox.Op) (model.Position, error) {
+// position is where an entry puts its task (insert_before / insert_after), with the real
+// gid of a task created offline. One whose create has not gone out (it failed) is left
+// out: the task still goes to its section or parent.
+func (s *Pusher) position(ctx context.Context, before, after string) (model.Position, error) {
 	var pos model.Position
 	for _, p := range []struct {
-		key string
+		gid string
 		to  *string
-	}{{"insert_before", &pos.Before}, {"insert_after", &pos.After}} {
-		gid, _ := op.Payload[p.key].(string)
+	}{{before, &pos.Before}, {after, &pos.After}} {
+		gid := p.gid
 		if gid == "" {
 			continue
 		}
@@ -299,7 +296,7 @@ func (s *Pusher) position(ctx context.Context, op outbox.Op) (model.Position, er
 // entry sent before, or by someone else): done either way. Push has checked that the
 // account is the one the store belongs to (checkPushAccount), so the 404 is not another
 // account's view.
-func (s *Pusher) pushDelete(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushDelete(ctx context.Context, op outbox.Op, _ outbox.DeleteTask) error {
 	if localgid.IsLocal(op.TaskGID) {
 		return &model.Error{Status: 404} // its create failed
 	}
@@ -310,19 +307,19 @@ func (s *Pusher) pushDelete(ctx context.Context, op outbox.Op) error {
 }
 
 // pushSetParent sends a parent change. Repeating it is harmless.
-func (s *Pusher) pushSetParent(ctx context.Context, op outbox.Op) error {
+func (s *Pusher) pushSetParent(ctx context.Context, op outbox.Op, p outbox.SetParent) error {
 	task, err := s.Store.RealGID(ctx, op.TaskGID)
 	if err != nil {
 		return err
 	}
-	parent, _ := op.Payload["parent"].(string)
-	if parent, err = s.Store.RealGID(ctx, parent); err != nil {
+	parent, err := s.Store.RealGID(ctx, p.Parent)
+	if err != nil {
 		return err
 	}
 	if localgid.IsLocal(task) || localgid.IsLocal(parent) {
 		return &model.Error{Status: 404} // its create failed
 	}
-	pos, err := s.position(ctx, op)
+	pos, err := s.position(ctx, p.InsertBefore, p.InsertAfter)
 	if err != nil {
 		return err
 	}
@@ -338,10 +335,8 @@ func (s *Pusher) pushSetParent(ctx context.Context, op outbox.Op) error {
 	return nil
 }
 
-func (s *Pusher) pushDuplicate(ctx context.Context, op outbox.Op) error {
-	source, _ := op.Payload["source"].(string)
-	name, _ := op.Payload["name"].(string)
-	created, err := s.API.DuplicateTask(ctx, source, name)
+func (s *Pusher) pushDuplicate(ctx context.Context, op outbox.Op, p outbox.DuplicateTask) error {
+	created, err := s.API.DuplicateTask(ctx, p.Source, p.Name)
 	if err != nil {
 		return err
 	}
@@ -355,9 +350,8 @@ func (s *Pusher) pushDuplicate(ctx context.Context, op outbox.Op) error {
 }
 
 // findCreatedTask looks for the task a create_task made (see reconcile).
-func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
-	str := func(k string) string { return payloadString(op, k) }
-	tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), f.since)
+func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.CreateTask, f finder) (outcome, match, error) {
+	tasks, ok, err := s.tasksCreatedUnder(ctx, p.Parent, p.Project, outbox.Str(p.Assignee), p.Workspace, f.since)
 	if err != nil || !ok {
 		return sent, ambiguousUnless(ok), err
 	}
@@ -366,14 +360,14 @@ func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, f finder) (ou
 		return sent, notFound, err
 	}
 	t, m := pick(tasks, func(t model.Task) bool {
-		return !used[t.GID] && t.Name == str("name") && f.recent(t.CreatedAt) && f.byMe(t.CreatedBy) && sameTaskFields(t, op.Payload)
+		return !used[t.GID] && t.Name == p.Name && f.recent(t.CreatedAt) && f.byMe(t.CreatedBy) && sameTaskFields(t, p)
 	})
 	if m != matched {
 		return sent, m, nil
 	}
 	var move *outbox.MoveTarget
-	if section := str("section"); section != "" {
-		move = &outbox.MoveTarget{Project: str("project"), Section: section, From: sectionIn(&t, str("project"))}
+	if section := outbox.Str(p.Section); section != "" {
+		move = &outbox.MoveTarget{Project: p.Project, Section: section, From: sectionIn(&t, p.Project)}
 	}
 	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, move); err != nil {
 		return sent, notFound, err
@@ -386,10 +380,9 @@ func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, f finder) (ou
 }
 
 // findDuplicate looks for the copy a duplicate_task made (see reconcile).
-func findDuplicate(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
-	str := func(k string) string { return payloadString(op, k) }
+func findDuplicate(s *Pusher, ctx context.Context, op outbox.Op, p outbox.DuplicateTask, f finder) (outcome, match, error) {
 	// The copy goes where the source is (same parent, or the source's first project).
-	src, err := s.API.Task(ctx, str("source"))
+	src, err := s.API.Task(ctx, p.Source)
 	if err != nil {
 		return sent, notFound, err
 	}
@@ -415,7 +408,7 @@ func findDuplicate(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outc
 		return sent, notFound, err
 	}
 	t, m := pick(tasks, func(t model.Task) bool {
-		return !used[t.GID] && t.Name == str("name") && t.GID != src.GID && f.recent(t.CreatedAt)
+		return !used[t.GID] && t.Name == p.Name && t.GID != src.GID && f.recent(t.CreatedAt)
 	})
 	if m != matched {
 		return sent, m, nil
@@ -428,33 +421,32 @@ func findDuplicate(s *Pusher, ctx context.Context, op outbox.Op, f finder) (outc
 }
 
 // batchUpdateTask is the batch request for an update_task: its fields, checked against the task in Asana first.
-func batchUpdateTask(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+func batchUpdateTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.UpdateTask, e *batchEntry) (bool, error) {
 	task := e.task
-	if domaintask.TouchesCustomType(op.Payload) {
+	if domaintask.TouchesCustomType(p.Fields()) {
 		return false, nil // sent alone: a 402 there records that the plan lacks custom types
 	}
-	e.write = model.BatchUpdateTask(task, taskUpdateFields(op))
+	e.write = model.BatchUpdateTask(task, taskUpdateFields(op, p))
 	e.check = func(op outbox.Op, server *model.Task) (map[string]any, error) {
-		return updateConflicts(op, server), nil
+		return updateConflicts(op, p, server), nil
 	}
 	return true, nil
 }
 
 // batchMoveTask is the batch request for a move_task to a section without a place in it.
-func batchMoveTask(s *Pusher, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
-	str := func(k string) string { return payloadString(op, k) }
+func batchMoveTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.MoveTask, e *batchEntry) (bool, error) {
 	task := e.task
-	section := str("section")
+	section := p.Section
 	if !realGID(section) {
 		return false, nil
 	}
-	if str("insert_before") != "" || str("insert_after") != "" {
+	if p.InsertBefore != "" || p.InsertAfter != "" {
 		// A place is next to another task, which an action of the same batch may move:
 		// the batch keeps the order of one task's changes only. Sent alone, in order.
 		return false, nil
 	}
 	e.write = model.BatchMoveTaskToSection(section, task)
-	e.project, e.section = str("project"), section
+	e.project, e.section = p.Project, section
 	e.refresh = true
 	return true, nil
 }

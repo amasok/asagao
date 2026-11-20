@@ -20,23 +20,22 @@ type TaskFields struct {
 	HTMLNotes   string
 }
 
-// SameTaskFields compares the fields a create (its payload) sets besides the name, so a
+// SameTaskFields compares the fields a create (its payload p) sets besides the name, so a
 // task someone made by hand with the same name is not taken for ours. Descriptions are
 // compared by their visible words (TextKey); a rich one matches by its html_notes or its
 // notes.
-func SameTaskFields(t TaskFields, payload map[string]any) bool {
-	str := func(k string) string { v, _ := payload[k].(string); return v }
-	if str("due_on") != t.DueOn || str("start_on") != t.StartOn {
+func SameTaskFields(t TaskFields, p CreateTask) bool {
+	if Str(p.DueOn) != t.DueOn || Str(p.StartOn) != t.StartOn {
 		return false
 	}
-	if str("assignee") != t.AssigneeGID {
+	if Str(p.Assignee) != t.AssigneeGID {
 		return false
 	}
-	if _, rich := payload["html_notes"]; rich {
-		return TextKey(StripHTML(t.HTMLNotes)) == TextKey(StripHTML(str("html_notes"))) ||
-			TextKey(t.Notes) == TextKey(str("notes"))
+	if p.HTMLNotes != nil {
+		return TextKey(StripHTML(t.HTMLNotes)) == TextKey(StripHTML(*p.HTMLNotes)) ||
+			TextKey(t.Notes) == TextKey(Str(p.Notes))
 	}
-	return TextKey(t.Notes) == TextKey(str("notes"))
+	return TextKey(t.Notes) == TextKey(Str(p.Notes))
 }
 
 // SameComment reports whether a story (storyText, storyHTML) is the comment we sent
