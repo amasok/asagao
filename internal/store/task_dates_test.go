@@ -153,7 +153,7 @@ func TestUpdateTaskLocalStartOnPlan(t *testing.T) {
 	if ops, _ := s.PendingOps(ctx); len(ops) != 0 {
 		t.Fatalf("queued: %+v", ops)
 	}
-	// Another workspace is not affected; and after PlanRecheckAfter it is offered again.
+	// Another workspace is not affected; and after plan.RecheckAfter it is offered again.
 	if err := s.ClearPlanRefusal(ctx, plan.StartOn, "w1"); err != nil {
 		t.Fatal(err)
 	}

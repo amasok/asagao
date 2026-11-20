@@ -99,7 +99,7 @@ func TestDetailStartDateHiddenByPlan(t *testing.T) {
 func TestTimelineStartDate(t *testing.T) {
 	h := timelineHarness(t)
 	col := func(day int) int { return (day - 6) * 2 } // November day -> column
-	h.selectTask("t10")                                // 家具を運ぶ: due 11/21, no start date
+	h.selectTask("t10")                               // 家具を運ぶ: due 11/21, no start date
 	if got := h.ganttOf("家具を運ぶ"); !strings.HasPrefix(strings.ReplaceAll(got, "│", " "), strings.Repeat(" ", col(21))+"██") {
 		t.Fatalf("before: %q", got)
 	}

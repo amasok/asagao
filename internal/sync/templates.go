@@ -26,7 +26,7 @@ import (
 // The job is waited for (GET /jobs/{gid}) up to jobWait. If it is still running, what is
 // there is stored and the result says so (Pending): the rest arrives with the next sync.
 //
-// A 402 is recorded for the workspace (store.RecordPlanUnavailable, plan.go), so the TUI stops
+// A 402 is recorded for the workspace (store.RecordPlanRefusal, sync_state.go), so the TUI stops
 // offering the feature there for plan.RecheckAfter; a list that works again
 // forgets it.
 
