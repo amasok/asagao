@@ -1,13 +1,15 @@
 package cli
 
 import (
+	"github.com/spf13/cobra"
+
 	"github.com/amasok/asagao/internal/config"
 	"github.com/amasok/asagao/internal/wire"
 )
 
-// The commands get the adapters from internal/wire, as cmd/asagao gives them.
-func init() {
-	wiring = Wiring{
+// testWiring returns the default production wiring for tests.
+func testWiring() Wiring {
+	return Wiring{
 		MigrateLegacyDirs: config.MigrateLegacyDirs,
 		LoadSettings:      config.Load,
 		APIClient:         wire.APIClient,
@@ -16,4 +18,8 @@ func init() {
 		CheckPAT:          wire.CheckPAT,
 		Searches:          config.SearchFile{},
 	}
+}
+
+func newTestRoot(baseURL string) *cobra.Command {
+	return newRoot(&app{wiring: testWiring(), baseURL: baseURL})
 }

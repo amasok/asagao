@@ -53,7 +53,7 @@ func lazyCLIServer(t *testing.T) (*httptest.Server, func() []string) {
 
 func runLazyCLI(t *testing.T, baseURL string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	cmd := newRoot(&app{baseURL: baseURL})
+	cmd := newTestRoot(baseURL)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)

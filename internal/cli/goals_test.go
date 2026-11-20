@@ -163,7 +163,7 @@ func runOnlineCLI(t *testing.T, f http.Handler, args ...string) (stdout, stderr 
 	t.Setenv(auth.EnvToken, "test-pat")
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	cmd := newRoot(&app{baseURL: srv.URL})
+	cmd := newTestRoot(srv.URL)
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)

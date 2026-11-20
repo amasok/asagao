@@ -96,7 +96,7 @@ func timeCLIEnv(t *testing.T) (string, *fakeTimeAsana, func(args ...string) (str
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	run := func(args ...string) (string, string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)

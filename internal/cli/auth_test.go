@@ -54,7 +54,7 @@ func authTestEnv(t *testing.T, configTOML string) tokenstore.Store {
 
 func runAuthCLI(t *testing.T, baseURL, stdin string, args ...string) (string, error) {
 	t.Helper()
-	cmd := newRoot(&app{baseURL: baseURL})
+	cmd := newTestRoot(baseURL)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -101,7 +101,7 @@ func TestAuthLoginPAT(t *testing.T) {
 	}
 
 	// The API client uses the stored PAT without a client_id.
-	a := &app{baseURL: srv.URL}
+	a := &app{wiring: testWiring(), baseURL: srv.URL}
 	if a.cfg, err = config.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestAuthLoginPATAfterOAuth(t *testing.T) {
 	if err := ts.Save(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{baseURL: srv.URL}
+	a := &app{wiring: testWiring(), baseURL: srv.URL}
 	if a.cfg, err = config.Load(); err != nil {
 		t.Fatal(err)
 	}

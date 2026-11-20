@@ -34,7 +34,7 @@ func dryRunEnv(t *testing.T) (path string, requests *atomic.Int32, run func(args
 	}))
 	t.Cleanup(srv.Close)
 	run = func(args ...string) (string, string, error) {
-		cmd := newRoot(&app{baseURL: srv.URL})
+		cmd := newTestRoot(srv.URL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
@@ -260,7 +260,7 @@ func TestDryRunCancelled(t *testing.T) {
 
 // Every write command takes --dry-run (so that an agent can try any of them first).
 func TestWriteCommandsHaveDryRun(t *testing.T) {
-	root := newRoot(&app{})
+	root := NewRoot(testWiring())
 	for _, path := range []string{
 		"task create", "task complete", "task reopen", "task move", "task assign", "task tag",
 		"task like", "task follow", "task project", "task duplicate", "task attach", "task field",

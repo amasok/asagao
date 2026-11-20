@@ -117,7 +117,7 @@ func (a *app) loginPAT(cmd *cobra.Command, ts auth.TokenStore) error {
 	defer cancel()
 	// The user is waiting: retry a busy or failing Asana once, briefly and saying so, not
 	// with the backoff of a sync (about 30 s in all, #24).
-	me, err := wiring.CheckPAT(checkCtx, token, a.baseURL, loginRetryDelay, func(status int, wait time.Duration) {
+	me, err := a.wiring.CheckPAT(checkCtx, token, a.baseURL, loginRetryDelay, func(status int, wait time.Duration) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s。%s後にもう一度確かめます…\n", busyMessage(status), wait.Round(time.Second))
 	})
 	if model.IsUnauthorized(err) {

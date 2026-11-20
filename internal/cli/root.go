@@ -22,6 +22,7 @@ import (
 )
 
 type app struct {
+	wiring  Wiring
 	cfg     settings.Config
 	json    bool
 	offline bool
@@ -37,7 +38,7 @@ type app struct {
 	jsonOut io.Writer
 }
 
-func NewRoot() *cobra.Command { return newRoot(&app{}) }
+func NewRoot(w Wiring) *cobra.Command { return newRoot(&app{wiring: w}) }
 
 func newRoot(a *app) *cobra.Command {
 	root := &cobra.Command{
@@ -51,10 +52,10 @@ func newRoot(a *app) *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// Folders of the former name (asana-tui) move to the new ones. What could not
 			// be moved is left in place: warn and go on with the new folders.
-			if err := wiring.MigrateLegacyDirs(); err != nil {
+			if err := a.wiring.MigrateLegacyDirs(); err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "注意:", termsafe.String(err.Error()))
 			}
-			cfg, err := wiring.LoadSettings()
+			cfg, err := a.wiring.LoadSettings()
 			if err != nil {
 				return err
 			}
@@ -97,12 +98,8 @@ type Wiring struct {
 	Searches usecase.SearchFile
 }
 
-// wiring is set by Execute (and by the tests' init).
-var wiring Wiring
-
 func Execute(w Wiring) {
-	wiring = w
-	if err := NewRoot().ExecuteContext(context.Background()); err != nil {
+	if err := NewRoot(w).ExecuteContext(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", termsafe.String(err.Error()))
 		os.Exit(1)
 	}
@@ -112,22 +109,22 @@ func (a *app) tokenStore() (auth.TokenStore, error) { return auth.OpenTokenStore
 
 // apiClient is the Asana client for the login (wire.APIClient).
 func (a *app) apiClient(ctx context.Context) (sync.AsanaAPI, error) {
-	return wiring.APIClient(ctx, a.cfg, a.baseURL)
+	return a.wiring.APIClient(ctx, a.cfg, a.baseURL)
 }
 
 // syncer is the Syncer for api and st (wire.Syncer).
 func (a *app) syncer(api sync.AsanaAPI, st Store) *sync.Syncer {
-	return wiring.Syncer(api, st, a.cfg)
+	return a.wiring.Syncer(api, st, a.cfg)
 }
 
 func (a *app) storePath() string { return filepath.Join(xdg.DataDir(), "store.db") }
 
 func (a *app) openStore(ctx context.Context) (Store, error) {
-	st, err := wiring.OpenStore(ctx, a.storePath())
+	st, err := a.wiring.OpenStore(ctx, a.storePath())
 	if err != nil || !a.dryRun {
 		return st, err
 	}
-	return openDryRun(ctx, st)
+	return a.openDryRun(ctx, st)
 }
 
 // printJSON writes v as indented JSON to the command's output (#25).

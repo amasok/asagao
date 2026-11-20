@@ -19,7 +19,7 @@ import (
 // run executes the CLI with a private data and config directory.
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := newRoot(&app{baseURL: unreachableAsana(t)})
+	cmd := newTestRoot(unreachableAsana(t))
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -42,7 +42,7 @@ func unreachableAsana(t *testing.T) string {
 // kept apart.
 func runCLISplit(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	cmd := newRoot(&app{baseURL: unreachableAsana(t)})
+	cmd := newTestRoot(unreachableAsana(t))
 	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)

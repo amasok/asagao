@@ -42,7 +42,7 @@ func TestGitScanByCustomID(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	run := func(baseURL string, args ...string) (string, string, error) {
-		cmd := newRoot(&app{baseURL: baseURL})
+		cmd := newTestRoot(baseURL)
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
