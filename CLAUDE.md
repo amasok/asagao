@@ -43,6 +43,7 @@ CI は PR のときだけ ubuntu で `go vet`・`go test`・仕様の検証を�
   - 並行して作業するときは `.worktrees/<branch>` に worktree を切る。
   - `git checkout -- .` や `reset --hard` は、自分専用の worktree の中でだけ使う。
 - 依存を足すときは、理由をコミットメッセージに書く。
+- **エージェントの署名**: `git log`・PR・Issue (コメント含む) で書き込み元が分かるよう、Claude Code は system-reminder 指定の `Co-Authored-By` (`LAND_TRAILERS` 含む) と `🤖 Generated with [Claude Code](https://claude.com/claude-code)` を必ず付ける（Gemini 側は `Co-Authored-By: Gemini (Antigravity) <noreply@google.com>` と `🤖 Generated with Gemini (Antigravity)` を使用）。
 
 ## チームで作業するとき
 
