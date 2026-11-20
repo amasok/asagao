@@ -41,7 +41,8 @@ description: >-
   - 修正前なら失敗するテストを必ず追加する。
   - 開発中の確認は変更パッケージ＋`-run '<Pattern>'` のみで回す。完了前も `go build ./... && go vet ./...` と **関連パッケージの `go test -race ./internal/<pkg>/...`** までとし、全パッケージの `go test -race ./...` は回さない。
   - `search_web` は最大 2〜3 回に絞り、まず既存コード・`openspec/`・既存テストを確認する。
-  - `git add -A` 禁止、`push` 禁止。完了報告は **10 行以内の箇条書き**（設計判断・変更ファイル・テスト結果・残課題のみ）に収める。
+  - `git add -A` 禁止、`push` 禁止。コミットメッセージ末尾には必ず `Co-Authored-By: Gemini (Antigravity) <noreply@google.com>` を付ける。
+  - 完了報告は **10 行以内の箇条書き**（設計判断・変更ファイル・テスト結果・残課題のみ）に収める。
 
 ### 2. `asagao-tester` (攻撃テスト担当 / `EnableWriteTools: true`)
 - **責務**: 実装完了後の `.worktrees/<branch>` に対し、壊しにいく側のテスト (`*_attack_test.go`) を書いて検証する。
@@ -53,6 +54,7 @@ description: >-
   - 攻撃テストの作成・修正ループは `go test ./internal/<pkg>/ -run '<Pattern>'` で素早く回す。
   - 仕上げに必要なら `mutation` スキルでテスト強度を確認する。
   - 最終確認は単独ブランチなら `go vet ./... && go test -race ./...` を 1 回だけ回す。複数ブランチを `scripts/land.sh merge` でまとめて統合する場合は関連パッケージの `go test -race` までとし、全パッケージ `-race` は統合時の 1 回へ集約する。
+  - テストファイルをコミットする際も、末尾に必ず `Co-Authored-By: Gemini (Antigravity) <noreply@google.com>` を付ける。
   - 完了報告は **10 行以内の箇条書き**（追加テスト・検出した不具合・テスト結果・mutation 結果のみ）に収める。
 
 ### 3. `asagao-reviewer` (レビュー担当 / `EnableWriteTools: false`)

@@ -54,6 +54,9 @@ go build ./... && go vet ./... && go test -race ./...
   - 並行作業は `.worktrees/<branch>` に worktree を切る。
   - `git checkout -- .` や `reset --hard` は自分専用の隔離 worktree 内でだけ使う。
 - 依存パッケージを追加するときは、理由をコミットメッセージに書く。
+- **エージェントの署名 (Attribution)**: `git log`・PR・Issue でどのエージェントが書いたか判別できるよう、以下を必ず付ける。
+  - **コミット / マージコミット**: メッセージ末尾に `Co-Authored-By: Gemini (Antigravity) <noreply@google.com>` を付ける（`scripts/land.sh merge` 実行時は `LAND_TRAILERS='Co-Authored-By: Gemini (Antigravity) <noreply@google.com>'` を渡す）。Claude Code の場合は system-reminder 指定の `Co-Authored-By: Claude ...` を付ける。
+  - **PR / Issue / Issue コメント**: 本文末尾に `🤖 Generated with Gemini (Antigravity)`（Claude Code の場合は `🤖 Generated with [Claude Code](https://claude.com/claude-code)`）を付ける。
 
 ## サブエージェントとスキル運用
 

@@ -13,9 +13,10 @@ description: >-
 前提: 対象ブランチが `asagao-reviewer` の承認を得ており、`asagao-tester` の確認および関連パッケージの `go test -race` も通過していること（全パッケージの `-race` は `scripts/land.sh merge` がまとめて実行する）。
 
 ```sh
-scripts/land.sh merge <branch> [<branch>...]
+LAND_TRAILERS='Co-Authored-By: Gemini (Antigravity) <noreply@google.com>' scripts/land.sh merge <branch> [<branch>...]
 ```
 
+- `LAND_TRAILERS` に `Co-Authored-By: Gemini (Antigravity) <noreply@google.com>` を渡し、マージコミットにも Gemini 経由であることを残す。
 - マイグレーションを含むブランチがある場合は、番号がぶつからない順番で取り込む。
 - 途中でコンフリクトした場合はスクリプトが止まる。解決してコミットしたら、残りのブランチで再実行する。
 - `scripts/land.sh merge` はローカル `main` へのマージ・検証・worktree/ブランチ削除まで行い、`push` はしない。
@@ -26,6 +27,7 @@ scripts/land.sh merge <branch> [<branch>...]
    - Issue ごとに 1 行の `Closes #n: 何をどう直したか`
    - 別 Issue として切り出した残課題
    - テスト結果 (`go build`, `go vet`, `go test -race`, `spec:validate`)
+   - 末尾に署名フッター: `🤖 Generated with Gemini (Antigravity)`
 2. 実行する:
    ```sh
    scripts/land.sh pr <新しいブランチ名> "<英語のタイトル>" <本文のファイル>

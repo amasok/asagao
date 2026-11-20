@@ -10,7 +10,7 @@ description: >-
    ```sh
    gh issue list --state open --search "<キーワード>" --limit 5
    ```
-   同じ Issue が既にあれば `gh issue comment` で追記して終える。
+   同じ Issue が既にあれば `gh issue comment` で追記して終える（末尾に `🤖 Generated with Gemini (Antigravity)` を付ける）。
 2. タイトルは日本語で症状が分かる一文にし、本文は以下の構成で作成する:
    ```markdown
    ## 何が起きるか
@@ -24,6 +24,8 @@ description: >-
 
    ## 見つけた経緯
    <どの作業・どのテストで見つけたか (1 行)>
+
+   🤖 Generated with Gemini (Antigravity)
    ```
 3. 複数ある場合は関係の近いものを 1 つにまとめる。ユーザーには Issue 番号とタイトルだけを簡潔に返す。
 4. ユーザーの名前・メールアドレス・トークンなどの個人・機密情報は本文に書かない。
