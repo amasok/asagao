@@ -1,6 +1,10 @@
 package timetrack
 
-import "testing"
+import (
+	"math"
+	"strconv"
+	"testing"
+)
 
 func TestParseDuration(t *testing.T) {
 	for in, want := range map[string]int{
@@ -35,12 +39,17 @@ func TestFormatRoundTrips(t *testing.T) {
 
 // The most negative int is its own negation: Format must not recurse on it forever (a NaN
 // duration converted to int is math.MinInt on amd64; CI caught the stack overflow).
+// math.MinInt depends on the size of int, so the test also builds for 32-bit targets.
 func TestFormatNegativeExtremes(t *testing.T) {
+	minWant := "-153722867280912930h08m"
+	if strconv.IntSize == 32 {
+		minWant = "-35791394h08m"
+	}
 	for in, want := range map[int]string{
-		-1:                   "-1m",
-		-90:                  "-1h30m",
-		-120:                 "-2h",
-		-9223372036854775808: "-153722867280912930h08m",
+		-1:          "-1m",
+		-90:         "-1h30m",
+		-120:        "-2h",
+		math.MinInt: minWant,
 	} {
 		if got := Format(in); got != want {
 			t.Errorf("Format(%d) = %q, want %q", in, got, want)

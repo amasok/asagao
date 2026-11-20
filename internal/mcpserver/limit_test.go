@@ -28,7 +28,7 @@ func TestReadToolLimitsAreCapped(t *testing.T) {
 	}{
 		{"list_tasks", map[string]any{"limit": 1000000}},
 		{"search_tasks", map[string]any{"query": "まとめ", "limit": 1000000}},
-		{"list_tasks", map[string]any{"limit": 1000000, "modified_within_days": 1 << 40}},
+		{"list_tasks", map[string]any{"limit": 1000000, "modified_within_days": 1 << 30}},
 	} {
 		var out TasksOutput
 		res := call(t, cs, tc.tool, tc.args, &out)

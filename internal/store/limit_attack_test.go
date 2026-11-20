@@ -69,7 +69,7 @@ func TestListTasksRelationsStayWithTheirTaskAcrossBatches(t *testing.T) {
 func TestModifiedWithinDaysNotPositive(t *testing.T) {
 	s := manyTasks(t, 2)
 	now := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
-	for _, days := range []int{0, -1, -(1 << 40), -int(^uint(0)>>1) - 1} {
+	for _, days := range []int{0, -1, -(1 << 30), -int(^uint(0)>>1) - 1} {
 		f, err := s.BuildFilter(context.Background(), FilterSpec{ModifiedWithinDays: days}, now)
 		if err != nil {
 			t.Fatal(err)
