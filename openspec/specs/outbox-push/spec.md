@@ -235,12 +235,20 @@ TUI・CLI・MCP の解決は `app.Outbox.Resolve` を通す (MUST)。`keep_local
 - **THEN** `ErrOpSending` で断り、何も変えない
 
 ### Requirement: 自動で捨てた変更を残す
-自動で捨てた変更は、要約・理由・payload ごと `discarded_changes` に記録し、利用者に 1 回だけ知らせる (MUST)。一覧では、知らせたかどうかを問わず新しい順に出す。理由は保存する値で、初期化で消したものはコード `reset` (`readmodel.DiscardReasonReset`)、それ以外は Asana の応答を述べる文にする。表示の文言は保存しない (#82。それより前に保存した日本語の文は、マイグレーションで `reset` にする)。CLI (`outbox discarded --json`、書き込みの `--json` の `discarded`) と MCP の `discarded` は、`reason` を保存したまま返す。要約は、組み立てが `Store.SetDescribeChange` で渡す表示の説明で記録し、渡されていなければ空にして、表示するときに種類と payload から作る。
-根拠: store/discard.go (recordDiscard); store/discard_list.go; store/schema.go (最後のマイグレーション); readmodel/discard.go (DiscardReasonReset、IsReset); TestDroppedChangeKeepsPayload, TestRecentDiscards, TestMigrateResetReasonToCode, TestResetDiscardReasonAndSummary, TestOpenStoreDescribesDroppedChanges
+自動で捨てた変更は、要約・理由・payload ごと `discarded_changes` に記録し、利用者に 1 回だけ知らせる (MUST)。一覧では、知らせたかどうかを問わず新しい順に出す。
+根拠: store/discard.go (recordDiscard); store/discard_list.go; TestDroppedChangeKeepsPayload, TestRecentDiscards
 
 #### Scenario: 消えたタスクへの変更を捨てた
 - **WHEN** push が、Asana で消えたタスクへの変更を捨てる
 - **THEN** 次に入り口が結果を出すとき、捨てたことを 1 回だけ知らせる
+
+### Requirement: 捨てた理由と要約には表示の文言を保存しない
+捨てた理由は、初期化で消したものはコード `reset` (`readmodel.DiscardReasonReset`)、それ以外は Asana の応答を述べる文で保存する (MUST)。表示の文言は保存せず、#82 より前の日本語の文はマイグレーションで `reset` にする。CLI と MCP は `reason` を保存したまま返す。要約は `Store.SetDescribeChange` で渡された説明で記録し、なければ空にして、表示のときに種類と payload から作る。
+根拠: store/schema.go (最後のマイグレーション); readmodel/discard.go (DiscardReasonReset、IsReset); TestMigrateResetReasonToCode, TestResetDiscardReasonAndSummary, TestOpenStoreDescribesDroppedChanges
+
+#### Scenario: 初期化で変更を捨てた
+- **WHEN** outbox を初期化して、送っていない変更を捨てる
+- **THEN** `outbox discarded --json`・書き込みの `--json` の `discarded`・MCP の `discarded` で、`reason` は `reset` になる
 
 ### Requirement: 送った記録は使われている間残す
 ローカル gid と本物の gid の対応 (`gid:`・`story:`・`att:`・`status:`・`tag:`) は、outbox のどこか (状態を問わず、payload と base の文字列の中も) か、キャッシュの行がそのローカル gid を使っている間は残す (MUST)。その接頭辞を使う種類の作成が outbox にある間も残す。要らないと最初に分かったときに印を付け、そこから 30 日たったら消す。消すかどうかは読み取りのトランザクションで決め、変えるものがあるときだけ書き込みのロックを取る。
