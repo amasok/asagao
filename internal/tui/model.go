@@ -191,14 +191,12 @@ type Model struct {
 	inboxUnread int
 
 	// views (board.go)
-	zoom           bool // detail pane fills the screen
-	board          bool // project tasks as a board (sections = columns)
-	boardCol       int
-	boardRow       int
-	boardColOffset int
-	tagFilter      string
-	picker         *picker
-	saved          *readmodel.SavedSearch // the saved search shown (searches.go)
+	zoom      bool     // detail pane fills the screen
+	mode      viewMode // how the tasks are shown: a list, a board, a timeline or a calendar
+	board     boardState
+	tagFilter string
+	picker    *picker
+	saved     *readmodel.SavedSearch // the saved search shown (searches.go)
 
 	// collapsible groups (collapse.go)
 	allRows   []row           // every row; rows is allRows minus collapsed groups
@@ -230,17 +228,8 @@ type Model struct {
 	detailRatio int // detail pane width in % of the area right of the sidebar
 	hideSidebar bool
 
-	// calendar (calendar.go)
-	calendar bool
-	calDay   time.Time // selected day
-	calMonth time.Time // month of calTasks
-	calTasks map[string][]readmodel.TaskSummary
-
-	// timeline (timeline.go)
-	timeline bool
-	tlStart  time.Time // first day shown (zero: a week before today)
-	tlDayW   int       // columns per day (0: the default)
-	tlFollow string    // the task the timeline last scrolled to
+	cal calendarState // calendar.go
+	tl  timelineState // timeline.go
 
 	// projects (projects.go)
 	statusView         statusScreen
@@ -971,7 +960,7 @@ func (m *Model) moveScope(delta int) tea.Cmd {
 	m.scopeCursor = next
 	m.saved = nil // the sidebar leaves a saved search
 	m.listCursor, m.listOffset = 0, 0
-	m.boardCol, m.boardRow, m.boardColOffset = 0, 0, 0
+	m.board.col, m.board.row, m.board.colOffset = 0, 0, 0
 	return tea.Batch(m.loadTasks(), m.openProjectLater())
 }
 

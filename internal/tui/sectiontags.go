@@ -217,7 +217,7 @@ func (m *Model) moveSection(by int) tea.Cmd {
 	}
 	sections := m.sections(m.deps.Now())
 	if m.boardActive() {
-		m.boardCol = j // keep the moved column selected
+		m.board.col = j // keep the moved column selected
 	}
 	return func() tea.Msg {
 		if err := sections.ReorderHere(m.ctx, section, before, after); err != nil {

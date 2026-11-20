@@ -405,8 +405,8 @@ func TestBoardViewAndCardMoves(t *testing.T) {
 	if s := h.screen(); !strings.Contains(s, "家具 (0)") || !strings.Contains(s, "手続き (4)") || !strings.Contains(s, "↑ 未送信 1") {
 		t.Fatalf("card should move to the next column:\n%s", s)
 	}
-	if h.selected() != "t1" || h.m.boardCol != 1 {
-		t.Fatalf("cursor should follow the moved card: %q col %d", h.selected(), h.m.boardCol)
+	if h.selected() != "t1" || h.m.board.col != 1 {
+		t.Fatalf("cursor should follow the moved card: %q col %d", h.selected(), h.m.board.col)
 	}
 	h.key("H") // and back: the move cancels out
 	if s := h.screen(); !strings.Contains(s, "家具 (1)") || strings.Contains(s, "未送信") {
@@ -1218,8 +1218,8 @@ func TestCalendarView(t *testing.T) {
 		t.Fatal("esc should go back to the calendar")
 	}
 	h.key("j") // +7 days: 11/20
-	if h.m.calDay.Format(time.DateOnly) != "2026-11-20" {
-		t.Fatalf("j should move a week, got %s", h.m.calDay.Format(time.DateOnly))
+	if h.m.cal.day.Format(time.DateOnly) != "2026-11-20" {
+		t.Fatalf("j should move a week, got %s", h.m.cal.day.Format(time.DateOnly))
 	}
 	h.key("a")
 	h.typeText("内見")
@@ -1431,14 +1431,14 @@ func TestBoardRightEdge(t *testing.T) {
 		t.Fatalf("board should have an その他 column:\n%s", s)
 	}
 	h.key("l", "j") // 手続き, second card
-	if h.m.boardCol != 1 || h.selected() != "t3" {
-		t.Fatalf("col %d selected %q, want col 1 t3", h.m.boardCol, h.selected())
+	if h.m.board.col != 1 || h.selected() != "t3" {
+		t.Fatalf("col %d selected %q, want col 1 t3", h.m.board.col, h.selected())
 	}
 
 	// L into "その他" (no section gid) is refused: no move, cursor stays.
 	h.key("L")
-	if h.m.boardCol != 1 || h.selected() != "t3" || pendingOps(t, st) != 0 {
-		t.Fatalf("L into その他 should do nothing: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	if h.m.board.col != 1 || h.selected() != "t3" || pendingOps(t, st) != 0 {
+		t.Fatalf("L into その他 should do nothing: col %d selected %q pending %d", h.m.board.col, h.selected(), pendingOps(t, st))
 	}
 	if s := h.screen(); !strings.Contains(s, "手続き (3)") || !strings.Contains(s, "その他 (1)") {
 		t.Fatalf("columns changed:\n%s", s)
@@ -1446,54 +1446,54 @@ func TestBoardRightEdge(t *testing.T) {
 
 	// l to the last column, then l / L there do nothing.
 	h.key("l")
-	if h.m.boardCol != 2 || h.selected() != "t6" {
-		t.Fatalf("l should reach その他: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 2 || h.selected() != "t6" {
+		t.Fatalf("l should reach その他: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("l", "right")
-	if h.m.boardCol != 2 || h.selected() != "t6" {
-		t.Fatalf("l on the last column should stay: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 2 || h.selected() != "t6" {
+		t.Fatalf("l on the last column should stay: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("L")
-	if h.m.boardCol != 2 || h.selected() != "t6" || pendingOps(t, st) != 0 {
-		t.Fatalf("L on the last column should do nothing: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	if h.m.board.col != 2 || h.selected() != "t6" || pendingOps(t, st) != 0 {
+		t.Fatalf("L on the last column should do nothing: col %d selected %q pending %d", h.m.board.col, h.selected(), pendingOps(t, st))
 	}
 
 	// H out of その他 moves the card into a real section.
 	h.key("H")
-	if h.m.boardCol != 1 || h.selected() != "t6" || pendingOps(t, st) != 1 {
-		t.Fatalf("H should move the card to 手続き: col %d selected %q pending %d", h.m.boardCol, h.selected(), pendingOps(t, st))
+	if h.m.board.col != 1 || h.selected() != "t6" || pendingOps(t, st) != 1 {
+		t.Fatalf("H should move the card to 手続き: col %d selected %q pending %d", h.m.board.col, h.selected(), pendingOps(t, st))
 	}
 	if s := h.screen(); !strings.Contains(s, "手続き (4)") || strings.Contains(s, "その他") {
 		t.Fatalf("その他 should disappear once empty:\n%s", s)
 	}
 	// With その他 gone, 手続き is the last column: L does nothing.
 	h.key("L")
-	if h.m.boardCol != 1 || pendingOps(t, st) != 1 {
-		t.Fatalf("L on the last section should do nothing: col %d pending %d", h.m.boardCol, pendingOps(t, st))
+	if h.m.board.col != 1 || pendingOps(t, st) != 1 {
+		t.Fatalf("L on the last section should do nothing: col %d pending %d", h.m.board.col, pendingOps(t, st))
 	}
 }
 
 func TestBoardLeftEdgeAndRows(t *testing.T) {
 	h, st := boardHarness(t)
 	h.key("H") // first column: nothing to the left
-	if h.m.boardCol != 0 || h.selected() != "t1" || pendingOps(t, st) != 0 {
-		t.Fatalf("H on the first column should do nothing: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 0 || h.selected() != "t1" || pendingOps(t, st) != 0 {
+		t.Fatalf("H on the first column should do nothing: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("l", "G")
 	if h.selected() != "t4" {
 		t.Fatalf("G should go to the last card, got %q", h.selected())
 	}
 	h.key("j") // past the end: stays
-	if h.selected() != "t4" || h.m.boardRow != 2 {
-		t.Fatalf("j past the last card: row %d selected %q", h.m.boardRow, h.selected())
+	if h.selected() != "t4" || h.m.board.row != 2 {
+		t.Fatalf("j past the last card: row %d selected %q", h.m.board.row, h.selected())
 	}
 	h.key("h") // into 家具, which has one card: the row is clamped
-	if h.m.boardCol != 0 || h.m.boardRow != 0 || h.selected() != "t1" {
-		t.Fatalf("h into a shorter column: col %d row %d selected %q", h.m.boardCol, h.m.boardRow, h.selected())
+	if h.m.board.col != 0 || h.m.board.row != 0 || h.selected() != "t1" {
+		t.Fatalf("h into a shorter column: col %d row %d selected %q", h.m.board.col, h.m.board.row, h.selected())
 	}
 	h.key("k", "g")
-	if h.selected() != "t1" || h.m.boardRow != 0 {
-		t.Fatalf("k/g at the top: row %d", h.m.boardRow)
+	if h.selected() != "t1" || h.m.board.row != 0 {
+		t.Fatalf("k/g at the top: row %d", h.m.board.row)
 	}
 	h.key("h") // h on the first column goes to the sidebar
 	if h.m.focus != paneSidebar {
@@ -1506,8 +1506,8 @@ func TestBoardCursorAfterComplete(t *testing.T) {
 	h, _ := boardHarness(t)
 	h.key("l", "G") // 手続き: t2 t3 t4, on t4 (last)
 	h.key("x")
-	if h.m.boardCol != 1 || h.selected() != "t3" {
-		t.Fatalf("completing the last card should select the one above: col %d selected %q", h.m.boardCol, h.selected())
+	if h.m.board.col != 1 || h.selected() != "t3" {
+		t.Fatalf("completing the last card should select the one above: col %d selected %q", h.m.board.col, h.selected())
 	}
 	h.key("g", "x") // complete t2 (first)
 	if h.selected() != "t3" {
@@ -1619,9 +1619,9 @@ func TestCalendarMonthMoves(t *testing.T) {
 	}
 	h := projectHarness(t, st, nil)
 	h.key("h", "g", "l", "v") // My Tasks calendar
-	day := func() string { return h.m.calDay.Format(time.DateOnly) }
-	month := func() string { return h.m.calMonth.Format("2006-01") }
-	loaded := func(due string) bool { return len(h.m.calTasks[due]) > 0 }
+	day := func() string { return h.m.cal.day.Format(time.DateOnly) }
+	month := func() string { return h.m.cal.month.Format("2006-01") }
+	loaded := func(due string) bool { return len(h.m.cal.tasks[due]) > 0 }
 
 	if month() != "2026-11" || !loaded("2026-11-13") {
 		t.Fatalf("calendar should open on November: %s", month())
@@ -1644,7 +1644,7 @@ func TestCalendarMonthMoves(t *testing.T) {
 	}
 
 	// Moving by days across a month boundary reloads too.
-	h.m.calDay = time.Date(2026, 11, 30, 10, 0, 0, 0, time.Local)
+	h.m.cal.day = time.Date(2026, 11, 30, 10, 0, 0, 0, time.Local)
 	h.key("l")
 	if day() != "2026-12-01" || month() != "2026-12" {
 		t.Fatalf("l on the 30th: day %s month %s", day(), month())
@@ -1668,7 +1668,7 @@ func TestCalendarMonthMoves(t *testing.T) {
 		{"2027-01-15", "p", "2026-12-15"},
 	} {
 		from, _ := time.ParseInLocation(time.DateOnly, tc.from, time.Local)
-		h.m.calDay = from
+		h.m.cal.day = from
 		h.key(tc.key)
 		if day() != tc.want || month() != tc.want[:7] {
 			t.Errorf("%s from %s: day %s month %s, want %s", tc.key, tc.from, day(), month(), tc.want)

@@ -75,7 +75,7 @@ func (m *Model) showSavedSearchPicker(ss []readmodel.SavedSearch) {
 // the saved search for clearSavedSearch. The other narrowings start over.
 func (m *Model) applySavedSearch(name string) tea.Cmd {
 	m.listCursor, m.listOffset = 0, 0
-	m.boardCol, m.boardRow, m.boardColOffset = 0, 0, 0
+	m.board.col, m.board.row, m.board.colOffset = 0, 0, 0
 	if name == clearSavedSearch {
 		m.saved = nil
 		return m.loadTasks()

@@ -123,7 +123,7 @@ func TestQuickAddAttackCalendarDayPriority(t *testing.T) {
 	if !h.m.calendarActive() {
 		t.Skip("cannot reach the calendar")
 	}
-	day := h.m.calDay.Format(time.DateOnly)
+	day := h.m.cal.day.Format(time.DateOnly)
 	h.run(h.m.createTask("A 2026-12-24"))
 	h.run(h.m.createTask("B"))
 	ops, _ := st.ListOps(context.Background())

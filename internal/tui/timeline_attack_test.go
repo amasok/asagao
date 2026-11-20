@@ -222,8 +222,8 @@ func TestTimelineAttackScopeSwitch(t *testing.T) {
 func TestTimelineAttackKeysOutside(t *testing.T) {
 	h := projectHarness(t, timelineStore(t), nil)
 	h.key("[", "]", "{", "}", ".")
-	if !h.m.tlStart.IsZero() || h.m.tlDayW != 0 {
-		t.Fatalf("list keys changed timeline state: %v %d", h.m.tlStart, h.m.tlDayW)
+	if !h.m.tl.start.IsZero() || h.m.tl.dayW != 0 {
+		t.Fatalf("list keys changed timeline state: %v %d", h.m.tl.start, h.m.tl.dayW)
 	}
 }
 

@@ -29,15 +29,15 @@ const (
 )
 
 func (m *Model) timelineActive() bool {
-	return m.timeline && m.currentScope().kind == scopeProject && m.query == ""
+	return m.mode == viewTimeline && m.currentScope().kind == scopeProject && m.query == ""
 }
 
 // tlDayWidth is the number of columns of one day.
 func (m *Model) tlDayWidth() int {
-	if m.tlDayW <= 0 {
+	if m.tl.dayW <= 0 {
 		return tlDefaultDayW
 	}
-	return min(m.tlDayW, tlMaxDayW)
+	return min(m.tl.dayW, tlMaxDayW)
 }
 
 // dayOf is t's calendar day (in t's location) as midnight UTC, so that days can be
@@ -50,10 +50,10 @@ func daysBetween(a, b time.Time) int { return int(b.Sub(a).Hours() / 24) }
 
 // tlOrigin is the first day shown.
 func (m *Model) tlOrigin() time.Time {
-	if m.tlStart.IsZero() {
+	if m.tl.start.IsZero() {
 		return dayOf(m.deps.Now()).AddDate(0, 0, -tlLeadDays)
 	}
-	return m.tlStart
+	return m.tl.start
 }
 
 // taskSpan returns the days a task's bar covers: start date to due date, only the due
@@ -91,15 +91,15 @@ func isMilestone(t *readmodel.TaskSummary) bool { return t.ResourceSubtype == "m
 func (m *Model) handleTimelineKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "[":
-		m.tlStart = m.tlOrigin().AddDate(0, 0, -7)
+		m.tl.start = m.tlOrigin().AddDate(0, 0, -7)
 	case "]":
-		m.tlStart = m.tlOrigin().AddDate(0, 0, 7)
+		m.tl.start = m.tlOrigin().AddDate(0, 0, 7)
 	case "{":
-		m.tlDayW = max(1, m.tlDayWidth()-1)
+		m.tl.dayW = max(1, m.tlDayWidth()-1)
 	case "}":
-		m.tlDayW = min(tlMaxDayW, m.tlDayWidth()+1)
+		m.tl.dayW = min(tlMaxDayW, m.tlDayWidth()+1)
 	case ".":
-		m.tlStart = time.Time{}
+		m.tl.start = time.Time{}
 	case "l", "right":
 		// The detail pane is hidden: open it full screen when there is nothing to expand.
 		if t := m.selectedTask(); t != nil && (t.NumSubtasks == 0 || m.expanded[t.GID]) {
@@ -142,10 +142,10 @@ func (m *Model) tlFollowSelection(l tlLayout) {
 	if t == nil || l.days == 0 {
 		return
 	}
-	if t.GID == m.tlFollow {
+	if t.GID == m.tl.follow {
 		return
 	}
-	m.tlFollow = t.GID
+	m.tl.follow = t.GID
 	start, end, ok := taskSpan(t, m.deps.Now().Location())
 	if !ok {
 		return
@@ -156,7 +156,7 @@ func (m *Model) tlFollowSelection(l tlLayout) {
 		return // (partly) visible
 	}
 	lead := min(tlLeadDays, l.days/4)
-	m.tlStart = start.AddDate(0, 0, -lead)
+	m.tl.start = start.AddDate(0, 0, -lead)
 }
 
 // tlRelations are the tasks the selected task waits for (前) and that wait for it (後),

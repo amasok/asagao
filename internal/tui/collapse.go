@@ -146,8 +146,8 @@ func (m *Model) sectionUnderCursor() (gid, name string) {
 	sc := m.currentScope()
 	if m.boardActive() {
 		cols := m.boardColumns()
-		if m.boardCol < len(cols) {
-			return cols[m.boardCol].gid, cols[m.boardCol].name
+		if m.board.col < len(cols) {
+			return cols[m.board.col].gid, cols[m.board.col].name
 		}
 		return "", ""
 	}

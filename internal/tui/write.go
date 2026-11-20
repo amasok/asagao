@@ -433,7 +433,7 @@ func (m *Model) createTask(input string) tea.Cmd {
 	now := m.deps.Now()
 	var defaultDue string
 	if m.calendarActive() {
-		defaultDue = m.calDay.Format(time.DateOnly) // the day selected in the calendar
+		defaultDue = m.cal.day.Format(time.DateOnly) // the day selected in the calendar
 	}
 	sc := m.currentScope()
 	var in app.CreateHereInput
