@@ -20,6 +20,11 @@ import (
 // edits (update_project, sent by pushUpdateProject); the overview's progress and brief
 // are fetched when it is opened (FetchProjectOverview).
 
+func init() {
+	register(outbox.KindCreateStatus, opHandler{send: sends((*Syncer).pushStatus), find: findStatus})
+	register(outbox.KindUpdateProject, opHandler{send: (*Syncer).pushUpdateProject})
+}
+
 // ErrOffline is returned by online-only operations when there is no API client.
 var ErrOffline = errors.New("オンラインのときだけできる操作です")
 
@@ -315,4 +320,24 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// findStatus looks for the status update a create_status posted (see reconcile).
+func findStatus(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	ups, err := s.API.StatusUpdates(ctx, op.TaskGID)
+	if err != nil {
+		return sent, notFound, err
+	}
+	used, err := s.taken(ctx, readmodel.ResultStatus)
+	if err != nil {
+		return sent, notFound, err
+	}
+	u, m := pick(ups, func(u model.StatusUpdate) bool {
+		return !used[u.GID] && u.Title == str("title") && u.StatusType == str("status_type") && f.recent(u.CreatedAt) && f.byMe(u.Author)
+	})
+	if m != matched {
+		return sent, m, nil
+	}
+	return sent, matched, s.Store.CompleteStatus(ctx, op.ID, str("status"), u)
 }

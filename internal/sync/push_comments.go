@@ -2,14 +2,25 @@ package sync
 
 import (
 	"context"
+	"os"
+
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
-	"os"
 )
 
 // Sending comments and attachments: adding, editing and deleting them.
+
+func init() {
+	story := localRef{key: "story", result: readmodel.ResultStory}
+	attachment := localRef{key: "attachment", result: readmodel.ResultAttachment}
+	register(outbox.KindAddComment, opHandler{send: sends((*Syncer).pushComment), find: findComment})
+	register(outbox.KindUpdateStory, opHandler{send: sends((*Syncer).pushUpdateStory), local: story})
+	register(outbox.KindDeleteStory, opHandler{send: sends((*Syncer).pushDeleteItem), local: story})
+	register(outbox.KindUploadAttachment, opHandler{send: sends((*Syncer).pushUpload), find: findUpload})
+	register(outbox.KindDeleteAttachment, opHandler{send: sends((*Syncer).pushDeleteItem), local: attachment})
+}
 
 func (s *Syncer) pushComment(ctx context.Context, op outbox.Op) error {
 	if localgid.IsLocal(op.TaskGID) {
@@ -47,20 +58,6 @@ func (s *Syncer) pushUpload(ctx context.Context, op outbox.Op) error {
 	return sentNotSaved(s.Store.CompleteUpload(ctx, op.ID, local, att.GID, att.ViewURL))
 }
 
-// storyTarget returns, for an edit or a delete of a comment, attachment or time entry, the payload key
-// of its gid and the ResultKind under which a local one's result is recorded ("" otherwise).
-func storyTarget(kind outbox.Kind) (key string, result readmodel.ResultKind) {
-	switch kind {
-	case outbox.KindUpdateStory, outbox.KindDeleteStory:
-		return "story", readmodel.ResultStory
-	case outbox.KindDeleteAttachment:
-		return "attachment", readmodel.ResultAttachment
-	case outbox.KindUpdateTimeEntry, outbox.KindDeleteTimeEntry:
-		return "entry", readmodel.ResultTimeEntry
-	}
-	return "", ""
-}
-
 // pushUpdateStory edits a comment; sending it twice is harmless (PUT). A comment deleted
 // in Asana answers 404: the edit is dropped (dropGone).
 func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
@@ -89,9 +86,8 @@ func (s *Syncer) pushUpdateStory(ctx context.Context, op outbox.Op) error {
 // it is gone already (deleted elsewhere, or by an earlier request whose answer was lost),
 // which is what was asked.
 func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
-	key, prefix := storyTarget(op.Kind)
-	gid, _ := op.Payload[key].(string)
-	real, _, err := s.Store.LocalResult(ctx, prefix, gid)
+	ref := handlers[op.Kind].local
+	real, _, err := s.Store.LocalResult(ctx, ref.result, payloadString(op, ref.key))
 	if err != nil {
 		return err
 	}
@@ -113,4 +109,43 @@ func (s *Syncer) pushDeleteItem(ctx context.Context, op outbox.Op) error {
 		_ = s.Store.RemoveAttachmentFile(path) // only inside the attachments folder
 	}
 	return nil
+}
+
+// findComment looks for the comment an add_comment posted (see reconcile).
+func findComment(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	stories, err := s.API.Stories(ctx, op.TaskGID)
+	if err != nil {
+		return sent, notFound, err
+	}
+	used, err := s.taken(ctx, readmodel.ResultStory)
+	if err != nil {
+		return sent, notFound, err
+	}
+	st, m := pick(stories, func(st model.Story) bool {
+		return !used[st.GID] && st.Type == "comment" && f.byMe(st.CreatedBy) && f.recent(st.CreatedAt) &&
+			sameComment(st, str("text"), str("html_text"))
+	})
+	if m != matched {
+		return sent, m, nil
+	}
+	return sent, matched, s.Store.CompleteComment(ctx, op.ID, str("story_gid"), op.TaskGID, st)
+}
+
+// findUpload looks for the attachment an upload_attachment added (see reconcile).
+func findUpload(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	atts, err := s.API.Attachments(ctx, op.TaskGID)
+	if err != nil {
+		return sent, notFound, err
+	}
+	used, err := s.taken(ctx, readmodel.ResultAttachment)
+	if err != nil {
+		return sent, notFound, err
+	}
+	a, m := pick(atts, func(a model.Attachment) bool { return !used[a.GID] && a.Name == str("name") && f.recent(a.CreatedAt) })
+	if m != matched {
+		return sent, m, nil
+	}
+	return sent, matched, s.Store.CompleteUpload(ctx, op.ID, str("attachment"), a.GID, a.ViewURL)
 }

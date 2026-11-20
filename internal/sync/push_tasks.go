@@ -3,15 +3,41 @@ package sync
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"strings"
-	"time"
+	domaintask "github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // Sending changes to tasks themselves: updates, creates, duplicates, moves to a section,
 // deletes and parent changes.
+
+func init() {
+	register(outbox.KindUpdateTask, opHandler{send: (*Syncer).pushUpdate, batch: batchUpdateTask, startOn: true})
+	register(outbox.KindCreateTask, opHandler{send: (*Syncer).pushCreate, find: findCreatedTask, startOn: true,
+		fieldValues: func(op outbox.Op) map[string]any {
+			cfs, _ := op.Payload["custom_fields"].(map[string]any)
+			return cfs
+		}})
+	// A duplicate is copied by a background job, so its result takes longer to show.
+	register(outbox.KindDuplicateTask, opHandler{send: sends((*Syncer).pushDuplicate), find: findDuplicate, settle: 5 * time.Minute})
+	register(outbox.KindMoveTask, opHandler{send: sends((*Syncer).pushMove), batch: batchMoveTask,
+		goneReason: func(op outbox.Op, cause error) string {
+			if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
+				return "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			}
+			return ""
+		}})
+	register(outbox.KindDeleteTask, opHandler{send: sends((*Syncer).pushDelete)})
+	register(outbox.KindSetParent, opHandler{send: sends((*Syncer).pushSetParent),
+		goneReason: func(_ outbox.Op, cause error) string {
+			return "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+		}})
+}
 
 func (s *Syncer) pushUpdate(ctx context.Context, op outbox.Op) (outcome, error) {
 	if localgid.IsLocal(op.TaskGID) {
@@ -326,4 +352,109 @@ func (s *Syncer) pushDuplicate(ctx context.Context, op outbox.Op) error {
 		s.refresh(ctx, *t)
 	}
 	return nil
+}
+
+// findCreatedTask looks for the task a create_task made (see reconcile).
+func findCreatedTask(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	tasks, ok, err := s.tasksCreatedUnder(ctx, str("parent"), str("project"), str("assignee"), str("workspace"), f.since)
+	if err != nil || !ok {
+		return sent, ambiguousUnless(ok), err
+	}
+	used, err := s.taken(ctx, readmodel.ResultTask)
+	if err != nil {
+		return sent, notFound, err
+	}
+	t, m := pick(tasks, func(t model.Task) bool {
+		return !used[t.GID] && t.Name == str("name") && f.recent(t.CreatedAt) && f.byMe(t.CreatedBy) && sameTaskFields(t, op.Payload)
+	})
+	if m != matched {
+		return sent, m, nil
+	}
+	var move *outbox.MoveTarget
+	if section := str("section"); section != "" {
+		move = &outbox.MoveTarget{Project: str("project"), Section: section, From: sectionIn(&t, str("project"))}
+	}
+	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, move); err != nil {
+		return sent, notFound, err
+	}
+	s.refresh(ctx, t)
+	if move != nil {
+		return followUp, matched, nil
+	}
+	return sent, matched, nil
+}
+
+// findDuplicate looks for the copy a duplicate_task made (see reconcile).
+func findDuplicate(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	// The copy goes where the source is (same parent, or the source's first project).
+	src, err := s.API.Task(ctx, str("source"))
+	if err != nil {
+		return sent, notFound, err
+	}
+	parent, project, assignee, ws := "", "", "", ""
+	if src.Parent != nil {
+		parent = src.Parent.GID
+	}
+	if len(src.Memberships) > 0 && src.Memberships[0].Project != nil {
+		project = src.Memberships[0].Project.GID
+	}
+	if src.Assignee != nil {
+		assignee = src.Assignee.GID
+	}
+	if src.Workspace != nil {
+		ws = src.Workspace.GID
+	}
+	tasks, ok, err := s.tasksCreatedUnder(ctx, parent, project, assignee, ws, f.since)
+	if err != nil || !ok {
+		return sent, ambiguousUnless(ok), err
+	}
+	used, err := s.taken(ctx, readmodel.ResultTask)
+	if err != nil {
+		return sent, notFound, err
+	}
+	t, m := pick(tasks, func(t model.Task) bool {
+		return !used[t.GID] && t.Name == str("name") && t.GID != src.GID && f.recent(t.CreatedAt)
+	})
+	if m != matched {
+		return sent, m, nil
+	}
+	if err := s.Store.CompleteCreate(ctx, op.ID, op.TaskGID, t.GID, nil); err != nil {
+		return sent, notFound, err
+	}
+	s.refresh(ctx, t)
+	return sent, matched, nil
+}
+
+// batchUpdateTask is the batch request for an update_task: its fields, checked against the task in Asana first.
+func batchUpdateTask(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+	task := e.task
+	if domaintask.TouchesCustomType(op.Payload) {
+		return false, nil // sent alone: a 402 there records that the plan lacks custom types
+	}
+	e.write = model.BatchUpdateTask(task, taskUpdateFields(op))
+	e.check = func(op outbox.Op, server *model.Task) (map[string]any, error) {
+		return updateConflicts(op, server), nil
+	}
+	return true, nil
+}
+
+// batchMoveTask is the batch request for a move_task to a section without a place in it.
+func batchMoveTask(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	task := e.task
+	section := str("section")
+	if !realGID(section) {
+		return false, nil
+	}
+	if str("insert_before") != "" || str("insert_after") != "" {
+		// A place is next to another task, which an action of the same batch may move:
+		// the batch keeps the order of one task's changes only. Sent alone, in order.
+		return false, nil
+	}
+	e.write = model.BatchMoveTaskToSection(section, task)
+	e.project, e.section = str("project"), section
+	e.refresh = true
+	return true, nil
 }

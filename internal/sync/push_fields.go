@@ -16,25 +16,30 @@ import (
 // Sending changes to custom fields themselves (#37): an option added to a field, a field
 // added to or removed from a project.
 
+func init() {
+	register(outbox.KindSetCustomField, opHandler{send: (*Syncer).pushCustomField, batch: batchCustomField,
+		fieldValues: func(op outbox.Op) map[string]any {
+			return map[string]any{payloadString(op, "field"): op.Payload["value"]}
+		}})
+	register(outbox.KindCreateEnumOption, opHandler{send: (*Syncer).pushCreateEnumOption, forbidden: enumOptionForbidden,
+		find: func(s *Syncer, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
+			m, err := s.findEnumOption(ctx, op)
+			return sent, m, err
+		}})
+	register(outbox.KindAddFieldSetting, opHandler{send: sends((*Syncer).pushFieldSetting), forbidden: fieldSettingForbidden})
+	register(outbox.KindRemoveFieldSetting, opHandler{send: sends((*Syncer).pushFieldSetting), forbidden: fieldSettingForbidden})
+}
+
 // waitsForField reports whether a value of a custom field (set_custom_field, or a create
 // with values) uses an option created offline whose creation is still queued, or a field
 // whose adding to a project of the task is still queued. It waits, and goes out once that
 // is sent (the option's gid is then replaced in it) or is discarded with it.
 func (s *Syncer) waitsForField(ctx context.Context, op outbox.Op) (bool, error) {
-	values := map[string]any{}
-	switch op.Kind {
-	case outbox.KindSetCustomField:
-		field, _ := op.Payload["field"].(string)
-		values[field] = op.Payload["value"]
-	case outbox.KindCreateTask:
-		cfs, _ := op.Payload["custom_fields"].(map[string]any)
-		for k, v := range cfs {
-			values[k] = v
-		}
-	default:
+	valuesOf := handlers[op.Kind].fieldValues
+	if valuesOf == nil {
 		return false, nil
 	}
-	for field, v := range values {
+	for field, v := range valuesOf(op) {
 		if wait, err := s.Store.FieldSettingQueued(ctx, op.TaskGID, field); err != nil || wait {
 			return wait, err
 		}
@@ -177,23 +182,19 @@ func hasField(settings []model.CustomFieldSetting, field string) bool {
 	return false
 }
 
-// fieldForbidden records that Asana refused (403) a change to a custom field itself, so
-// that it is not offered again for that field or project, and says why.
-func (s *Syncer) fieldForbidden(ctx context.Context, op outbox.Op, cause error) error {
-	if !isForbidden(cause) {
-		return cause
-	}
-	now := s.clock()
-	switch op.Kind {
-	case outbox.KindCreateEnumOption:
-		field, _ := op.Payload["field"].(string)
-		_ = s.Store.SetFieldOptionsLocked(ctx, field, now)
-		return fmt.Errorf("Asana がこのフィールドへの選択肢の追加を許可しませんでした (選択肢の編集が制限されているか、権限がありません): %w", cause)
-	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
-		_ = s.Store.SetProjectFieldsLocked(ctx, op.TaskGID, now)
-		return fmt.Errorf("Asana がこのプロジェクトのカスタムフィールドの変更を許可しませんでした (権限がありません): %w", cause)
-	}
-	return cause
+// enumOptionForbidden records that Asana refused (403) to add an option to a field, so
+// that adding one is not offered again for that field, and says why.
+func enumOptionForbidden(s *Syncer, ctx context.Context, op outbox.Op, cause error) error {
+	_ = s.Store.SetFieldOptionsLocked(ctx, payloadString(op, "field"), s.clock())
+	return fmt.Errorf("Asana がこのフィールドへの選択肢の追加を許可しませんでした (選択肢の編集が制限されているか、権限がありません): %w", cause)
+}
+
+// fieldSettingForbidden records that Asana refused (403) to add a custom field to a
+// project or remove one from it, so that it is not offered again for that project, and
+// says why.
+func fieldSettingForbidden(s *Syncer, ctx context.Context, op outbox.Op, cause error) error {
+	_ = s.Store.SetProjectFieldsLocked(ctx, op.TaskGID, s.clock())
+	return fmt.Errorf("Asana がこのプロジェクトのカスタムフィールドの変更を許可しませんでした (権限がありません): %w", cause)
 }
 
 // syncWorkspaceCustomFields fetches the custom fields of a workspace (to add one to a
@@ -307,4 +308,19 @@ func normalize(v any) any {
 		return out
 	}
 	return v
+}
+
+// batchCustomField is the batch request for a set_custom_field, checked against the task in Asana first.
+func batchCustomField(s *Syncer, ctx context.Context, op outbox.Op, e *batchEntry) (bool, error) {
+	str := func(k string) string { return payloadString(op, k) }
+	task := e.task
+	if str("field") == "" {
+		return false, nil
+	}
+	if wait, err := s.waitsForField(ctx, op); err != nil || wait {
+		return false, err // an option or a field of the project is created first
+	}
+	e.write = model.BatchUpdateTask(task, customFieldUpdate(op))
+	e.check = customFieldConflict
+	return true, nil
 }

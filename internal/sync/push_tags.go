@@ -2,12 +2,43 @@ package sync
 
 import (
 	"context"
+
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 // Sending changes to tags themselves (#33).
+
+func init() {
+	waits := func(s *Syncer, ctx context.Context, op outbox.Op) (bool, error) {
+		return s.waitsForTag(ctx, op.TaskGID)
+	}
+	register(outbox.KindUpdateTag, opHandler{send: (*Syncer).pushUpdateTag, waits: waits,
+		planWorkspace: func(s *Syncer, ctx context.Context, op outbox.Op) string {
+			ws, _ := s.Store.TagWorkspace(ctx, op.TaskGID)
+			return ws
+		}})
+	register(outbox.KindDeleteTag, opHandler{send: sends((*Syncer).pushDeleteTag), waits: waits, planWorkspace: deletedTagWorkspace})
+}
+
+// deletedTagWorkspace is the workspace of a tag being deleted. The tag is gone from the
+// cache: its workspace is kept in the entry (or, for an entry queued before #68, the tasks
+// it was on, in the order TagWorkspace reads them).
+func deletedTagWorkspace(s *Syncer, ctx context.Context, op outbox.Op) string {
+	if ws := payloadString(op, "workspace"); ws != "" {
+		return ws
+	}
+	tasks, _ := op.Payload["tasks"].([]any)
+	for _, t := range tasks {
+		if g, _ := t.(string); g != "" {
+			if ws, _ := s.Store.TaskWorkspace(ctx, g); ws != "" {
+				return ws
+			}
+		}
+	}
+	return ""
+}
 
 // pushUpdateTag renames and/or recolors a tag. A value changed in Asana since the local
 // edit (to something else) is a conflict.

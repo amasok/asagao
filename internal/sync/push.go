@@ -319,9 +319,9 @@ func (s *Syncer) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 			return err
 		}
 		op.Attempts++
-		if op.Kind == outbox.KindMarkNotification {
+		if h := handlers[op.Kind]; h.sendAlong != nil {
 			var batched int // entries sent along with this one, whatever happened to it
-			out, batched, err = s.pushMarkNotification(ctx, *op)
+			out, batched, err = h.sendAlong(s, ctx, *op)
 			res.Sent += batched
 		} else {
 			out, err = s.send(ctx, *op)
@@ -385,9 +385,10 @@ const maxStepsPerEntry = 4
 // it). An edit or delete of a comment or attachment not created in Asana yet waits for
 // its create too.
 func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error) {
-	if key, prefix := storyTarget(op.Kind); key != "" {
-		g, _ := op.Payload[key].(string)
-		if _, waiting, err := s.Store.LocalResult(ctx, prefix, g); err != nil || waiting {
+	h := handlers[op.Kind]
+	if h.local.key != "" {
+		g := payloadString(op, h.local.key)
+		if _, waiting, err := s.Store.LocalResult(ctx, h.local.result, g); err != nil || waiting {
 			return waiting, err
 		}
 	}
@@ -397,29 +398,17 @@ func (s *Syncer) waitsForCreate(ctx context.Context, op outbox.Op) (bool, error)
 	if wait, err := s.waitsForField(ctx, op); err != nil || wait {
 		return wait, err
 	}
-	if op.Kind == outbox.KindDeleteSection { // Asana deletes only an empty section
-		if wait, err := s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID); err != nil || wait {
+	if h.waits != nil {
+		if wait, err := h.waits(s, ctx, op); err != nil || wait {
 			return wait, err
 		}
 	}
-	gid := op.TaskGID
-	switch op.Kind {
-	case outbox.KindCreateTask:
-		gid, _ = op.Payload["parent"].(string)
-	case outbox.KindSetParent: // the task, and the new parent
-		if parent, _ := op.Payload["parent"].(string); parent != "" {
-			if wait, err := s.createQueued(ctx, parent); err != nil || wait {
-				return wait, err
-			}
+	for _, gid := range outbox.TaskDeps(op) {
+		if wait, err := s.createQueued(ctx, gid); err != nil || wait {
+			return wait, err
 		}
-	case outbox.KindDuplicateTask, outbox.KindCreateStatus, outbox.KindRenameSection, outbox.KindMarkNotification,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateProject,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
-		return false, nil
-	case outbox.KindUpdateTag, outbox.KindDeleteTag:
-		return s.waitsForTag(ctx, op.TaskGID)
 	}
-	return s.createQueued(ctx, gid)
+	return false, nil
 }
 
 // createQueued reports whether gid is a task created offline whose create (or duplicate)
@@ -440,7 +429,7 @@ func (s *Syncer) createQueued(ctx context.Context, gid string) (bool, error) {
 // plan.RecheckAfter.
 func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	_, withStart := op.Payload["start_on"]
-	withStart = withStart && (op.Kind == outbox.KindUpdateTask || op.Kind == outbox.KindCreateTask)
+	withStart = withStart && handlers[op.Kind].startOn
 	var startWS string
 	if withStart {
 		// before sending: a create gives the task its Asana gid
@@ -450,8 +439,8 @@ func (s *Syncer) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		}
 	}
 	out, err := s.sendOp(ctx, op)
-	if isForbidden(err) {
-		err = s.fieldForbidden(ctx, op, err)
+	if h := handlers[op.Kind]; isForbidden(err) && h.forbidden != nil {
+		err = h.forbidden(s, ctx, op, err)
 	}
 	if feature := plan.FeatureOf(op.Kind); feature == plan.CustomFields { // recorded per workspace
 		ws, _ := op.Payload["workspace"].(string)
@@ -543,73 +532,11 @@ func (s *Syncer) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWi
 }
 
 func (s *Syncer) sendOp(ctx context.Context, op outbox.Op) (outcome, error) {
-	var err error
-	switch op.Kind {
-	case outbox.KindUpdateTask:
-		return s.pushUpdate(ctx, op)
-	case outbox.KindSetCustomField:
-		return s.pushCustomField(ctx, op)
-	case outbox.KindRenameSection:
-		return s.pushRenameSection(ctx, op)
-	case outbox.KindCreateSection:
-		return s.pushCreateSection(ctx, op)
-	case outbox.KindDeleteSection:
-		err = s.pushDeleteSection(ctx, op)
-	case outbox.KindInsertSection:
-		err = s.pushInsertSection(ctx, op)
-	case outbox.KindUpdateTag:
-		return s.pushUpdateTag(ctx, op)
-	case outbox.KindDeleteTag:
-		err = s.pushDeleteTag(ctx, op)
-	case outbox.KindMoveMySection:
-		err = s.pushMoveMySection(ctx, op)
-	case outbox.KindUpdateProject:
-		return s.pushUpdateProject(ctx, op)
-	case outbox.KindUpdateProjectBrief:
-		return s.pushUpdateBrief(ctx, op)
-	case outbox.KindCreateEnumOption:
-		return s.pushCreateEnumOption(ctx, op)
-	case outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting:
-		err = s.pushFieldSetting(ctx, op)
-	case outbox.KindCreateTask:
-		return s.pushCreate(ctx, op)
-	case outbox.KindAddComment:
-		err = s.pushComment(ctx, op)
-	case outbox.KindMoveTask:
-		err = s.pushMove(ctx, op)
-	case outbox.KindAddTag, outbox.KindRemoveTag:
-		err = s.pushTag(ctx, op)
-	case outbox.KindAddFollower, outbox.KindRemoveFollower, outbox.KindAddProject, outbox.KindRemoveProject:
-		err = s.pushRelation(ctx, op)
-	case outbox.KindAddDependency, outbox.KindRemoveDependency:
-		err = s.pushDependency(ctx, op)
-	case outbox.KindDeleteTask:
-		err = s.pushDelete(ctx, op)
-	case outbox.KindSetParent:
-		err = s.pushSetParent(ctx, op)
-	case outbox.KindDuplicateTask:
-		err = s.pushDuplicate(ctx, op)
-	case outbox.KindUploadAttachment:
-		err = s.pushUpload(ctx, op)
-	case outbox.KindUpdateStory:
-		err = s.pushUpdateStory(ctx, op)
-	case outbox.KindDeleteStory, outbox.KindDeleteAttachment:
-		err = s.pushDeleteItem(ctx, op)
-	case outbox.KindAddTimeEntry:
-		err = s.pushAddTimeEntry(ctx, op)
-	case outbox.KindUpdateTimeEntry:
-		err = s.pushUpdateTimeEntry(ctx, op)
-	case outbox.KindDeleteTimeEntry:
-		err = s.pushDeleteTimeEntry(ctx, op)
-	case outbox.KindCreateStatus:
-		err = s.pushStatus(ctx, op)
-	case outbox.KindMarkNotification:
-		out, _, err := s.pushMarkNotification(ctx, op)
-		return out, err
-	default:
-		err = &model.Error{Status: 400}
+	h, ok := handlers[op.Kind]
+	if !ok { // an entry of a newer version: Asana cannot be asked for it
+		return sent, &model.Error{Status: 400}
 	}
-	return sent, err
+	return h.send(s, ctx, op)
 }
 
 // holdBack handles a network error while sending op: it goes back in the queue, to be
@@ -707,14 +634,13 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 		discards, err = s.Store.DiscardDeletedTask(ctx, gid, reason, now)
 		return nil
 	}
-	switch op.Kind {
-	case outbox.KindCreateTask, outbox.KindDuplicateTask:
+	subject := outbox.SubjectOf(op.Kind)
+	switch {
+	case subject == outbox.SubjectNewTask: // its parent or project is gone
 		if ferr := deleteTask(op.TaskGID); ferr != nil {
 			return ferr
 		}
-	case outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindMarkNotification, outbox.KindUpdateProject,
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, outbox.KindUpdateTag, outbox.KindDeleteTag,
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting, outbox.KindUpdateProjectBrief:
+	case subject != outbox.SubjectTask && op.Kind.Known(): // a section, project, tag, ... is gone
 		var d readmodel.Discard
 		d, err = s.Store.DiscardGoneOp(ctx, op.ID, reason, now)
 		discards = []readmodel.Discard{d}
@@ -745,14 +671,10 @@ func (s *Syncer) dropGone(ctx context.Context, op outbox.Op, cause error, st *dr
 				return ferr
 			}
 		} else {
-			switch op.Kind { // the other task is missing, or private to someone else
-			case outbox.KindAddDependency, outbox.KindRemoveDependency:
-				reason = "依存先のタスクが Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
-			case outbox.KindSetParent:
-				reason = "親タスク (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
-			case outbox.KindMoveTask:
-				if op.Payload["insert_before"] != nil || op.Payload["insert_after"] != nil {
-					reason = "セクション (または位置の目印のタスク) が Asana で見つからないか、アクセスできません (" + cause.Error() + ")"
+			// Something else it names is missing, or private to someone else.
+			if f := handlers[op.Kind].goneReason; f != nil {
+				if r := f(op, cause); r != "" {
+					reason = r
 				}
 			}
 			var d readmodel.Discard

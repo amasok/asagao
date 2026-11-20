@@ -40,30 +40,9 @@ func (s *Syncer) clearPlanRefusal(ctx context.Context, feature, workspaceGID str
 // a move in My Tasks, or of a task carrying a tag; the default workspace when that is not
 // known.
 func (s *Syncer) planWorkspace(ctx context.Context, op outbox.Op) string {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
 	var ws string
-	switch op.Kind {
-	case outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection:
-		ws, _ = s.Store.ProjectWorkspace(ctx, str("project"))
-	case outbox.KindMoveMySection:
-		if ws = str("workspace"); ws == "" {
-			ws, _ = s.Store.TaskWorkspace(ctx, op.TaskGID)
-		}
-	case outbox.KindUpdateTag:
-		ws, _ = s.Store.TagWorkspace(ctx, op.TaskGID)
-	case outbox.KindDeleteTag:
-		// The tag is gone from the cache: its workspace is kept in the entry (or, for an
-		// entry queued before #68, the tasks it was on, in the order TagWorkspace reads them).
-		if ws = str("workspace"); ws == "" {
-			tasks, _ := op.Payload["tasks"].([]any)
-			for _, t := range tasks {
-				if g, _ := t.(string); g != "" {
-					if ws, _ = s.Store.TaskWorkspace(ctx, g); ws != "" {
-						break
-					}
-				}
-			}
-		}
+	if f := handlers[op.Kind].planWorkspace; f != nil {
+		ws = f(s, ctx, op)
 	}
 	if ws == "" {
 		ws, _ = s.Store.DefaultWorkspace(ctx)

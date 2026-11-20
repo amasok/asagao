@@ -12,15 +12,31 @@ import (
 
 // Sending changes to sections themselves (#33).
 
-// sectionKinds are the kinds whose task_gid is a section gid.
-var sectionKinds = []outbox.Kind{outbox.KindRenameSection, outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection}
+func init() {
+	register(outbox.KindRenameSection, opHandler{send: (*Syncer).pushRenameSection})
+	register(outbox.KindCreateSection, opHandler{send: (*Syncer).pushCreateSection, planWorkspace: sectionWorkspace,
+		find: func(s *Syncer, ctx context.Context, op outbox.Op, _ finder) (outcome, match, error) {
+			return s.findCreatedSection(ctx, op)
+		}})
+	register(outbox.KindDeleteSection, opHandler{send: sends((*Syncer).pushDeleteSection), planWorkspace: sectionWorkspace,
+		waits: func(s *Syncer, ctx context.Context, op outbox.Op) (bool, error) {
+			return s.Store.TaskDeletesQueuedIn(ctx, op.TaskGID) // Asana deletes only an empty section
+		}})
+	register(outbox.KindInsertSection, opHandler{send: sends((*Syncer).pushInsertSection), planWorkspace: sectionWorkspace})
+}
+
+// sectionWorkspace is the workspace of the project of a section entry.
+func sectionWorkspace(s *Syncer, ctx context.Context, op outbox.Op) string {
+	ws, _ := s.Store.ProjectWorkspace(ctx, payloadString(op, "project"))
+	return ws
+}
 
 // waitsForSection reports whether op names a section created offline whose creation is
 // still queued (pending, being verified or failed): it waits, and goes out once the
 // section is created (its gid is then replaced in op) or is discarded with it.
 func (s *Syncer) waitsForSection(ctx context.Context, op outbox.Op) (bool, error) {
 	var refs []string
-	if slices.Contains(sectionKinds, op.Kind) && op.Kind != outbox.KindCreateSection {
+	if spec, _ := outbox.SpecOf(op.Kind); spec.Subject == outbox.SubjectSection && !spec.Creates {
 		refs = append(refs, op.TaskGID)
 	}
 	for _, k := range outbox.SectionRefKeys {
