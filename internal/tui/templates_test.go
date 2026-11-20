@@ -149,8 +149,8 @@ func TestTemplatesFromTheMenu(t *testing.T) {
 		t.Fatalf("picker = %+v", h.m.picker)
 	}
 	h.key("enter")
-	if h.m.promptMode != promptTemplateProject || h.m.prompt.Value() != "新居テンプレ" {
-		t.Fatalf("prompt %v %q", h.m.promptMode, h.m.prompt.Value())
+	if h.m.prompt.mode != promptTemplateProject || h.m.prompt.input.Value() != "新居テンプレ" {
+		t.Fatalf("prompt %v %q", h.m.prompt.mode, h.m.prompt.input.Value())
 	}
 	h.typeText(" 2")
 	h.key("enter")
@@ -166,8 +166,8 @@ func TestTemplatesFromTheMenu(t *testing.T) {
 		h.key("h", "k", "l")
 	}
 	h.key("space", "S")
-	if h.m.promptMode != promptDuplicateProject || h.m.prompt.Value() != "新居プロジェクト のコピー" {
-		t.Fatalf("prompt %v %q", h.m.promptMode, h.m.prompt.Value())
+	if h.m.prompt.mode != promptDuplicateProject || h.m.prompt.input.Value() != "新居プロジェクト のコピー" {
+		t.Fatalf("prompt %v %q", h.m.prompt.mode, h.m.prompt.input.Value())
 	}
 	h.key("enter")
 	if last := f.lastPost(); !strings.HasPrefix(last, "POST /projects/p1/duplicate ") || !strings.Contains(last, `"name":"新居プロジェクト のコピー"`) {
@@ -237,7 +237,7 @@ func TestTemplatesOffline(t *testing.T) {
 		t.Fatalf("offered offline:\n%s", s)
 	}
 	h.key("S")
-	if !strings.Contains(h.screen(), "オフラインのためできません") || h.m.promptMode != promptNone {
+	if !strings.Contains(h.screen(), "オフラインのためできません") || h.m.prompt.mode != promptNone {
 		t.Fatalf("duplicate offline: %q", h.m.status)
 	}
 	if len(f.posts)+len(f.gets) != 0 {

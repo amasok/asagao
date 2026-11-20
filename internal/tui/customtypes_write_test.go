@@ -59,13 +59,13 @@ func TestCustomTypePickers(t *testing.T) {
 		t.Errorf("status line %q", got)
 	}
 	// The detail shows the type by its name, and the status as an item of its own.
-	h.m.detail = d
+	h.m.detail.task = d
 	out := ansi.Strip(h.m.renderDetail(100))
 	if !strings.Contains(out, "バグ") || !strings.Contains(out, "修正済み") {
 		t.Fatalf("detail:\n%s", out)
 	}
 	found := false
-	for _, it := range h.m.detailItems {
+	for _, it := range h.m.detail.items {
 		found = found || it.kind == itemCustomStatus
 	}
 	if !found {

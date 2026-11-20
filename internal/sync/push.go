@@ -27,21 +27,8 @@ import (
 // text for the user, kept in the outbox as it was written (an older store shows the same).
 const ambiguousMessage = "Asana に届いたか自動で確かめられませんでした（同じ内容のものが複数あります）。Asana で確認して、届いていなければ再送、届いていれば破棄してください"
 
-type PushResult struct {
-	Sent      int `json:"sent"`
-	Conflicts int `json:"conflicts"`
-	Failed    int `json:"failed"`
-	// Remaining is the number of pending entries left (e.g. because we went offline).
-	Remaining int `json:"remaining"`
-	// Busy is set when another process was already sending (Push returns ErrPushBusy).
-	Busy bool `json:"busy,omitempty"`
-	// Discarded lists changes dropped because what they change was deleted in Asana. They
-	// are also kept for the front ends to show once (store.PendingDiscards).
-	Discarded []readmodel.Discard `json:"discarded,omitempty"`
-	// InboxReadOnly is set when Asana refused to mark notifications read / unread (no
-	// notifications:write scope): those changes were dropped (see pushMarkNotification).
-	InboxReadOnly bool `json:"inbox_read_only,omitempty"`
-}
+// PushResult is what one push did (readmodel.PushResult, so that internal/app can read it).
+type PushResult = readmodel.PushResult
 
 // ErrPushBusy is returned by Push when another process (TUI, CLI, MCP server) is sending
 // the outbox. The entries stay queued; they are sent by that process or the next push.
@@ -797,7 +784,7 @@ const maxDroppedTasks = 5
 // ErrAccountChanged is returned by Push when the logged-in Asana account is not the one
 // the local data belongs to: Asana answers 404 for everything, which must not be taken as
 // deletions.
-var ErrAccountChanged = errors.New("ログイン中の Asana アカウントが、ローカルのデータを同期したアカウントと違うため送れません")
+var ErrAccountChanged = readmodel.ErrAccountChanged
 
 // checkAccount makes sure (once per push) that the API acts as the user the store was
 // synced with.

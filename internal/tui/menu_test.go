@@ -36,7 +36,7 @@ func menuScreens(t *testing.T, h *harness) []string {
 	for p := 2; p <= n; p++ {
 		h.key("tab")
 		s := h.screen()
-		if !h.m.leader {
+		if !h.m.showing(overlayMenu) {
 			t.Fatalf("tab closed the menu on page %d", p-1)
 		}
 		if !strings.Contains(s, fmt.Sprintf("メニュー %d/%d", p, n)) {
@@ -112,15 +112,15 @@ func TestTUIMenuPageKeys(t *testing.T) {
 	for _, k := range menuNext {
 		h.m.menuPage = 0
 		h.send(keyMsg(k))
-		if !h.m.leader || page() != 1 {
-			t.Errorf("%s: open %v, page %d (want 1)", k, h.m.leader, page())
+		if !h.m.showing(overlayMenu) || page() != 1 {
+			t.Errorf("%s: open %v, page %d (want 1)", k, h.m.showing(overlayMenu), page())
 		}
 	}
 	for _, k := range menuPrev {
 		h.m.menuPage = 1
 		h.send(keyMsg(k))
-		if !h.m.leader || page() != 0 {
-			t.Errorf("%s: open %v, page %d (want 0)", k, h.m.leader, page())
+		if !h.m.showing(overlayMenu) || page() != 0 {
+			t.Errorf("%s: open %v, page %d (want 0)", k, h.m.showing(overlayMenu), page())
 		}
 	}
 	h.m.menuPage = 0
@@ -133,7 +133,7 @@ func TestTUIMenuPageKeys(t *testing.T) {
 		t.Errorf("j on the last page: page %d, want 0", page())
 	}
 	h.key("tab", "esc")
-	if h.m.leader {
+	if h.m.showing(overlayMenu) {
 		t.Fatal("esc did not close the menu")
 	}
 	h.key("space")
@@ -141,8 +141,8 @@ func TestTUIMenuPageKeys(t *testing.T) {
 		t.Errorf("the menu reopens on page %d", page()+1)
 	}
 	h.key("?") // on the last page, not the first
-	if h.m.leader || !h.m.showHelp {
-		t.Errorf("? from page 1 did not open the help: menu %v, help %v", h.m.leader, h.m.showHelp)
+	if h.m.showing(overlayMenu) || !h.m.showing(overlayHelp) {
+		t.Errorf("? from page 1 did not open the help: menu %v, help %v", h.m.showing(overlayMenu), h.m.showing(overlayHelp))
 	}
 }
 

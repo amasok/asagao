@@ -90,8 +90,8 @@ func TestSearchAsanaFromTheTUI(t *testing.T) {
 	h.menu("g")
 	// (the status line then shows the selected task's detail fetch, which the fake refuses)
 	s := h.screen()
-	if !strings.Contains(s, "古い見積もり") || !strings.Contains(s, "Asana も") || h.m.remote.query != "見積" || h.m.remote.byName {
-		t.Fatalf("found task should be listed (remote %+v):\n%s", h.m.remote, s)
+	if !strings.Contains(s, "古い見積もり") || !strings.Contains(s, "Asana も") || h.m.search.remote.query != "見積" || h.m.search.remote.byName {
+		t.Fatalf("found task should be listed (remote %+v):\n%s", h.m.search.remote, s)
 	}
 	// another search: what Asana found for the old one is not mixed in
 	h.key("/")
@@ -108,14 +108,14 @@ func TestSearchAsanaByNameWithoutTheSearchAPI(t *testing.T) {
 	h.typeText("古い")
 	h.key("enter")
 	h.menu("g")
-	if s := h.screen(); !strings.Contains(s, "古い見積もり") || !h.m.remote.byName {
-		t.Fatalf("typeahead result (remote %+v):\n%s", h.m.remote, s)
+	if s := h.screen(); !strings.Contains(s, "古い見積もり") || !h.m.search.remote.byName {
+		t.Fatalf("typeahead result (remote %+v):\n%s", h.m.search.remote, s)
 	}
 }
 
 func TestSearchAsanaStatus(t *testing.T) {
 	h := newHarness(t, 160, 30)
-	h.m.query = "x"
+	h.m.search.query = "x"
 	for _, tc := range []struct {
 		msg  remoteSearchMsg
 		want string
@@ -165,15 +165,15 @@ func TestQuickAddLooksUpAnAssigneeTheCacheLacks(t *testing.T) {
 // the current search nor the status line.
 func TestSearchAsanaLateAnswerIsDropped(t *testing.T) {
 	h := newHarness(t, 160, 30)
-	h.m.query = "B"
+	h.m.search.query = "B"
 	h.run(h.m.remoteSearchDone(remoteSearchMsg{query: "B", res: readmodel.RemoteSearchResult{GIDs: []string{"t1"}}}))
 	for _, late := range []remoteSearchMsg{
 		{query: "A", res: readmodel.RemoteSearchResult{GIDs: []string{"t2", "t3"}}},
 		{query: "A", err: errors.New("offline")},
 	} {
 		h.run(h.m.remoteSearchDone(late))
-		if h.m.remote.query != "B" || len(h.m.remote.gids) != 1 || h.m.status != "Asana で 1 件見つかりました" {
-			t.Fatalf("late answer %+v: remote %+v status %q", late, h.m.remote, h.m.status)
+		if h.m.search.remote.query != "B" || len(h.m.search.remote.gids) != 1 || h.m.status != "Asana で 1 件見つかりました" {
+			t.Fatalf("late answer %+v: remote %+v status %q", late, h.m.search.remote, h.m.status)
 		}
 	}
 }

@@ -44,7 +44,7 @@ func TestAttackMenuTinyScreens(t *testing.T) {
 					_ = h.screen()
 				}
 				h.key("esc")
-				if h.m.leader {
+				if h.m.showing(overlayMenu) {
 					t.Error("esc did not close")
 				}
 			})
@@ -81,7 +81,7 @@ func TestAttackMenuResizeWhileOpen(t *testing.T) {
 	for _, sz := range [][2]int{{140, 40}, {20, 4}, {80, 24}, {1, 1}, {60, 12}} {
 		h.send(tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
 		_ = h.screen()
-		if !h.m.leader {
+		if !h.m.showing(overlayMenu) {
 			t.Fatalf("resize to %v closed the menu", sz)
 		}
 		_, p, c, _ := h.m.currentMenuPage()
@@ -94,7 +94,7 @@ func TestAttackMenuResizeWhileOpen(t *testing.T) {
 	// a big screen shows it on one page, and tab then does not close or misbehave
 	h.send(tea.WindowSizeMsg{Width: 200, Height: 60})
 	h.key("tab")
-	if !h.m.leader {
+	if !h.m.showing(overlayMenu) {
 		t.Error("tab closed a one-page menu")
 	}
 }

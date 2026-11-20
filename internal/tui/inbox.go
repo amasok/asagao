@@ -92,10 +92,10 @@ func notificationTaskGIDs(ns []readmodel.Notification) []string {
 
 // selectedNotification returns the notification under the list cursor (inbox only).
 func (m *Model) selectedNotification() *readmodel.Notification {
-	if m.currentScope().kind != scopeInbox || m.listCursor < 0 || m.listCursor >= len(m.rows) {
+	if m.currentScope().kind != scopeInbox || m.list.cursor < 0 || m.list.cursor >= len(m.list.rows) {
 		return nil
 	}
-	return m.rows[m.listCursor].notif
+	return m.list.rows[m.list.cursor].notif
 }
 
 // openNotification opens what the selected notification is about and marks it read.
@@ -144,7 +144,7 @@ func (m *Model) toggleNotificationRead() tea.Cmd {
 // markAllNotificationsRead marks every unread notification read.
 func (m *Model) markAllNotificationsRead() tea.Cmd {
 	var gids []string
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.notif != nil && !r.notif.Read {
 			gids = append(gids, r.notif.GID)
 		}

@@ -85,14 +85,14 @@ func (h *harness) gutterOf(name string) string {
 
 func (h *harness) selectTask(gid string) {
 	h.t.Helper()
-	for range len(h.m.rows) {
+	for range len(h.m.list.rows) {
 		if h.selected() == gid {
 			return
 		}
 		h.key("j")
 	}
 	h.key("g")
-	for range len(h.m.rows) {
+	for range len(h.m.list.rows) {
 		if h.selected() == gid {
 			return
 		}
@@ -311,7 +311,7 @@ func TestTimelineSmallScreens(t *testing.T) {
 	}
 	h.key("G")
 	h.send(teaSize(120, 9)) // shorter window: the selected (last) row is still drawn
-	if last := h.m.rows[len(h.m.rows)-1].task; last == nil || !strings.Contains(h.screen(), last.Name) {
+	if last := h.m.list.rows[len(h.m.list.rows)-1].task; last == nil || !strings.Contains(h.screen(), last.Name) {
 		t.Fatalf("the selected row should stay visible:\n%s", h.screen())
 	}
 	h.send(teaSize(120, 30))
@@ -366,7 +366,7 @@ func TestTimelineMarks(t *testing.T) {
 	h := timelineHarness(t)
 	h.selectTask("t1")
 	h.key("V")
-	if !h.m.marked["t1"] || !strings.Contains(h.screen(), "● ☐ ソファを買う") {
+	if !h.m.list.marked["t1"] || !strings.Contains(h.screen(), "● ☐ ソファを買う") {
 		t.Fatalf("a marked task should show ●:\n%s", h.screen())
 	}
 	if got := h.ganttOf("ソファを買う"); !strings.Contains(got, "██") {

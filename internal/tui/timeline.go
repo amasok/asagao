@@ -29,15 +29,15 @@ const (
 )
 
 func (m *Model) timelineActive() bool {
-	return m.timeline && m.currentScope().kind == scopeProject && m.query == ""
+	return m.mode == viewTimeline && m.currentScope().kind == scopeProject && m.search.query == ""
 }
 
 // tlDayWidth is the number of columns of one day.
 func (m *Model) tlDayWidth() int {
-	if m.tlDayW <= 0 {
+	if m.tl.dayW <= 0 {
 		return tlDefaultDayW
 	}
-	return min(m.tlDayW, tlMaxDayW)
+	return min(m.tl.dayW, tlMaxDayW)
 }
 
 // dayOf is t's calendar day (in t's location) as midnight UTC, so that days can be
@@ -50,10 +50,10 @@ func daysBetween(a, b time.Time) int { return int(b.Sub(a).Hours() / 24) }
 
 // tlOrigin is the first day shown.
 func (m *Model) tlOrigin() time.Time {
-	if m.tlStart.IsZero() {
+	if m.tl.start.IsZero() {
 		return dayOf(m.deps.Now()).AddDate(0, 0, -tlLeadDays)
 	}
-	return m.tlStart
+	return m.tl.start
 }
 
 // taskSpan returns the days a task's bar covers: start date to due date, only the due
@@ -91,18 +91,18 @@ func isMilestone(t *readmodel.TaskSummary) bool { return t.ResourceSubtype == "m
 func (m *Model) handleTimelineKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "[":
-		m.tlStart = m.tlOrigin().AddDate(0, 0, -7)
+		m.tl.start = m.tlOrigin().AddDate(0, 0, -7)
 	case "]":
-		m.tlStart = m.tlOrigin().AddDate(0, 0, 7)
+		m.tl.start = m.tlOrigin().AddDate(0, 0, 7)
 	case "{":
-		m.tlDayW = max(1, m.tlDayWidth()-1)
+		m.tl.dayW = max(1, m.tlDayWidth()-1)
 	case "}":
-		m.tlDayW = min(tlMaxDayW, m.tlDayWidth()+1)
+		m.tl.dayW = min(tlMaxDayW, m.tlDayWidth()+1)
 	case ".":
-		m.tlStart = time.Time{}
+		m.tl.start = time.Time{}
 	case "l", "right":
 		// The detail pane is hidden: open it full screen when there is nothing to expand.
-		if t := m.selectedTask(); t != nil && (t.NumSubtasks == 0 || m.expanded[t.GID]) {
+		if t := m.selectedTask(); t != nil && (t.NumSubtasks == 0 || m.list.expanded[t.GID]) {
 			return m.openDetail(), true
 		}
 		return nil, false
@@ -142,10 +142,10 @@ func (m *Model) tlFollowSelection(l tlLayout) {
 	if t == nil || l.days == 0 {
 		return
 	}
-	if t.GID == m.tlFollow {
+	if t.GID == m.tl.follow {
 		return
 	}
-	m.tlFollow = t.GID
+	m.tl.follow = t.GID
 	start, end, ok := taskSpan(t, m.deps.Now().Location())
 	if !ok {
 		return
@@ -156,21 +156,21 @@ func (m *Model) tlFollowSelection(l tlLayout) {
 		return // (partly) visible
 	}
 	lead := min(tlLeadDays, l.days/4)
-	m.tlStart = start.AddDate(0, 0, -lead)
+	m.tl.start = start.AddDate(0, 0, -lead)
 }
 
 // tlRelations are the tasks the selected task waits for (前) and that wait for it (後),
 // from its detail once loaded.
 func (m *Model) tlRelations() (before, after map[string]bool) {
 	t := m.selectedTask()
-	if t == nil || m.detail == nil || m.detail.GID != t.GID {
+	if t == nil || m.detail.task == nil || m.detail.task.GID != t.GID {
 		return nil, nil
 	}
 	before, after = map[string]bool{}, map[string]bool{}
-	for _, d := range m.detail.Dependencies {
+	for _, d := range m.detail.task.Dependencies {
 		before[d.GID] = true
 	}
-	for _, d := range m.detail.Dependents {
+	for _, d := range m.detail.task.Dependents {
 		after[d.GID] = true
 	}
 	return before, after
@@ -201,24 +201,24 @@ func (m *Model) renderTimeline(w, h int) string {
 			pad+m.st.dim.Render("│")+m.tlMonthLine(l, origin),
 			pad+m.st.dim.Render("│")+m.tlDayLine(l, origin, today))
 	}
-	if len(m.rows) == 0 {
+	if len(m.list.rows) == 0 {
 		msg := "該当するタスクはありません"
-		if m.syncing && m.lastSync.IsZero() {
+		if m.syncState.running && m.syncState.last.IsZero() {
 			msg = "同期しています…"
 		}
 		return m.pane(title, append(lines, m.st.dim.Render(msg)), w, h, focused)
 	}
 	before, after := m.tlRelations()
 	rowsH := max(1, h-3-len(lines))
-	offset := m.listOffset
-	if m.listCursor >= offset+rowsH { // e.g. the window got shorter
-		offset = m.listCursor - rowsH + 1
+	offset := m.list.offset
+	if m.list.cursor >= offset+rowsH { // e.g. the window got shorter
+		offset = m.list.cursor - rowsH + 1
 	}
-	offset = clamp(offset, 0, max(0, len(m.rows)-1))
-	end := min(len(m.rows), offset+rowsH)
+	offset = clamp(offset, 0, max(0, len(m.list.rows)-1))
+	end := min(len(m.list.rows), offset+rowsH)
 	for i := offset; i < end; i++ {
-		r := m.rows[i]
-		selected := i == m.listCursor
+		r := m.list.rows[i]
+		selected := i == m.list.cursor
 		var name, gutter string
 		var t *readmodel.TaskSummary
 		switch {
@@ -284,7 +284,7 @@ func (m *Model) tlNameCell(t *readmodel.TaskSummary, depth, w int, selected, foc
 		s += " " + badges
 	}
 	if t.NumSubtasks > 0 {
-		if m.expanded[t.GID] {
+		if m.list.expanded[t.GID] {
 			s += fmt.Sprintf(" ▾%d", t.NumSubtasks)
 		} else {
 			s += fmt.Sprintf(" ↳%d", t.NumSubtasks)

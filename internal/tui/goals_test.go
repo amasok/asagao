@@ -90,11 +90,11 @@ func TestGoalsScreen(t *testing.T) {
 		t.Fatalf("cursor after esc = %d", m.goals.cursor)
 	}
 	h.key("j", "enter") // the project
-	if m.goals.open || m.currentProject() != "p1" {
-		t.Fatalf("not moved to p1: open=%v project=%q", m.goals.open, m.currentProject())
+	if m.showing(overlayGoals) || m.currentProject() != "p1" {
+		t.Fatalf("not moved to p1: open=%v project=%q", m.showing(overlayGoals), m.currentProject())
 	}
 	h.key(" ", "Q", "esc") // esc closes from the list
-	if m.goals.open {
+	if m.showing(overlayGoals) {
 		t.Fatalf("esc did not close the list:\n%s", h.screen())
 	}
 	h.key(" ", "Q", "tab")
@@ -102,7 +102,7 @@ func TestGoalsScreen(t *testing.T) {
 	h.key("enter")
 	mustShow(t, h.screen(), "ポートフォリオ（今期の施策）", "プロジェクト  [遅れ] 新居プロジェクト")
 	h.key("esc", "esc", "esc")
-	if m.goals.open {
+	if m.showing(overlayGoals) {
 		t.Fatal("still open after esc")
 	}
 }

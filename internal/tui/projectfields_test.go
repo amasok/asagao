@@ -70,8 +70,8 @@ func TestNewOptionFromChooser(t *testing.T) {
 			d, _ := st.GetTask(ctx, "t1")
 			h.m.showFieldPicker(d.TaskSummary, h.field("cf"))
 			h.pickLabel("選択肢を足して設定する")
-			if h.m.promptMode != promptFieldOption {
-				t.Fatalf("prompt = %v", h.m.promptMode)
+			if h.m.prompt.mode != promptFieldOption {
+				t.Fatalf("prompt = %v", h.m.prompt.mode)
 			}
 			h.typeText("低")
 			h.key("enter")

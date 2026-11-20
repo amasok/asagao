@@ -26,7 +26,7 @@ const minBoardColumn = 26
 
 // boardActive reports whether the task area shows the board instead of the list.
 func (m *Model) boardActive() bool {
-	return m.board && m.currentScope().kind == scopeProject && m.query == ""
+	return m.mode == viewBoard && m.currentScope().kind == scopeProject && m.search.query == ""
 }
 
 // boardColumns builds one column per section of the project (empty ones included, so cards
@@ -40,7 +40,7 @@ func (m *Model) boardColumns() []boardColumn {
 		cols = append(cols, boardColumn{gid: s.GID, name: s.Name})
 	}
 	var other []*readmodel.TaskSummary
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.task == nil || r.depth > 0 { // expanded subtasks are not cards
 			continue
 		}
@@ -65,14 +65,14 @@ func (m *Model) boardColumns() []boardColumn {
 
 func (m *Model) boardSelected() *readmodel.TaskSummary {
 	cols := m.boardColumns()
-	if m.boardCol < 0 || m.boardCol >= len(cols) {
+	if m.board.col < 0 || m.board.col >= len(cols) {
 		return nil
 	}
-	col := cols[m.boardCol]
-	if m.boardRow < 0 || m.boardRow >= len(col.tasks) {
+	col := cols[m.board.col]
+	if m.board.row < 0 || m.board.row >= len(col.tasks) {
 		return nil
 	}
-	return col.tasks[m.boardRow]
+	return col.tasks[m.board.row]
 }
 
 // selectInBoard puts the cursor on gid if it is on the board; otherwise clamps the cursor.
@@ -81,14 +81,14 @@ func (m *Model) selectInBoard(gid string) {
 	for c, col := range cols {
 		for r, t := range col.tasks {
 			if t.GID == gid {
-				m.boardCol, m.boardRow = c, r
+				m.board.col, m.board.row = c, r
 				return
 			}
 		}
 	}
-	m.boardCol = clamp(m.boardCol, 0, len(cols)-1)
-	if m.boardCol < len(cols) {
-		m.boardRow = clamp(m.boardRow, 0, len(cols[m.boardCol].tasks)-1)
+	m.board.col = clamp(m.board.col, 0, len(cols)-1)
+	if m.board.col < len(cols) {
+		m.board.row = clamp(m.board.row, 0, len(cols[m.board.col].tasks)-1)
 	}
 }
 
@@ -103,41 +103,41 @@ func (m *Model) handleBoardKey(key string) (tea.Model, tea.Cmd) {
 	prev := m.boardSelected()
 	switch key {
 	case "h", "left":
-		if m.boardCol == 0 {
+		if m.board.col == 0 {
 			m.focus = paneSidebar
 			return m, nil
 		}
-		m.boardCol--
+		m.board.col--
 	case "l", "right":
-		m.boardCol = min(m.boardCol+1, len(cols)-1)
+		m.board.col = min(m.board.col+1, len(cols)-1)
 	case "j", "down":
-		m.boardRow++
+		m.board.row++
 	case "k", "up":
-		m.boardRow--
+		m.board.row--
 	case "g", "home":
-		m.boardRow = 0
+		m.board.row = 0
 	case "G", "end":
-		m.boardRow = len(cols[m.boardCol].tasks) - 1
+		m.board.row = len(cols[m.board.col].tasks) - 1
 	case "H", "L":
 		t := m.boardSelected()
 		if t == nil {
 			return m, nil
 		}
-		target := m.boardCol - 1
+		target := m.board.col - 1
 		if key == "L" {
-			target = m.boardCol + 1
+			target = m.board.col + 1
 		}
 		if target < 0 || target >= len(cols) || cols[target].gid == "" {
 			return m, nil
 		}
-		m.boardCol = target
+		m.board.col = target
 		return m, m.moveTask(*t, m.currentScope().project, cols[target].gid, cols[target].name)
 	case "enter":
 		return m, m.openDetail()
 	default:
 		return m, nil
 	}
-	m.boardRow = clamp(m.boardRow, 0, len(cols[m.boardCol].tasks)-1)
+	m.board.row = clamp(m.board.row, 0, len(cols[m.board.col].tasks)-1)
 	if t := m.boardSelected(); t != nil && (prev == nil || prev.GID != t.GID) {
 		m.resetDetailNav()
 		return m, tea.Batch(m.loadDetail(t.GID), m.debounceDetail(t.GID))
@@ -151,20 +151,20 @@ func (m *Model) renderBoard(w, h int) string {
 		return m.pane("ボード", []string{m.st.dim.Render("セクションがありません")}, w, h, m.focus == paneList)
 	}
 	visible := clamp(w/minBoardColumn, 1, len(cols))
-	if m.boardCol < m.boardColOffset {
-		m.boardColOffset = m.boardCol
+	if m.board.col < m.board.colOffset {
+		m.board.colOffset = m.board.col
 	}
-	if m.boardCol >= m.boardColOffset+visible {
-		m.boardColOffset = m.boardCol - visible + 1
+	if m.board.col >= m.board.colOffset+visible {
+		m.board.colOffset = m.board.col - visible + 1
 	}
-	m.boardColOffset = clamp(m.boardColOffset, 0, len(cols)-visible)
+	m.board.colOffset = clamp(m.board.colOffset, 0, len(cols)-visible)
 
 	today := m.deps.Now().Format(time.DateOnly)
 	var panes []string
 	used := 0
-	for i := m.boardColOffset; i < m.boardColOffset+visible; i++ {
+	for i := m.board.colOffset; i < m.board.colOffset+visible; i++ {
 		colW := w / visible
-		if i == m.boardColOffset+visible-1 {
+		if i == m.board.colOffset+visible-1 {
 			colW = w - used // give the remainder to the last column
 		}
 		used += colW
@@ -172,24 +172,24 @@ func (m *Model) renderBoard(w, h int) string {
 		inner := colW - 4
 		rows := h - 3
 		offset := 0
-		if i == m.boardCol && m.boardRow >= rows {
-			offset = m.boardRow - rows + 1
+		if i == m.board.col && m.board.row >= rows {
+			offset = m.board.row - rows + 1
 		}
 		var lines []string
 		for r := offset; r < len(col.tasks) && len(lines) < rows; r++ {
-			lines = append(lines, m.cardLine(col.tasks[r], inner, today, i == m.boardCol && r == m.boardRow))
+			lines = append(lines, m.cardLine(col.tasks[r], inner, today, i == m.board.col && r == m.board.row))
 		}
 		if len(col.tasks) == 0 {
 			lines = []string{m.st.dim.Render("（なし）")}
 		}
 		title := fmt.Sprintf("%s (%d)", col.name, len(col.tasks))
-		if i == m.boardColOffset && i > 0 {
+		if i == m.board.colOffset && i > 0 {
 			title = "‹ " + title
 		}
-		if i == m.boardColOffset+visible-1 && i < len(cols)-1 {
+		if i == m.board.colOffset+visible-1 && i < len(cols)-1 {
 			title += " ›"
 		}
-		panes = append(panes, m.pane(title, lines, colW, h, m.focus == paneList && i == m.boardCol))
+		panes = append(panes, m.pane(title, lines, colW, h, m.focus == paneList && i == m.board.col))
 	}
 	return strings.Join(joinColumns(panes), "\n")
 }
@@ -333,7 +333,7 @@ func (m *Model) showTagPicker(tags []readmodel.TagCount) {
 	p := &picker{kind: pickTag, title: "タグで絞り込む", items: []pickerItem{{label: "（すべてのタスク）"}}}
 	for i, t := range tags {
 		p.items = append(p.items, pickerItem{label: "#" + t.Name, value: t.Name, hint: fmt.Sprintf("未完了 %d", t.Open)})
-		if t.Name == m.tagFilter {
+		if t.Name == m.list.tagFilter {
 			p.cursor = i + 1
 		}
 	}
@@ -346,8 +346,8 @@ func (m *Model) openSectionPicker() {
 	if t == nil {
 		return
 	}
-	project := m.sectionProject // chosen from a project line in the detail view
-	m.sectionProject = ""
+	project := m.choosing.sectionProject // chosen from a project line in the detail view
+	m.choosing.sectionProject = ""
 	if project == "" && m.currentScope().kind == scopeMyTasks && m.openMySectionPicker(*t) {
 		return
 	}
@@ -469,7 +469,7 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		case pickArchive:
 			return m, m.archive(item.value)
 		case pickTeam:
-			return m, m.createProjectInTeam(m.newProjectName, item.value)
+			return m, m.createProjectInTeam(m.choosing.newProjectName, item.value)
 		case pickTaskTemplate:
 			return m, m.makeTaskFromTemplate(p.project, item.value)
 		case pickProjectTemplate:
@@ -489,11 +489,11 @@ func (m *Model) handlePickerKey(key string) (tea.Model, tea.Cmd) {
 		case pickFilter:
 			var f int
 			fmt.Sscan(item.value, &f)
-			m.filter = filterMode(f)
+			m.list.filter = filterMode(f)
 			return m, m.loadTasks()
 		case pickTag:
-			m.tagFilter = item.value
-			m.listCursor, m.listOffset = 0, 0
+			m.list.tagFilter = item.value
+			m.list.cursor, m.list.offset = 0, 0
 			return m, m.loadTasks()
 		case pickSection:
 			return m, m.moveTask(p.task, p.project, item.value, item.label)
@@ -547,7 +547,7 @@ func (m *Model) viewKey(key string) tea.Cmd {
 		}
 	case "v":
 		// list -> board -> timeline (projects only) -> calendar -> list
-		if m.query != "" {
+		if m.search.query != "" {
 			m.status = "検索中は表示を切り替えられません（esc で検索を解除）"
 			return nil
 		}
@@ -557,15 +557,15 @@ func (m *Model) viewKey(key string) tea.Cmd {
 		}
 		selected := m.selectedTask()
 		switch {
-		case m.calendar:
-			m.calendar, m.board, m.timeline = false, false, false
-		case m.timeline || m.currentScope().kind != scopeProject:
-			m.calendar, m.board, m.timeline = true, false, false
-		case m.board:
-			m.board, m.timeline = false, true
-			m.tlFollow = "" // show the selected task's bar
+		case m.mode == viewCalendar:
+			m.mode = viewList
+		case m.mode == viewTimeline || m.currentScope().kind != scopeProject:
+			m.mode = viewCalendar
+		case m.mode == viewBoard:
+			m.mode = viewTimeline
+			m.tl.follow = "" // show the selected task's bar
 		default:
-			m.board = true
+			m.mode = viewBoard
 		}
 		m.focus = paneList
 		if selected != nil {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -19,6 +20,29 @@ import (
 // queued in the outbox; a sync is then requested to send them. Offline, they simply wait.
 
 type promptKind int
+
+// promptState is the text input in the footer: its kind and what it changes. Opening a
+// prompt forgets what the one before it changed, so a target left over from an earlier
+// prompt is never taken for this one.
+type promptState struct {
+	input textinput.Model
+	mode  promptKind // promptNone: closed
+
+	commentGID      string                    // promptComment: the task commented on
+	renameGID       string                    // promptRenameSection: the section renamed
+	newSectionAfter string                    // promptNewSection: the section to add it after
+	subtaskParent   string                    // promptSubtask: the parent
+	dueTask         readmodel.TaskSummary     // promptDue and promptStart: the task
+	bulkDue         []readmodel.TaskSummary   // promptDue for the marked tasks (bulk.go)
+	tagTask         readmodel.TaskSummary     // promptNewTag: the task to tag
+	fieldTask       readmodel.TaskSummary     // promptField, promptFieldOption: the task
+	fieldEdit       readmodel.CustomFieldView // promptField, promptFieldOption: the field
+	depTask         readmodel.TaskSummary     // promptDepSearch: the task
+	depDependents   bool                      // promptDepSearch: add a dependent, not a dependency
+	dupSource       string                    // promptDuplicate: the task duplicated
+	attachTask      string                    // promptAttach: the task attached to
+	timeEntry       string                    // promptTimeEdit: the entry edited
+}
 
 const (
 	promptNone promptKind = iota
@@ -110,8 +134,8 @@ func (m *Model) loadOutboxOnly() tea.Cmd {
 
 // requestSync sends queued writes as soon as possible.
 func (m *Model) requestSync() tea.Cmd {
-	if m.syncing {
-		m.syncAgain = true
+	if m.syncState.running {
+		m.syncState.again = true
 		return nil
 	}
 	return m.startSync()
@@ -191,9 +215,9 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case outboxLoadedMsg:
 		if msg.err == nil {
-			m.outbox, m.ops = msg.counts, msg.ops
-			m.opCursor = clamp(m.opCursor, 0, max(0, len(m.ops)-1))
-			m.discards = msg.recent
+			m.outbox, m.outboxView.ops = msg.counts, msg.ops
+			m.outboxView.cursor = clamp(m.outboxView.cursor, 0, max(0, len(m.outboxView.ops)-1))
+			m.outboxView.discards = msg.recent
 			if len(msg.discards) > 0 {
 				m.status = m.discardStatus(msg.discards)
 			}
@@ -250,7 +274,7 @@ func (m *Model) updateWrite(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.status = msg.status
 		if msg.gid != "" {
-			m.selectAfter = msg.gid
+			m.list.selectAfter = msg.gid
 		}
 		if msg.refresh != "" {
 			return m, tea.Batch(m.afterWrite(), m.fetchDetails(msg.refresh)), true
@@ -283,16 +307,17 @@ func (m *Model) writeKey(key string) tea.Cmd {
 		return m.editComment(t.GID)
 	case "a":
 		m.openPrompt(promptCreate)
-		return m.prompt.Focus()
+		return m.prompt.input.Focus()
 	case "c":
 		if t == nil || m.focus == paneSidebar {
 			return nil
 		}
 		m.openPrompt(promptComment)
-		m.commentGID = t.GID
-		return m.prompt.Focus()
+		m.prompt.commentGID = t.GID
+		return m.prompt.input.Focus()
 	case "!":
-		m.showOutbox, m.outboxTop = true, 0
+		m.openOverlay(overlayOutbox)
+		m.outboxView.top = 0
 		return m.loadOutbox()
 	}
 	return nil
@@ -307,72 +332,71 @@ func (m *Model) toggleComplete(t readmodel.TaskSummary) tea.Cmd {
 }
 
 func (m *Model) openPrompt(kind promptKind) {
-	m.promptMode = kind
-	m.prompt.Reset()
+	m.prompt = promptState{input: m.prompt.input, mode: kind}
+	m.prompt.input.Reset()
 	switch kind {
 	case promptCreate:
-		m.prompt.Prompt = "新しいタスク: "
-		m.prompt.Placeholder = "タスク名  （例: 牛乳を買う @me 明日 #買い物 / +3d / 2026-12-01）"
+		m.prompt.input.Prompt = "新しいタスク: "
+		m.prompt.input.Placeholder = "タスク名  （例: 牛乳を買う @me 明日 #買い物 / +3d / 2026-12-01）"
 	case promptComment:
-		m.prompt.Prompt = "コメント: "
-		m.prompt.Placeholder = "Enter で投稿 / Esc で取り消し"
+		m.prompt.input.Prompt = "コメント: "
+		m.prompt.input.Placeholder = "Enter で投稿 / Esc で取り消し"
 	case promptRenameSection:
-		m.prompt.Prompt = "セクション名: "
-		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+		m.prompt.input.Prompt = "セクション名: "
+		m.prompt.input.Placeholder = "Enter で変更 / Esc で取り消し"
 	case promptNewSection:
-		m.prompt.Prompt = "新しいセクション: "
-		m.prompt.Placeholder = "Enter で追加 / Esc で取り消し"
+		m.prompt.input.Prompt = "新しいセクション: "
+		m.prompt.input.Placeholder = "Enter で追加 / Esc で取り消し"
 	case promptRenameTag:
-		m.prompt.Prompt = "タグ名: "
-		m.prompt.Placeholder = "Enter で変更 / Esc で取り消し"
+		m.prompt.input.Prompt = "タグ名: "
+		m.prompt.input.Placeholder = "Enter で変更 / Esc で取り消し"
 	case promptTimeAdd, promptTimeEdit:
-		m.prompt.Prompt = "作業時間: "
-		m.prompt.Placeholder = "1h30m / 45m / 1:30 のあとに日付（昨日 / 2026-11-12。省略で今日）"
+		m.prompt.input.Prompt = "作業時間: "
+		m.prompt.input.Placeholder = "1h30m / 45m / 1:30 のあとに日付（昨日 / 2026-11-12。省略で今日）"
 	case promptSubtask:
-		m.prompt.Prompt = "サブタスク: "
-		m.prompt.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
+		m.prompt.input.Prompt = "サブタスク: "
+		m.prompt.input.Placeholder = "サブタスク名  （例: 見積もりを取る @me +3d）"
 	case promptDue:
-		m.prompt.Prompt = "期日: "
-		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
+		m.prompt.input.Prompt = "期日: "
+		m.prompt.input.Placeholder = "2026-12-01 / 明日 / +3d（空欄で期日なし）"
 	case promptStart:
-		m.prompt.Prompt = "開始日: "
-		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で開始日なし。期日より後にはできません）"
+		m.prompt.input.Prompt = "開始日: "
+		m.prompt.input.Placeholder = "2026-12-01 / 明日 / +3d（空欄で開始日なし。期日より後にはできません）"
 	case promptNewTag:
-		m.prompt.Prompt = "新しいタグ: "
-		m.prompt.Placeholder = "タグ名"
+		m.prompt.input.Prompt = "新しいタグ: "
+		m.prompt.input.Placeholder = "タグ名"
 	case promptDuplicate:
-		m.prompt.Prompt = "複製したタスクの名前: "
-		m.prompt.Placeholder = ""
+		m.prompt.input.Prompt = "複製したタスクの名前: "
+		m.prompt.input.Placeholder = ""
 	case promptNewProject:
-		m.prompt.Prompt = "新しいプロジェクト: "
-		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+		m.prompt.input.Prompt = "新しいプロジェクト: "
+		m.prompt.input.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptTemplateProject:
-		m.prompt.Prompt = "テンプレートから作るプロジェクト: "
-		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+		m.prompt.input.Prompt = "テンプレートから作るプロジェクト: "
+		m.prompt.input.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptDuplicateProject:
-		m.prompt.Prompt = "複製したプロジェクトの名前: "
-		m.prompt.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
+		m.prompt.input.Prompt = "複製したプロジェクトの名前: "
+		m.prompt.input.Placeholder = "プロジェクト名（すぐ Asana に作られます）"
 	case promptDepSearch:
-		m.prompt.Prompt = "タスクを検索: "
-		m.prompt.Placeholder = "タスク名の一部"
+		m.prompt.input.Prompt = "タスクを検索: "
+		m.prompt.input.Placeholder = "タスク名の一部"
 	case promptAttach:
-		m.prompt.Prompt = "添付するファイル: "
-		m.prompt.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
+		m.prompt.input.Prompt = "添付するファイル: "
+		m.prompt.input.Placeholder = "~/Downloads/見積書.pdf（ファイルのパス）"
 	}
 }
 
 func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.promptMode = promptNone
-		m.prompt.Blur()
-		m.bulkDueTasks = nil // a bulk date prompt is cancelled too
+		m.prompt.input.Blur()
+		m.prompt = promptState{input: m.prompt.input} // a bulk date prompt is cancelled too
 		return m, nil
 	case "enter":
-		value := strings.TrimSpace(m.prompt.Value())
-		kind := m.promptMode
-		m.promptMode = promptNone
-		m.prompt.Blur()
+		value := strings.TrimSpace(m.prompt.input.Value())
+		kind := m.prompt.mode
+		m.prompt.mode = promptNone
+		m.prompt.input.Blur()
 		if kind == promptDue { // empty clears the due date
 			return m, m.submitDue(value)
 		}
@@ -389,7 +413,7 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptCreate:
 			return m, m.createTask(value)
 		case promptRenameSection:
-			return m, m.renameSection(m.renameGID, value)
+			return m, m.renameSection(m.prompt.renameGID, value)
 		case promptNewSection:
 			return m, m.createSection(value)
 		case promptRenameTag:
@@ -397,7 +421,7 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptTimeAdd, promptTimeEdit:
 			return m, m.submitTime(kind, value)
 		case promptSubtask:
-			return m, m.createSubtask(m.subtaskParent, value)
+			return m, m.createSubtask(m.prompt.subtaskParent, value)
 		case promptNewTag:
 			return m, m.submitNewTag(value)
 		case promptFieldOption:
@@ -413,15 +437,15 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case promptDuplicateProject:
 			return m, m.duplicateProject(value)
 		case promptDepSearch:
-			return m, m.openDependencyTargets(m.depTask, m.depDependents, value)
+			return m, m.openDependencyTargets(m.prompt.depTask, m.prompt.depDependents, value)
 		}
-		if m.commentGID != "" {
-			return m, m.addComment(m.commentGID, value)
+		if m.prompt.commentGID != "" {
+			return m, m.addComment(m.prompt.commentGID, value)
 		}
 		return m, nil
 	}
 	var cmd tea.Cmd
-	m.prompt, cmd = m.prompt.Update(msg)
+	m.prompt.input, cmd = m.prompt.input.Update(msg)
 	return m, cmd
 }
 
@@ -432,7 +456,7 @@ func (m *Model) createTask(input string) tea.Cmd {
 	now := m.deps.Now()
 	var defaultDue string
 	if m.calendarActive() {
-		defaultDue = m.calDay.Format(time.DateOnly) // the day selected in the calendar
+		defaultDue = m.cal.day.Format(time.DateOnly) // the day selected in the calendar
 	}
 	sc := m.currentScope()
 	var in app.CreateHereInput
@@ -464,8 +488,8 @@ func (m *Model) addComment(taskGID, text string) tea.Cmd {
 
 func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	var op *outbox.Op
-	if m.opCursor < len(m.ops) {
-		op = &m.ops[m.opCursor]
+	if m.outboxView.cursor < len(m.outboxView.ops) {
+		op = &m.outboxView.ops[m.outboxView.cursor]
 	}
 	resolve := func(action app.ResolveAction, status string) tea.Cmd {
 		if op == nil {
@@ -487,17 +511,17 @@ func (m *Model) handleOutboxKey(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc", "q", "!":
-		m.showOutbox = false
+		m.closeOverlay(overlayOutbox)
 	case "j", "down":
-		m.opCursor = clamp(m.opCursor+1, 0, max(0, len(m.ops)-1))
+		m.outboxView.cursor = clamp(m.outboxView.cursor+1, 0, max(0, len(m.outboxView.ops)-1))
 		m.showOpCursor()
 	case "k", "up":
-		m.opCursor = clamp(m.opCursor-1, 0, max(0, len(m.ops)-1))
+		m.outboxView.cursor = clamp(m.outboxView.cursor-1, 0, max(0, len(m.outboxView.ops)-1))
 		m.showOpCursor()
 	case "ctrl+d", "pgdown": // scroll, e.g. through the full text of dropped changes
-		m.outboxTop += max(1, m.outboxHeight()/2)
+		m.outboxView.top += max(1, m.outboxHeight()/2)
 	case "ctrl+u", "pgup":
-		m.outboxTop = max(0, m.outboxTop-max(1, m.outboxHeight()/2))
+		m.outboxView.top = max(0, m.outboxView.top-max(1, m.outboxHeight()/2))
 	case "l":
 		return m, resolve(app.KeepLocal, "こちらの値で上書きします")
 	case "s":
@@ -548,17 +572,17 @@ func (m *Model) outboxHeight() int { return max(1, max(3, m.height-2)-3) }
 // showOpCursor scrolls the overlay so that the selected entry is on screen.
 func (m *Model) showOpCursor() {
 	line := m.outboxCursorLine()
-	if line < m.outboxTop {
-		m.outboxTop = line
-	} else if line >= m.outboxTop+m.outboxHeight() {
-		m.outboxTop = line - m.outboxHeight() + 1
+	if line < m.outboxView.top {
+		m.outboxView.top = line
+	} else if line >= m.outboxView.top+m.outboxHeight() {
+		m.outboxView.top = line - m.outboxHeight() + 1
 	}
 }
 
 // outboxCursorLine is the overlay line of the selected entry (see outboxLines).
 func (m *Model) outboxCursorLine() int {
 	line := 2 // help, blank
-	for _, op := range m.ops[:min(m.opCursor, len(m.ops))] {
+	for _, op := range m.outboxView.ops[:min(m.outboxView.cursor, len(m.outboxView.ops))] {
 		line++
 		line += len(format.ConflictLines(op))
 		if _, text := format.OpNote(op); text != "" {
@@ -571,8 +595,8 @@ func (m *Model) outboxCursorLine() int {
 func (m *Model) renderOutbox(w, h int) string {
 	lines := m.outboxLines(w - 4)
 	visible := max(1, h-3)
-	m.outboxTop = clamp(m.outboxTop, 0, max(0, len(lines)-visible))
-	return m.pane("未送信の変更", lines[m.outboxTop:], w, h, true)
+	m.outboxView.top = clamp(m.outboxView.top, 0, max(0, len(lines)-visible))
+	return m.pane("未送信の変更", lines[m.outboxView.top:], w, h, true)
 }
 
 // outboxLines are all the lines of the outbox overlay for an inner width.
@@ -581,10 +605,10 @@ func (m *Model) outboxLines(inner int) []string {
 		m.st.dim.Render("j/k 移動   l こちらの値で上書き（競合）   s Asana の値を採用（競合）   d 取り消し   R 再送（失敗）   ctrl+d/u スクロール   esc 閉じる"),
 		"",
 	}
-	if len(m.ops) == 0 {
+	if len(m.outboxView.ops) == 0 {
 		lines = append(lines, "未送信の変更はありません")
 	}
-	for i, op := range m.ops {
+	for i, op := range m.outboxView.ops {
 		style := m.st.dim // pending, sending (Push has it; nothing to resolve)
 		switch op.State {
 		case outbox.StateConflict:
@@ -593,7 +617,7 @@ func (m *Model) outboxLines(inner int) []string {
 			style = m.st.errorText
 		}
 		line := style.Render(padRight("["+format.OpLabel(op)+"]", opStateWidth)) + " " + format.DescribeOp(op)
-		lines = append(lines, m.highlight(line, inner, i == m.opCursor, true))
+		lines = append(lines, m.highlight(line, inner, i == m.outboxView.cursor, true))
 		for _, c := range format.ConflictLines(op) {
 			lines = append(lines, opDetailIndent+c)
 		}
@@ -605,9 +629,9 @@ func (m *Model) outboxLines(inner int) []string {
 			lines = append(lines, note.Render(opDetailIndent+text))
 		}
 	}
-	if len(m.discards) > 0 {
+	if len(m.outboxView.discards) > 0 {
 		lines = append(lines, "", m.st.dim.Render("最近破棄した変更（Asana で削除されていたもの・初期化で消したもの。書いた内容は下に全文があります）"))
-		for _, d := range m.discards {
+		for _, d := range m.outboxView.discards {
 			lines = append(lines, "  "+format.DiscardLine(d)+m.st.dim.Render("  "+shortTime(d.DiscardedAt)))
 			for _, dt := range format.DiscardDetails(d, richtext.ToEditableMarkdown) {
 				lines = append(lines, m.st.dim.Render("    "+dt.Label+":"))

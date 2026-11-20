@@ -22,9 +22,17 @@ CLI と MCP は、書き込みのあとすぐに `Syncer.Push` を 20 秒の期�
 - **WHEN** MCP の書き込みのあと、push のロックを別のプロセスが持っている
 - **THEN** 書き込みは成功し、`sent` は false、note で送信中だと知らせる (TestPushBusyIsNotOffline)
 
+### Requirement: 即時送信の判定
+CLI と MCP の `sent` は、push がエラーなしで、outbox の未送信 (`Remaining`)・失敗・競合がどれも 0 で、通知の既読が断られておらず、その変更が捨てられていないときだけ真にする (MUST, #75)。この判定と、作ったタスク・セクション・作業時間のローカル gid を作成が送れたら本物の gid に直すことは `app.PushNow` で行い、入り口は表示だけをする (ADR 0010)。
+根拠: app/pushnow.go; TestPushNowOutcome, TestPushNowResolvesGIDs, TestPushNowDropped
+
+#### Scenario: 残りがある
+- **WHEN** push がエラーなしで終わったが、outbox に未送信の変更が残っている
+- **THEN** `sent` は false
+
 ### Requirement: CLI の送れたかの知らせ方
-CLI の `sent` は、push がエラーなしで、outbox の未送信・失敗・競合がどれも 0 で、通知の既読が断られておらず、その変更が捨てられていないときだけ真にする (MUST)。`--json` は `task_gid`・`comment_gid`・`sent`・`push`・`discarded`・`error` を返す。送れたときにローカル gid だった `task_gid` は空にする (本物の gid は返さない)。文は、送れたら「（Asana に送信しました）」、push のエラーなら「（オフラインのため未送信。次の sync で送ります: <エラー>）」。
-根拠: cli/write.go:23-32, :91-131; TestWriteCommandJSON, TestWriteCommandJSONOnline, TestWriteCommandOnlineConflict
+CLI の `--json` は `task_gid`・`comment_gid`・`sent`・`push`・`discarded`・`error` を返す (MUST)。文は、送れたら「（Asana に送信しました）」、ログインしていない・トークンを拒まれたなら「（ログインが必要なため未送信。ログインしたあとの sync で送ります: <ログインの案内>）」、そのほかの push のエラーなら「（オフラインのため未送信。次の sync で送ります: <エラー>）」。
+根拠: cli/write.go (reportWrite); TestWriteCommandJSON, TestWriteCommandJSONOnline, TestWriteCommandOnlineConflict, TestCommentAndStatusPostSameAsBeforeA4
 
 #### Scenario: 送ったが競合した
 - **WHEN** CLI の書き込みを送り、競合になる
@@ -32,15 +40,19 @@ CLI の `sent` は、push がエラーなしで、outbox の未送信・失敗�
 
 #### Scenario: オフラインで作って送れたあと
 - **WHEN** ローカル gid のタスクを作る `--json` のコマンドで、送信まで成功する
-- **THEN** `task_gid` は空になる
+- **THEN** `task_gid` は Asana の gid になる (TestWriteJSONCreateAndDeletedTask)
 
 ### Requirement: MCP と TUI の送れたかの知らせ方
-MCP の `sent` は、push がエラーなしで、通知の既読が断られておらず、outbox の競合と失敗が 0 のときに真にする (MUST)。未送信の数 (`Remaining`) は見ない。`task_gid` は、送った記録があれば本物の gid にする。捨てた変更があれば、`discarded` と note で知らせる。TUI はしたことだけを表示し、未送信の数と項目ごとの「未送信」で示す。
-根拠: mcpserver/server.go:309-316, :720-765; tui/view.go:214, :700; TestWritesOnlineAreSent, TestPushBusyIsNotOffline
+MCP の `sent` は CLI と同じ判定 (`app.PushNow`) で決める (MUST, #75)。未送信の数 (`Remaining`) が残れば `sent` は false で、note でキューに残っていると知らせる。`task_gid` は、送った記録があれば本物の gid にする。捨てた変更があれば、`discarded` と note で知らせる。TUI はしたことだけを表示し、未送信の数と項目ごとの「未送信」で示す。
+根拠: mcpserver/server.go (pushTarget); tui/view.go:214, :700; TestWritesOnlineAreSent, TestPushBusyIsNotOffline, TestWriteLeftQueuedIsNotSent
 
 #### Scenario: MCP でオフラインに作ったタスクが送れた
 - **WHEN** MCP の `create_task` のあと、push で作成が送れる
 - **THEN** `task_gid` は Asana の gid になる (TestWritesOnlineAreSent)
+
+#### Scenario: MCP で作成がキューに残った
+- **WHEN** MCP の `create_task` のあと、Asana が作成に 500 を返し、Asana にまだないためキューに残る
+- **THEN** `sent` は false で、note でキューに残っていると知らせる (TestWriteLeftQueuedIsNotSent)
 
 ### Requirement: タスク作成の入力
 タスク作成の入力は、CLI では名前・親・プロジェクト・セクション・期日 (`--due`)・担当・説明、MCP では CLI と同じ欄と `tags` (タグは作成のあとに別のトランザクションで付ける) (MUST)。名前が空なら store が「タスク名が空です」で断る。
@@ -230,5 +242,4 @@ TUI はテンプレートが 1 つもないとき、またはプランで使え�
 
 - TUI の期日の選択 (tui/pickers.go:83) の不正な入力を確かめるテスト。
 - 名前が空のタスク作成が断られることを、入り口のテストでは確かめていない (コードは store/outbox.go:261-262)。
-- CLI で、ローカル gid の作成が送れたときに `task_gid` が空になることを確かめるテスト (コードは cli/write.go:107-110)。
 - オフラインでのプロジェクト作成で outbox が空のままかを確かめるテスト (TestProjectCommandsOffline はエラーになることだけを見ている)。

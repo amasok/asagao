@@ -20,7 +20,6 @@ import (
 
 // goalScreen is the state of the goals / portfolios screen.
 type goalScreen struct {
-	open       bool
 	portfolios bool // portfolios rather than goals
 	current    bool // goals narrowed to the periods that include today
 
@@ -76,10 +75,11 @@ func (m *Model) openPortfolios() tea.Cmd { return m.openGoalScreen(true) }
 
 func (m *Model) openGoalScreen(portfolios bool) tea.Cmd {
 	g := &m.goals
-	if !g.open || g.portfolios != portfolios {
+	if !m.showing(overlayGoals) || g.portfolios != portfolios {
 		g.cursor, g.offset = 0, 0
 	}
-	g.open, g.portfolios = true, portfolios
+	m.openOverlay(overlayGoals)
+	g.portfolios = portfolios
 	g.goal, g.pf, g.stack = nil, nil, nil
 	return m.loadGoalList(true)
 }
@@ -245,7 +245,7 @@ func (m *Model) handleGoalKey(key string) (tea.Model, tea.Cmd) {
 			g.goal, g.pf = nil, nil
 			return m, m.loadGoalDetail(top, false)
 		}
-		g.open = false
+		m.closeOverlay(overlayGoals)
 	case "j", "down":
 		g.cursor = min(g.cursor+1, max(0, n-1))
 	case "k", "up":
@@ -326,13 +326,13 @@ func (m *Model) openGoalRow() tea.Cmd {
 	case "project":
 		for i, s := range m.scopes {
 			if s.kind == scopeProject && s.project == gid {
-				g.open = false
+				m.closeOverlay(overlayGoals)
 				return m.moveScope(i - m.scopeCursor)
 			}
 		}
 		m.status = "プロジェクト「" + name + "」は同期していません"
 	case "task":
-		g.open = false
+		m.closeOverlay(overlayGoals)
 		return m.openTaskDetail(gid)
 	}
 	return nil

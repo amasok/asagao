@@ -149,7 +149,7 @@ func TestTUIFetchesCompletedAfterSync(t *testing.T) {
 	if _, err := st.GetTask(ctx, "md"); err != nil {
 		t.Fatalf("my completed task not fetched after the sync: %v", err)
 	}
-	if h.m.syncing {
+	if h.m.syncState.running {
 		t.Fatal("still syncing")
 	}
 	if v, _ := st.MyTaskState(ctx, "w1"); v != readmodel.TasksAll {

@@ -35,21 +35,22 @@ func (m *Model) render() string {
 	footer := m.renderFooter()
 	bodyH := max(3, m.height-2)
 	var body string
-	if m.showHelp {
+	switch {
+	case m.showing(overlayHelp):
 		body = m.renderHelp(m.width, bodyH)
-	} else if m.showOutbox {
+	case m.showing(overlayOutbox):
 		body = m.renderOutbox(m.width, bodyH)
-	} else if m.statusView {
+	case m.showing(overlayStatuses):
 		body = m.renderStatuses(m.width, bodyH)
-	} else if m.overviewView && m.picker == nil { // (a confirmation of the overview is shown over it)
+	case m.showing(overlayOverview) && m.picker == nil: // (a confirmation of the overview is shown over it)
 		body = m.renderOverview(m.width, bodyH)
-	} else if m.goals.open {
+	case m.showing(overlayGoals):
 		body = m.renderGoals(m.width, bodyH)
-	} else if m.picker != nil {
+	case m.picker != nil:
 		body = m.renderPicker(m.width, bodyH)
-	} else if m.leader {
+	case m.showing(overlayMenu):
 		body = m.renderMenuPane(bodyH)
-	} else {
+	default:
 		body = m.renderBody(bodyH)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -107,24 +108,24 @@ func (m *Model) layoutDetail() {
 	if m.narrow() {
 		dw = m.width
 	}
-	m.detailView.SetWidth(max(1, dw-4))
-	m.detailView.SetHeight(m.listHeight())
+	m.detail.view.SetWidth(max(1, dw-4))
+	m.detail.view.SetHeight(m.listHeight())
 	m.refreshDetailView()
 }
 
 func (m *Model) ensureListVisible() {
 	h := m.listHeight()
-	if m.listCursor < m.listOffset {
-		m.listOffset = m.listCursor
+	if m.list.cursor < m.list.offset {
+		m.list.offset = m.list.cursor
 		// show the group header above the first task when scrolling up
-		if m.listOffset > 0 && m.rows[m.listOffset-1].isHeader() {
-			m.listOffset--
+		if m.list.offset > 0 && m.list.rows[m.list.offset-1].isHeader() {
+			m.list.offset--
 		}
 	}
-	if m.listCursor >= m.listOffset+h {
-		m.listOffset = m.listCursor - h + 1
+	if m.list.cursor >= m.list.offset+h {
+		m.list.offset = m.list.cursor - h + 1
 	}
-	m.listOffset = clamp(m.listOffset, 0, max(0, len(m.rows)-h))
+	m.list.offset = clamp(m.list.offset, 0, max(0, len(m.list.rows)-h))
 }
 
 func (m *Model) renderBody(h int) string {
@@ -178,19 +179,19 @@ func (m *Model) renderBody(h int) string {
 		panes = append(panes, m.pane(m.listTitle(), m.listLines(lw-4, h-3), lw, h, m.focus == paneList))
 	}
 	if dw > 0 {
-		if m.detailView.Width() != max(1, dw-4) {
-			m.detailView.SetWidth(max(1, dw-4))
+		if m.detail.view.Width() != max(1, dw-4) {
+			m.detail.view.SetWidth(max(1, dw-4))
 			m.refreshDetailView() // re-wrap for the new width (e.g. after z)
 		}
-		m.detailView.SetHeight(h - 3)
+		m.detail.view.SetHeight(h - 3)
 		title := "詳細"
 		if m.zoom {
 			title = "詳細（z / esc で戻る）"
 		}
-		if m.fetchingFor != "" && m.detail != nil && m.fetchingFor == m.detail.GID {
+		if m.detail.fetchingFor != "" && m.detail.task != nil && m.detail.fetchingFor == m.detail.task.GID {
 			title += " ⟳"
 		}
-		panes = append(panes, m.pane(title, strings.Split(m.detailView.View(), "\n"), dw, h, m.focus == paneDetail))
+		panes = append(panes, m.pane(title, strings.Split(m.detail.view.View(), "\n"), dw, h, m.focus == paneDetail))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, panes...)
 }
@@ -227,15 +228,15 @@ func (m *Model) renderHeader() string {
 		badge = " " + m.statusBadge(sc.status) // latest project status
 	}
 	left := m.st.header.Render(" asagao ") + " " + m.st.headerScope.Render(m.currentScope().name) + badge +
-		"  " + m.st.headerFilter.Render("["+m.filter.String()+"]")
+		"  " + m.st.headerFilter.Render("["+m.list.filter.String()+"]")
 	if l := m.savedSearchLabel(); l != "" {
 		left += "  " + m.st.headerFilter.Render(l)
 	}
-	if m.tagFilter != "" {
-		left += "  " + m.st.tag.Render("#"+m.tagFilter)
+	if m.list.tagFilter != "" {
+		left += "  " + m.st.tag.Render("#"+m.list.tagFilter)
 	}
-	if m.fieldFilter.field != "" {
-		left += "  " + m.st.tag.Render(m.fieldFilter.label())
+	if m.list.fieldFilter.field != "" {
+		left += "  " + m.st.tag.Render(m.list.fieldFilter.label())
 	}
 	if m.boardActive() {
 		left += "  " + m.st.headerFilter.Render("[ボード]")
@@ -246,8 +247,8 @@ func (m *Model) renderHeader() string {
 	if m.calendarActive() {
 		left += "  " + m.st.headerFilter.Render("[カレンダー]")
 	}
-	if m.query != "" {
-		left += "  " + m.st.headerFilter.Render("検索: "+m.query)
+	if m.search.query != "" {
+		left += "  " + m.st.headerFilter.Render("検索: "+m.search.query)
 	}
 	status, ok := m.syncStatus()
 	style := m.st.dim
@@ -273,13 +274,13 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	if m.promptMode != promptNone {
-		m.prompt.SetWidth(max(10, m.width-4))
-		return m.prompt.View()
+	if m.prompt.mode != promptNone {
+		m.prompt.input.SetWidth(max(10, m.width-4))
+		return m.prompt.input.View()
 	}
-	if m.searching {
-		m.search.SetWidth(max(10, m.width-4))
-		return m.search.View()
+	if m.search.active {
+		m.search.input.SetWidth(max(10, m.width-4))
+		return m.search.input.View()
 	}
 	if q, ok := m.bulkFooter(); ok {
 		return ansi.Truncate(" "+m.st.today.Render(q), m.width, "…")
@@ -287,7 +288,7 @@ func (m *Model) renderFooter() string {
 	if m.status != "" {
 		return ansi.Truncate(" "+m.st.footer.Render(m.status), m.width, "…")
 	}
-	if m.leader {
+	if m.showing(overlayMenu) {
 		hint := "メニュー: キーを押してください（esc で閉じる）"
 		if _, _, n, _ := m.currentMenuPage(); n > 1 {
 			hint = "メニュー: キーを押してください（tab / j・k でページを切り替え・esc で閉じる）"
@@ -394,16 +395,16 @@ func (m *Model) sidebarGrouped() bool {
 
 func (m *Model) listTitle() string {
 	n := 0
-	for _, r := range m.allRows {
+	for _, r := range m.list.all {
 		if r.notif == nil && r.task != nil && r.depth == 0 {
 			n++
 		}
 	}
 	marked := ""
-	if len(m.marked) > 0 {
-		marked = fmt.Sprintf("  印 %d 件", len(m.marked))
+	if len(m.list.marked) > 0 {
+		marked = fmt.Sprintf("  印 %d 件", len(m.list.marked))
 	}
-	if m.query != "" {
+	if m.search.query != "" {
 		return fmt.Sprintf("検索 (%d)", n) + marked
 	}
 	if m.currentScope().kind == scopeInbox {
@@ -413,24 +414,24 @@ func (m *Model) listTitle() string {
 }
 
 func (m *Model) listLines(w, h int) []string {
-	if len(m.rows) == 0 {
+	if len(m.list.rows) == 0 {
 		msg := "該当するタスクはありません"
-		if m.syncing && m.lastSync.IsZero() {
+		if m.syncState.running && m.syncState.last.IsZero() {
 			msg = "同期しています…"
 		}
 		return []string{m.st.dim.Render(msg)}
 	}
 	today := m.deps.Now().Format(time.DateOnly)
-	end := min(len(m.rows), m.listOffset+h)
-	lines := make([]string, 0, end-m.listOffset)
-	for i := m.listOffset; i < end; i++ {
-		r := m.rows[i]
+	end := min(len(m.list.rows), m.list.offset+h)
+	lines := make([]string, 0, end-m.list.offset)
+	for i := m.list.offset; i < end; i++ {
+		r := m.list.rows[i]
 		if r.note {
 			lines = append(lines, m.st.dim.Render(ansi.Truncate(r.header, w, "…")))
 			continue
 		}
 		if r.notif != nil {
-			lines = append(lines, m.notificationLine(r.notif, w, i == m.listCursor))
+			lines = append(lines, m.notificationLine(r.notif, w, i == m.list.cursor))
 			continue
 		}
 		if r.task == nil {
@@ -438,7 +439,7 @@ func (m *Model) listLines(w, h int) []string {
 			if r.collapsed {
 				header = fmt.Sprintf("▸ %s (%d)", r.header, r.count)
 			}
-			if i == m.listCursor {
+			if i == m.list.cursor {
 				lines = append(lines, m.highlight(header, w, true, m.focus == paneList))
 			} else {
 				lines = append(lines, m.st.sectionHeader.Render(header))
@@ -446,10 +447,10 @@ func (m *Model) listLines(w, h int) []string {
 			continue
 		}
 		if mark, ok := m.markGutter(r.task); ok {
-			lines = append(lines, mark+m.taskLine(r.task, r.depth, w-2, today, i == m.listCursor))
+			lines = append(lines, mark+m.taskLine(r.task, r.depth, w-2, today, i == m.list.cursor))
 			continue
 		}
-		lines = append(lines, m.taskLine(r.task, r.depth, w, today, i == m.listCursor))
+		lines = append(lines, m.taskLine(r.task, r.depth, w, today, i == m.list.cursor))
 	}
 	return lines
 }
@@ -471,13 +472,13 @@ func (m *Model) taskLine(t *readmodel.TaskSummary, depth, w int, today string, s
 		extra += " ↑"
 	}
 	if t.NumSubtasks > 0 {
-		if m.expanded[t.GID] {
+		if m.list.expanded[t.GID] {
 			extra += fmt.Sprintf(" ▾%d", t.NumSubtasks)
 		} else {
 			extra += fmt.Sprintf(" ↳%d", t.NumSubtasks)
 		}
 	}
-	if depth == 0 && (m.currentScope().kind == scopeMyTasks || m.query != "") {
+	if depth == 0 && (m.currentScope().kind == scopeMyTasks || m.search.query != "") {
 		switch {
 		case t.ParentName != "":
 			extra += "  ⊂ " + t.ParentName // a subtask listed on its own
@@ -527,23 +528,23 @@ func (m *Model) highlight(s string, w int, selected, focused bool) string {
 // --- detail ---
 
 func (m *Model) refreshDetailView() {
-	m.detailView.SetContent(m.renderDetail(max(10, m.detailView.Width())))
+	m.detail.view.SetContent(m.renderDetail(max(10, m.detail.view.Width())))
 }
 
 func (m *Model) renderDetail(w int) string {
-	d := m.detail
-	m.detailItems = m.detailItems[:0]
+	d := m.detail.task
+	m.detail.items = m.detail.items[:0]
 	if d == nil {
 		return m.st.dim.Render("タスクを選択してください")
 	}
 	active := m.inDetail() // items are selectable (and empty fields shown)
-	m.renderedActive = active
+	m.detail.renderedActive = active
 	var b strings.Builder
 	line := func() int { return strings.Count(b.String(), "\n") }
 	// item marks the next line as a selectable item and returns whether it is selected.
 	item := func(kind itemKind, sub int) bool {
-		m.detailItems = append(m.detailItems, detailItem{kind: kind, sub: sub, line: line()})
-		return active && len(m.detailItems)-1 == m.detailCursor
+		m.detail.items = append(m.detail.items, detailItem{kind: kind, sub: sub, line: line()})
+		return active && len(m.detail.items)-1 == m.detail.cursor
 	}
 	row := func(selected bool, text string) {
 		if selected {
@@ -553,7 +554,7 @@ func (m *Model) renderDetail(w int) string {
 		}
 	}
 
-	if len(m.detailStack) > 1 {
+	if len(m.detail.stack) > 1 {
 		b.WriteString(m.st.dim.Render("← backspace で戻る") + "\n")
 	}
 	title := d.Name
@@ -585,7 +586,7 @@ func (m *Model) renderDetail(w int) string {
 	}
 	field(itemAssignee, "担当", assignee, "未割り当て")
 	field(itemDue, "期日", longDue(d.DueOn, d.DueAt), "なし")
-	if m.startOffered {
+	if m.detail.startOffered {
 		field(itemStart, "開始日", d.StartOn, "なし")
 	} else if d.StartOn != "" { // the plan lacks start dates (a recent 402): shown, not offered
 		b.WriteString(m.st.label.Render(padRight("開始日", labelW)) + " " + d.StartOn + "\n")

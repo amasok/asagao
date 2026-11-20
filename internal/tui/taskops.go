@@ -192,7 +192,7 @@ func (m *Model) updateTaskOps(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		m.status = msg.status
 		// the task is hidden now: back to the list
-		m.detailStack, m.zoom = nil, false
+		m.detail.stack, m.zoom = nil, false
 		if m.focus == paneDetail {
 			m.focus = paneList
 		}

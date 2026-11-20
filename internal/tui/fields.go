@@ -45,21 +45,21 @@ func (m *Model) editCustomField(t readmodel.TaskSummary, f readmodel.CustomField
 		return nil
 	}
 	m.openPrompt(promptField)
-	m.fieldTask, m.fieldEdit = t, f
-	m.prompt.Prompt = f.Name + ": "
+	m.prompt.fieldTask, m.prompt.fieldEdit = t, f
+	m.prompt.input.Prompt = f.Name + ": "
 	switch f.Type {
 	case readmodel.CFNumber:
-		m.prompt.Placeholder = "数値（空欄で空にする）"
+		m.prompt.input.Placeholder = "数値（空欄で空にする）"
 	case readmodel.CFDate:
-		m.prompt.Placeholder = "2026-12-01 / 明日 / +3d（空欄で空にする）"
+		m.prompt.input.Placeholder = "2026-12-01 / 明日 / +3d（空欄で空にする）"
 	case readmodel.CFPeople:
-		m.prompt.Placeholder = "me / 名前（カンマ区切りで複数。空欄で空にする）"
+		m.prompt.input.Placeholder = "me / 名前（カンマ区切りで複数。空欄で空にする）"
 	default:
-		m.prompt.Placeholder = "テキスト（空欄で空にする）"
+		m.prompt.input.Placeholder = "テキスト（空欄で空にする）"
 	}
-	m.prompt.SetValue(fieldInput(f))
-	m.prompt.CursorEnd()
-	return m.prompt.Focus()
+	m.prompt.input.SetValue(fieldInput(f))
+	m.prompt.input.CursorEnd()
+	return m.prompt.input.Focus()
 }
 
 // fieldInput is a field's value as the prompt takes it back: the raw number (the display
@@ -192,7 +192,7 @@ type queuedField struct {
 }
 
 func (m *Model) submitField(input string) tea.Cmd {
-	relations, t, f := m.relations(m.deps.Now()), m.fieldTask, m.fieldEdit
+	relations, t, f := m.relations(m.deps.Now()), m.prompt.fieldTask, m.prompt.fieldEdit
 	value, err := relations.ParseFieldValue(m.ctx, f.GID, input)
 	if err != nil {
 		return func() tea.Msg { return writeDoneMsg{err: err} }
@@ -239,7 +239,7 @@ func (m *Model) openFieldFilterPicker() tea.Cmd {
 }
 
 func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
-	if len(opts) == 0 && m.fieldFilter.field == "" {
+	if len(opts) == 0 && m.list.fieldFilter.field == "" {
 		m.status = "絞り込みに使える選択式のカスタムフィールドがありません"
 		return
 	}
@@ -247,7 +247,7 @@ func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
 	for _, o := range opts {
 		p.items = append(p.items, pickerItem{label: o.FieldName + ": " + o.Option, value: o.FieldGID + "\x00" + o.FieldName + "\x00" + o.Option,
 			hint: fmt.Sprintf("未完了 %d", o.Tasks)})
-		if o.FieldGID == m.fieldFilter.field && o.Option == m.fieldFilter.value {
+		if o.FieldGID == m.list.fieldFilter.field && o.Option == m.list.fieldFilter.value {
 			p.cursor = len(p.items) - 1
 		}
 	}
@@ -255,11 +255,11 @@ func (m *Model) showFieldFilterPicker(opts []readmodel.FieldOption) {
 }
 
 func (m *Model) applyFieldFilter(value string) tea.Cmd {
-	m.fieldFilter = fieldFilter{}
+	m.list.fieldFilter = fieldFilter{}
 	if parts := strings.Split(value, "\x00"); len(parts) == 3 {
-		m.fieldFilter = fieldFilter{field: parts[0], fieldName: parts[1], value: parts[2]}
+		m.list.fieldFilter = fieldFilter{field: parts[0], fieldName: parts[1], value: parts[2]}
 	}
-	m.listCursor, m.listOffset = 0, 0
+	m.list.cursor, m.list.offset = 0, 0
 	return m.loadTasks()
 }
 

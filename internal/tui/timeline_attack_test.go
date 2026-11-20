@@ -161,7 +161,7 @@ func TestTimelineAttackDependencyCycle(t *testing.T) {
 	_ = ctx
 	h := timelineHarness(t)
 	h.selectTask("t7")
-	h.m.detail.Dependencies = append(h.m.detail.Dependencies, h.m.detail.Dependents...)
+	h.m.detail.task.Dependencies = append(h.m.detail.task.Dependencies, h.m.detail.task.Dependents...)
 	for _, line := range strings.Split(h.screen(), "\n") {
 		if ansi.StringWidth(line) > 140 {
 			t.Fatalf("too wide: %q", line)
@@ -179,7 +179,7 @@ func TestTimelineAttackStaleDetailAndSearch(t *testing.T) {
 	h.selectTask("t7")
 	h.screen()
 	h.key("j") // another task: its detail (if any) is not t7's
-	h.m.detail = nil
+	h.m.detail.task = nil
 	if g := h.gutterOf("家具を運ぶ"); g != "待" {
 		t.Fatalf("without the selected task's detail, a waiting task is 待: %q", g)
 	}
@@ -222,8 +222,8 @@ func TestTimelineAttackScopeSwitch(t *testing.T) {
 func TestTimelineAttackKeysOutside(t *testing.T) {
 	h := projectHarness(t, timelineStore(t), nil)
 	h.key("[", "]", "{", "}", ".")
-	if !h.m.tlStart.IsZero() || h.m.tlDayW != 0 {
-		t.Fatalf("list keys changed timeline state: %v %d", h.m.tlStart, h.m.tlDayW)
+	if !h.m.tl.start.IsZero() || h.m.tl.dayW != 0 {
+		t.Fatalf("list keys changed timeline state: %v %d", h.m.tl.start, h.m.tl.dayW)
 	}
 }
 
@@ -262,12 +262,12 @@ func TestTimelineAttackStaleDetailIgnored(t *testing.T) {
 	h := timelineHarness(t)
 	h.selectTask("t7")
 	h.screen()
-	if h.m.detail == nil || h.m.detail.GID != "t7" {
+	if h.m.detail.task == nil || h.m.detail.task.GID != "t7" {
 		t.Skip("detail not loaded in the harness")
 	}
-	stale := *h.m.detail
+	stale := *h.m.detail.task
 	h.selectTask("t1")
-	h.m.detail = &stale
+	h.m.detail.task = &stale
 	if g := h.gutterOf("家具を運ぶ"); g == "後" {
 		t.Fatalf("a stale detail of another task marked 後: %q", g)
 	}

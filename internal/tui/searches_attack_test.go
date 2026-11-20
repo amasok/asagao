@@ -36,18 +36,18 @@ func TestSavedSearchAttackSurvivesViewSwitches(t *testing.T) {
 	}
 	for _, k := range []string{"v", "v", "v"} { // cycle board / calendar / list
 		h.key(k)
-		if h.m.saved == nil {
+		if h.m.list.saved == nil {
 			t.Fatalf("view switch %q dropped the saved search", k)
 		}
 	}
 	h.chooseFilter(filterAll)
-	if h.m.saved == nil {
+	if h.m.list.saved == nil {
 		t.Fatal("filter dropped the saved search")
 	}
 	h.key("/")
 	h.typeText("ソファ")
 	h.key("enter")
-	if h.m.saved == nil {
+	if h.m.list.saved == nil {
 		t.Fatal("search words dropped the saved search")
 	}
 	for _, g := range h.visibleGIDs() {
