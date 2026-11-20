@@ -17,6 +17,7 @@ LAND_TRAILERS="$(printf 'Co-Authored-By: ...\nClaude-Session: ...')" scripts/lan
 
 - `LAND_TRAILERS` には、その会話の system-reminder で指定された、コミット用の attribution 行を入れます。
 - 取り込む順番は、マイグレーションの番号がぶつからない順にします。
+- ブランチが `openspec/changes/` の変更を実装し終えているなら、その変更がアーカイブされているか (`openspec/changes/archive/` に移り、`openspec/specs/` に反映されているか) を確かめます。されていなければ、取り込む前に実装者に `OPENSPEC_TELEMETRY=0 npx openspec archive <変更> --yes` と `npm run -s spec:validate` を頼みます (#76)。
 - 途中でぶつかったら、スクリプトは止まります。解決してコミットしたら、`check` を兼ねて残りのブランチだけで再実行します。ぶつかった場所の担当の実装者がまだいるなら、その人に main を自分のブランチへ取り込んでもらう方が早いこともあります。
 - 通ったら、そのブランチのチームメイトに終了を頼みます。
 

@@ -141,7 +141,7 @@ Markdown の CRLF と CR は、変換の前に LF にそろえる (MUST)。コ�
 
 ### Requirement: エディタの往復は 1 回で落ち着く
 Asana の rich text `h0` をエディタで開いて何も変えずに戻した `h1` を、もう一度開いて戻しても `h1` のまま変わらない (MUST)。`h1` が `h0` と同じであることは求めない (次の要件の、変換で落ちるものがあるため)。次の要件の、既知の例外は除く。
-根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go TestUserMarkdownFollowsNestingRules (除く形は unstableOnMain、除いた件数をログに出す); target_attack_test.go TestTargetRandomAttack
+根拠: stability_attack_test.go TestEditableRoundTripIsStable (30000 件、seed 45); nesting_attack_test.go TestNestedStructuresStable; nesting_spec_test.go TestUserMarkdownFollowsNestingRules (30000 件、seed 60、除く形はない); target_attack_test.go TestTargetRandomAttack
 
 #### Scenario: 2 回目の往復
 - **WHEN** html を ToEditableMarkdown → FromMarkdown と 2 回続けて往復する

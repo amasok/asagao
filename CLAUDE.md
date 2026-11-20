@@ -7,17 +7,25 @@ Asana をローカルの SQLite にキャッシュして扱う Go 製ツール�
 | パッケージ | 役割 |
 |---|---|
 | `cmd/asagao` | エントリポイント |
-| `internal/asana` | Asana REST クライアント (batch、events、custom fields、dependencies、レート制限) |
+| `internal/wire` | アダプター (store・Asana クライアント・トークンの保存先) を組み立てて入り口に渡す |
+| `internal/tui` / `internal/cli` / `internal/mcpserver` | 3 つの入り口 (Markdown⇔HTML 変換や `*Local` 直呼びは禁止、`archtest` で検証)。MCP は読み取りをキャッシュから、書き込みを outbox 経由で行う |
+| `internal/app` | ユースケース層 (入り口共通の書き込み・プラン判定) |
+| `internal/domain` (`outbox`・`task`・`project`・`tag`・`plan`・`rich`・`gid`・`timetrack`・`commitref`) | 純粋ドメインロジック (`time.Now`・`os`・外部依存禁止、`archtest` で検証) |
+| `internal/readmodel` | store が表示用に返す DTO の型 |
+| `internal/ui/format` | 画面向けの日本語の表示名 (outbox の操作の説明など) |
+| `internal/asana` (`model`) | Asana REST クライアント (batch、events、custom fields、dependencies、レート制限と任意のリミッター)。`model` は API が返す型 |
 | `internal/auth` (`tokenstore`) | OAuth (PKCE)・PAT、トークンの保存先 (keychain / 1Password / ファイル) |
 | `internal/store` | SQLite キャッシュ。マイグレーションは `schema.go` の `migrations` (末尾に足すだけ)。outbox もここ |
-| `internal/sync` | Push (outbox 送信、照合) と Pull (Events API の差分、modified_since、全件)。push は flock で排他 |
-| `internal/tui` | 画面 |
-| `internal/cli` | コマンド |
-| `internal/mcpserver` | MCP ツール。読み取りはキャッシュから、書き込みは outbox 経由 |
-| `internal/richtext` | Asana の html_text ⇔ エディタ用 Markdown |
+| `internal/sync` | Push (outbox 送信、照合) と Pull (Events API の差分、`modified_since`、全件)。push は flock で排他 |
+| `internal/richtext` | Asana の `html_text` ⇔ エディタ用 Markdown |
 | `internal/termsafe` | 端末の制御文字を取り除く |
 | `internal/imageview` | インライン画像 (kitty プレースホルダ)、添付を開く |
-| `internal/config` | 設定 (`$XDG_CONFIG_HOME/asagao/config.toml`) |
+| `internal/config` / `internal/settings` | 設定ファイル (`$XDG_CONFIG_HOME/asagao/config.toml`) の読み書きと、設定の型 |
+| `internal/xdg` | 設定・データの置き場所 (XDG ベースディレクトリ) |
+| `internal/repoctx` | フォルダとプロジェクトを結び付ける `.asana.json` を読む |
+| `internal/dates` | 相対・絶対の日付の解釈 (CLI・TUI・MCP 共通) |
+| `internal/browser` | URL をブラウザで開く |
+| `internal/archtest` / `internal/testguard` | アーキテクチャ依存・`TestMain` 隔離の自動検証 |
 
 ## 確認コマンド
 

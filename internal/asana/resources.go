@@ -458,12 +458,16 @@ func (c *Client) UploadAttachment(ctx context.Context, parentGID, fileName strin
 		return nil, err
 	}
 	q := fields(attachmentFields)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/attachments?"+q.Encode(), &buf)
+	u := c.BaseURL + "/attachments?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &buf)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
+	if err := c.pace(ctx, http.MethodPost, u, 1); err != nil {
+		return nil, err
+	}
 	c.requests.Add(1)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

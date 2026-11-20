@@ -143,6 +143,198 @@ Asana クライアントは、429 をどのメソッドでも、5xx を POST 以
 - **WHEN** POST /tasks が 503 を返す
 - **THEN** クライアントは再試行しない (二重に作らないため)
 
+### Requirement: マイタスクのセクションの取得
+定期の取り直し (poll) のとき、ワークスペースごとに自分のマイタスクのリスト (`GET /users/me/user_task_list`) と、そのセクションを順番どおりに取り、キャッシュに入れる (MUST)。タスクは `assignee_section` を一緒に取り、自分のタスクのマイタスクのセクションを覚える。応答に項目がなければ今の値を保ち、null なら外す。
+根拠: sync/my_sections.go; store/my_sections.go; asana/model (OptionalRef); TestSyncAndMoveMySections
+
+#### Scenario: 同期でマイタスクのセクションを取る
+- **WHEN** マイタスクに 今日やる・あとで があり、自分のタスクが あとで にある状態で同期する
+- **THEN** キャッシュに 今日やる・あとで がこの順で入り、タスクのマイタスクのセクションは あとで になる
+
+### Requirement: マイタスクのセクションが取れないとき
+マイタスクのリストやセクションが取れないとき (402 以外) は同期を失敗にせず、今のキャッシュとタスクから分かったセクションを使い、次の取り直しでまた試す (MUST)。402 なら、そのワークスペースについて `plan_unavailable:my_section:<ワークスペースの gid>` を記録し、24 時間はそのワークスペースのマイタスクのセクションを取らず、出さない。そのあと試し直し、取れたら記録を消す。ほかのワークスペースは隠さない。
+根拠: sync/my_sections.go; TestMySectionsPaymentRequired, TestMySectionsPlanPerWorkspace, TestMySectionsOldGlobalRecordIgnored, TestPushMoveMySection402PerWorkspace
+
+#### Scenario: リストが取れない
+- **WHEN** マイタスクのリストの取得に 404 が返る
+- **THEN** 同期は成功し、機能は隠さない
+
+### Requirement: チームとお気に入りの取り込み
+同期は、ワークスペースごとに、参加しているチーム (組織のときだけ) と自分のお気に入りのプロジェクトを、ポーリングのときと、まだ取っていないとき (`teams:` + ワークスペースの gid が空) に取って置き換える (MUST)。402・403 は「無い」として空にする。ほかの失敗はキャッシュを残し、次の同期で取り直す。同期は止めない。プロジェクトの一覧はお気に入り (自分の並び順) → チーム名 → チームなしの順。
+根拠: internal/sync/sync.go (syncTeamsAndFavorites); internal/store/project_fields.go; TestSyncTeamsAndFavorites, TestListProjectsFavoritesThenTeams
+
+#### Scenario: お気に入りが取れなかった
+- **WHEN** お気に入りの取得が 500 で失敗する
+- **THEN** 前のお気に入りが残り、次の同期でもう一度取る
+
+### Requirement: プロジェクトの概要は開いたときに取る
+プロジェクトの概要 (TUI `O`・CLI `project show`・MCP `get_project`) は、オンラインなら開いたときにプロジェクト・タスクの数・ブリーフを取ってキャッシュし、表示はキャッシュから行う (MUST)。ブリーフが 402・403 なら出さない。取れなかったものはキャッシュの値を出す。
+根拠: internal/sync/projects.go (FetchProjectOverview); TestFetchProjectOverview, TestProjectShowOffline, TestProjectFieldsOnline
+
+#### Scenario: ブリーフがプランで使えない
+- **WHEN** `GET /project_briefs/{gid}` が 402 を返す
+- **THEN** 概要にブリーフを出さず、エラーにもしない
+
+### Requirement: 作業時間の記録は開いたときに取る
+タスクの作業時間の記録は同期では取らず、利用者が記録を見るとき (TUI の一覧、CLI の `time list`、MCP の `list_time_entries`) に `GET /tasks/{gid}/time_tracking_entries` で取ってキャッシュを置き換える (MUST)。送っていない記録 (ローカル gid)、取り始めより後に Asana が作った記録は残し、送っていない変更と削除はやり直す。取れなければキャッシュを出す。
+根拠: sync/timetracking.go (FetchTimeEntries); store/time_entries.go (ReplaceTimeEntries); TestReplaceTimeEntries, TestUpdateTimeEntryLocal, TestTimeEntryChangedWhileSending, TestTimeAddAndList
+
+#### Scenario: 送っていない変更のあとに取り直す
+- **WHEN** 30 分の記録を 70 分に直し、送る前に Asana の一覧 (30 分のまま) を取る
+- **THEN** キャッシュの記録は 70 分のまま
+
+### Requirement: ワークスペースのカスタムフィールドの取得
+定期の取り直し (poll) のとき、またはまだ取っていないとき、ワークスペースごとにカスタムフィールド (`GET /workspaces/{gid}/custom_fields`、選択肢つき) を取り、キャッシュに入れる (MUST)。プロジェクトに付けられるフィールドの一覧に使う。402 なら一覧を空にして `plan_unavailable:custom_fields:<workspace>` を記録し、403 なら一覧を空にする。ほかの失敗では同期を失敗にせず、今のキャッシュを保って次の同期でまた試す。
+根拠: sync/push_fields.go (syncWorkspaceCustomFields); store/field_ops.go (ReplaceWorkspaceCustomFields); TestSyncWorkspaceCustomFields
+
+#### Scenario: プランにない
+- **WHEN** ワークスペースのカスタムフィールドの取得に 402 が返る
+- **THEN** 同期は成功し、付けられるフィールドの一覧は空になり、フィールドの付け外しと選択肢の追加は出さない
+
+### Requirement: ゴールとポートフォリオは表示するときに取る
+ゴール・期間・ポートフォリオは同期では取らず、表示するとき (TUI で開いたとき、CLI `goal`・`portfolio`、MCP `list_goals`・`get_goal`・`list_portfolios`・`get_portfolio`) にオンラインなら取り直してキャッシュし、表示はキャッシュから行う (MUST)。402 以外の失敗はキャッシュを残してエラーを返す。期間だけが取れなかったときもゴールは置き換える。一覧から消えたゴールはキャッシュからも消し、1 件を取って 404 ならそのゴール (ポートフォリオ) を消す。
+根拠: internal/sync/goals.go; TestFetchGoalsAndGoal, TestGoalsFailuresKeepTheCache, TestFetchGoneGoal, TestFetchPortfolios
+
+#### Scenario: 期間だけが取れない
+- **WHEN** `GET /goals` は答え、`GET /time_periods` が 500 を返す
+- **THEN** ゴールはキャッシュに入り、期間は前のものが残り、エラーが返る
+
+### Requirement: プランにない機能は 1 日隠して、また試す
+`GET /goals` などが 402 を返したら、`plan_unavailable:<機能>:<ワークスペースの gid>` (store の `planKey`) に時刻を記録し、そのワークスペースでその機能を 1 日 (`plan.RecheckAfter`) 隠して問い合わせない (MUST)。1 日たったら再び出して試し、答えが返れば記録を消す。402 はエラーにせず、読む側が「プランで使えない」と伝える。
+根拠: internal/sync/plan.go; internal/domain/plan/plan.go; internal/store/sync_state.go (planKey); TestGoals402HidesThemForADay, TestGoals402IsPerWorkspace, TestPlanOffFor
+
+#### Scenario: お試しを始めたワークスペース
+- **WHEN** ゴールが 402 で隠れてから 1 日たち、Asana がゴールを返すようになっている
+- **THEN** TUI のメニューにゴールが戻り、開くとゴールが取れて、402 の記録が消える
+
+#### Scenario: 無料のワークスペースの 402
+- **WHEN** 別のワークスペース (無料) でゴールが 402 を返した記録がある
+- **THEN** 既定のワークスペース (有料の組織) ではゴールを隠さない。ワークスペースが消えれば、その記録も消える
+
+#### Scenario: 読めない記録
+- **WHEN** 記録が時刻として読めない、または未来の時刻である
+- **THEN** 隠さずに試す
+
+### Requirement: カスタムタイプの取得
+プロジェクトのカスタムフィールドを取るとき (全件の同期、変更のイベント、まだ取っていないとき) に、そのプロジェクトで使える種類とステータス (`GET /custom_types?project=`) を取ってキャッシュに入れる (MUST)。403 なら一覧を空にする。ほかの失敗では同期を失敗にせず、次の同期でまた試す。
+根拠: sync/sync.go (syncCustomTypes); store/customtypes.go (ReplaceProjectCustomTypes); TestSyncCustomTypesOfProject
+
+#### Scenario: 全件の同期で取り直す
+- **WHEN** 種類を取ったプロジェクトを、全件でない同期のあとに全件で同期する
+- **THEN** 全件でない同期では問い合わせず、全件の同期で取り直す
+
+### Requirement: カスタムタイプの取得の 402
+種類の取得に 402 が返ったら、一覧を空にし、ワークスペースについて `plan_unavailable:custom_types:<workspace>` を記録して、24 時間はそのワークスペースのどのプロジェクトでも問い合わせない (MUST)。そのあと試し直し、答えが来たら印を消す。ほかのワークスペースは隠さない。
+根拠: sync/sync.go (syncCustomTypes); sync/plan.go; TestSyncCustomTypesPaymentRequired
+
+#### Scenario: プランにない
+- **WHEN** 種類の取得に 402 が返る
+- **THEN** 同期は成功し、そのワークスペースでは種類の選択肢を出さず、24 時間は問い合わせない
+
+### Requirement: タスクの種類を読む
+タスクの `custom_type`・`custom_type_status_option` は省ける欄として読む (MUST)。断られたら、まずこの 2 つだけを外して読み直し、それでも断られたら省ける欄を全部外す。種類を読まなかったタスクでは、キャッシュの種類を保ち、競合の比べにも使わない。
+根拠: asana/customfields.go (readTasks, fieldTier); store/write.go; asana/model/fieldvalues.go; TestCustomTypeFieldsRefusedAlone, TestCustomTypeNotFetchedIsKept, TestCustomTypePartialAndCleared
+
+#### Scenario: 種類の欄だけを断るプラン
+- **WHEN** タスクの読み取りが、opt_fields に `custom_type` があるときだけ 402 になる
+- **THEN** カスタムフィールドと依存関係は読まれ、キャッシュの種類は消えない
+
+### Requirement: 種類の gid を名指しして読む
+タスクの種類とステータスは、gid と名前を名指しして (`custom_type.gid`・`custom_type.name`・`custom_type_status_option.gid`・`custom_type_status_option.name`) 読む (MUST)。Asana は `.name` だけを頼むと gid を返さない。種類かステータスが gid 無しで来たタスクでは、キャッシュの種類を保つ。
+根拠: asana/resources.go (TaskFields); store/customtypes.go (upsertTaskCustomType); TestTaskFieldsHaveCustomType, TestCustomTypeReadWithGid, TestCustomTypeWithoutGidIsKept
+
+#### Scenario: gid を名指しして読む
+- **WHEN** 種類「バグ」・ステータス「対応中」のタスクを読む (Asana は名指しした欄だけを返す)
+- **THEN** キャッシュのタスクに種類とステータスの gid と名前が入り、そのステータスを変えられる
+
+### Requirement: 種類を読めていなかったキャッシュ
+種類を `custom_type.name` だけで読んでいた版のキャッシュに、種類の無いカスタムタイプのタスクがあれば、マイグレーション (23 番) で最後の全件の同期の記録を消し、次の同期を全件にして種類を読み直す (MUST)。そのタスクが無いキャッシュは、全件の同期の記録を保つ。
+根拠: store/schema.go (migrations); TestMigrateStoreWithCustomTasksWithoutType
+
+#### Scenario: 種類の無いカスタムタイプのタスク
+- **WHEN** 種類の無いカスタムタイプのタスクがあるキャッシュを、新しい版で開く
+- **THEN** 次の同期は全件になる
+
+### Requirement: タスクを取るのは同期するプロジェクトだけ
+同期はワークスペースのプロジェクトの一覧を全部取り込むが、セクション・ステータス・タスク・Events を取るのは同期するプロジェクトだけにする (MUST)。同期するプロジェクトは、一度開いたもの、お気に入り、前の版で取っていたもの (Events のトークンがある)、`all_projects = true` なら全部、`lazy_projects = false` なら参加しているもの。マイタスク (自分の担当) は、どのプロジェクトのタスクでもいつも取る。
+根拠: sync/lazy.go (toSync, pullMyTasks); sync/sync.go (run); TestLazySyncFetchesProjectListOnly, TestLazyStoreSyncedBefore, TestLazyOff
+
+#### Scenario: 最初の同期
+- **WHEN** `lazy_projects` が既定のまま、参加しているプロジェクト p1 (お気に入りでない) と、お気に入りの p2 がある状態で初めて同期する
+- **THEN** p2 のタスクとマイタスクを取り、p1 には 1 回もリクエストしない (Events も読まない)。p1 は一覧に「未取得」として出る
+
+#### Scenario: 前の版で同期していたストア
+- **WHEN** 前の版で同期した (Events のトークンがある) プロジェクトがあるストアで同期する
+- **THEN** そのプロジェクトは Events の差分で今までどおり取り込み、初めからは取り直さない
+
+### Requirement: 初めて取るものは未完了を先に取る
+`lazy_projects` のとき、初めて取るプロジェクトとマイタスクは、まず未完了のタスクだけを取る (`completed_since` = 同期を始めた時刻) (MUST)。全部の未完了とそのサブタスクを取り込んでから、完了済み (`completed_since` と `modified_since` = `completed_days` 日前) を取る。完了済みで新しく取るサブタスクは、完了したタスクのものだけ。
+根拠: sync/lazy.go (pullProject, pullMyTasks, pullCompleted); TestLazyFetchesIncompleteFirst
+
+#### Scenario: お気に入りを初めて取る
+- **WHEN** 初めての同期でお気に入りの p2 を取る
+- **THEN** マイタスクと p2 の未完了を取る問い合わせが全部済んでから、完了済みを取る問い合わせが 2 回 (マイタスクと p2) 出る
+
+### Requirement: どこまで取れたかを覚える
+取れたところまでを `project_tasks:<gid>` / `my_tasks:<workspace gid>` に `open` (未完了まで) / `all` として覚える (MUST)。`open` のものは、次の同期か `FetchCompleted` で完了済みを取る。`DeferCompleted` の同期 (TUI) は完了済みを取らずに `completed_pending` を返す。`completed_days` が 0 (負は 0) なら完了済みは取らず、すぐ `all` にする。
+根拠: sync/lazy.go (finishPull, completedPending, FetchCompleted); TestLazyDeferCompleted, TestLazyCompletedDaysZero, TestTUIFetchesCompletedAfterSync
+
+#### Scenario: TUI の最初の同期
+- **WHEN** `DeferCompleted` で初めて同期する
+- **THEN** 未完了だけを取って `completed_pending` を返し、続く `FetchCompleted` で完了済みを取る
+
+### Requirement: 開いたときに取る
+プロジェクトを開いたとき (TUI でカーソルがとどまる、CLI・MCP でタスクの一覧や検索にプロジェクトを指定する)、それを同期するプロジェクトとして記録し、タスクが未取得ならその場で取る (MUST)。取り込むだけで、未送信の変更は送らず、上書きもしない。TUI でカーソルが通り過ぎただけのプロジェクトは取らない。
+根拠: sync/lazy.go (OpenProject); TestOpenProjectFetchesAndTracks, TestOpenProjectWithCompleted, TestTaskListFetchesUnfetchedProject, TestListTasksFetchesUnfetchedProject, TestTUIOpenProjectFetchesIncompleteThenCompleted, TestTUIPassingByFetchesNothing
+
+#### Scenario: CLI で未取得のプロジェクトを一覧する
+- **WHEN** オンラインで `asagao task list --project 仕事` を実行し、仕事のタスクがまだキャッシュにない
+- **THEN** 仕事のタスクを Asana から取ってから一覧を出す。もう一度実行しても Asana には聞かない
+
+### Requirement: 開いても取れないとき
+開いたプロジェクトを取れないとき (オフライン、Asana に届かない、`--offline`、ほかの同期の最中で ErrPushBusy) は、記録だけを残して次の同期で取る (MUST)。CLI は標準エラー、MCP は `note`、TUI は一覧の注記で「まだ取得していません」と伝える。
+根拠: sync/lazy.go (OpenProject); TestOpenProjectWhileBusy, TestTaskListUnfetchedProjectOffline, TestListTasksUnfetchedProjectOffline, TestTUIUnfetchedProjectOffline
+
+#### Scenario: オフラインで開く
+- **WHEN** `asagao task list --project 仕事 --offline` を実行する
+- **THEN** Asana には聞かず、標準エラーに「まだ取得していません…次の同期で取得します」と出し、次の同期で仕事のタスクを取る
+
+### Requirement: 未取得のプロジェクトを見せる
+タスクが未取得のプロジェクトは、TUI のサイドバーで `◌`、`project list` で `[タスク未取得]`、MCP の `list_projects` で `unfetched: true` と示す (MUST)。キャッシュだけの検索 (プロジェクトの指定なし) は、参加している未取得のプロジェクトの数を添える (CLI は標準エラー、MCP は `note`)。`sync` は Asana へのリクエスト数を出す。
+根拠: store/project_tasks.go (fetchedSQL, CountUnfetchedProjects); cli/lazy.go (noteUnfetched); cli/sync.go; TestProjectTaskStates, TestTaskListUnfetchedProjectOffline, TestListTasksUnfetchedProjectOffline, TestLazySyncFetchesProjectListOnly
+
+#### Scenario: 検索
+- **WHEN** 未取得のプロジェクトが 2 件ある状態で `asagao search 何か` を実行する
+- **THEN** 標準エラーに「タスクをまだ取得していないプロジェクトが 2 件あり、そこは探していません」と出る
+
+### Requirement: タスクの並びを取り込む
+取り込みは、セクションの中のタスクの並びとサブタスクの並びを Asana の順で保存する (MUST)。プロジェクトを全部取ったときは返った順を、一部だけ取ったとき (Events、modified_since、完了済みの取得) は、取ったタスクのセクションを `GET /sections/{gid}/tasks` で取り直した順を、サブタスクは `GET /tasks/{gid}/subtasks` の順を使う。Events がサブタスクを挙げたら、その親のサブタスクを取り直す。
+根拠: sync/lazy.go (pullProject, refreshSections, refreshParents, storeSubtasks, pullCompleted); store/order.go; TestPullKeepsAsanaOrder, TestPullCompletedTakeTheirPlace, TestOrderFromListings
+
+#### Scenario: Events で並べ替えが届く
+- **WHEN** 同じセクションの中でタスクが並べ替えられ、Events がそのタスクを挙げる
+- **THEN** そのセクションの並びを取り直し、`list_tasks` と TUI がその順で並べる
+
+### Requirement: 並びを取れないとき
+セクションや親の並びが 404・403 なら、今の並びのまま同期を進める (MUST)。オフラインと 401 は、ほかの取得と同じく同期の失敗とし、Events の token を進めない。それ以外の失敗 (再試行しても続く 5xx・429、400 など) は同期を止めず、そのセクションや親を覚えておき、次の同期で取り直す。
+根拠: sync/lazy.go (refreshSections, refreshParents, orderFailed); TestPullOrderGone, TestPullOrderFailsLater
+
+#### Scenario: セクションが消えていた
+- **WHEN** 並びを取り直すセクションが 404 を返す
+- **THEN** 同期は成功し、そのセクションの並びは前のまま
+
+#### Scenario: Asana が一時的に答えない
+- **WHEN** 並びを取り直すセクションが 500 を返し続ける
+- **THEN** 同期は成功して token が進み、次の同期でそのセクションを取り直す
+
+### Requirement: 並びの分からないタスク
+並びの分からないタスクは、分かるタスクのあとに、今までの順 (一覧は完了・期日・名前、サブタスクは作った順) で並べる (MUST)。一覧は、セクションで絞ったときは位置の順。プロジェクトで絞ったときは、位置の分かるタスクが 1 つでもあればセクションの順にまとめ、その中は位置の順。
+根拠: store/read.go (ListTasks, GetTask); TestOrderUnknownKeepsOldOrder, TestOrderFromListings
+
+#### Scenario: 並びが分からない
+- **WHEN** #51 より前に取り込んだタスクを、全件の同期の前に一覧する
+- **THEN** 今までの順 (完了・期日・名前) で並ぶ
+
 ## 未確認
 
 - カスタムフィールドの記録 `custom_fields:<gid>` の時刻は、Asana の時計ではなく PC の時計 (sync.go:438)。意図したものか。
