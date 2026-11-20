@@ -151,11 +151,7 @@ func (m *Model) prepareInline() tea.Cmd {
 	if !m.deps.InlineImages || d == nil {
 		return nil
 	}
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = m.deps.LocalSyncer() // offline: cached files only
-		syncer.CacheDir = m.deps.CacheDir
-	}
+	syncer := m.attachments(true) // offline: cached files only
 	var cmds []tea.Cmd
 	for _, gid := range taskImages(d) {
 		if img := m.cache.inline[gid]; img != nil && (img.loading || img.png != nil) {

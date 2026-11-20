@@ -209,10 +209,7 @@ func (m *Model) openAttachment(a readmodel.AttachmentView) tea.Cmd {
 	if a.IsImage {
 		return m.viewImages()
 	}
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = m.deps.LocalSyncer()
-	}
+	syncer := m.attachments(false)
 	taskGID := m.detail.task.GID
 	return func() tea.Msg {
 		path, err := syncer.DownloadAttachment(m.ctx, taskGID, a.GID)

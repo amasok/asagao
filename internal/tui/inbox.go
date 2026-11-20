@@ -3,13 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
-	"github.com/amasok/asagao/internal/app"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/amasok/asagao/internal/app"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/sync"
 )

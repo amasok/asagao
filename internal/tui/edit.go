@@ -172,10 +172,7 @@ func (m *Model) editTask(gid string) tea.Cmd {
 		return nil
 	}
 	st := m.deps.App
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = m.deps.LocalSyncer() // offline: cached images only
-	}
+	syncer := m.attachments(false) // offline: cached images only
 	return func() tea.Msg {
 		d, err := st.Query().GetTask(m.ctx, gid)
 		if err != nil {

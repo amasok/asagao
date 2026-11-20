@@ -50,7 +50,7 @@ func (a *app) syncCmd() *cobra.Command {
 				for i, d := range res.Push.Discarded {
 					ids[i] = d.ID
 				}
-				_ = st.App.Outbox().Store.MarkDiscardsNotified(ctx, ids)
+				_ = st.App.Outbox().MarkDiscardsNotified(ctx, ids)
 				return a.printJSON(res)
 			}
 			takeDiscards(ctx, st, cmd.OutOrStdout(), true)

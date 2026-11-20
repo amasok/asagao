@@ -210,6 +210,12 @@ func (u *ProjectFields) Available(ctx context.Context, workspaceGID string) bool
 	return planOffered(ctx, u.Store, plan.CustomFields, workspaceGID, u.Clock()) == nil
 }
 
+// ResolveField finds the custom field arg (a gid or a name) among the project's and the
+// workspace's, as a change of the project's fields names it.
+func (u *ProjectFields) ResolveField(ctx context.Context, projectGID, arg string) (readmodel.ProjectFieldView, error) {
+	return u.Store.ResolveProjectField(ctx, projectGID, arg)
+}
+
 // Changeable says (nil) whether the fields of project projectGID can be changed, else why not.
 func (u *ProjectFields) Changeable(ctx context.Context, projectGID string) error {
 	ws, err := u.Store.ProjectWorkspace(ctx, projectGID)

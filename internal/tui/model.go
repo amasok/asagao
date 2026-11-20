@@ -27,7 +27,7 @@ type Deps struct {
 	// and writes the cache through them, never the store itself.
 	App *app.UseCases
 	// LocalSyncer makes a syncer without an Asana client, over the same cache: attachments
-	// downloaded before, while offline. It must be set with App.
+	// downloaded before, while offline. nil: none are shown offline.
 	LocalSyncer func() *sync.Syncer
 	// NewSyncer creates a syncer with an authenticated API client. It is called lazily in the
 	// background so the UI never waits for authentication (e.g. a 1Password unlock).

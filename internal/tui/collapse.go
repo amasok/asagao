@@ -3,10 +3,11 @@ package tui
 import (
 	"context"
 	"encoding/json"
-	"github.com/amasok/asagao/internal/app"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/amasok/asagao/internal/app"
 )
 
 // Collapsible groups in the list view. The collapsed groups of each scope (project or

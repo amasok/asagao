@@ -73,11 +73,7 @@ func (m *Model) viewImages() tea.Cmd {
 		m.status = "画像を表示できません"
 		return nil
 	}
-	syncer := m.syncer
-	if syncer == nil {
-		syncer = m.deps.LocalSyncer() // offline: cached files only
-		syncer.CacheDir = m.deps.CacheDir
-	}
+	syncer := m.attachments(true) // offline: cached files only
 	taskGID := d.GID
 	m.status = fmt.Sprintf("画像を準備しています（%d 件）…", len(images))
 	return func() tea.Msg {

@@ -137,6 +137,12 @@ func refreshTarget(op outbox.Op) string {
 	return op.TaskGID
 }
 
+// MarkDiscardsNotified marks the dropped changes ids as announced (a sync's own, which it
+// reports itself).
+func (o *Outbox) MarkDiscardsNotified(ctx context.Context, ids []int64) error {
+	return o.Store.MarkDiscardsNotified(ctx, ids)
+}
+
 // TakenDiscards are the dropped changes not announced yet, taken by TakeDiscards.
 type TakenDiscards struct {
 	// All are every one of them; Announce those to tell the user about (a change deleted

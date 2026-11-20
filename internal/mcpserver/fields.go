@@ -49,7 +49,7 @@ func (s *Server) updateProjectFields(ctx context.Context, _ *mcp.CallToolRequest
 		arg   string
 	}{{in.Add, true, "add"}, {in.Remove, false, "remove"}} {
 		for _, name := range c.names {
-			f, err := pf.Store.ResolveProjectField(ctx, gid, name)
+			f, err := pf.ResolveField(ctx, gid, name)
 			if err != nil {
 				return nil, ProjectWriteOutput{}, fmt.Errorf("%s: %w", c.arg, err)
 			}
