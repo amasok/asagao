@@ -9,7 +9,7 @@ import (
 
 // Incremental sync from Asana's events (#27).
 //
-// Each member project has a sync token (ProjectEventToken). GET /events with it returns
+// Each member project has a sync token (store.EventsToken). GET /events with it returns
 // what changed in the project since (its tasks and subtasks, sections, ...), 100 at a time.
 // Only the tasks named there are fetched (POST /batch, 10 per request), so a sync with
 // nothing changed costs one request per project. Asana answers 412 with a new token the

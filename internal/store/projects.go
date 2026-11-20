@@ -130,7 +130,7 @@ func (s *Store) ProjectMembers(ctx context.Context, projectGID string) ([]UserRe
 	return out, rows.Err()
 }
 
-// ArchiveProjectLocal marks a project archived (after Asana accepted it); it disappears
+// SetProjectArchivedLocal marks a project archived (after Asana accepted it); it disappears
 // from the project list.
 func (s *Store) SetProjectArchivedLocal(ctx context.Context, projectGID string, archived bool) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE projects SET archived = ? WHERE gid = ?", archived, projectGID)

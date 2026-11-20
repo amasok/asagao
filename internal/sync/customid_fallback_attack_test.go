@@ -420,8 +420,8 @@ func TestTaskByCustomID500FallbackTruncatedAtSearchLimitKeepsCache(t *testing.T)
 }
 
 // Search API errors on 500 fallback (402, 500, 429, 401, broken/empty JSON, disconnect,
-// context cancel) never wipe custom_id:<ID> and never wrongly mark PlanCustomID as 402;
-// only a search 402 marks PlanSearch.
+// context cancel) never wipe custom_id:<ID> and never wrongly mark plan.CustomID as 402;
+// only a search 402 marks plan.Search.
 func TestTaskByCustomID500FallbackSearchFailuresPreserveState(t *testing.T) {
 	type tc struct {
 		name           string

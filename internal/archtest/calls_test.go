@@ -33,7 +33,7 @@ var entryForbiddenCalls = map[string][]string{
 // storeWrites says whether a method name is one of the store's local writes, which an
 // entry point leaves to the use cases: the names that end in "Local" (CreateTaskLocal, …;
 // only the store has them) and ApplyTagEdit. Only method calls are checked: x.Name where x
-// is not an imported package, so a package's constant such as sync.KeepLocal is not one.
+// is not an imported package, so a package's constant such as app.KeepLocal is not one.
 // A name the file also binds to something else (a parameter "sync *store.Store") is not
 // taken for the package anywhere in the file (see rebound).
 func storeWrites(name string) bool {
