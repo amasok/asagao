@@ -35,16 +35,16 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 | `internal/domain/gid` | ドメイン | (store の `LocalPrefix`・`IsLocalGID`) | なし | ローカル gid の判定と作り方 (乱数は引数。型は作らない: gid はどこでも string) |
 | `internal/domain/task` | ドメイン | (store の `NewTask`・`TagEdit`・`TagRef`、`validateFields` ほか) | なし | 作るタスクの内容 (`NewTask`)、解決済みのタグの変更 (`TagEdit`)、タスクの欄の検証、承認の状態の決まり |
 | `internal/domain/outbox` | ドメイン | (store の `Op`、`safeToResend`、`UpdateTaskLocal` の後半、sync の `sameTaskFields`) | なし | 操作の種類・状態、畳み込み、再送してよいか、照合で同じとみなす条件 |
-| `internal/domain/rich` | ドメイン | (richtext の `Target`、`layout()`、入れ子の決まり) | なし | 送り先と、送り先ごとに許すタグ |
-| `internal/domain/plan` | ドメイン | (#73 で `readmodel` から分離) | なし | 402 プラン制限の機能定数、有効期間判定 (`OffAt`・`Window`)、`FeatureOf`、`UnavailableMessage`、`UnavailableError` |
+| `internal/domain/rich` | ドメイン | (richtext の `Target`、`layout()`、入れ子の決まり。#82 で `readmodel/assets.go` を移した) | なし | 送り先と、送り先ごとに許すタグ。画像の決まり (`IsImageName`、貼り付けた画像のリンク `InlineAssets`・`ReplaceInlineAssets`) |
+| `internal/domain/plan` | ドメイン | (#73 で `readmodel` から分離) | なし | 402 プラン制限の機能定数、有効期間判定 (`OffAt`・`Window`)、`FeatureOf` (日本語の文言は #82 で `readmodel` の `PlanUnavailableMessage`・`PlanUnavailableError` に移した) |
 | `internal/dates` | ドメイン | 同じ | なし | 期日の解釈 (今も外部依存なし。場所は変えない) |
 | `internal/app` | アプリ | **ない** | なし | ユースケース (タスク作成・更新・コメント・status update・タグ・…)、ポート |
 | `internal/sync` | アプリ | 同じ | なし (x/oauth2 は d2 で外した) | 同期のユースケース (push・照合・pull)。Asana とキャッシュはポート経由 |
 | `internal/store` | adapter | 同じ | modernc.org/sqlite、x/sys | キャッシュのリポジトリ。SQL とトランザクション、`sync_state` 生キー規約・`resultPrefix` の隠蔽と型付きアクセサ |
 | `internal/asana` | adapter | 同じ | なし (net/http) | Asana の REST クライアント (腐敗防止層) |
 | `internal/asana/model` | 共有の型 | 同じ (d1 で `internal/asana` から移した。`internal/asana` に別名。#73 で PUT 値変換とタスク/CF 抽出を移した) | なし | `Task`・`Story`・`Project` などの型 (JSON のタグ付き)、`Error`、`CF*` 定数、`TaskFieldValues`・`CustomFieldValue`・`CustomFieldAPIValue`・`ServerCustomField` |
-| `internal/readmodel` | 共有の型 | (#73 で非 DTO 責務を `domain/plan`・`asana/model`・`store`・`ui/format` に分離し、純粋な DTO 層へ整理) | なし | 表示・問い合わせ用の読み取り DTO (`TaskSummary`・`TaskDetail`・`CustomFieldView`・`FilterSpec`・`Discard` など)、型付き `ResultKind`、共通エラー値 (`ErrNotFound`・`ErrPushBusy` など)。`asana/model` のみを import する |
-| `internal/ui/format` | 共通 | (#73 で `readmodel` から分離) | なし | TUI・CLI・MCP・sync が使う日本語の表示フォーマット (`StatusLabel`・`ConflictLines`・`DescribeOp`・`OpLabel`・`DiscardLine`・`TaskBadges`・`AccountChangedHelp` など) |
+| `internal/readmodel` | 共有の型 | (#73 で非 DTO 責務を `domain/plan`・`asana/model`・`store`・`ui/format` に分離し、純粋な DTO 層へ整理) | なし | 表示・問い合わせ用の読み取り DTO (`TaskSummary`・`TaskDetail`・`CustomFieldView`・`FilterSpec`・`Discard` など)、型付き `ResultKind`、共通エラー値 (`ErrNotFound`・`ErrPushBusy`・`PlanUnavailableError` など)、保存される値 (`DiscardReasonReset`)。`asana/model` と `domain/plan` を import する |
+| `internal/ui/format` | 共通 | (#73 で `readmodel` から分離) | なし | TUI・CLI・MCP・sync が使う日本語の表示フォーマット (`StatusLabel`・`ConflictLines`・`DescribeOp`・`OpLabel`・`DiscardLine`・`TaskBadges`・`AccountChangedHelp` など)。保存される値は置かない。adapter は import しない (#82。破棄した変更の要約は、組み立てが `DescribeChange` を `Store.SetDescribeChange` で渡す) |
 | `internal/auth` | adapter | 同じ | x/oauth2 | OAuth、トークンの供給 |
 | `internal/auth/tokenstore` | adapter | 同じ | go-keyring | トークンの保存先 |
 | `internal/richtext` | adapter | 同じ | goldmark、x/net/html | Markdown ⇔ rich text の変換。決まりは `domain/rich` を読む |
@@ -66,7 +66,7 @@ Issue #69 の段階 a〜d と、仕上げの e1 が終わったときの形。�
 
 1. **ドメイン** (`internal/domain/...`、`internal/dates`) は、標準ライブラリとほかのドメインのパッケージだけを import する。`time.Now`、`os`、`net`、`database/sql` を使わない。時刻と乱数は引数で受ける。
 2. **アプリ** (`internal/app`、`internal/sync`) は、ドメイン・`asana/model`・`readmodel`・`termsafe` と、標準ライブラリだけを import する。外部ライブラリを (間接にも) 使わない。Asana・キャッシュ・時計・rich text の変換は、自分で定義したポートで受ける (送るのは入り口で、app は送らない。ADR 0006・0008)。ポートの引数と戻り値にも、adapter の型を使わない (ドメインか共有の型にする)。
-3. **adapter** は、ドメイン・共有の型 (`asana/model`・`readmodel`)・`termsafe`・自分の外部ライブラリを import してよい。アプリと入り口と、ほかの adapter は import しない。例外: `auth` は `auth/tokenstore`・`config`・`browser` を、`auth/tokenstore` は `config` を使ってよい (同じ認証のまとまりと、その設定)。
+3. **adapter** は、ドメイン・共有の型 (`asana/model`・`readmodel`)・`termsafe`・自分の外部ライブラリを import してよい。アプリと入り口と、ほかの adapter は import しない。表示の文言 (`ui/format`) も import しない (#82。保存する値はドメインか `readmodel` の値にする)。例外: `auth` は `auth/tokenstore`・`config`・`browser` を、`auth/tokenstore` は `config` を使ってよい (同じ認証のまとまりと、その設定)。
 4. **入り口** は、アプリ・ドメイン・共有の型・`termsafe`・自分の画面のライブラリを import してよい。adapter のうち、次の 4 つだけは入り口から使ってよい:
    - `auth`: 認証のまとまりが公開するもの (`LoginHelp`・`ErrNotLoggedIn`・`ErrLoginReplaced`、CLI のログインのコマンドが使う `Login` など)。
    - `richtext`: **表示のための変換** (html → Markdown: `ToMarkdown`・`ToEditableMarkdownWith`・`Images`・`ImageToken` など)。Markdown → html (`Target.FromMarkdown`・`PlainFromMarkdown`) は、段階 a のあとは app だけが呼ぶ (関数の決まり。`dependency-rules.md`)。

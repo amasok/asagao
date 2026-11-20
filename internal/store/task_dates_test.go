@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/asana"
 	"github.com/amasok/asagao/internal/domain/plan"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // #57: a task's start date is edited locally and queued, with Asana's rules checked first.
@@ -146,7 +147,7 @@ func TestUpdateTaskLocalStartOnPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-11-15"}, now)
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if !errors.As(err, &pe) || pe.Feature != plan.StartOn {
 		t.Fatalf("err = %v, want a plan error", err)
 	}
@@ -227,7 +228,7 @@ func TestCreateSubtaskStartOnPlanWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := s.CreateTaskLocal(ctx, NewTask{Name: "採寸", ParentGID: "t1", DueOn: "2026-11-19", StartOn: "2026-11-18"}, now)
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err = %v, want a plan error", err)
 	}

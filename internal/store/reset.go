@@ -6,14 +6,10 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // ErrUnsentChanges is readmodel.ErrUnsentChanges.
 var ErrUnsentChanges = readmodel.ErrUnsentChanges
-
-// ResetReason is format.ResetReason.
-const ResetReason = format.ResetReason
 
 // Reset deletes all local data: tasks, projects, comments, attachments, the outbox, the
 // record of dropped changes and sync state including the account (keyMeGID), so the store
@@ -101,7 +97,7 @@ func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsen
 			if err != nil {
 				return err
 			}
-			if _, err := recordDiscard(ctx, tx, op, ResetReason, now); err != nil {
+			if _, err := s.recordDiscard(ctx, tx, op, readmodel.DiscardReasonReset, now); err != nil {
 				return err
 			}
 		}

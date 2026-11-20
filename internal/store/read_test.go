@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/rich"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -201,14 +202,14 @@ func TestResolveProject(t *testing.T) {
 
 func TestInlineAssets(t *testing.T) {
 	text := "見て https://app.asana.com/app/asana/-/get_asset?asset_id=111 と\n(https://app.asana.com/app/asana/-/get_asset?asset_id=222&size=large) 以上"
-	if got := InlineAssets(text); len(got) != 2 || got[0] != "111" || got[1] != "222" {
+	if got := rich.InlineAssets(text); len(got) != 2 || got[0] != "111" || got[1] != "222" {
 		t.Fatalf("InlineAssets = %v", got)
 	}
-	got := ReplaceInlineAssets(text, func(gid string) string { return "[" + gid + "]" })
+	got := rich.ReplaceInlineAssets(text, func(gid string) string { return "[" + gid + "]" })
 	if got != "見て [111] と\n([222]) 以上" {
 		t.Fatalf("ReplaceInlineAssets = %q", got)
 	}
-	if InlineAssets("https://app.asana.com/0/123/456") != nil {
+	if rich.InlineAssets("https://app.asana.com/0/123/456") != nil {
 		t.Fatal("task links are not images")
 	}
 }

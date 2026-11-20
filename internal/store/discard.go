@@ -9,7 +9,6 @@ import (
 
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
-	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // Changes to things deleted in Asana are dropped automatically (Asana answered 404), and
@@ -52,7 +51,7 @@ func (s *Store) DiscardDeletedTask(ctx context.Context, taskGID, reason string, 
 			if err != nil {
 				return err
 			}
-			d, err := recordDiscard(ctx, tx, op, reason, now)
+			d, err := s.recordDiscard(ctx, tx, op, reason, now)
 			if err != nil {
 				return err
 			}
@@ -95,7 +94,7 @@ func (s *Store) DiscardGoneOp(ctx context.Context, id int64, reason string, now 
 		if err != nil {
 			return err
 		}
-		if d, err = recordDiscard(ctx, tx, op, reason, now); err != nil {
+		if d, err = s.recordDiscard(ctx, tx, op, reason, now); err != nil {
 			return err
 		}
 		return discardOpTx(ctx, tx, op)
@@ -138,14 +137,16 @@ func (s *Store) MarkDiscardsNotified(ctx context.Context, ids []int64) error {
 	})
 }
 
-func recordDiscard(ctx context.Context, tx *sql.Tx, op *Op, reason string, now time.Time) (Discard, error) {
+func (s *Store) recordDiscard(ctx context.Context, tx *sql.Tx, op *Op, reason string, now time.Time) (Discard, error) {
 	var name string
 	_ = tx.QueryRowContext(ctx, "SELECT name FROM tasks WHERE gid = ?", op.TaskGID).Scan(&name)
 	if name == "" {
 		name, _ = op.Payload["name"].(string)
 	}
-	d := Discard{Kind: op.Kind, TaskGID: op.TaskGID, TaskName: name, Summary: format.DescribeChange(*op), Reason: reason,
-		DiscardedAt: formatTime(now), Payload: op.Payload}
+	d := Discard{Kind: op.Kind, TaskGID: op.TaskGID, TaskName: name, Reason: reason, DiscardedAt: formatTime(now), Payload: op.Payload}
+	if s.describeChange != nil {
+		d.Summary = s.describeChange(*op)
+	}
 	payload, err := json.Marshal(nonNil(op.Payload))
 	if err != nil {
 		return d, err

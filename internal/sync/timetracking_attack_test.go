@@ -96,7 +96,7 @@ func TestAttackTimeEntry402OnEditAndDelete(t *testing.T) {
 			if res, _ := s.Push(ctx); res.Failed != 1 {
 				t.Fatalf("Push = %+v", res)
 			}
-			var pe *plan.UnavailableError
+			var pe *readmodel.PlanUnavailableError
 			if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 				t.Errorf("402 on %s was not recorded: %v", method, err)
 			}
@@ -296,7 +296,7 @@ func TestAttackPlanRecheckAfter24h(t *testing.T) {
 	cur := at
 	s.now = func() time.Time { return cur }
 	must(t, st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", at))
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	for _, d := range []time.Duration{0, time.Hour, 24*time.Hour - time.Second} {
 		cur = at.Add(d)
 		if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
@@ -333,7 +333,7 @@ func TestAttackPlanRecheckStill402(t *testing.T) {
 	s.now = func() time.Time { return cur }
 	must(t, st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", at))
 	ts.unpaid = true
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestAttackPlanPerWorkspace(t *testing.T) {
 	ctx := context.Background()
 	must(t, st.UpsertTasks(ctx, []asana.Task{{GID: "t2", Name: "B", Workspace: &asana.Ref{GID: "w2"}}}))
 	must(t, st.RecordPlanRefusal(ctx, plan.TimeTracking, "w1", time.Now().UTC()))
-	var pe *plan.UnavailableError
+	var pe *readmodel.PlanUnavailableError
 	if err := s.FetchTimeEntries(ctx, "t1"); !errors.As(err, &pe) {
 		t.Fatalf("t1: %v", err)
 	}

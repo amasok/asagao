@@ -1,10 +1,16 @@
-package readmodel
+package rich
 
 import (
 	"path/filepath"
 	"regexp"
 	"strings"
 )
+
+// Images in Asana's rich text and attachments: which files are images, and how an image
+// pasted into a description or comment is linked. These are Asana's rules, like the rest of
+// this package, so the store (which marks attachments as images) and the front ends (which
+// show them) read the same ones; richtext and imageview are adapters the store may not
+// import (Issue #82 moved them here from readmodel, which holds only types and values).
 
 var imageExts = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".heic": true, ".bmp": true}
 

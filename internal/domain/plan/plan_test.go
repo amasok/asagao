@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -57,12 +56,5 @@ func TestFeatureOf(t *testing.T) {
 		if got := FeatureOf(kind); got != want {
 			t.Errorf("FeatureOf(%q) = %q, want %q", kind, got, want)
 		}
-	}
-}
-
-func TestUnavailableError(t *testing.T) {
-	err := &UnavailableError{Feature: StartOn}
-	if !strings.Contains(err.Error(), "タスクの開始日") {
-		t.Fatalf("Error() = %q, want feature description", err.Error())
 	}
 }

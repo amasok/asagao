@@ -81,32 +81,3 @@ func FeatureOf(kind string) string {
 	}
 	return ""
 }
-
-// UnavailableMessage says that a feature cannot be used with the workspace's plan.
-func UnavailableMessage(feature string) string {
-	what := map[string]string{
-		Sections:         "セクションの作成・削除・並べ替え",
-		Tags:             "タグの名前・色の変更と削除",
-		MySection:        "マイタスクのセクション",
-		TimeTracking:     "タイムトラッキング (作業時間の記録)",
-		Search:           "タスクの検索",
-		Typeahead:        "名前での検索 (typeahead)",
-		CustomID:         "タスクの ID (custom ID) での取得",
-		Goals:            "ゴール",
-		Portfolios:       "ポートフォリオ",
-		CustomFields:     "カスタムフィールドの選択肢の追加とプロジェクトへの追加",
-		ProjectBrief:     "プロジェクトブリーフ (概要のページ)",
-		StartOn:          "タスクの開始日",
-		CustomTypes:      "カスタムタイプ (タスクの種類とステータス)",
-		TaskTemplates:    "タスクテンプレート",
-		ProjectTemplates: "プロジェクトテンプレート",
-	}[feature]
-	// Every feature is tried again after RecheckAfter.
-	return "このワークスペースのプランでは、" + what + "を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"
-}
-
-// UnavailableError is returned for a feature that Asana refused because the workspace's
-// plan lacks it. The message says which.
-type UnavailableError struct{ Feature string }
-
-func (e *UnavailableError) Error() string { return UnavailableMessage(e.Feature) }

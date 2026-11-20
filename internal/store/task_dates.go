@@ -9,6 +9,7 @@ import (
 
 	"github.com/amasok/asagao/internal/domain/plan"
 	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // A task's start date (start_on) needs a due date and does not come after it (Asana's
@@ -67,7 +68,7 @@ func dueAtDay(ctx context.Context, q dbQuerier, gid string) (string, error) {
 	return t.Local().Format(time.DateOnly), nil
 }
 
-// startOnOffered returns a *plan.UnavailableError while a recent 402 hides start
+// startOnOffered returns a *readmodel.PlanUnavailableError while a recent 402 hides start
 // dates in workspace ws.
 func startOnOffered(ctx context.Context, q dbQuerier, ws string, now time.Time) error {
 	var v string
@@ -76,7 +77,7 @@ func startOnOffered(ctx context.Context, q dbQuerier, ws string, now time.Time) 
 		return err
 	}
 	if plan.OffFor(v, now) {
-		return &plan.UnavailableError{Feature: plan.StartOn}
+		return &readmodel.PlanUnavailableError{Feature: plan.StartOn}
 	}
 	return nil
 }
@@ -113,7 +114,7 @@ func (s *Store) WithdrawStartOn(ctx context.Context, id int64, reason string, no
 		}
 		start := Op{ID: op.ID, Kind: OpUpdateTask, TaskGID: op.TaskGID, Payload: map[string]any{"start_on": v},
 			Base: map[string]any{"start_on": op.Base["start_on"]}}
-		if d, err = recordDiscard(ctx, tx, &start, reason, now); err != nil {
+		if d, err = s.recordDiscard(ctx, tx, &start, reason, now); err != nil {
 			return err
 		}
 		was, _ := op.Base["start_on"].(string) // a create had none

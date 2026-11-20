@@ -67,7 +67,7 @@ func takeDiscards(ctx context.Context, st Store, w io.Writer, print bool) []read
 	}
 	var announce []readmodel.Discard // changes deleted by a reset were confirmed by the user
 	for _, d := range ds {
-		if !format.IsResetDiscard(d) {
+		if !d.IsReset() {
 			announce = append(announce, d)
 		}
 	}

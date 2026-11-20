@@ -51,7 +51,7 @@ outbox の送信 (push)、同期全体 (`Syncer.Run`)、初期化 (`ResetUpTo`) 
 - **THEN** 初期化は `ErrPushBusy` で止まり、何も消さない
 
 ### Requirement: 未送信の変更があれば初期化しない
-初期化は、指定した番号より新しい outbox の操作があれば `ErrUnsentChanges` を返し、何も消さない (MUST)。消すときは 1 つのトランザクションで、outbox の操作を「破棄した変更」として記録してから、キャッシュの表を消す。バックアップ付きの初期化は、先に操作と破棄の記録を JSON (0700 のフォルダ、fsync) に書き、書けなければ何も消さない。
+初期化は、指定した番号より新しい outbox の操作があれば `ErrUnsentChanges` を返し、何も消さない (MUST)。消すときは 1 つのトランザクションで、outbox の操作を「破棄した変更」(理由は `reset`) として記録してから、キャッシュの表を消す。バックアップ付きの初期化は、先に操作と破棄の記録を JSON (0700 のフォルダ、fsync) に書き、書けなければ何も消さない。
 根拠: internal/store/reset.go:38-130; reset_backup.go:18-110; TestResetRefusesWithUnsentChanges, TestResetDeletesOnlyConfirmedChanges, TestResetWithBackup
 
 #### Scenario: 確認のあとに新しい操作が積まれた
@@ -73,6 +73,14 @@ store から読む文字列の列は、すべて termsafe を通して端末の�
 #### Scenario: 全件の同期中に TUI で編集する
 - **WHEN** 大きな全件の同期の間に、別のプロセスがタスクを書く
 - **THEN** その書き込みは busy で失敗しない
+
+### Requirement: ゴールとポートフォリオのキャッシュの片付け
+ワークスペースが消えたときは、そのゴール・支えているものの一覧・期間・取得時刻の記録を消し、自分のポートフォリオでなくなったものは、自分のポートフォリオに (入れ子でも) 入っていなければ中身ごと消す (MUST)。初期化 (reset) ではすべて消す。ゴールの指標と期間は JSON の列に置き、読むときに termsafe を通す。
+根拠: internal/store/goals.go; internal/store/write.go (PruneWorkspaces); internal/store/reset.go; TestGoalsGoWithTheirWorkspaceAndReset, TestPortfoliosPrune, TestGoalsAreTermsafe
+
+#### Scenario: 入れ子のポートフォリオ
+- **WHEN** 自分のポートフォリオ A の中のポートフォリオ N の、さらに中のポートフォリオ NN を開いたあと、ポートフォリオの一覧を取り直す
+- **THEN** A が自分のものである間は NN も残り、A が一覧から消えると N と NN も消える
 
 ## 未確認
 

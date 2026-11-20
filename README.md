@@ -283,6 +283,7 @@ due = ["D", "ctrl+t"]
 | `inbox [--unread] [--limit N]` | 受信トレイ（Asana の通知）を新しい順に表示（`●` が未読。取得できないときは理由と最近の更新を表示） |
 | `inbox read <ID>... [--all]` / `inbox unread <ID>...` | 通知を既読にする / 未読に戻す（ID は一覧の右端。末尾の数桁でも可） |
 | `outbox retry <id>` / `outbox discard <id>` | 失敗した変更を再送 / 変更を取り消す |
+| `outbox discarded [--limit N]` | 破棄した変更（Asana で削除されていたもの・初期化で消したもの）を、書いた内容の全文つきで新しい順に表示。`--json` の `reason` は、初期化で消したものは `"reset"`、それ以外は Asana の応答を述べる文（書き込みのコマンドの `--json` と MCP の `discarded` も同じ） |
 | `mcp [--read-only]` | MCP サーバーとして起動（stdio） |
 | `keys` | キー設定で使える操作名の一覧 |
 | `context` | このフォルダの `.asana.json`（作業中のプロジェクト・セクション・タスク）を表示 |

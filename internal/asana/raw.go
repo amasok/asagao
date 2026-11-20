@@ -30,7 +30,7 @@ func (c *Client) Raw(ctx context.Context, method, path string, body []byte) (sta
 		hc = *c.HTTP
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	rep, err := c.send(ctx, &hc, method, u, body, func(status int) bool { return retryable(method, status) })
+	rep, err := c.send(ctx, &hc, method, u, body, 1, func(status int) bool { return retryable(method, status) })
 	if err != nil {
 		return 0, nil, err
 	}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 func TestResetWithBackup(t *testing.T) {
@@ -169,7 +171,7 @@ func TestResetDeletesOnlyConfirmedChanges(t *testing.T) {
 }
 
 func TestAccountChangedHelp(t *testing.T) {
-	got := AccountChangedHelp(3, "asagao reset")
+	got := format.AccountChangedHelp(3, "asagao reset")
 	for _, want := range []string{"アカウント", "3 件", "ログインし直せば", "asagao auth login", "初期化", "asagao reset", "バックアップ"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in %q", want, got)

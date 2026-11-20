@@ -17,7 +17,7 @@ import (
 // feature, and it is not offered (nor asked for) from then on.
 
 // FetchTimeEntries refreshes a task's time tracking entries. It returns a
-// *plan.UnavailableError, without asking Asana, while a 402 in the task's
+// *readmodel.PlanUnavailableError, without asking Asana, while a 402 in the task's
 // workspace still hides time tracking (plan.go); after that it asks again, and a list read
 // forgets the 402.
 func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
@@ -28,7 +28,7 @@ func (s *Syncer) FetchTimeEntries(ctx context.Context, taskGID string) error {
 	if err != nil {
 		return err
 	}
-	unavailable := &plan.UnavailableError{Feature: plan.TimeTracking}
+	unavailable := &readmodel.PlanUnavailableError{Feature: plan.TimeTracking}
 	if hidden, err := s.planHidden(ctx, plan.TimeTracking, ws); err != nil || hidden {
 		if err != nil {
 			return err

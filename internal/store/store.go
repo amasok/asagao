@@ -24,10 +24,21 @@ type Store struct {
 	// attachmentDir is where the attachment files the store may delete are (see
 	// SetAttachmentDir; "" for the cache's).
 	attachmentDir string
+	// describeChange says what an outbox entry changes, recorded as a dropped change's
+	// summary (see SetDescribeChange; nil records none).
+	describeChange func(Op) string
 }
 
+// SetDescribeChange sets how a dropped change is summed up when it is recorded
+// (Discard.Summary): the wiring gives the display's DescribeChange, so the store does not
+// depend on how the front ends word things (Issue #82). Without it the summary is left
+// empty, and the front ends describe the change from its kind and payload. Call it before
+// the store is used.
+func (s *Store) SetDescribeChange(f func(Op) string) { s.describeChange = f }
+
 // ErrNewerSchema reports that the local store uses a newer schema version than this build supports.
-var ErrNewerSchema = errors.New("ローカルのストアがより新しいバージョンのスキーマです")
+// The message says what to do: this build is older than the one that wrote the store.
+var ErrNewerSchema = errors.New("ローカルのストアが、この asagao より新しい版で作られています。asagao を最新の版に更新してください")
 
 // Open opens (creating if needed) the database at path with 0600 permissions and migrates it.
 func Open(ctx context.Context, path string) (*Store, error) {

@@ -14,6 +14,7 @@ on:
       - 'openspec/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/**'
       - '.github/workflows/ci.yml'
   schedule:
     - cron: '0 0 * * 1'
@@ -48,3 +49,11 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run spec:validate
+
+  # scripts/land.sh (取り込みと PR の手順) の確認。gh は偽物に差し替え、git と bash だけで
+  # 一時ディレクトリの中で動くので軽い (1 秒ほど)。
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/land_test.sh

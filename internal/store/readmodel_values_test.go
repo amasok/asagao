@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/ui/format"
 )
 
 // The store's errors are readmodel's values, so errors.Is matches either.
@@ -47,24 +46,9 @@ func TestInboxTypesAreReadmodelTypes(t *testing.T) {
 	}
 }
 
-// The descriptions of outbox entries are format's: the store's names are its values.
-func TestDescriptionsAreReadmodels(t *testing.T) {
+// A dropped change is readmodel's type.
+func TestDiscardIsReadmodels(t *testing.T) {
 	if typeName(Discard{}) != typeName(readmodel.Discard{}) {
 		t.Errorf("store.Discard is %s", typeName(Discard{}))
-	}
-	if VerifyNote != format.VerifyNote || DiscardNotice != format.DiscardNotice || ResetReason != format.ResetReason {
-		t.Error("the store's constants differ from format's")
-	}
-	if len(StatusTypes) != len(format.StatusTypes) || &StatusTypes[0] != &format.StatusTypes[0] {
-		t.Error("store.StatusTypes is not format.StatusTypes")
-	}
-	d := Discard{Kind: OpAddComment, Payload: map[string]any{"text": "a", "html_text": "<b>a</b>"}}
-	got := DiscardDetails(d, func(string) string { return "**a**" })
-	want := format.DiscardDetails(d, func(string) string { return "**a**" })
-	if len(got) != 1 || len(want) != 1 || got[0].Label != want[0].Label || got[0].Text != want[0].Text {
-		t.Errorf("DiscardDetails = %+v, want %+v", got, want)
-	}
-	if DiscardDetails(Discard{Kind: OpAddTag}, nil) != nil {
-		t.Error("DiscardDetails of nothing is not nil")
 	}
 }

@@ -192,6 +192,9 @@ func importRule(from, to string) string {
 			return "the application imports only domain, shared types and termsafe; adapters come through ports (rule 2)"
 		}
 	case layerAdapter:
+		if slices.Contains(displayOnly, to) {
+			return "adapters do not import the display text (ui/format): what they store is a domain or readmodel value, and the wiring gives them what they need of the display (Issue #82)"
+		}
 		if lt == layerAdapter && slices.Contains(adapterExceptions[from], to) {
 			return ""
 		}

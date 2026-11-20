@@ -518,4 +518,11 @@ UPDATE tags SET workspace_gid = COALESCE((
 	ORDER BY tt.task_gid LIMIT 1
 ), '') WHERE workspace_gid = '';
 `,
+	`
+-- The reason recorded for an unsent change deleted by a reset is a code (Issue #82,
+-- readmodel.DiscardReasonReset), no longer the Japanese text shown before, so rewording
+-- the display does not make these records look like changes deleted in Asana.
+UPDATE discarded_changes SET reason = 'reset'
+	WHERE reason = 'ローカルのデータを初期化したため、送らずに破棄しました';
+`,
 }

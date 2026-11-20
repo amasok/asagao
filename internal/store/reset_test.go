@@ -103,7 +103,7 @@ func TestResetDeletesEverything(t *testing.T) {
 			if err != nil || len(d) != map[bool]int{true: 2, false: 0}[force] {
 				t.Fatalf("recorded = %+v %v", d, err)
 			}
-			if force && (d[1].Payload["text"] != "メモ" || d[1].Reason != ResetReason || d[1].TaskName != "ソファを買う") {
+			if force && (d[1].Payload["text"] != "メモ" || !d[1].IsReset() || d[1].TaskName != "ソファを買う") {
 				t.Fatalf("recorded = %+v", d[1])
 			}
 			// The push lock file stays (another process may hold it).

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
+	"github.com/amasok/asagao/internal/domain/task"
+	"github.com/amasok/asagao/internal/ui/format"
 )
 
 func depGIDs(views []DependencyView) []string {
@@ -27,7 +29,7 @@ func TestDependenciesStoredBothWays(t *testing.T) {
 	if got := depGIDs(d.Dependencies); len(got) != 2 || d.OpenDependencies != 1 {
 		t.Fatalf("dependencies = %+v, open = %d", d.Dependencies, d.OpenDependencies)
 	}
-	if b := TaskBadges(d.TaskSummary); b != "◆ [待ち1]" {
+	if b := format.TaskBadges(d.TaskSummary); b != "◆ [待ち1]" {
 		t.Fatalf("badges = %q", b)
 	}
 	t2, err := s.GetTask(ctx, "t2")
@@ -45,7 +47,7 @@ func TestSetDependencyQueuesCancelsAndChecks(t *testing.T) {
 	if op.Kind != OpAddDependency || op.TaskGID != "t1" || op.Payload["dependency"] != "t2" {
 		t.Fatalf("op = %+v", op)
 	}
-	if got := DescribeChange(op); got != "「転居届を出す」を待つ" {
+	if got := format.DescribeChange(op); got != "「転居届を出す」を待つ" {
 		t.Fatalf("describe = %q", got)
 	}
 	// a pull without the link keeps the unsent one (from either side)
@@ -91,18 +93,18 @@ func TestApprovalStatusAndType(t *testing.T) {
 	if d.ResourceSubtype != "approval" || d.ApprovalStatus != "approved" || !d.Completed {
 		t.Fatalf("task = %+v", d.TaskSummary)
 	}
-	if got := DescribeChange(onlyOp(t, s)); got != "種類を「承認」に変更、承認を「承認済み」に変更" {
+	if got := format.DescribeChange(onlyOp(t, s)); got != "種類を「承認」に変更、承認を「承認済み」に変更" {
 		t.Fatalf("describe = %q", got)
 	}
 	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"approval_status": "maybe"}, testNow); err == nil {
 		t.Fatal("an unknown status must be refused")
 	}
 	for in, want := range map[string]string{"承認済み": "approved", "reject": "rejected", "pending": "pending"} {
-		if got, err := ParseApprovalStatus(in); err != nil || got != want {
-			t.Errorf("ParseApprovalStatus(%q) = %q, %v", in, got, err)
+		if got, err := task.ParseApprovalStatus(in); err != nil || got != want {
+			t.Errorf("task.ParseApprovalStatus(%q) = %q, %v", in, got, err)
 		}
 	}
-	if got, err := ParseSubtype("マイルストーン"); err != nil || got != "milestone" {
+	if got, err := task.ParseSubtype("マイルストーン"); err != nil || got != "milestone" {
 		t.Errorf("ParseSubtype = %q, %v", got, err)
 	}
 }
