@@ -16,6 +16,16 @@ import (
 // modified_at. A 402 (from the list or from a write) records that the plan lacks the
 // feature, and it is not offered (nor asked for) from then on.
 
+func init() {
+	entry := localRef{key: "entry", result: readmodel.ResultTimeEntry}
+	register(outbox.KindAddTimeEntry, opHandler{send: sends((*Syncer).pushAddTimeEntry),
+		find: func(s *Syncer, ctx context.Context, op outbox.Op, f finder) (outcome, match, error) {
+			return s.findTimeEntry(ctx, op, f.byMe, f.recent)
+		}})
+	register(outbox.KindUpdateTimeEntry, opHandler{send: sends((*Syncer).pushUpdateTimeEntry), local: entry})
+	register(outbox.KindDeleteTimeEntry, opHandler{send: sends((*Syncer).pushDeleteTimeEntry), local: entry})
+}
+
 // FetchTimeEntries refreshes a task's time tracking entries. It returns a
 // *readmodel.PlanUnavailableError, without asking Asana, while a 402 in the task's
 // workspace still hides time tracking (plan.go); after that it asks again, and a list read

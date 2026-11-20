@@ -50,7 +50,7 @@ func TestTUICommentAndStatusWithoutLayoutTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kinds := map[string]int{}
+	kinds := map[store.Kind]int{}
 	for _, op := range ops {
 		kinds[op.Kind]++
 		h, _ := op.Payload["html_text"].(string)

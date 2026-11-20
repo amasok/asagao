@@ -177,7 +177,7 @@ func (d *dryRunStore) queuedChanges(ctx context.Context) ([]plannedChange, []can
 			}
 		}
 		planned = append(planned, plannedChange{
-			Kind: op.Kind, TaskGID: dryRunGID(op.TaskGID), TaskName: op.TaskName,
+			Kind: string(op.Kind), TaskGID: dryRunGID(op.TaskGID), TaskName: op.TaskName,
 			Description: format.DescribeOp(op), Payload: op.Payload,
 		})
 	}

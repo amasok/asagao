@@ -84,7 +84,7 @@ func lastOutboxID(t *testing.T, s *Store) int64 {
 // Discards recorded concurrently with a describer set beforehand (race detector).
 func TestDescribeChangeConcurrent(t *testing.T) {
 	s := newTestStore(t)
-	s.SetDescribeChange(func(op Op) string { return "S:" + op.Kind })
+	s.SetDescribeChange(func(op Op) string { return "S:" + string(op.Kind) })
 	ctx := context.Background()
 	var ids []int64
 	for i := 0; i < 8; i++ {

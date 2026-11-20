@@ -10,7 +10,7 @@ import (
 
 // richTextTarget is the destination of the html_text of an entry of kind (false if it has
 // none that FitQueuedRichText fixes).
-func richTextTarget(kind string) (rich.Target, bool) {
+func richTextTarget(kind Kind) (rich.Target, bool) {
 	switch kind {
 	case OpAddComment:
 		return rich.Comment, true

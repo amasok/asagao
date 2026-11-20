@@ -36,7 +36,7 @@ func writeCLIEnv(t *testing.T) string {
 func opKinds(ops []store.Op) []string {
 	kinds := make([]string, len(ops))
 	for i, op := range ops {
-		kinds[i] = op.Kind + ":" + op.TaskGID
+		kinds[i] = string(op.Kind) + ":" + op.TaskGID
 	}
 	return kinds
 }
@@ -47,8 +47,8 @@ func TestWriteCommandsOfflineQueue(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		args  []string
-		kind  string // the queued op
-		task  string // its task (the section, for a section)
+		kind  store.Kind // the queued op
+		task  string     // its task (the section, for a section)
 		check func(t *testing.T, st *store.Store)
 	}{
 		{"complete", []string{"task", "complete", "t1"}, store.OpUpdateTask, "t1", func(t *testing.T, st *store.Store) {

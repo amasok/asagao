@@ -13,6 +13,16 @@ import (
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
+func init() {
+	register(outbox.KindMarkNotification, opHandler{
+		send: func(s *Syncer, ctx context.Context, op outbox.Op) (outcome, error) {
+			out, _, err := s.pushMarkNotification(ctx, op)
+			return out, err
+		},
+		sendAlong: (*Syncer).pushMarkNotification,
+	})
+}
+
 // MaxNotifications is how many notifications per workspace sync keeps (newest first).
 const MaxNotifications = 100
 

@@ -130,7 +130,8 @@ func TestOutboxResolveErrors(t *testing.T) {
 
 func TestOutboxRefreshTarget(t *testing.T) {
 	for _, tc := range []struct {
-		kind, task, want string
+		kind       outbox.Kind
+		task, want string
 	}{
 		{outbox.KindUpdateTask, "1200", "1200"},
 		{outbox.KindMoveTask, "1200", "1200"},
@@ -171,6 +172,20 @@ func TestStateErrorMessage(t *testing.T) {
 		}
 		if !errors.Is(&tc.err, ErrWrongState) {
 			t.Errorf("%v is not ErrWrongState", &tc.err)
+		}
+	}
+}
+
+// Only a change of an existing task re-fetches it: for every other kind task_gid is a
+// local task that is gone, or not a task (an unknown kind is not trusted to be one).
+func TestOutboxRefreshTargetEveryKind(t *testing.T) {
+	for _, k := range append(outbox.AllKinds(), "from_the_future") {
+		want := ""
+		if spec, _ := outbox.SpecOf(k); spec.Subject == outbox.SubjectTask {
+			want = "1200"
+		}
+		if got := refreshTarget(outbox.Op{Kind: k, TaskGID: "1200"}); got != want {
+			t.Errorf("%s: %q, want %q", k, got, want)
 		}
 	}
 }

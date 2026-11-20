@@ -127,13 +127,9 @@ func refreshTarget(op outbox.Op) string {
 	if gid.IsLocal(op.TaskGID) {
 		return "" // removed by DiscardOp, or never reached Asana
 	}
-	switch op.Kind {
-	case outbox.KindCreateTask, outbox.KindDuplicateTask, // the task was local and is gone
-		outbox.KindRenameSection, outbox.KindCreateStatus, outbox.KindUpdateProject, outbox.KindUpdateProjectBrief, // a section / project
-		outbox.KindMarkNotification,                                                  // task_gid is a notification
-		outbox.KindCreateSection, outbox.KindDeleteSection, outbox.KindInsertSection, // a section
-		outbox.KindUpdateTag, outbox.KindDeleteTag, // a tag
-		outbox.KindCreateEnumOption, outbox.KindAddFieldSetting, outbox.KindRemoveFieldSetting: // an option / a project
+	if !op.Kind.OnTask() {
+		// A create's local task is gone; task_gid of the others is a section, a project, a
+		// tag, a notification or an option.
 		return ""
 	}
 	return op.TaskGID

@@ -18,6 +18,10 @@ import (
 // (plan.ProjectBrief) and hides it for a while, as a 402 hides other features
 // (plan.go); a 403 makes this one project's brief unavailable (briefRefusal).
 
+func init() {
+	register(outbox.KindUpdateProjectBrief, opHandler{send: (*Syncer).pushUpdateBrief})
+}
+
 // serverBrief returns the brief project p has in Asana (nil: none).
 func (s *Syncer) serverBrief(ctx context.Context, p *model.Project) (*model.ProjectBrief, error) {
 	if p.ProjectBrief == nil || p.ProjectBrief.GID == "" {

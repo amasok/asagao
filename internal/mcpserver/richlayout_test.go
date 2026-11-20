@@ -38,7 +38,7 @@ func TestMCPRichTextTagsPerTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]bool{}
+	seen := map[store.Kind]bool{}
 	for _, op := range ops {
 		seen[op.Kind] = true
 		if op.Kind == store.OpUpdateTask {

@@ -11,66 +11,66 @@ package outbox
 
 // Kinds of outbox entries (the outbox kind column).
 const (
-	KindUpdateTask = "update_task"
-	KindCreateTask = "create_task"
-	KindAddComment = "add_comment"
+	KindUpdateTask Kind = "update_task"
+	KindCreateTask Kind = "create_task"
+	KindAddComment Kind = "add_comment"
 	// KindMoveTask moves a task to a section. payload: project, section, section_name, and
 	// insert_before / insert_after (a task of the section, optional: where in it); base: section.
-	KindMoveTask = "move_task"
+	KindMoveTask Kind = "move_task"
 
 	// KindRenameSection renames a section. The outbox task_gid column holds the section gid.
 	// payload: name; base: name (before the local edit).
-	KindRenameSection = "rename_section"
+	KindRenameSection Kind = "rename_section"
 
 	// Section operations of a project. The outbox task_gid column holds the section gid
 	// ("local:..." for a section created offline, replaced once Asana created it).
 	//   create_section: payload: project, name, before / after (a section gid, or absent)
 	//   delete_section: payload: project, name (only empty sections can be deleted)
 	//   insert_section: payload: project, name, before / after (exactly one); base: position
-	KindCreateSection = "create_section"
-	KindDeleteSection = "delete_section"
-	KindInsertSection = "insert_section"
+	KindCreateSection Kind = "create_section"
+	KindDeleteSection Kind = "delete_section"
+	KindInsertSection Kind = "insert_section"
 
 	// Tag operations on the tag itself. The outbox task_gid column holds the tag gid.
 	//   update_tag: payload: name and/or color ("" for none), workspace; base: name, color
 	//   delete_tag: payload: name, color, workspace (to restore)
-	KindUpdateTag = "update_tag"
-	KindDeleteTag = "delete_tag"
+	KindUpdateTag Kind = "update_tag"
+	KindDeleteTag Kind = "delete_tag"
 
 	// KindCreateStatus posts a project status update. task_gid holds the project gid;
 	// payload: status (local gid), status_type, title, text, html_text.
-	KindCreateStatus = "create_status"
+	KindCreateStatus Kind = "create_status"
 
 	// Tag operations. payload: tag (gid, "local:..." for a tag created offline), tag_name, workspace.
-	KindAddTag    = "add_tag"
-	KindRemoveTag = "remove_tag"
+	KindAddTag    Kind = "add_tag"
+	KindRemoveTag Kind = "remove_tag"
 
-	KindAddFollower      = "add_follower"    // payload: user, user_name
-	KindRemoveFollower   = "remove_follower" // payload: user, user_name
-	KindAddProject       = "add_project"     // payload: project, project_name, section
-	KindRemoveProject    = "remove_project"  // payload: project, project_name, section (to restore)
-	KindDuplicateTask    = "duplicate_task"  // task_gid: the local copy; payload: source, name
-	KindUploadAttachment = "upload_attachment"
+	KindAddFollower      Kind = "add_follower"    // payload: user, user_name
+	KindRemoveFollower   Kind = "remove_follower" // payload: user, user_name
+	KindAddProject       Kind = "add_project"     // payload: project, project_name, section
+	KindRemoveProject    Kind = "remove_project"  // payload: project, project_name, section (to restore)
+	KindDuplicateTask    Kind = "duplicate_task"  // task_gid: the local copy; payload: source, name
+	KindUploadAttachment Kind = "upload_attachment"
 
 	// KindDeleteTask deletes a task (and its subtasks) in Asana. Until it is sent the task
 	// stays in the store, hidden; discarding the entry shows it again. payload: name.
-	KindDeleteTask = "delete_task"
+	KindDeleteTask Kind = "delete_task"
 	// KindSetParent makes a task a subtask of another, or a top-level task (parent "").
 	// payload: parent, parent_name, insert_before / insert_after (a sibling, optional);
 	// base: parent (before the local change).
-	KindSetParent = "set_parent"
+	KindSetParent Kind = "set_parent"
 
-	KindAddDependency    = "add_dependency"    // payload: dependency, dependency_name
-	KindRemoveDependency = "remove_dependency" // payload: dependency, dependency_name
+	KindAddDependency    Kind = "add_dependency"    // payload: dependency, dependency_name
+	KindRemoveDependency Kind = "remove_dependency" // payload: dependency, dependency_name
 
 	// KindSetCustomField sets one custom field of a task. payload: field, field_name, type,
 	// value, display; base / conflict: value, display.
-	KindSetCustomField = "set_custom_field"
+	KindSetCustomField Kind = "set_custom_field"
 
 	// KindMarkNotification marks a notification read or unread. The outbox task_gid column
 	// holds the notification gid. payload: read bool, workspace, name (what it is about, for
 	// the outbox list); base: read (before the local change).
-	KindMarkNotification = "mark_notification"
+	KindMarkNotification Kind = "mark_notification"
 
 	// Comment and attachment edits (#34). task_gid holds the task the comment or the
 	// attachment belongs to.
@@ -78,41 +78,41 @@ const (
 	// KindUpdateStory edits one of the user's comments. payload: story (gid, "local:..."
 	// while its add_comment is being sent or checked), text, html_text; base: text,
 	// html_text (before the local edit).
-	KindUpdateStory = "update_story"
+	KindUpdateStory Kind = "update_story"
 	// KindDeleteStory deletes one of the user's comments. payload: story, text (for the
 	// outbox list); base: the comment as it was stored (to put it back if discarded).
-	KindDeleteStory = "delete_story"
+	KindDeleteStory Kind = "delete_story"
 	// KindDeleteAttachment deletes an attachment. payload: attachment, name; base: the
 	// attachment as it was stored.
-	KindDeleteAttachment = "delete_attachment"
+	KindDeleteAttachment Kind = "delete_attachment"
 
 	// KindMoveMySection moves a task to another section of the user's My Tasks list.
 	// payload: section, section_name, workspace; base: section (before the local move).
-	KindMoveMySection = "move_my_section"
+	KindMoveMySection Kind = "move_my_section"
 
 	// KindUpdateProject changes a project's fields (see domain/project). The outbox task_gid
 	// column holds the project gid. payload: the changed fields (notes, html_notes, owner,
 	// start_on, due_on, color); base: their values before the local edit.
-	KindUpdateProject = "update_project"
+	KindUpdateProject Kind = "update_project"
 	// KindUpdateProjectBrief creates, changes or deletes a project's brief (#60). The outbox
 	// task_gid column holds the project gid. payload: title, html_text and text (its plain
 	// text, to compare), or delete (true); base: the brief as it was before the local edit:
 	// state (none, available, or "" when it was never fetched), title and text. Asana's
 	// brief is compared with the base when it is sent: a change there is a conflict.
-	KindUpdateProjectBrief = "update_project_brief"
+	KindUpdateProjectBrief Kind = "update_project_brief"
 
 	// Time tracking entries of a task (#6). task_gid holds the task.
 	//
 	// KindAddTimeEntry records time on the task as the logged-in user. payload: entry (its
 	// local gid), duration_minutes, entered_on ("YYYY-MM-DD").
-	KindAddTimeEntry = "add_time_entry"
+	KindAddTimeEntry Kind = "add_time_entry"
 	// KindUpdateTimeEntry changes an entry. payload: entry (gid, "local:..." while its
 	// add_time_entry is being sent or checked), duration_minutes, entered_on; base: both
 	// before the local edit.
-	KindUpdateTimeEntry = "update_time_entry"
+	KindUpdateTimeEntry Kind = "update_time_entry"
 	// KindDeleteTimeEntry deletes an entry. payload: entry, duration_minutes, entered_on
 	// (for the outbox list); base: the entry as it was stored (to put it back if discarded).
-	KindDeleteTimeEntry = "delete_time_entry"
+	KindDeleteTimeEntry Kind = "delete_time_entry"
 
 	// Custom fields themselves (#37).
 	//
@@ -120,12 +120,12 @@ const (
 	// task_gid column holds the option's gid ("local:...", replaced once Asana created it:
 	// the values that use it wait for it). payload: field, field_name, name. It is matched
 	// by name in Asana before it is sent and when it is verified (never created twice).
-	KindCreateEnumOption = "create_enum_option"
+	KindCreateEnumOption Kind = "create_enum_option"
 	// KindAddFieldSetting adds an existing custom field to a project, KindRemoveFieldSetting
 	// removes it. The outbox task_gid column holds the project gid. payload: field,
 	// field_name; base (remove only): position, is_important (to restore).
-	KindAddFieldSetting    = "add_custom_field_setting"
-	KindRemoveFieldSetting = "remove_custom_field_setting"
+	KindAddFieldSetting    Kind = "add_custom_field_setting"
+	KindRemoveFieldSetting Kind = "remove_custom_field_setting"
 )
 
 // SectionRefKeys are the payload keys that may hold a section gid, so that a section
@@ -144,7 +144,7 @@ const (
 // Op is one outbox entry.
 type Op struct {
 	ID             int64          `json:"id"`
-	Kind           string         `json:"kind"`
+	Kind           Kind           `json:"kind"`
 	TaskGID        string         `json:"task_gid"`
 	TaskName       string         `json:"task_name"`
 	Payload        map[string]any `json:"payload"`

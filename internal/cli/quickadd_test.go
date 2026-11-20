@@ -12,7 +12,7 @@ import (
 
 // createdTask returns the task the first queued create_task made, and the kinds of all
 // the queued ops.
-func createdTask(t *testing.T, path string) (*store.TaskDetail, []string) {
+func createdTask(t *testing.T, path string) (*store.TaskDetail, []store.Kind) {
 	t.Helper()
 	st, err := store.Open(context.Background(), path)
 	if err != nil {
@@ -27,7 +27,7 @@ func createdTask(t *testing.T, path string) (*store.TaskDetail, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 	}
@@ -54,7 +54,7 @@ func TestCreateQuick(t *testing.T) {
 		!slices.Equal(tagNames(d), []string{"急ぎ"}) {
 		t.Errorf("task %+v tags %q", d, tagNames(d))
 	}
-	if !slices.Equal(kinds, []string{store.OpCreateTask, store.OpAddTag}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpCreateTask, store.OpAddTag}) {
 		t.Errorf("ops %q", kinds)
 	}
 }
@@ -73,7 +73,7 @@ func TestCreateWithoutQuickKeepsName(t *testing.T) {
 	if d.Name != "牛乳を買う @partner 2026-12-01 #急ぎ" || d.DueOn != "" || d.Assignee == nil || d.Assignee.GID != "me" {
 		t.Errorf("task %+v", d)
 	}
-	if !slices.Equal(kinds, []string{store.OpCreateTask}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpCreateTask}) {
 		t.Errorf("ops %q", kinds)
 	}
 }
@@ -94,7 +94,7 @@ func TestCreateQuickUnread(t *testing.T) {
 	if d.Name != "a #ない" || d.Assignee == nil || d.Assignee.GID != "me" || len(d.Tags) != 0 {
 		t.Errorf("task %+v", d)
 	}
-	if !slices.Equal(kinds, []string{store.OpCreateTask}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpCreateTask}) {
 		t.Errorf("ops %q", kinds)
 	}
 }

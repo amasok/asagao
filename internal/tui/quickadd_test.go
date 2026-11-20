@@ -49,11 +49,11 @@ func TestCreateTaskQuickAdd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var kinds []string
+	var kinds []store.Kind
 	for _, op := range ops {
 		kinds = append(kinds, op.Kind)
 	}
-	if !slices.Equal(kinds, []string{store.OpCreateTask, store.OpAddTag, store.OpAddTag}) {
+	if !slices.Equal(kinds, []store.Kind{store.OpCreateTask, store.OpAddTag, store.OpAddTag}) {
 		t.Errorf("ops %q", kinds)
 	}
 }

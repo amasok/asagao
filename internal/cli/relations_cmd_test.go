@@ -47,15 +47,15 @@ func TestRelationCommandsQueue(t *testing.T) {
 		args []string
 		want []string // kind:task of the queued ops
 	}{
-		{"tag remove", []string{"task", "tag", "t1", "--remove", "急ぎ"}, []string{store.OpRemoveTag + ":t1"}},
-		{"tag add and remove", []string{"task", "tag", "t1", "--add", "新しい", "--remove", "急ぎ"}, []string{store.OpAddTag + ":t1", store.OpRemoveTag + ":t1"}},
-		{"follow add", []string{"task", "follow", "t1", "--add", "me"}, []string{store.OpAddFollower + ":t1"}},
-		{"follow remove", []string{"task", "follow", "t1", "--remove", "Partner"}, []string{store.OpRemoveFollower + ":t1"}},
-		{"follow both", []string{"task", "follow", "t1", "--add", "me", "--remove", "u2"}, []string{store.OpAddFollower + ":t1", store.OpRemoveFollower + ":t1"}},
-		{"project add", []string{"task", "project", "t1", "--add", "仕事"}, []string{store.OpAddProject + ":t1"}},
-		{"project remove", []string{"task", "project", "t1", "--remove", "新居"}, []string{store.OpRemoveProject + ":t1"}},
-		{"depend", []string{"task", "depend", "t1", "--add", "t2"}, []string{store.OpAddDependency + ":t1"}},
-		{"depend dependent", []string{"task", "depend", "t1", "--add-dependent", "t2"}, []string{store.OpAddDependency + ":t2"}},
+		{"tag remove", []string{"task", "tag", "t1", "--remove", "急ぎ"}, []string{string(store.OpRemoveTag) + ":t1"}},
+		{"tag add and remove", []string{"task", "tag", "t1", "--add", "新しい", "--remove", "急ぎ"}, []string{string(store.OpAddTag) + ":t1", string(store.OpRemoveTag) + ":t1"}},
+		{"follow add", []string{"task", "follow", "t1", "--add", "me"}, []string{string(store.OpAddFollower) + ":t1"}},
+		{"follow remove", []string{"task", "follow", "t1", "--remove", "Partner"}, []string{string(store.OpRemoveFollower) + ":t1"}},
+		{"follow both", []string{"task", "follow", "t1", "--add", "me", "--remove", "u2"}, []string{string(store.OpAddFollower) + ":t1", string(store.OpRemoveFollower) + ":t1"}},
+		{"project add", []string{"task", "project", "t1", "--add", "仕事"}, []string{string(store.OpAddProject) + ":t1"}},
+		{"project remove", []string{"task", "project", "t1", "--remove", "新居"}, []string{string(store.OpRemoveProject) + ":t1"}},
+		{"depend", []string{"task", "depend", "t1", "--add", "t2"}, []string{string(store.OpAddDependency) + ":t1"}},
+		{"depend dependent", []string{"task", "depend", "t1", "--add-dependent", "t2"}, []string{string(store.OpAddDependency) + ":t2"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := relationsCLIEnv(t)

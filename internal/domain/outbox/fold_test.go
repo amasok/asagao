@@ -132,24 +132,3 @@ func cloneOp(op Op) Op {
 	op.Payload, op.Base, op.Conflict = maps.Clone(op.Payload), maps.Clone(op.Base), maps.Clone(op.Conflict)
 	return op
 }
-
-func TestSameValue(t *testing.T) {
-	for _, tc := range []struct {
-		a, b any
-		want bool
-	}{
-		{"a", "a", true},
-		{"a", "b", false},
-		{1, 1.0, true},
-		{float64(30), 30, true},
-		{true, true, true},
-		{true, "true", true}, // as printed
-		{nil, nil, true},
-		{nil, "", false},
-		{"", "", true},
-	} {
-		if got := SameValue(tc.a, tc.b); got != tc.want {
-			t.Errorf("SameValue(%#v, %#v) = %v, want %v", tc.a, tc.b, got, tc.want)
-		}
-	}
-}

@@ -12,7 +12,7 @@ import (
 
 func TestFormatEmptyPayloadsAndBoundaries(t *testing.T) {
 	// All outbox kinds with completely empty/nil maps must never panic.
-	allKinds := []string{
+	allKinds := []outbox.Kind{
 		"", "unknown_kind",
 		outbox.KindCreateTask, outbox.KindDuplicateTask, outbox.KindAddComment,
 		outbox.KindMoveTask, outbox.KindDeleteTask, outbox.KindSetParent,

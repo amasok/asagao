@@ -8,7 +8,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
-	domaintask "github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 )
 
@@ -43,8 +42,9 @@ type batchEntry struct {
 	// project and section are set for KindMoveTask so sendBatch can refresh section order.
 	project string
 	section string
-	// check: compare with the task in Asana before sending (updates, custom fields).
-	check bool
+	// check compares the entry with the task in Asana before sending it (updates, custom
+	// fields): the conflicting values, or nil to send it. nil: not compared.
+	check func(op outbox.Op, server *model.Task) (map[string]any, error)
 	// refresh: read the task again after sending (a move: the answer has no task).
 	refresh bool
 	// alone: send it on its own (it changed after the group was formed).
@@ -91,90 +91,16 @@ func (s *Syncer) batchEntryFor(ctx context.Context, op outbox.Op) (e batchEntry,
 		return e, false, nil
 	}
 	e = batchEntry{op: op, task: task}
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	real := func(gid string) bool { return gid != "" && !localgid.IsLocal(gid) }
-	switch op.Kind {
-	case outbox.KindUpdateTask:
-		if domaintask.TouchesCustomType(op.Payload) {
-			return e, false, nil // sent alone: a 402 there records that the plan lacks custom types
-		}
-		e.write = model.BatchUpdateTask(task, taskUpdateFields(op))
-		e.check = true
-	case outbox.KindSetCustomField:
-		if str("field") == "" {
-			return e, false, nil
-		}
-		if wait, err := s.waitsForField(ctx, op); err != nil || wait {
-			return e, false, err // an option or a field of the project is created first
-		}
-		e.write = model.BatchUpdateTask(task, customFieldUpdate(op))
-		e.check = true
-	case outbox.KindMoveTask:
-		section := str("section")
-		if !real(section) {
-			return e, false, nil
-		}
-		if str("insert_before") != "" || str("insert_after") != "" {
-			// A place is next to another task, which an action of the same batch may move:
-			// the batch keeps the order of one task's changes only. Sent alone, in order.
-			return e, false, nil
-		}
-		e.write = model.BatchMoveTaskToSection(section, task)
-		e.project, e.section = str("project"), section
-		e.refresh = true
-	case outbox.KindAddTag, outbox.KindRemoveTag:
-		tag, err := s.Store.RealTagGID(ctx, str("tag"))
-		if err != nil {
-			return e, false, err
-		}
-		if !real(tag) {
-			return e, false, nil // a tag created offline is created in Asana first
-		}
-		if op.Kind == outbox.KindRemoveTag {
-			e.write = model.BatchRemoveTag(task, tag)
-		} else {
-			e.write = model.BatchAddTag(task, tag)
-		}
-	case outbox.KindAddFollower, outbox.KindRemoveFollower:
-		user := str("user")
-		if !real(user) {
-			return e, false, nil
-		}
-		if op.Kind == outbox.KindRemoveFollower {
-			e.write = model.BatchRemoveFollower(task, user)
-		} else {
-			e.write = model.BatchAddFollower(task, user)
-		}
-	case outbox.KindAddProject:
-		project, section := str("project"), str("section")
-		if !real(project) || (section != "" && !real(section)) {
-			return e, false, nil
-		}
-		e.write = model.BatchAddProject(task, project, section)
-	case outbox.KindRemoveProject:
-		project := str("project")
-		if !real(project) {
-			return e, false, nil
-		}
-		e.write = model.BatchRemoveProject(task, project)
-	case outbox.KindAddDependency, outbox.KindRemoveDependency:
-		dep, err := s.Store.RealGID(ctx, str("dependency"))
-		if err != nil {
-			return e, false, err
-		}
-		if !real(dep) {
-			return e, false, nil
-		}
-		if op.Kind == outbox.KindRemoveDependency {
-			e.write = model.BatchRemoveDependency(task, dep)
-		} else {
-			e.write = model.BatchAddDependency(task, dep)
-		}
-	default:
+	build := handlers[op.Kind].batch
+	if build == nil {
 		return e, false, nil
 	}
-	return e, true, nil
+	ok, err = build(s, ctx, op, &e)
+	return e, ok && err == nil, err
 }
+
+// realGID reports whether gid is set and an Asana gid (not one created offline).
+func realGID(gid string) bool { return gid != "" && !localgid.IsLocal(gid) }
 
 // batchSent is what sending one entry of a batch gave (as send returns it).
 type batchSent struct {
@@ -244,7 +170,7 @@ func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSen
 	// Compare with the tasks in Asana first (one more batch, reading).
 	var check []string
 	for i, e := range entries {
-		if e.check && !alone[i] {
+		if e.check != nil && !alone[i] {
 			check = append(check, e.task)
 		}
 	}
@@ -274,19 +200,13 @@ func (s *Syncer) sendBatch(ctx context.Context, entries []batchEntry) []batchSen
 		if alone[i] {
 			continue
 		}
-		if e.check {
+		if e.check != nil {
 			t := server[e.task]
 			if t == nil { // not shown to us (gone, or no access): sent alone, it tells which
 				alone[i] = true
 				continue
 			}
-			var conflicts map[string]any
-			var err error
-			if e.op.Kind == outbox.KindSetCustomField {
-				conflicts, err = customFieldConflict(e.op, t)
-			} else {
-				conflicts = updateConflicts(e.op, t)
-			}
+			conflicts, err := e.check(e.op, t)
 			if err != nil {
 				results[i].err = err
 				continue

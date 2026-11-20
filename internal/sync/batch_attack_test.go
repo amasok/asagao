@@ -133,7 +133,7 @@ func TestBatchAttackEntryForIntentAndResolvedGIDs(t *testing.T) {
 			if !reflect.DeepEqual(e.write, tc.wantWrite) {
 				t.Fatalf("write = %#v, want %#v", e.write, tc.wantWrite)
 			}
-			if e.check != tc.wantCheck || e.refresh != tc.wantRefresh || e.project != tc.wantProject || e.section != tc.wantSection {
+			if (e.check != nil) != tc.wantCheck || e.refresh != tc.wantRefresh || e.project != tc.wantProject || e.section != tc.wantSection {
 				t.Fatalf("entry meta mismatch: %+v", e)
 			}
 		})

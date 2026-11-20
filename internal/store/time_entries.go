@@ -15,6 +15,12 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpAddTimeEntry, undoTimeEntryOp)
+	registerUndo(OpUpdateTimeEntry, undoTimeEntryOp)
+	registerUndo(OpDeleteTimeEntry, undoTimeEntryOp)
+}
+
 // Time tracking entries of tasks (#6). As every other write, a change is applied to
 // time_entries at once and queued in the outbox, the way comments are (comment_edits.go):
 //

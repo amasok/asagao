@@ -12,6 +12,12 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
+func init() {
+	registerUndo(OpCreateSection, undoSectionOp)
+	registerUndo(OpDeleteSection, undoSectionOp)
+	registerUndo(OpInsertSection, undoSectionOp)
+}
+
 // Section operations of a project (outbox.KindCreateSection, KindDeleteSection,
 // KindInsertSection).
 const (
@@ -451,7 +457,7 @@ func putSectionAt(ctx context.Context, tx *sql.Tx, project, gid string, at int) 
 }
 
 // findOpAnyState returns the latest entry of kind for gid, whatever its state (nil if none).
-func findOpAnyState(ctx context.Context, tx *sql.Tx, kind, gid string) (*Op, error) {
+func findOpAnyState(ctx context.Context, tx *sql.Tx, kind Kind, gid string) (*Op, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND task_gid = ? ORDER BY id DESC LIMIT 1", kind, gid).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {

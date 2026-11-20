@@ -13,6 +13,19 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpSetParent, func(ctx context.Context, tx *sql.Tx, op *Op) error {
+		parent, ok := op.Base["parent"].(string)
+		if !ok {
+			return nil
+		}
+		if err := setParent(ctx, tx, op.TaskGID, parent); err != nil {
+			return err
+		}
+		return restoreSubtaskPosition(ctx, tx, op.TaskGID, op.Base)
+	})
+}
+
 // Position is where a task goes among its siblings (model.Position).
 type Position = model.Position
 
@@ -106,7 +119,8 @@ func (s *Store) DeleteTaskLocal(ctx context.Context, gid string, now time.Time) 
 // does. A create being sent cannot be taken back.
 func deleteLocalTask(ctx context.Context, tx *sql.Tx, gid string) error {
 	var id int64
-	var kind, state string
+	var kind Kind
+	var state string
 	err := tx.QueryRowContext(ctx, "SELECT id, kind, state FROM outbox WHERE task_gid = ? AND kind IN (?, ?) ORDER BY id LIMIT 1",
 		gid, OpCreateTask, OpDuplicateTask).Scan(&id, &kind, &state)
 	if errors.Is(err, sql.ErrNoRows) {

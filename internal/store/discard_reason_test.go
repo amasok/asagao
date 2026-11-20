@@ -54,7 +54,7 @@ func TestResetDiscardReasonAndSummary(t *testing.T) {
 		ctx := context.Background()
 		s := newTestStore(t)
 		if describe {
-			s.SetDescribeChange(func(op Op) string { return "summary of " + op.Kind })
+			s.SetDescribeChange(func(op Op) string { return "summary of " + string(op.Kind) })
 		}
 		_, err := s.db.Exec(`INSERT INTO outbox(kind, task_gid, payload, base, base_modified_at, state, conflict, created_at)
 			VALUES('add_comment', 't1', json_object('text', 'メモ'), '{}', '', 'pending', '{}', '')`)

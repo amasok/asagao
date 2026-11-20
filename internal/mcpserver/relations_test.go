@@ -18,7 +18,7 @@ func opList(t *testing.T, st *store.Store) []string {
 	}
 	var out []string
 	for _, op := range ops {
-		out = append(out, op.Kind+":"+op.TaskGID)
+		out = append(out, string(op.Kind)+":"+op.TaskGID)
 	}
 	return out
 }
@@ -42,8 +42,8 @@ func TestUpdateTaskRelationsQueueInOrder(t *testing.T) {
 	if res.IsError {
 		t.Fatal(toolError(res))
 	}
-	want := []string{store.OpAddTag + ":t1", store.OpSetCustomField + ":t1", store.OpSetCustomField + ":t1",
-		store.OpAddDependency + ":t1", store.OpAddDependency + ":t3", store.OpAddFollower + ":t1", store.OpAddProject + ":t1"}
+	want := []string{string(store.OpAddTag) + ":t1", string(store.OpSetCustomField) + ":t1", string(store.OpSetCustomField) + ":t1",
+		string(store.OpAddDependency) + ":t1", string(store.OpAddDependency) + ":t3", string(store.OpAddFollower) + ":t1", string(store.OpAddProject) + ":t1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}

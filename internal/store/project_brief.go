@@ -13,6 +13,10 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpUpdateBrief, undoBriefOp)
+}
+
 // OpUpdateBrief creates, changes or deletes a project's brief (outbox.KindUpdateProjectBrief).
 const OpUpdateBrief = outbox.KindUpdateProjectBrief
 

@@ -89,7 +89,7 @@ func TestPushUnauthorizedKeepsEverything(t *testing.T) {
 func TestPushUnauthorizedCreateIsNotVerified(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		kind  string
+		kind  store.Kind
 		queue func(*store.Store)
 	}{
 		{"create task", store.OpCreateTask, func(st *store.Store) {

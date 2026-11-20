@@ -14,6 +14,12 @@ import (
 	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
+func init() {
+	for _, k := range []Kind{OpAddFollower, OpRemoveFollower, OpAddProject, OpRemoveProject} {
+		registerUndo(k, undoWith(applyRelation))
+	}
+}
+
 // Followers, extra projects, duplicates and uploads. Like the other local edits they are
 // applied to the store at once and queued in the outbox.
 const (
@@ -26,13 +32,13 @@ const (
 )
 
 // opposite returns the op kind that cancels kind.
-func opposite(kind string) string {
-	return map[string]string{OpAddFollower: OpRemoveFollower, OpRemoveFollower: OpAddFollower,
+func opposite(kind Kind) Kind {
+	return map[Kind]Kind{OpAddFollower: OpRemoveFollower, OpRemoveFollower: OpAddFollower,
 		OpAddProject: OpRemoveProject, OpRemoveProject: OpAddProject}[kind]
 }
 
 // relationKey is the payload field identifying the related object.
-func relationKey(kind string) string {
+func relationKey(kind Kind) string {
 	if kind == OpAddProject || kind == OpRemoveProject {
 		return "project"
 	}
@@ -41,7 +47,7 @@ func relationKey(kind string) string {
 
 // queueRelation applies a follower/project change and queues it; doing the opposite of a
 // pending change cancels it instead.
-func (s *Store) queueRelation(ctx context.Context, kind, taskGID string, payload map[string]any, now time.Time) error {
+func (s *Store) queueRelation(ctx context.Context, kind Kind, taskGID string, payload map[string]any, now time.Time) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		var exists int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE gid = ?", taskGID).Scan(&exists); err != nil {

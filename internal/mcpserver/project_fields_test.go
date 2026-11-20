@@ -31,9 +31,9 @@ func TestUpdateTaskAddMissingOptions(t *testing.T) {
 	ops, _ := st.ListOps(context.Background())
 	var kinds []string
 	for _, op := range ops {
-		kinds = append(kinds, op.Kind)
+		kinds = append(kinds, string(op.Kind))
 	}
-	if strings.Join(kinds, ",") != store.OpCreateEnumOption+","+store.OpSetCustomField+","+store.OpSetCustomField {
+	if strings.Join(kinds, ",") != string(store.OpCreateEnumOption+","+store.OpSetCustomField+","+store.OpSetCustomField) {
 		t.Fatalf("ops = %v", kinds)
 	}
 	// refused before (403): an error, nothing written

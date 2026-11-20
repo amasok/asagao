@@ -28,7 +28,7 @@ func TestMoveTaskAndRenameSectionQueue(t *testing.T) {
 	if res := call(t, cs, "rename_section", map[string]any{"project": "新居", "section": "家具", "name": "大型家具"}, &w); res.IsError {
 		t.Fatal(toolError(res))
 	}
-	want := []string{store.OpMoveTask + ":t1", store.OpRenameSection + ":s1"}
+	want := []string{string(store.OpMoveTask) + ":t1", string(store.OpRenameSection) + ":s1"}
 	if got := opList(t, st); !slices.Equal(got, want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -82,7 +82,7 @@ func TestSectionAndTagTools(t *testing.T) {
 	}
 	got := opList(t, st)
 	// The unsent color change of a tag deleted afterwards is not sent.
-	want := []string{store.OpCreateSection, store.OpMoveTask + ":t1", store.OpInsertSection + ":s2", store.OpDeleteTag + ":g1"}
+	want := []string{string(store.OpCreateSection), string(store.OpMoveTask) + ":t1", string(store.OpInsertSection) + ":s2", string(store.OpDeleteTag) + ":g1"}
 	if len(got) != len(want) {
 		t.Fatalf("ops = %v, want %v", got, want)
 	}
@@ -153,7 +153,7 @@ func TestMoveTaskMyTasks(t *testing.T) {
 	if res := call(t, cs, "move_task", map[string]any{"gid": "t1", "section": "今日やる", "my_tasks": true}, &w); res.IsError {
 		t.Fatal(toolError(res))
 	}
-	if got := opList(t, st); !slices.Equal(got, []string{store.OpMoveMySection + ":t1"}) {
+	if got := opList(t, st); !slices.Equal(got, []string{string(store.OpMoveMySection) + ":t1"}) {
 		t.Fatalf("ops = %v", got)
 	}
 	var list struct {

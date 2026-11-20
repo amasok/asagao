@@ -16,6 +16,12 @@ import (
 	"github.com/amasok/asagao/internal/termsafe"
 )
 
+func init() {
+	registerUndo(OpCreateEnumOption, undoCreateEnumOption)
+	registerUndo(OpAddFieldSetting, undoFieldSettingOp)
+	registerUndo(OpRemoveFieldSetting, undoFieldSettingOp)
+}
+
 // Changes to custom fields themselves (#37): adding an option to an enum / multi_enum
 // field, and adding an existing field of the workspace to a project (or removing it).
 //

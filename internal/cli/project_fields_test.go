@@ -24,9 +24,9 @@ func TestTaskFieldAddOption(t *testing.T) {
 	}
 	var kinds []string
 	for _, op := range cliOps(t, path) {
-		kinds = append(kinds, op.Kind)
+		kinds = append(kinds, string(op.Kind))
 	}
-	if strings.Join(kinds, ",") != store.OpCreateEnumOption+","+store.OpSetCustomField {
+	if strings.Join(kinds, ",") != string(store.OpCreateEnumOption+","+store.OpSetCustomField) {
 		t.Fatalf("ops = %v", kinds)
 	}
 	if out, err := runCLI(t, "task", "show", "t1"); err != nil || !strings.Contains(out, "最高") {
@@ -91,9 +91,9 @@ func TestProjectFieldsCommand(t *testing.T) {
 	}
 	var kinds []string
 	for _, op := range cliOps(t, path) {
-		kinds = append(kinds, op.Kind)
+		kinds = append(kinds, string(op.Kind))
 	}
-	if strings.Join(kinds, ",") != store.OpAddFieldSetting+","+store.OpRemoveFieldSetting {
+	if strings.Join(kinds, ",") != string(store.OpAddFieldSetting+","+store.OpRemoveFieldSetting) {
 		t.Fatalf("ops = %v", kinds)
 	}
 }

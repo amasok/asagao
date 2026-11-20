@@ -11,6 +11,17 @@ import (
 
 // The sections of My Tasks (#35).
 
+func init() {
+	register(outbox.KindMoveMySection, opHandler{send: sends((*Syncer).pushMoveMySection),
+		planWorkspace: func(s *Syncer, ctx context.Context, op outbox.Op) string {
+			if ws := payloadString(op, "workspace"); ws != "" {
+				return ws
+			}
+			ws, _ := s.Store.TaskWorkspace(ctx, op.TaskGID)
+			return ws
+		}})
+}
+
 // syncMySections fetches the sections of my My Tasks list in a workspace (with the poll:
 // they change rarely). Asana answering 402 hides the feature in that workspace for
 // plan.RecheckAfter (it is then asked again); an answer forgets an earlier 402.

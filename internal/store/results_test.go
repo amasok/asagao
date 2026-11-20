@@ -266,14 +266,17 @@ func TestPruneResultsKeepsWhileRowHasLocalGID(t *testing.T) {
 // and only those (one case per entry in resultKinds).
 func TestPruneResultsKindsHoldTheirPrefix(t *testing.T) {
 	prefixes := []string{resultPrefixTask, resultPrefixStory, resultPrefixAttachment, resultPrefixStatus, resultPrefixTag}
-	for _, tc := range []struct{ kind, prefix string }{
+	for _, tc := range []struct {
+		kind   Kind
+		prefix string
+	}{
 		{OpCreateTask, resultPrefixTask},
 		{OpDuplicateTask, resultPrefixTask},
 		{OpAddComment, resultPrefixStory},
 		{OpUploadAttachment, resultPrefixAttachment},
 		{OpCreateStatus, resultPrefixStatus},
 	} {
-		t.Run(tc.kind, func(t *testing.T) {
+		t.Run(string(tc.kind), func(t *testing.T) {
 			ctx := context.Background()
 			st := resultsStore(t)
 			now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
