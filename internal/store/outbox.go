@@ -126,6 +126,8 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 				return err
 			}
 		}
+		// An entry this version cannot send (written by a newer one) takes the edit in all
+		// the same: it is held with it, and the version that reads it sends them together.
 		if op != nil && update == nil && !task.TouchesCustomType(changes) {
 			maps.Copy(op.Payload, changes)
 			if err := saveOp(ctx, tx, op); err != nil {
@@ -151,6 +153,7 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 		op = &Op{Kind: OpUpdateTask, TaskGID: gid, Payload: map[string]any{}, Base: map[string]any{},
 			BaseModifiedAt: modifiedAt, State: OpPending, CreatedAt: formatTime(now)}
 	}
+	// (an entry this version cannot send is folded into too: held with the edit, see above)
 	folded, deleteOp := outbox.Fold(*op, cur, changes)
 	if err := applyFields(ctx, tx, gid, changes, now); err != nil {
 		return err

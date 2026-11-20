@@ -187,6 +187,9 @@ func (s *Pusher) pushMarkNotification(ctx context.Context, op outbox.Op, mark ou
 	var batch []outbox.Op
 	gids := []string{op.TaskGID}
 	for _, p := range peers {
+		if outbox.Readable(p) != nil {
+			continue // not sent along: held when its turn comes (holdUnreadable)
+		}
 		if ok, err := s.Store.BeginSend(ctx, p.ID, s.clock()); err != nil {
 			return sent, batched, err
 		} else if ok {
