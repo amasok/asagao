@@ -378,7 +378,7 @@ func (s *Pusher) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 		if !wasFollowUp {
 			res.Sent++
 		}
-		return out == followUp, nil
+		return out == followUp, w.markErr // the store failing stops the push
 	case errors.As(err, new(*startOnWithdrawn)): // the plan or the due date does not allow the start date
 		var w *startOnWithdrawn
 		errors.As(err, &w)
@@ -508,11 +508,10 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 // (plan.StartOn), and the error says why; an answer that set one forgets an
 // earlier 402. err is returned, wrapped when it is a 402.
 func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outcome, err error) error {
-	if errors.As(err, new(*startOnIgnored)) {
+	var ignored *startOnIgnored
+	if errors.As(err, &ignored) {
 		// Taken for a 402: start dates are hidden in ws for a while, as after one.
-		if rerr := s.Store.RecordPlanRefusal(ctx, plan.StartOn, ws, s.clock()); rerr != nil {
-			return errors.Join(err, rerr)
-		}
+		ignored.markErr = s.Store.RecordPlanRefusal(ctx, plan.StartOn, ws, s.clock())
 		return err
 	}
 	if err == nil {
@@ -537,9 +536,10 @@ func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outco
 // a 402 gives (handleOutcome), and start dates are hidden in the workspace for a while
 // (startOnOutcome). The cache has the task as Asana answered it.
 type startOnIgnored struct {
-	task  string // the task's gid in Asana
-	start string
-	kept  string
+	task    string // the task's gid in Asana
+	start   string
+	kept    string
+	markErr error // recording the mark failed (startOnOutcome)
 }
 
 func (e *startOnIgnored) reason() string { return readmodel.PlanUnavailableMessage(plan.StartOn) }
