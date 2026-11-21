@@ -50,6 +50,12 @@ func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op, p outbox.UpdateTa
 	if conflicts := updateConflicts(op, p, server); conflicts != nil {
 		return conflicted, s.Store.MarkOpConflict(ctx, op.ID, conflicts)
 	}
+	if reason := milestoneStartBlocked(p, server); reason != "" {
+		// Asana would answer 400: not sent. The cache learns the task's type, so that the
+		// next start date is refused before it is queued.
+		s.refresh(ctx, *server)
+		return sent, &startOnWithdrawn{reason: reason}
+	}
 	if reason := startOnBlocked(p, server); reason != "" {
 		return sent, &startOnWithdrawn{reason: reason}
 	}
@@ -96,6 +102,21 @@ func serverDueDay(t *model.Task) string {
 		return t.DueAt.Local().Format(time.DateOnly)
 	}
 	return ""
+}
+
+// milestoneStartBlocked says why an update's start date cannot be sent when the task is a
+// milestone in Asana and stays one (the cache did not know it when the edit was queued):
+// Asana would refuse it with a 400 cannot_set_start_date_on_milestone. "" when it can be sent.
+func milestoneStartBlocked(p outbox.UpdateTask, server *model.Task) string {
+	start := outbox.Str(p.StartOn)
+	subtype := server.ResourceSubtype
+	if p.ResourceSubtype != nil {
+		subtype = *p.ResourceSubtype
+	}
+	if start == "" || subtype != domaintask.SubtypeMilestone {
+		return ""
+	}
+	return milestoneStartReason(start)
 }
 
 // startOnBlocked says why an update's start date cannot be sent when it keeps the due

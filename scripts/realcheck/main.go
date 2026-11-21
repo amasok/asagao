@@ -195,9 +195,9 @@ type Check struct {
 	cf       map[string]string // custom fields made for the run, by type
 
 	Shapes, Templates, ColorsOnly, Features, Dates, Brief, Order bool   // -shapes, -templates, -colors, -features, -dates, -brief, -order
-	SyncBench                                             string // -syncbench
-	Web                                                   string // -web
-	CleanupOnly                                           bool   // -cleanup
+	SyncBench                                                    string // -syncbench
+	Web                                                          string // -web
+	CleanupOnly                                                  bool   // -cleanup
 }
 
 func (c *Check) group(name string) { c.Rep.group(name) }

@@ -16,6 +16,10 @@ var (
 // SubtypeCustom is the resource_subtype of a task of a custom task type.
 const SubtypeCustom = "custom"
 
+// SubtypeMilestone is the resource_subtype of a milestone, which has a due date and no
+// start date (CheckMilestoneStart).
+const SubtypeMilestone = "milestone"
+
 // SubtypeLabel is the Japanese name of a task type (resource_subtype). A custom task type
 // has its own name, which is shown instead where it is known.
 func SubtypeLabel(s string) string {
