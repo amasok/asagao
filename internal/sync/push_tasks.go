@@ -71,7 +71,19 @@ func (s *Pusher) pushUpdate(ctx context.Context, op outbox.Op, p outbox.UpdateTa
 		return sent, sentNotSaved(err)
 	}
 	s.refresh(ctx, *t)
-	return sent, nil
+	return sent, startOnKept(t, p.StartOn)
+}
+
+// startOnKept checks that Asana's answer t to a create or an update that set the start
+// date start has it: an answer that kept another one (e.g. none, the plan lacking start
+// dates, #62) is startOnIgnored. The change is done in Asana either way. An answer
+// without start_on (t.StartOnKnown false) is not checked, nor a start date cleared.
+func startOnKept(t *model.Task, start *string) error {
+	want := outbox.Str(start)
+	if want == "" || t == nil || !t.StartOnKnown || t.StartOn == want {
+		return nil
+	}
+	return &startOnIgnored{task: t.GID, start: want, kept: t.StartOn}
 }
 
 // serverDueDay is the day a task is due in Asana: due_on, or the local day of due_at.
@@ -199,10 +211,11 @@ func (s *Pusher) pushCreate(ctx context.Context, op outbox.Op, p outbox.CreateTa
 		return sent, sentNotSaved(err)
 	}
 	s.refresh(ctx, *t)
+	out := sent
 	if move != nil {
-		return followUp, nil
+		out = followUp
 	}
-	return sent, nil
+	return out, startOnKept(t, p.StartOn)
 }
 
 // sectionIn returns the section t is in within project ("" if unknown).
@@ -425,6 +438,11 @@ func batchUpdateTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.Upda
 	task := e.task
 	if domaintask.TouchesCustomType(p.Fields()) {
 		return false, nil // sent alone: a 402 there records that the plan lacks custom types
+	}
+	if p.StartOn != nil {
+		// sent alone: with the due date it needs (withDue), and its 402 or an answer that
+		// did not keep it is handled (startOnOutcome)
+		return false, nil
 	}
 	e.write = model.BatchUpdateTask(task, taskUpdateFields(op, p))
 	e.check = func(op outbox.Op, server *model.Task) (map[string]any, error) {

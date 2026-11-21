@@ -367,6 +367,18 @@ func (s *Pusher) handleOutcome(ctx context.Context, op outbox.Op, out outcome, e
 		var w *customTypeWithdrawn
 		errors.As(err, &w)
 		return s.withdrawCustomType(ctx, op, w, res)
+	case errors.As(err, new(*startOnIgnored)): // done, but Asana did not keep the start date (#62)
+		var w *startOnIgnored
+		errors.As(err, &w)
+		d, rerr := s.Store.RecordStartOnIgnored(ctx, w.task, w.start, w.reason(), s.clock())
+		if rerr != nil {
+			return false, rerr
+		}
+		res.Discarded = append(res.Discarded, d)
+		if !wasFollowUp {
+			res.Sent++
+		}
+		return out == followUp, nil
 	case errors.As(err, new(*startOnWithdrawn)): // the plan or the due date does not allow the start date
 		var w *startOnWithdrawn
 		errors.As(err, &w)
@@ -496,6 +508,13 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 // (plan.StartOn), and the error says why; an answer that set one forgets an
 // earlier 402. err is returned, wrapped when it is a 402.
 func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outcome, err error) error {
+	if errors.As(err, new(*startOnIgnored)) {
+		// Taken for a 402: start dates are hidden in ws for a while, as after one.
+		if rerr := s.Store.RecordPlanRefusal(ctx, plan.StartOn, ws, s.clock()); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+		return err
+	}
 	if err == nil {
 		if start != "" && out != conflicted {
 			// Sent: a failure to forget the 402 only hides start dates until it expires.
@@ -509,6 +528,24 @@ func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outco
 		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.StartOn), err: err}
 	}
 	return err
+}
+
+// startOnIgnored says that Asana answered a create or an update that set a task's start
+// date (to start) with the task keeping another one (kept, "" for none), as a plan
+// without start dates may do instead of a 402 (#62). The rest of the change was applied
+// and the entry is done; the start date is recorded as a dropped change, with the reason
+// a 402 gives (handleOutcome), and start dates are hidden in the workspace for a while
+// (startOnOutcome). The cache has the task as Asana answered it.
+type startOnIgnored struct {
+	task  string // the task's gid in Asana
+	start string
+	kept  string
+}
+
+func (e *startOnIgnored) reason() string { return readmodel.PlanUnavailableMessage(plan.StartOn) }
+
+func (e *startOnIgnored) Error() string {
+	return fmt.Sprintf("%s (Asana が開始日 %s を付けませんでした)", e.reason(), e.start)
 }
 
 // startOnWithdrawn says that an entry's start date cannot be sent (Asana answered 402,

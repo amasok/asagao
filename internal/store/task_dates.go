@@ -150,3 +150,19 @@ func (s *Store) WithdrawStartOn(ctx context.Context, id int64, reason string, no
 	})
 	return rest, d, err
 }
+
+// RecordStartOnIgnored records, as a dropped change with reason (PendingDiscards), the
+// start date start that a change to task taskGID sent and Asana answered without keeping
+// (the plan may lack start dates, #62). The change itself was applied and is done; the
+// task is stored as Asana answered it.
+func (s *Store) RecordStartOnIgnored(ctx context.Context, taskGID, start, reason string, now time.Time) (d Discard, err error) {
+	op := Op{Kind: OpUpdateTask, TaskGID: taskGID}
+	if err := outbox.SetPayload(&op, outbox.UpdateTask{StartOn: &start}); err != nil {
+		return d, err
+	}
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		d, err = s.recordDiscard(ctx, tx, &op, reason, now)
+		return err
+	})
+	return d, err
+}
