@@ -384,8 +384,7 @@ func reapplyTimeEntryOps(ctx context.Context, tx *sql.Tx, taskGID string) error 
 		if op.Kind == OpDeleteTimeEntry {
 			_, err = tx.ExecContext(ctx, "DELETE FROM time_entries WHERE task_gid = ? AND gid = ?", taskGID, gid)
 		} else {
-			_, err = tx.ExecContext(ctx, "UPDATE time_entries SET duration_minutes = ?, entered_on = ? WHERE task_gid = ? AND gid = ?",
-				p.DurationMinutes, p.EnteredOn, taskGID, gid)
+			err = updateReadFields(ctx, tx, "time_entries", op, map[string]any{"duration_minutes": p.DurationMinutes, "entered_on": p.EnteredOn}, taskGID, gid)
 		}
 		if err != nil {
 			return err

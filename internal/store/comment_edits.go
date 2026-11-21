@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -314,13 +316,33 @@ func reapplyStoryOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
 			_, err = tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ? AND gid = ?", taskGID, gid)
 		} else {
 			p, _ := outbox.BestEffortPayload[outbox.UpdateStory](op)
-			_, err = tx.ExecContext(ctx, "UPDATE stories SET text = ?, html_text = ? WHERE task_gid = ? AND gid = ?", p.Text, p.HTMLText, taskGID, gid)
+			err = updateReadFields(ctx, tx, "stories", op, map[string]any{"text": p.Text, "html_text": p.HTMLText}, taskGID, gid)
 		}
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// updateReadFields sets the columns of the row (task_gid, gid) of table to the values of
+// fields (column → value, its payload key the same) whose key the payload of op holds,
+// with a value that reads (outbox.ReadsField): one that does not read is left as it is,
+// not cleared.
+func updateReadFields(ctx context.Context, tx *sql.Tx, table string, op Op, fields map[string]any, taskGID, gid string) error {
+	var sets []string
+	var args []any
+	for _, k := range slices.Sorted(maps.Keys(fields)) {
+		if outbox.ReadsField(op, k) {
+			sets = append(sets, k+" = ?")
+			args = append(args, fields[k])
+		}
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE "+table+" SET "+strings.Join(sets, ", ")+" WHERE task_gid = ? AND gid = ?", append(args, taskGID, gid)...)
+	return err
 }
 
 // reapplyAttachmentDeletes removes again a task's attachments whose delete is queued.

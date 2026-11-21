@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/amasok/asagao/internal/asana"
@@ -67,5 +68,21 @@ func TestMistypedValueMatchesNothing(t *testing.T) {
 	must(t, err)
 	if queued {
 		t.Error("a tag 7 (a number) taken for the tag \"7\"")
+	}
+}
+
+// An unsent comment edit held because a value does not read applies what reads: the
+// comment keeps Asana's text instead of taking "" (or the value of another type).
+func TestReapplyStoryEditAppliesWhatReads(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	_, err := s.db.Exec(`INSERT INTO stories(gid, task_gid, text, html_text) VALUES ('s9', 't1', 'Asana', '<body>Asana</body>')`)
+	must(t, err)
+	insertRawOp(t, s, OpUpdateStory, "t1", `{"story":"s9","text":7,"html_text":"<body>edit</body>"}`, `{}`)
+	must(t, s.tx(ctx, func(tx *sql.Tx) error { return reapplyStoryOps(ctx, tx, "t1") }))
+	var text, html string
+	must(t, s.db.QueryRow(`SELECT text, html_text FROM stories WHERE gid = 's9'`).Scan(&text, &html))
+	if text != "Asana" || html != "<body>edit</body>" {
+		t.Errorf("story = %q, %q; want Asana's text and the edit's html", text, html)
 	}
 }

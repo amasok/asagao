@@ -165,7 +165,7 @@ func (s *Store) DeleteTagLocal(ctx context.Context, tagGID string, now time.Time
 			return err
 		}
 		// The tag's queued changes that were never sent need not be: it is going away.
-		ops, err := opsWhere(ctx, tx, func(op Op) bool { return op.TaskGID == tagGID || tagOf(op) == tagGID },
+		ops, err := opsWhere(ctx, tx, func(op Op) bool { return tagGID != "" && (op.TaskGID == tagGID || tagOf(op) == tagGID) },
 			"kind IN (?, ?, ?)", OpAddTag, OpRemoveTag, OpUpdateTag)
 		if err != nil {
 			return err

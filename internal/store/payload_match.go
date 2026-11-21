@@ -33,7 +33,9 @@ func scanOp(scan func(dest ...any) error) (*Op, error) {
 
 // opsWhere returns the entries where (a condition on the columns of the outbox, with
 // args) selects whose payload match says yes to (nil: every one), in the order they were
-// queued.
+// queued. A row whose payload, base or conflict is not a JSON object (damaged) is left
+// out, as json_extract read nothing from it: it is neither changed nor removed here, and
+// does not stop the reads and pulls that look among the entries.
 func opsWhere(ctx context.Context, q dbQuerier, match func(Op) bool, where string, args ...any) ([]Op, error) {
 	rows, err := q.QueryContext(ctx, `SELECT `+opColumns+` FROM outbox WHERE `+where+` ORDER BY id`, args...)
 	if err != nil {
@@ -43,8 +45,11 @@ func opsWhere(ctx context.Context, q dbQuerier, match func(Op) bool, where strin
 	var ops []Op
 	for rows.Next() {
 		op, err := scanOp(rows.Scan)
-		if err != nil {
+		if op == nil {
 			return nil, err
+		}
+		if err != nil {
+			continue // damaged (see above)
 		}
 		if match == nil || match(*op) {
 			ops = append(ops, *op)

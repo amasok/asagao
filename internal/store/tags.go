@@ -178,7 +178,7 @@ func (s *Store) ReplaceLocalTagGID(ctx context.Context, local, real string) erro
 // cancelUnsentTag removes the pending entries of kind (add_tag or remove_tag) of task
 // taskGID for tag tagGID, and returns how many it removed.
 func cancelUnsentTag(ctx context.Context, tx *sql.Tx, kind Kind, taskGID, tagGID string) (int, error) {
-	ops, err := opsWhere(ctx, tx, func(op Op) bool { return tagOf(op) == tagGID },
+	ops, err := opsWhere(ctx, tx, func(op Op) bool { return tagGID != "" && tagOf(op) == tagGID },
 		"kind = ? AND task_gid = ? AND state = 'pending'", kind, taskGID)
 	if err != nil {
 		return 0, err
