@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/rich"
@@ -45,31 +46,13 @@ func (s *Store) FitQueuedRichText(ctx context.Context, fit func(target rich.Targ
 	fixed := 0
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		fixed = 0
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM outbox WHERE kind IN (?, ?) AND state IN (?, ?)
-			AND json_extract(payload, '$.html_text') LIKE '%<%'`, OpAddComment, OpCreateStatus, OpPending, OpFailed)
+		ops, err := opsWhere(ctx, tx, func(op Op) bool { return strings.Contains(richHTML(op), "<") },
+			"kind IN (?, ?) AND state IN (?, ?)", OpAddComment, OpCreateStatus, OpPending, OpFailed)
 		if err != nil {
 			return err
 		}
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		for _, id := range ids {
-			op, err := getOpTx(ctx, tx, id)
-			if err != nil {
-				return err
-			}
+		for i := range ops {
+			op, id := &ops[i], ops[i].ID
 			target, ok := richTextTarget(op.Kind)
 			if !ok {
 				continue
@@ -113,4 +96,18 @@ func (s *Store) FitQueuedRichText(ctx context.Context, fit func(target rich.Targ
 		return nil
 	})
 	return fixed, err
+}
+
+// richHTML returns the html_text of an add_comment or create_status, as far as its payload
+// reads ("" for another kind).
+func richHTML(op Op) string {
+	switch op.Kind {
+	case OpAddComment:
+		p, _ := outbox.BestEffortPayload[outbox.AddComment](op)
+		return p.HTMLText
+	case OpCreateStatus:
+		p, _ := outbox.BestEffortPayload[outbox.CreateStatus](op)
+		return p.HTMLText
+	}
+	return ""
 }

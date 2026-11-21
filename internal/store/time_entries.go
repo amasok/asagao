@@ -123,7 +123,7 @@ func (s *Store) UpdateTimeEntryLocal(ctx context.Context, gid string, minutes in
 			return err
 		}
 		if IsLocalGID(gid) {
-			create, err := unsentCreate(ctx, tx, OpAddTimeEntry, "entry", gid)
+			create, err := unsentCreate(ctx, tx, OpAddTimeEntry, gid)
 			if err != nil {
 				return err
 			}
@@ -133,12 +133,12 @@ func (s *Store) UpdateTimeEntryLocal(ctx context.Context, gid string, minutes in
 				}
 				return saveOp(ctx, tx, create)
 			}
-			if err := ensureStoryCreateQueued(ctx, tx, OpAddTimeEntry, "entry", gid); err != nil {
+			if err := ensureStoryCreateQueued(ctx, tx, OpAddTimeEntry, gid); err != nil {
 				return err
 			}
 		}
 		// Join the edit not sent yet, so its base stays the values before the first edit.
-		op, err := findStoryOp(ctx, tx, OpUpdateTimeEntry, "entry", gid, "'pending', 'failed'")
+		op, err := findStoryOp(ctx, tx, OpUpdateTimeEntry, gid, "'pending', 'failed'")
 		if err != nil {
 			return err
 		}
@@ -164,14 +164,14 @@ func (s *Store) DeleteTimeEntryLocal(ctx context.Context, gid string, now time.T
 			return err
 		}
 		if IsLocalGID(gid) {
-			create, err := unsentCreate(ctx, tx, OpAddTimeEntry, "entry", gid)
+			create, err := unsentCreate(ctx, tx, OpAddTimeEntry, gid)
 			if err != nil {
 				return err
 			}
 			if create != nil { // never sent: forget it (with the edits queued for it)
 				return discardOpTx(ctx, tx, create)
 			}
-			if err := ensureStoryCreateQueued(ctx, tx, OpAddTimeEntry, "entry", gid); err != nil {
+			if err := ensureStoryCreateQueued(ctx, tx, OpAddTimeEntry, gid); err != nil {
 				return err
 			}
 		}
@@ -222,11 +222,13 @@ func (s *Store) TimeEntryTask(ctx context.Context, gid string) (string, error) {
 // TimeEntries returns a task's time tracking entries in the cache, newest day first.
 func (s *Store) TimeEntries(ctx context.Context, taskGID string) (readmodel.TimeEntries, error) {
 	out := readmodel.TimeEntries{TaskGID: taskGID, Entries: []readmodel.TimeEntryView{}}
-	pending := resolvedSQL("entry", resultPrefixTimeEntry)
+	changed, err := resolvedRefs(ctx, s.db, resultPrefixTimeEntry, "kind IN (?, ?)", OpUpdateTimeEntry, OpDeleteTimeEntry)
+	if err != nil {
+		return out, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT gid, duration_minutes, entered_on, assignee_gid, assignee_name,
-		created_by_gid, created_by_name, project_name, categories,
-		gid LIKE 'local:%' OR EXISTS (SELECT 1 FROM outbox o WHERE o.kind IN (?, ?) AND `+pending+` = time_entries.gid)
-		FROM time_entries WHERE task_gid = ? ORDER BY entered_on DESC, gid DESC`, OpUpdateTimeEntry, OpDeleteTimeEntry, taskGID)
+		created_by_gid, created_by_name, project_name, categories, gid LIKE 'local:%'
+		FROM time_entries WHERE task_gid = ? ORDER BY entered_on DESC, gid DESC`, taskGID)
 	if err != nil {
 		return out, err
 	}
@@ -237,6 +239,7 @@ func (s *Store) TimeEntries(ctx context.Context, taskGID string) (readmodel.Time
 		if err := rows.Scan(&e.GID, &e.DurationMinutes, &e.EnteredOn, &aGID, &aName, &bGID, &bName, &e.Project, &cats, &e.Pending); err != nil {
 			return out, err
 		}
+		e.Pending = e.Pending || changed[e.GID]
 		e.TaskGID, e.Duration = taskGID, timetrack.Format(e.DurationMinutes)
 		if aGID != "" || aName != "" {
 			e.Assignee = &UserRef{GID: aGID, Name: aName}
@@ -362,20 +365,33 @@ func (s *Store) ApplyTimeEntry(ctx context.Context, e model.TimeEntry) error {
 // (after they were replaced by what Asana returned). A failed one is not: Asana's values
 // are shown, as for a failed task update.
 func reapplyTimeEntryOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
-	gid := resolvedSQL("entry", resultPrefixTimeEntry)
-	latest := func(field string) string {
-		return `(SELECT json_extract(o.payload, '$.` + field + `') FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed' AND ` +
-			gid + ` = time_entries.gid ORDER BY o.id DESC LIMIT 1)`
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE time_entries SET duration_minutes = `+latest("duration_minutes")+`,
-		entered_on = `+latest("entered_on")+`
-		WHERE task_gid = ?2 AND gid IN (SELECT `+gid+` FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed')`,
-		OpUpdateTimeEntry, taskGID); err != nil {
+	// In the order they were made; the entry they name is the one Asana created for it, for a
+	// local gid already sent (resolveResult). One whose payload does not read entirely
+	// (held) is applied as far as it reads.
+	ops, err := opsWhere(ctx, tx, nil, "kind IN (?, ?) AND state <> 'failed'", OpUpdateTimeEntry, OpDeleteTimeEntry)
+	if err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM time_entries WHERE task_gid = ? AND gid IN
-		(SELECT `+gid+` FROM outbox o WHERE o.kind = ? AND o.state <> 'failed')`, taskGID, OpDeleteTimeEntry)
-	return err
+	for _, op := range ops {
+		p, _ := outbox.BestEffortPayload[outbox.TimeEntry](op)
+		if p.Entry == "" {
+			continue
+		}
+		gid, err := resolveResult(ctx, tx, resultPrefixTimeEntry, p.Entry)
+		if err != nil {
+			return err
+		}
+		if op.Kind == OpDeleteTimeEntry {
+			_, err = tx.ExecContext(ctx, "DELETE FROM time_entries WHERE task_gid = ? AND gid = ?", taskGID, gid)
+		} else {
+			_, err = tx.ExecContext(ctx, "UPDATE time_entries SET duration_minutes = ?, entered_on = ? WHERE task_gid = ? AND gid = ?",
+				p.DurationMinutes, p.EnteredOn, taskGID, gid)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // undoTimeEntryOp puts back what a discarded add, edit or delete of an entry changed locally.
@@ -388,7 +404,7 @@ func undoTimeEntryOp(ctx context.Context, tx *sql.Tx, op *Op, p outbox.TimeEntry
 		if _, err := tx.ExecContext(ctx, "DELETE FROM time_entries WHERE gid = ?", local); err != nil {
 			return err
 		}
-		return dropChangesOf(ctx, tx, "entry", local, OpUpdateTimeEntry, OpDeleteTimeEntry)
+		return dropChangesOf(ctx, tx, local, OpUpdateTimeEntry, OpDeleteTimeEntry)
 	}
 	gid, err := resolveResult(ctx, tx, resultPrefixTimeEntry, local)
 	if err != nil {

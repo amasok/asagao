@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/url"
 	"testing"
-	"time"
 
 	"modernc.org/sqlite"
 )
@@ -50,19 +49,15 @@ func rowsAffectedFails(t *testing.T, s *Store) *Store {
 }
 
 // A failing RowsAffected is an error, not "nothing was deleted" (#67): treated as 0, a
-// change that should cancel an unsent one is queued as well, and a prune reports nothing
-// pruned.
+// prune reports nothing pruned. (Cancelling an unsent change, a tag, a dependency, a
+// follower, does not use it: it counts the entries it picks in the same transaction,
+// deleteOps.)
 func TestRowsAffectedErrorIsReturned(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name string
 		run  func(s *Store) error
 	}{
-		{"SetDependencyLocal", func(s *Store) error { return s.SetDependencyLocal(ctx, "t1", "t2", true, now) }},
-		{"SetFollowerLocal", func(s *Store) error { return s.SetFollowerLocal(ctx, "t1", "u9", true, now) }},
-		{"AddTagLocal", func(s *Store) error { _, err := s.AddTagLocal(ctx, "t2", "g1", "", now); return err }},
-		{"RemoveTagLocal", func(s *Store) error { return s.RemoveTagLocal(ctx, "t1", "g1", now) }},
 		{"PruneTasks", func(s *Store) error { _, err := s.PruneTasks(ctx, map[string]bool{}); return err }},
 		{"DeleteGoneTasks", func(s *Store) error { _, err := s.DeleteGoneTasks(ctx, []string{"t1"}); return err }},
 	}

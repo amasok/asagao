@@ -116,10 +116,7 @@ func (s *Store) AddTagLocal(ctx context.Context, taskGID, tagGID, tagName string
 			return err
 		}
 		// undoing a pending removal cancels it
-		if res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
-			AND json_extract(payload, '$.tag') = ?`, OpRemoveTag, taskGID, tagGID); err != nil {
-			return err
-		} else if n, err := res.RowsAffected(); err != nil {
+		if n, err := cancelUnsentTag(ctx, tx, OpRemoveTag, taskGID, tagGID); err != nil {
 			return fmt.Errorf("cancel unsent %s: %w", OpRemoveTag, err)
 		} else if n > 0 {
 			return nil
@@ -138,10 +135,7 @@ func (s *Store) RemoveTagLocal(ctx context.Context, taskGID, tagGID string, now 
 		if _, err := tx.ExecContext(ctx, "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?", taskGID, tagGID); err != nil {
 			return err
 		}
-		if res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
-			AND json_extract(payload, '$.tag') = ?`, OpAddTag, taskGID, tagGID); err != nil {
-			return err
-		} else if n, err := res.RowsAffected(); err != nil {
+		if n, err := cancelUnsentTag(ctx, tx, OpAddTag, taskGID, tagGID); err != nil {
 			return fmt.Errorf("cancel unsent %s: %w", OpAddTag, err)
 		} else if n > 0 {
 			return nil // it was never sent
@@ -181,32 +175,48 @@ func (s *Store) ReplaceLocalTagGID(ctx context.Context, local, real string) erro
 	})
 }
 
+// cancelUnsentTag removes the pending entries of kind (add_tag or remove_tag) of task
+// taskGID for tag tagGID, and returns how many it removed.
+func cancelUnsentTag(ctx context.Context, tx *sql.Tx, kind Kind, taskGID, tagGID string) (int, error) {
+	ops, err := opsWhere(ctx, tx, func(op Op) bool { return tagOf(op) == tagGID },
+		"kind = ? AND task_gid = ? AND state = 'pending'", kind, taskGID)
+	if err != nil {
+		return 0, err
+	}
+	return deleteOps(ctx, tx, ops)
+}
+
+// tagOf returns the tag an add_tag or remove_tag puts on or takes off, as far as its
+// payload reads ("" for another kind).
+func tagOf(op Op) string {
+	switch op.Kind {
+	case OpAddTag:
+		p, _ := outbox.BestEffortPayload[outbox.AddTag](op)
+		return p.Tag
+	case OpRemoveTag:
+		p, _ := outbox.BestEffortPayload[outbox.RemoveTag](op)
+		return p.Tag
+	}
+	return ""
+}
+
+// reapplyTagOps applies the unsent tag changes of a task again. One whose tag does not
+// read (held) has nothing to apply.
 func reapplyTagOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT kind, json_extract(payload, '$.tag') FROM outbox
-		WHERE task_gid = ? AND kind IN (?, ?) AND state <> 'failed' ORDER BY id`, taskGID, OpAddTag, OpRemoveTag)
+	ops, err := opsWhere(ctx, tx, nil, "task_gid = ? AND kind IN (?, ?) AND state <> 'failed'", taskGID, OpAddTag, OpRemoveTag)
 	if err != nil {
 		return err
 	}
-	type op struct {
-		kind Kind
-		tag  string
-	}
-	var ops []op
-	for rows.Next() {
-		var o op
-		if err := rows.Scan(&o.kind, &o.tag); err != nil {
-			rows.Close()
-			return err
+	for _, op := range ops {
+		tag := tagOf(op)
+		if tag == "" {
+			continue
 		}
-		ops = append(ops, o)
-	}
-	rows.Close()
-	for _, o := range ops {
 		q := "INSERT OR IGNORE INTO task_tags(task_gid, tag_gid) VALUES(?, ?)"
-		if o.kind == OpRemoveTag {
+		if op.Kind == OpRemoveTag {
 			q = "DELETE FROM task_tags WHERE task_gid = ? AND tag_gid = ?"
 		}
-		if _, err := tx.ExecContext(ctx, q, taskGID, o.tag); err != nil {
+		if _, err := tx.ExecContext(ctx, q, taskGID, tag); err != nil {
 			return err
 		}
 	}

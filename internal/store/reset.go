@@ -61,8 +61,16 @@ func (s *Store) ResetUpTo(ctx context.Context, upTo int64, now time.Time) (unsen
 		if upTo != AnyUnsent && maxID > upTo {
 			return ErrUnsentChanges
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT local_path FROM attachments WHERE local_path <> ''
-			UNION SELECT json_extract(payload, '$.path') FROM outbox WHERE kind = ? AND json_extract(payload, '$.path') <> ''`, OpUploadAttachment)
+		ups, err := opsWhere(ctx, tx, nil, "kind = ?", OpUploadAttachment)
+		if err != nil {
+			return err
+		}
+		for _, op := range ups {
+			if p := attachmentPath(op); p != "" {
+				files = append(files, p)
+			}
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT local_path FROM attachments WHERE local_path <> ''`)
 		if err != nil {
 			return err
 		}

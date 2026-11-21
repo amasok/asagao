@@ -276,39 +276,7 @@ func forgetLocalSection(ctx context.Context, tx *sql.Tx, gid string) error {
 // opsReferringToSection returns the entries (other than the section's own) whose payload
 // names section gid: moves of tasks to it, sections placed next to it.
 func opsReferringToSection(ctx context.Context, tx *sql.Tx, gid string) ([]Op, error) {
-	var conds []string
-	var args []any
-	for _, k := range outbox.SectionRefKeys {
-		conds = append(conds, "json_extract(payload, '$."+k+"') = ?")
-		args = append(args, gid)
-	}
-	args = append(args, gid)
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM outbox WHERE ("+strings.Join(conds, " OR ")+") AND task_gid <> ? ORDER BY id", args...)
-	if err != nil {
-		return nil, err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	var ops []Op
-	for _, id := range ids {
-		op, err := getOpTx(ctx, tx, id)
-		if err != nil {
-			return nil, err
-		}
-		ops = append(ops, *op)
-	}
-	return ops, nil
+	return opsWhere(ctx, tx, func(op Op) bool { return slices.Contains(outbox.SectionRefsAsFarAsTheyRead(op), gid) }, "task_gid <> ?", gid)
 }
 
 // CompleteCreateSection records that Asana created the section of entry id with gid real:
@@ -368,34 +336,34 @@ func (s *Store) SectionCreateQueued(ctx context.Context, gid string) (bool, erro
 func reapplySectionOps(ctx context.Context, tx *sql.Tx, projectGID string) error {
 	// A failed create is kept too: the section (and the tasks moved to it) stay visible
 	// until the user discards it.
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM outbox WHERE kind IN (?1, ?2, ?3) AND (state <> 'failed' OR kind = ?1)
-		AND json_extract(payload, '$.project') = ?4 ORDER BY id`, OpCreateSection, OpDeleteSection, OpInsertSection, projectGID)
+	ops, err := opsWhere(ctx, tx, func(op Op) bool { return projectGID != "" && sectionOpProject(op) == projectGID },
+		"kind IN (?1, ?2, ?3) AND (state <> 'failed' OR kind = ?1)", OpCreateSection, OpDeleteSection, OpInsertSection)
 	if err != nil {
 		return err
 	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		op, err := getOpTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if err := applySectionOp(ctx, tx, *op); err != nil {
+	for _, op := range ops {
+		if err := applySectionOp(ctx, tx, op); err != nil {
 			return err
 		}
 	}
 	return reapplySectionRenames(ctx, tx)
+}
+
+// sectionOpProject returns the project of a create_section, delete_section or
+// insert_section, as far as its payload reads ("" for another kind).
+func sectionOpProject(op Op) string {
+	switch op.Kind {
+	case OpCreateSection:
+		p, _ := outbox.BestEffortPayload[outbox.CreateSection](op)
+		return p.Project
+	case OpDeleteSection:
+		p, _ := outbox.BestEffortPayload[outbox.DeleteSection](op)
+		return p.Project
+	case OpInsertSection:
+		p, _ := outbox.BestEffortPayload[outbox.InsertSection](op)
+		return p.Project
+	}
+	return ""
 }
 
 // applySectionOp redoes one unsent section change (create_section, delete_section or
