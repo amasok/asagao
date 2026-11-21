@@ -110,25 +110,23 @@ func applyDependency(ctx context.Context, tx *sql.Tx, op Op, undo bool) error {
 
 // reapplyDependencyOps keeps unsent dependency changes of a task (either side) after a pull.
 func reapplyDependencyOps(ctx context.Context, tx *sql.Tx, gid string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM outbox WHERE kind IN (?, ?) AND state <> 'failed'
-		AND (task_gid = ? OR json_extract(payload, '$.dependency') = ?) ORDER BY id`, OpAddDependency, OpRemoveDependency, gid, gid)
+	ops, err := opsWhere(ctx, tx, func(op Op) bool { return op.TaskGID == gid || dependencyIs(gid)(op) },
+		"kind IN (?, ?) AND state <> 'failed'", OpAddDependency, OpRemoveDependency)
 	if err != nil {
 		return err
 	}
-	ids, err := scanIDs(rows)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		op, err := getOpTx(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if err := applyDependency(ctx, tx, *op, false); err != nil {
+	for _, op := range ops {
+		if err := applyDependency(ctx, tx, op, false); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// dependencyIs is the match of the dependency changes whose payload names task gid as the
+// one waited for, as far as it reads.
+func dependencyIs(gid string) func(Op) bool {
+	return payloadIs(func(p outbox.Dependency) bool { return gid != "" && p.Dependency == gid })
 }
 
 // taskName returns the name of a cached or referenced task ("" if unknown).
@@ -184,12 +182,11 @@ func (s *Store) SetDependencyLocal(ctx context.Context, taskGID, dependencyGID s
 		if err := applyDependency(ctx, tx, op, false); err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
-			AND json_extract(payload, '$.dependency') = ?`, opposite, taskGID, dependencyGID)
+		unsent, err := opsWhere(ctx, tx, dependencyIs(dependencyGID), "kind = ? AND task_gid = ? AND state = 'pending'", opposite, taskGID)
 		if err != nil {
 			return err
 		}
-		n, err := res.RowsAffected()
+		n, err := deleteOps(ctx, tx, unsent)
 		if err != nil {
 			return fmt.Errorf("cancel unsent %s: %w", opposite, err)
 		}
@@ -232,12 +229,21 @@ func (s *Store) taskDependencies(ctx context.Context, gid string, dependents boo
 	if dependents {
 		self, other = other, self
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+other+`,
-			COALESCE(t.name, r.name, ''), COALESCE(t.completed, r.completed, 0), COALESCE(t.resource_subtype, r.resource_subtype, ''),
-			EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.task_gid = `+waiting+`
-				AND json_extract(o.payload, '$.dependency') = `+blocker+`)
+	// The dependencies added and not sent yet (waiting task → the one it waits for).
+	adds, err := opsWhere(ctx, s.db, nil, "kind = ?", OpAddDependency)
+	if err != nil {
+		return nil, err
+	}
+	type edge struct{ waiting, blocker string }
+	unsent := map[edge]bool{}
+	for _, op := range adds {
+		p, _ := outbox.BestEffortPayload[outbox.Dependency](op)
+		unsent[edge{op.TaskGID, p.Dependency}] = true
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+waiting+`, `+blocker+`,
+			COALESCE(t.name, r.name, ''), COALESCE(t.completed, r.completed, 0), COALESCE(t.resource_subtype, r.resource_subtype, '')
 		FROM task_dependencies d LEFT JOIN tasks t ON t.gid = `+other+` LEFT JOIN task_refs r ON r.gid = `+other+`
-		WHERE `+self+` = ? ORDER BY 3, 2`, OpAddDependency, gid)
+		WHERE `+self+` = ? ORDER BY 4, 3`, gid)
 	if err != nil {
 		return nil, err
 	}
@@ -245,8 +251,13 @@ func (s *Store) taskDependencies(ctx context.Context, gid string, dependents boo
 	out := []DependencyView{}
 	for rows.Next() {
 		var v DependencyView
-		if err := rows.Scan(&v.GID, &v.Name, &v.Completed, &v.ResourceSubtype, &v.Pending); err != nil {
+		var e edge
+		if err := rows.Scan(&e.waiting, &e.blocker, &v.Name, &v.Completed, &v.ResourceSubtype); err != nil {
 			return nil, err
+		}
+		v.GID, v.Pending = e.blocker, unsent[e]
+		if dependents {
+			v.GID = e.waiting
 		}
 		out = append(out, v)
 	}

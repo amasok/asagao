@@ -165,15 +165,21 @@ func (s *Store) DeleteTagLocal(ctx context.Context, tagGID string, now time.Time
 			return err
 		}
 		// The tag's queued changes that were never sent need not be: it is going away.
-		var unsure int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM outbox WHERE kind IN (?, ?, ?)
-			AND (task_gid = ?4 OR json_extract(payload, '$.tag') = ?4) AND (state <> 'pending' OR verify = 1)`,
-			OpAddTag, OpRemoveTag, OpUpdateTag, tagGID).Scan(&unsure); err != nil {
+		ops, err := opsWhere(ctx, tx, func(op Op) bool { return tagGID != "" && (op.TaskGID == tagGID || tagOf(op) == tagGID) },
+			"kind IN (?, ?, ?)", OpAddTag, OpRemoveTag, OpUpdateTag)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind IN (?, ?, ?)
-			AND (task_gid = ?4 OR json_extract(payload, '$.tag') = ?4) AND state = 'pending' AND verify = 0`,
-			OpAddTag, OpRemoveTag, OpUpdateTag, tagGID); err != nil {
+		unsure := 0
+		var unsent []Op
+		for _, op := range ops {
+			if op.State == OpPending && !op.Verify {
+				unsent = append(unsent, op)
+			} else {
+				unsure++
+			}
+		}
+		if _, err := deleteOps(ctx, tx, unsent); err != nil {
 			return err
 		}
 		for _, q := range []string{"DELETE FROM task_tags WHERE tag_gid = ?", "DELETE FROM tags WHERE gid = ?"} {
@@ -285,7 +291,5 @@ func undoDeleteTag(ctx context.Context, tx *sql.Tx, op *Op, p outbox.DeleteTag) 
 // TagCreateQueued reports whether a tag created offline still has an add_tag (which
 // creates it in Asana) in the outbox, in any state.
 func (s *Store) TagCreateQueued(ctx context.Context, tag string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.tag') = ?", OpAddTag, tag).Scan(&n)
-	return n > 0, err
+	return anyOpWhere(ctx, s.db, func(op Op) bool { return tag != "" && tagOf(op) == tag }, "kind = ?", OpAddTag)
 }

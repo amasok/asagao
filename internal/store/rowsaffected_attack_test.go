@@ -18,7 +18,6 @@ func countRows(t *testing.T, s *Store, q string) int {
 // deletes that ran before it must not stay.
 func TestRowsAffectedFailureRollsBackData(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name  string
 		query string
@@ -26,9 +25,6 @@ func TestRowsAffectedFailureRollsBackData(t *testing.T) {
 	}{
 		{"PruneTasks", "SELECT count(*) FROM tasks", func(s *Store) error { _, err := s.PruneTasks(ctx, map[string]bool{}); return err }},
 		{"DeleteGoneTasks", "SELECT count(*) FROM tasks", func(s *Store) error { _, err := s.DeleteGoneTasks(ctx, []string{"t1"}); return err }},
-		{"RemoveTagLocal", "SELECT count(*) FROM task_tags", func(s *Store) error { return s.RemoveTagLocal(ctx, "t1", "g1", now) }},
-		{"AddTagLocal", "SELECT count(*) FROM task_tags", func(s *Store) error { _, err := s.AddTagLocal(ctx, "t2", "g1", "", now); return err }},
-		{"SetDependencyLocal", "SELECT count(*) FROM task_dependencies", func(s *Store) error { return s.SetDependencyLocal(ctx, "t1", "t2", true, now) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

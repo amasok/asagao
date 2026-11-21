@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -163,5 +164,70 @@ func f(op *Op, payload string, row struct{ payload sql.NullString }) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("payloadMapReads:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The store does not read the payload of an outbox entry in SQL either (json_extract and
+// the other JSON functions on the payload column): it picks the entries by their columns
+// in SQL, and by what their payload holds in Go, read as their kind's struct
+// (store/payload_match.go). Text searches of the stored form (instr, LIKE, replace: a
+// local gid wherever it is) are not reads of a value, and are not checked.
+func TestStoreSQLDoesNotReadPayloads(t *testing.T) {
+	g := loadModule(t)
+	var found []string
+	fset := token.NewFileSet()
+	for _, p := range payloadReaders {
+		info, ok := g.pkgs[p]
+		if !ok {
+			t.Fatalf("package %s not found", p)
+		}
+		for _, name := range info.files {
+			f, err := parser.ParseFile(fset, filepath.Join(info.dir, name), nil, parser.SkipObjectResolution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range payloadSQLReads(fset, f) {
+				found = append(found, p+"/"+r)
+			}
+		}
+	}
+	report(t, found, "outbox payloads read in SQL (pick the entries by their columns, and read the payload as the kind's struct in Go: opsWhere, payloadIs):")
+}
+
+// payloadSQL matches a JSON function of SQLite applied to the payload column.
+var payloadSQL = regexp.MustCompile(`(?i)\bjson_\w+\(\s*(\w+\.)?payload\b`)
+
+// payloadSQLReads returns "file:line: literal" for each string literal of f that applies a
+// JSON function to the payload column.
+func payloadSQLReads(fset *token.FileSet, f *ast.File) []string {
+	var out []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING && payloadSQL.MatchString(lit.Value) {
+			pos := fset.Position(lit.Pos())
+			out = append(out, fmt.Sprintf("%s:%d: %s", filepath.Base(pos.Filename), pos.Line, payloadSQL.FindString(lit.Value)))
+		}
+		return true
+	})
+	return out
+}
+
+func TestPayloadSQLReadsFindsThem(t *testing.T) {
+	src := `package p
+const a = "SELECT json_extract(payload, '$.tag') FROM outbox"
+const b = ` + "`" + `SELECT 1 FROM outbox o WHERE JSON_EXTRACT( o.payload, '$.x') = ?` + "`" + `
+const c = "SELECT id FROM outbox WHERE instr(payload, ?) > 0"
+const d = "SELECT value FROM json_each(?)"
+const e = "SELECT json_extract(j.value, '$.gid') FROM custom_fields"
+const f = "SELECT json_type(payload) FROM outbox"
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := payloadSQLReads(fset, f)
+	want := []string{"p.go:2: json_extract(payload", "p.go:3: JSON_EXTRACT( o.payload", "p.go:7: json_type(payload"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("payloadSQLReads:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

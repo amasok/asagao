@@ -546,7 +546,7 @@ func (s *Store) GetOp(ctx context.Context, id int64) (*Op, error) {
 }
 
 func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name, CASE WHEN o.kind = 'mark_notification' THEN json_extract(o.payload, '$.name') END, ''), o.payload, o.base,
+	rows, err := s.db.QueryContext(ctx, `SELECT o.id, o.kind, o.task_gid, COALESCE(t.name, sec.name, pr.name), o.payload, o.base,
 		o.base_modified_at, o.state, o.conflict, o.last_error, o.attempts, o.created_at, o.sent_at, o.last_sent_at, o.verify
 		FROM outbox o LEFT JOIN tasks t ON t.gid = o.task_gid LEFT JOIN sections sec ON sec.gid = o.task_gid
 		LEFT JOIN projects pr ON pr.gid = o.task_gid `+where+` ORDER BY o.id`, args...)
@@ -557,13 +557,19 @@ func (s *Store) queryOps(ctx context.Context, where string, args ...any) ([]Op, 
 	ops := []Op{}
 	for rows.Next() {
 		var op Op
+		var name sql.NullString
 		var payload, base, conflict string
-		if err := rows.Scan(&op.ID, &op.Kind, &op.TaskGID, &op.TaskName, &payload, &base, &op.BaseModifiedAt,
+		if err := rows.Scan(&op.ID, &op.Kind, &op.TaskGID, &name, &payload, &base, &op.BaseModifiedAt,
 			&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.LastSentAt, &op.Verify); err != nil {
 			return nil, err
 		}
 		if err := unmarshalOp(&op, payload, base, conflict); err != nil {
 			return nil, err
+		}
+		op.TaskName = name.String
+		if !name.Valid && op.Kind == OpMarkNotification { // (a notification is not cached: the name it was marked with)
+			p, _ := outbox.BestEffortPayload[outbox.MarkNotification](op)
+			op.TaskName = p.Name
 		}
 		ops = append(ops, op)
 	}
@@ -1043,18 +1049,11 @@ func findLastOp(ctx context.Context, tx *sql.Tx, q string, args ...any) (*Op, er
 }
 
 func getOpTx(ctx context.Context, tx *sql.Tx, id int64) (*Op, error) {
-	var op Op
-	var payload, base, conflict string
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, task_gid, payload, base, base_modified_at, state, conflict, last_error, attempts, created_at,
-		sent_at, last_sent_at, verify FROM outbox WHERE id = ?`, id).Scan(&op.ID, &op.Kind, &op.TaskGID, &payload, &base, &op.BaseModifiedAt,
-		&op.State, &conflict, &op.LastError, &op.Attempts, &op.CreatedAt, &op.SentAt, &op.LastSentAt, &op.Verify)
+	op, err := scanOp(tx.QueryRowContext(ctx, `SELECT `+opColumns+` FROM outbox WHERE id = ?`, id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("outbox entry %d: %w", id, ErrNotFound)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return &op, unmarshalOp(&op, payload, base, conflict)
+	return op, err
 }
 
 func saveOp(ctx context.Context, tx *sql.Tx, op *Op) error {

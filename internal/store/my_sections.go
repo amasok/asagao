@@ -163,15 +163,15 @@ func upsertAssigneeSection(ctx context.Context, tx *sql.Tx, t model.Task, worksp
 			return err
 		}
 	}
-	var payload string
-	err := tx.QueryRowContext(ctx, "SELECT json_extract(payload, '$.section') FROM outbox WHERE kind = ? AND task_gid = ? AND state <> 'failed' ORDER BY id DESC LIMIT 1",
-		OpMoveMySection, t.GID).Scan(&payload)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	// An unsent move: as far as it reads (one whose section does not read, held, moves nothing).
+	op, err := lastOpWhere(ctx, tx, nil, "kind = ? AND task_gid = ? AND state <> 'failed'", OpMoveMySection, t.GID)
+	if err != nil || op == nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "UPDATE tasks SET assignee_section_gid = ? WHERE gid = ?", payload, t.GID)
+	p, _ := outbox.BestEffortPayload[outbox.MoveMySection](*op)
+	if p.Section == "" {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE tasks SET assignee_section_gid = ? WHERE gid = ?", p.Section, t.GID)
 	return err
 }

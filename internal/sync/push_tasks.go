@@ -9,6 +9,7 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	localgid "github.com/amasok/asagao/internal/domain/gid"
 	"github.com/amasok/asagao/internal/domain/outbox"
+	"github.com/amasok/asagao/internal/domain/plan"
 	domaintask "github.com/amasok/asagao/internal/domain/task"
 	"github.com/amasok/asagao/internal/readmodel"
 )
@@ -372,9 +373,23 @@ func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.Crea
 	if err != nil {
 		return sent, notFound, err
 	}
-	t, m := pick(tasks, func(t model.Task) bool {
-		return !used[t.GID] && t.Name == p.Name && f.recent(t.CreatedAt) && f.byMe(t.CreatedBy) && sameTaskFields(t, p)
-	})
+	same := func(startDropped bool) func(model.Task) bool {
+		return func(t model.Task) bool {
+			return !used[t.GID] && t.Name == p.Name && f.recent(t.CreatedAt) && f.byMe(t.CreatedBy) && sameTaskFields(t, p, startDropped)
+		}
+	}
+	t, m := pick(tasks, same(false))
+	if m == notFound && outbox.Str(p.StartOn) != "" {
+		// Asana may have made it without its start date (#62). A task without one is taken
+		// for it only where start dates are known to be dropped (a 402, or an answer that did
+		// not keep one): elsewhere it may well be another task, and the create is sent again
+		// (an answer that drops the start date is then judged by startOnKept).
+		if dropped, err := s.startDatesRefused(ctx, op); err != nil {
+			return sent, notFound, err
+		} else if dropped {
+			t, m = pick(tasks, same(true))
+		}
+	}
 	if m != matched {
 		return sent, m, nil
 	}
@@ -386,10 +401,31 @@ func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.Crea
 		return sent, notFound, err
 	}
 	s.refresh(ctx, t)
+	out := sent
 	if move != nil {
-		return followUp, matched, nil
+		out = followUp
 	}
-	return sent, matched, nil
+	// Found without the start date it was created with: as when Asana answers the create so
+	// (#62), the start date is a dropped change, and start dates are hidden in the workspace.
+	if err := startOnKept(&t, p.StartOn); err != nil {
+		ws, wsErr := s.Store.TaskWorkspace(ctx, t.GID)
+		if wsErr != nil {
+			return out, matched, err // not in the cache: nothing to record the plan for (as send)
+		}
+		return out, matched, s.startOnOutcome(ctx, ws, outbox.Str(p.StartOn), out, err)
+	}
+	return out, matched, nil
+}
+
+// startDatesRefused reports whether start dates are known to be refused (or dropped) in
+// the workspace of the task of op (plan.StartOn recorded, however long ago).
+func (s *Pusher) startDatesRefused(ctx context.Context, op outbox.Op) (bool, error) {
+	ws, err := s.Store.TaskWorkspace(ctx, op.TaskGID)
+	if err != nil {
+		return false, nil // not in the cache: not known
+	}
+	_, ok, err := s.Store.PlanRefusedAt(ctx, plan.StartOn, ws)
+	return ok, err
 }
 
 // findDuplicate looks for the copy a duplicate_task made (see reconcile).

@@ -123,22 +123,17 @@ func writeFieldOptions(ctx context.Context, tx *sql.Tx, fieldGID string, opts []
 // localOptions returns the options created offline for a field whose creation is still in
 // the outbox (in any state: a failed one stays visible until it is discarded), in order.
 func localOptions(ctx context.Context, tx *sql.Tx, fieldGID string) ([]EnumOptionView, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT task_gid, COALESCE(json_extract(payload, '$.name'), '') FROM outbox
-		WHERE kind = ? AND json_extract(payload, '$.field') = ? ORDER BY id`, OpCreateEnumOption, fieldGID)
+	ops, err := opsWhere(ctx, tx, nil, "kind = ?", OpCreateEnumOption)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []EnumOptionView
-	for rows.Next() {
-		var o EnumOptionView
-		if err := rows.Scan(&o.GID, &o.Name); err != nil {
-			return nil, err
+	for _, op := range ops {
+		if p, _ := outbox.BestEffortPayload[outbox.CreateEnumOption](op); fieldGID != "" && p.Field == fieldGID {
+			out = append(out, EnumOptionView{GID: op.TaskGID, Name: p.Name, Enabled: true})
 		}
-		o.Enabled = true
-		out = append(out, o)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // EnumOptionCreateQueued reports whether the creation of the local option gid is still in
@@ -315,6 +310,29 @@ func rewriteFieldValues(ctx context.Context, tx *sql.Tx, local string, f func(an
 	return ids, nil
 }
 
+// fieldIs is the match of the entries whose payload names custom field gid (field:
+// set_custom_field, the custom field settings of a project, create_enum_option), as far
+// as it reads.
+func fieldIs(gid string) func(Op) bool {
+	return func(op Op) bool {
+		if gid == "" {
+			return false
+		}
+		switch op.Kind {
+		case OpSetCustomField:
+			p, _ := outbox.BestEffortPayload[outbox.SetCustomField](op)
+			return p.Field == gid
+		case OpAddFieldSetting, OpRemoveFieldSetting:
+			p, _ := outbox.BestEffortPayload[outbox.FieldSetting](op)
+			return p.Field == gid
+		case OpCreateEnumOption:
+			p, _ := outbox.BestEffortPayload[outbox.CreateEnumOption](op)
+			return p.Field == gid
+		}
+		return false
+	}
+}
+
 func scanIDsQuery(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -450,18 +468,11 @@ func (s *Store) SetProjectFieldLocal(ctx context.Context, projectGID, fieldGID s
 		if add {
 			undo, other = OpRemoveFieldSetting, OpAddFieldSetting
 		}
-		var id int64
-		err = tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND json_extract(payload, '$.field') = ?
-			AND state IN ('pending', 'failed') ORDER BY id DESC LIMIT 1`, undo, projectGID, fieldGID).Scan(&id)
-		if err == nil {
-			op, err := getOpTx(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			return discardOpTx(ctx, tx, op)
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if op, err := lastOpWhere(ctx, tx, fieldIs(fieldGID), "kind = ? AND task_gid = ? AND state IN ('pending', 'failed')",
+			undo, projectGID); err != nil {
 			return err
+		} else if op != nil {
+			return discardOpTx(ctx, tx, op)
 		}
 		op := &Op{Kind: other, TaskGID: projectGID, State: OpPending, CreatedAt: formatTime(now)}
 		if add {
@@ -530,10 +541,8 @@ func reapplyFieldSettingOps(ctx context.Context, tx *sql.Tx, projectGID string) 
 // FieldSettingQueued reports whether adding the field fieldGID to a project of task
 // taskGID is still in the outbox (in any state): setting its value waits for it.
 func (s *Store) FieldSettingQueued(ctx context.Context, taskGID, fieldGID string) (bool, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.field') = ?
-		AND task_gid IN (SELECT project_gid FROM task_memberships WHERE task_gid = ?)`, OpAddFieldSetting, fieldGID, taskGID).Scan(&n)
-	return n > 0, err
+	return anyOpWhere(ctx, s.db, fieldIs(fieldGID), "kind = ? AND task_gid IN (SELECT project_gid FROM task_memberships WHERE task_gid = ?)",
+		OpAddFieldSetting, taskGID)
 }
 
 // fieldWorkspace returns the workspace a field belongs to ("" if not known): from the
@@ -585,26 +594,17 @@ func (s *Store) ProjectFields(ctx context.Context, projectGID string) ([]Project
 		return nil, err
 	}
 	pending := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT COALESCE(json_extract(payload, '$.field'), '') FROM outbox WHERE kind IN (?, ?) AND task_gid = ?`,
-		OpAddFieldSetting, OpRemoveFieldSetting, projectGID)
+	settings, err := opsWhere(ctx, s.db, nil, "kind IN (?, ?) AND task_gid = ?", OpAddFieldSetting, OpRemoveFieldSetting, projectGID)
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var g string
-		if err := rows.Scan(&g); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		pending[g] = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for _, op := range settings {
+		p, _ := outbox.BestEffortPayload[outbox.FieldSetting](op)
+		pending[p.Field] = true
 	}
 	var out []ProjectFieldView
 	seen := map[string]bool{}
-	rows, err = s.db.QueryContext(ctx, `SELECT field_gid, is_important, 1 AS attached, position FROM project_custom_fields WHERE project_gid = ?1
+	rows, err := s.db.QueryContext(ctx, `SELECT field_gid, is_important, 1 AS attached, position FROM project_custom_fields WHERE project_gid = ?1
 		UNION ALL SELECT field_gid, 0, 0, position FROM workspace_custom_fields WHERE workspace_gid = ?2
 		ORDER BY attached DESC, position, field_gid`, projectGID, workspace)
 	if err != nil {

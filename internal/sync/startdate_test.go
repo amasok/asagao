@@ -36,6 +36,10 @@ type startServer struct {
 	// ignoreStart: answer 200 but keep the task's start date (#62); omitStart: answer
 	// without start_on.
 	ignoreStart, omitStart bool
+	// loseCreate: make the task of a POST /tasks but answer 500 (the answer lost); it is
+	// then listed in project p1 (made).
+	loseCreate bool
+	made       map[string]any
 }
 
 func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -105,7 +109,24 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		if f.ignoreStart {
 			task["start_on"] = nil
 		}
+		if f.loseCreate {
+			task["memberships"] = []any{map[string]any{"project": map[string]any{"gid": "p1"}}}
+			f.made = task
+			refuse(http.StatusInternalServerError, "server error")
+			return
+		}
 		answer(task)
+	case r.URL.Path == "/tasks" && r.Method == http.MethodGet:
+		var list []map[string]any
+		if f.made != nil && r.URL.Query().Get("project") == "p1" {
+			list = append(list, f.made)
+			if f.omitStart {
+				list[0] = maps.Clone(f.made)
+				delete(list[0], "start_on")
+			}
+		}
+		out, _ := json.Marshal(map[string]any{"data": list})
+		rw.Write(out)
 	default:
 		refuse(http.StatusNotFound, "not found: "+r.Method+" "+r.URL.Path)
 	}

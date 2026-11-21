@@ -274,6 +274,12 @@ func (s *Pusher) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 					return err
 				}
 				sendIt = false
+			case m == matched && errors.As(err, new(*startOnIgnored)):
+				// Asana has it, without its start date (#62): recorded as after sending it.
+				if again, err = s.handleOutcome(ctx, *op, out, err, wasFollowUp, res, drops); err != nil {
+					return err
+				}
+				sendIt = false
 			case model.IsUnauthorized(err): // the token is rejected: keep it for after a new login
 				if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
 					return rerr

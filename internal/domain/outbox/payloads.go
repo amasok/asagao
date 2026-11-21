@@ -1,5 +1,7 @@
 package outbox
 
+import "reflect"
+
 // The payload structs of the kinds (see payload.go). A field is written back as it was
 // read: a key always written is a plain field; one written only when it holds something
 // omits its zero value; one whose "" (or false) says something else than its absence (a
@@ -333,6 +335,24 @@ func SectionRefs(op Op) []string {
 	if err != nil {
 		return nil
 	}
+	return refsOf(p)
+}
+
+// SectionRefsAsFarAsTheyRead returns the sections the payload of op names as SectionRefs,
+// but read as far as it reads (BestEffortPayload): an entry held because it cannot be read
+// entirely still names the sections its keys that read hold.
+func SectionRefsAsFarAsTheyRead(op Op) []string {
+	t, ok := payloadTypes[op.Kind]
+	if !ok {
+		return nil
+	}
+	p := reflect.New(t)
+	readAsFarAsItReads(op.Payload, p.Interface())
+	return refsOf(p.Elem().Interface())
+}
+
+// refsOf returns the sections payload p names ("" left out).
+func refsOf(p any) []string {
 	r, ok := p.(sectionRefs)
 	if !ok {
 		return nil

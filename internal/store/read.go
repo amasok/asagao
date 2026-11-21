@@ -347,9 +347,12 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 
 	// A comment whose edit is not sent yet is pending too (#34); a failed edit is not
 	// applied (reapplyStoryOps), so its comment shows Asana's text and is not.
+	edits, err := resolvedRefs(ctx, s.db, resultPrefixStory, "kind = ? AND state <> 'failed'", OpUpdateStory)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT gid, type, resource_subtype, text, created_by_gid, created_by_name, created_at, html_text,
-		reactions, EXISTS (SELECT 1 FROM outbox o WHERE o.kind = ? AND o.state <> 'failed' AND `+resolvedSQL("story", resultPrefixStory)+` = stories.gid)
-		FROM stories WHERE task_gid = ? ORDER BY created_at`, OpUpdateStory, gid)
+		reactions FROM stories WHERE task_gid = ? ORDER BY created_at`, gid)
 	if err != nil {
 		return nil, err
 	}
@@ -357,11 +360,11 @@ func (s *Store) GetTask(ctx context.Context, gid string) (*TaskDetail, error) {
 	for rows.Next() {
 		var st StoryView
 		var byGID, byName, reactions string
-		var edited bool
 		if err := rows.Scan(&st.GID, &st.Type, &st.ResourceSubtype, &st.Text, &byGID, &byName, &st.CreatedAt, &st.HTMLText,
-			&reactions, &edited); err != nil {
+			&reactions); err != nil {
 			return nil, err
 		}
+		edited := edits[st.GID]
 		if byGID != "" {
 			st.CreatedBy = &UserRef{GID: byGID, Name: byName}
 		}
