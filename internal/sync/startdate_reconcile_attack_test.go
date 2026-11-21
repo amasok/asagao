@@ -88,6 +88,10 @@ func TestReconcileDroppedStartIsRecordedOnce(t *testing.T) {
 	if _, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "見積もり", ProjectGID: "p1", DueOn: "2026-12-10", StartOn: "2026-12-01"}, now); err != nil {
 		t.Fatal(err)
 	}
+	// Start dates are known to be dropped in w1 (a create without one is taken for it only then).
+	if err := st.RecordPlanRefusal(ctx, plan.StartOn, "w1", now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 3; i++ {
 		if _, err := s.Push(ctx); err != nil {
 			t.Fatal(err)
@@ -109,6 +113,10 @@ func TestReconcileDroppedStartWithSection(t *testing.T) {
 	s.now = func() time.Time { return now }
 	f.ignoreStart, f.loseCreate = true, true
 	if _, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "見積もり", ProjectGID: "p1", SectionGID: "s1", DueOn: "2026-12-10", StartOn: "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
+	}
+	// Start dates are known to be dropped in w1 (a create without one is taken for it only then).
+	if err := st.RecordPlanRefusal(ctx, plan.StartOn, "w1", now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	res, err := s.Push(ctx)

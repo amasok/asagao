@@ -14,18 +14,23 @@ import (
 )
 
 // #62: a create whose answer was lost, found in Asana by reconcile, is checked for its
-// start date as an answered one is: Asana may have created the task without it.
+// start date as an answered one is: Asana may have created the task without it. A task
+// without the start date is taken for it only where start dates are known to be dropped
+// (marked): elsewhere it may be another task (TestReconcileDoesNotAdoptALookalikeWithoutStart).
 
 func TestReconcileCreateStartOn(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
 		ignoreStart, omitStart bool
-		dropped                bool // the start date reported as dropped, and hidden in w1
+		marked                 bool // plan.StartOn recorded in w1 before the push
+		found                  bool
+		dropped                bool // the start date reported as dropped
 		wantStart              string
 	}{
-		{"dropped", true, false, true, ""},
-		{"kept", false, false, false, "2026-12-01"},
-		{"not listed", true, true, false, ""}, // start_on not in the list: not judged
+		{"dropped, marked", true, false, true, true, true, ""},
+		{"dropped, not marked", true, false, false, false, false, ""}, // not taken: waits, then sent again (as before)
+		{"kept", false, false, false, true, false, "2026-12-01"},
+		{"not listed, marked", true, true, true, true, false, ""}, // start_on not in the list: not judged
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, s, st := setupStart(t, nil)
@@ -37,19 +42,37 @@ func TestReconcileCreateStartOn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if tc.marked { // (after queuing: a mark refuses a start date before it is queued)
+				if err := st.RecordPlanRefusal(ctx, plan.StartOn, "w1", now.Add(-time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			res, err := s.Push(ctx)
-			if err != nil || res.Failed != 0 || res.Sent != 1 {
+			if err != nil || res.Failed != 0 {
 				t.Fatalf("push = %+v, %v", res, err)
 			}
-			if real, err := st.RealGID(ctx, gid); err != nil || real != "new1" {
-				t.Fatalf("real gid = %q, %v: the task Asana made was not found", real, err)
+			real, err := st.RealGID(ctx, gid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.found {
+				if res.Sent != 0 || len(res.Discarded) != 0 || real != gid {
+					t.Fatalf("push = %+v, real gid %q: a task without the start date taken for the create", res, real)
+				}
+				if ops, _ := st.ListOps(ctx); len(ops) != 1 {
+					t.Fatalf("ops = %+v", ops)
+				}
+				return
+			}
+			if res.Sent != 1 || real != "new1" {
+				t.Fatalf("push = %+v, real gid %q: the task Asana made was not found", res, real)
 			}
 			if ops, _ := st.ListOps(ctx); len(ops) != 0 {
 				t.Fatalf("ops = %+v", ops)
 			}
 			_, hidden, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1")
 			if !tc.dropped {
-				if len(res.Discarded) != 0 || hidden {
+				if len(res.Discarded) != 0 || hidden != tc.marked {
 					t.Fatalf("discarded %+v, start dates hidden %v", res.Discarded, hidden)
 				}
 				if got, _ := st.GetTask(ctx, "new1"); got == nil || got.StartOn != tc.wantStart {
@@ -66,8 +89,8 @@ func TestReconcileCreateStartOn(t *testing.T) {
 			if ds, _ := st.PendingDiscards(ctx); len(ds) != 1 {
 				t.Fatalf("pending discards = %+v", ds)
 			}
-			if !hidden {
-				t.Fatal("start dates not hidden in w1")
+			if at, ok, _ := st.PlanRefusedAt(ctx, plan.StartOn, "w1"); !ok || !at.Equal(now) {
+				t.Fatalf("mark at %v (%v), want renewed at %v", at, ok, now)
 			}
 			if got, _ := st.GetTask(ctx, "new1"); got == nil || got.StartOn != "" || got.DueOn != "2026-12-10" || got.Pending {
 				t.Fatalf("new1 = %+v", got)
