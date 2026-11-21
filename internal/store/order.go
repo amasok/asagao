@@ -6,7 +6,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/amasok/asagao/internal/termsafe"
+	"github.com/amasok/asagao/internal/domain/outbox"
 )
 
 // The order of tasks as Asana has it (#51).
@@ -226,100 +226,49 @@ func restorePlace(ctx context.Context, tx *sql.Tx, base map[string]any, l ordere
 	return setNumber(p)
 }
 
-// payloadPosition is the place an outbox payload asks for (insert_before / insert_after).
-func payloadPosition(p map[string]any) Position {
-	before, _ := p["insert_before"].(string)
-	after, _ := p["insert_after"].(string)
+// insertPosition is the place an outbox payload asks for (insert_before / insert_after).
+func insertPosition(before, after string) Position {
 	return Position{Before: before, After: after}
 }
 
 // reapplyMoves puts the tasks with an unsent move in project where the moves put them,
 // after a listing of Asana's order (which does not have them yet).
 func reapplyMoves(ctx context.Context, tx *sql.Tx, project string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT task_gid, payload, base FROM outbox
+	ops, err := opsTx(ctx, tx, `SELECT id FROM outbox
 		WHERE kind = ? AND state <> 'failed' AND json_extract(payload, '$.project') = ? ORDER BY id`, OpMoveTask, project)
 	if err != nil {
 		return err
 	}
-	type move struct {
-		gid           string
-		payload, base map[string]any
-	}
-	var moves []move
-	for rows.Next() {
-		var m move
-		var payload, base sql.NullString
-		if err := rows.Scan(&m.gid, &payload, &base); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := termsafe.Unmarshal([]byte(payload.String), &m.payload); err != nil {
-			rows.Close()
-			return err
-		}
-		if base.Valid && base.String != "" {
-			if err := termsafe.Unmarshal([]byte(base.String), &m.base); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		moves = append(moves, m)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, m := range moves {
-		if err := reapplyMove(ctx, tx, m.gid, m.payload, m.base); err != nil {
+	for _, op := range ops {
+		if err := reapplyMove(ctx, tx, op); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// reapplyMove applies an unsent move of a task again: its section, and its place there.
-func reapplyMove(ctx context.Context, tx *sql.Tx, gid string, payload, base map[string]any) error {
-	project, _ := payload["project"].(string)
-	section, _ := payload["section"].(string)
-	if err := setSection(ctx, tx, gid, project, section); err != nil {
+// reapplyMove applies an unsent move of a task (entry op) again: its section, and its
+// place there. An unreadable payload (held) is applied as far as it reads.
+func reapplyMove(ctx context.Context, tx *sql.Tx, op Op) error {
+	p, _ := outbox.BestEffortPayload[outbox.MoveTask](op)
+	if err := setSection(ctx, tx, op.TaskGID, p.Project, p.Section); err != nil {
 		return err
 	}
-	from, _ := base["section"].(string)
-	return placeInSection(ctx, tx, gid, project, section, payloadPosition(payload), from != section)
+	from, _ := op.Base["section"].(string)
+	return placeInSection(ctx, tx, op.TaskGID, p.Project, p.Section, insertPosition(p.InsertBefore, p.InsertAfter), from != p.Section)
 }
 
 // reapplyParentMoves puts the subtasks with an unsent, placed parent change into parent
 // where the changes put them, after a listing of Asana's order.
 func reapplyParentMoves(ctx context.Context, tx *sql.Tx, parent string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT task_gid, payload FROM outbox
+	ops, err := opsTx(ctx, tx, `SELECT id FROM outbox
 		WHERE kind = ? AND state <> 'failed' AND json_extract(payload, '$.parent') = ? ORDER BY id`, OpSetParent, parent)
 	if err != nil {
 		return err
 	}
-	type move struct {
-		gid     string
-		payload map[string]any
-	}
-	var moves []move
-	for rows.Next() {
-		var m move
-		var payload string
-		if err := rows.Scan(&m.gid, &payload); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := termsafe.Unmarshal([]byte(payload), &m.payload); err != nil {
-			rows.Close()
-			return err
-		}
-		moves = append(moves, m)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, m := range moves {
-		if err := placeSubtask(ctx, tx, m.gid, parent, payloadPosition(m.payload)); err != nil {
+	for _, op := range ops {
+		p, _ := outbox.BestEffortPayload[outbox.SetParent](op)
+		if err := placeSubtask(ctx, tx, op.TaskGID, parent, insertPosition(p.InsertBefore, p.InsertAfter)); err != nil {
 			return err
 		}
 	}

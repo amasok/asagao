@@ -279,3 +279,16 @@ func MergeFields(op *Op, fields map[string]any) error {
 	maps.Copy(op.Payload, fields)
 	return nil
 }
+
+// PayloadName returns the name the payload of op holds (the task, section, tag, file …
+// its kind's struct calls name), as far as it reads: "" when it has none. For a kind this
+// version does not know, it is the stored form's "name" if that is a string (what such an
+// entry most likely names, shown when it is discarded).
+func PayloadName(op Op) string {
+	fields := PayloadFields(op)
+	if fields == nil {
+		fields = op.Payload
+	}
+	name, _ := fields["name"].(string)
+	return name
+}

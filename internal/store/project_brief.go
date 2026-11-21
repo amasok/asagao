@@ -10,7 +10,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/termsafe"
 )
 
 func init() {
@@ -154,40 +153,35 @@ func reapplyBriefEdits(ctx context.Context, tx *sql.Tx, projectGID string) error
 }
 
 // reapplyBriefEditsBut is reapplyBriefEdits without entry except (one being discarded).
+// An unreadable payload (held) is applied as far as it reads.
 func reapplyBriefEditsBut(ctx context.Context, tx *sql.Tx, projectGID string, except int64) error {
-	var payload string
-	err := tx.QueryRowContext(ctx, `SELECT payload FROM outbox WHERE kind = ? AND task_gid = ? AND state <> 'failed'
-		AND id <> ? ORDER BY id DESC LIMIT 1`, OpUpdateBrief, projectGID, except).Scan(&payload)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var p map[string]any
-	if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
+	op, err := findLastOp(ctx, tx, `SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state <> 'failed'
+		AND id <> ? ORDER BY id DESC LIMIT 1`, OpUpdateBrief, projectGID, except)
+	if op == nil || err != nil {
 		return err
 	}
 	cur, err := readBrief(ctx, tx, projectGID)
 	if err != nil {
 		return err
 	}
-	return writeBrief(ctx, tx, projectGID, briefWith(cur, p))
+	return writeBrief(ctx, tx, projectGID, briefWith(cur, *op))
 }
 
-// briefWith is brief cur with an entry's payload applied: deleted, or its title and body
-// where the payload has them (a change of only one keeps the other as cur has it).
-func briefWith(cur cachedBrief, p map[string]any) cachedBrief {
-	if p["delete"] == true {
+// briefWith is brief cur with the payload of entry op applied (as far as it reads):
+// deleted, or its title and body where the payload has them (a change of only one keeps
+// the other as cur has it).
+func briefWith(cur cachedBrief, op Op) cachedBrief {
+	p, _ := outbox.BestEffortPayload[outbox.UpdateProjectBrief](op)
+	if p.Delete {
 		return cachedBrief{state: BriefNone}
 	}
 	b := cur
 	b.state = BriefAvailable
-	if v, ok := p["title"].(string); ok {
-		b.title = v
+	if p.Title != nil {
+		b.title = *p.Title
 	}
-	if v, ok := p["html_text"].(string); ok {
-		b.html, b.text = v, briefStr(p, "text")
+	if p.HTMLText != nil {
+		b.html, b.text = *p.HTMLText, outbox.Str(p.Text)
 	}
 	return b
 }

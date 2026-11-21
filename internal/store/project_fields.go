@@ -13,7 +13,6 @@ import (
 	"github.com/amasok/asagao/internal/domain/project"
 	"github.com/amasok/asagao/internal/domain/tag"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/termsafe"
 )
 
 func init() {
@@ -119,34 +118,13 @@ func applyProjectFields(ctx context.Context, tx *sql.Tx, gid string, fields map[
 // reapplyProjectUpdates keeps unsent project edits after a sync stored the server's
 // values.
 func reapplyProjectUpdates(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT task_gid, payload FROM outbox WHERE kind = ? AND state <> 'failed' ORDER BY id", OpUpdateProject)
+	ops, err := opsTx(ctx, tx, "SELECT id FROM outbox WHERE kind = ? AND state <> 'failed' ORDER BY id", OpUpdateProject)
 	if err != nil {
 		return err
 	}
-	type edit struct {
-		gid     string
-		payload map[string]any
-	}
-	var edits []edit
-	for rows.Next() {
-		var e edit
-		var payload string
-		if err := rows.Scan(&e.gid, &payload); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := termsafe.Unmarshal([]byte(payload), &e.payload); err != nil {
-			rows.Close()
-			return err
-		}
-		edits = append(edits, e)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, e := range edits {
-		if err := applyProjectFields(ctx, tx, e.gid, e.payload); err != nil {
+	for _, op := range ops {
+		p, _ := outbox.BestEffortPayload[outbox.UpdateProject](op) // (held: as far as it reads)
+		if err := applyProjectFields(ctx, tx, op.TaskGID, p.Fields()); err != nil {
 			return err
 		}
 	}

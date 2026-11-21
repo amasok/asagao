@@ -398,25 +398,33 @@ func reapplySectionOps(ctx context.Context, tx *sql.Tx, projectGID string) error
 	return reapplySectionRenames(ctx, tx)
 }
 
-// applySectionOp redoes one unsent section change on the local sections.
+// applySectionOp redoes one unsent section change (create_section, delete_section or
+// insert_section) on the local sections. An unreadable payload (held) is applied as far as
+// it reads.
 func applySectionOp(ctx context.Context, tx *sql.Tx, op Op) error {
-	str := func(k string) string { v, _ := op.Payload[k].(string); return v }
-	project := str("project")
+	var project, before, after string
 	switch op.Kind {
 	case OpDeleteSection:
 		_, err := tx.ExecContext(ctx, "DELETE FROM sections WHERE gid = ?", op.TaskGID)
 		return err
 	case OpCreateSection:
+		p, _ := outbox.BestEffortPayload[outbox.CreateSection](op)
+		project, before, after = p.Project, p.Before, p.After
 		if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO sections(gid, project_gid, name, position) VALUES(?, ?, ?, 1 << 30)",
-			op.TaskGID, project, str("name")); err != nil {
+			op.TaskGID, project, p.Name); err != nil {
 			return err
 		}
+	case OpInsertSection:
+		p, _ := outbox.BestEffortPayload[outbox.InsertSection](op)
+		project, before, after = p.Project, p.Before, p.After
+	default:
+		return nil
 	}
 	order, err := sectionOrder(ctx, tx, project)
 	if err != nil || !slices.Contains(order, op.TaskGID) {
 		return err
 	}
-	return writeSectionOrder(ctx, tx, placeSection(order, op.TaskGID, str("before"), str("after")))
+	return writeSectionOrder(ctx, tx, placeSection(order, op.TaskGID, before, after))
 }
 
 // undoDeleteSection puts back a section whose delete is discarded, where it was.
