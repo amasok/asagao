@@ -25,8 +25,9 @@ func noStartMark(t *testing.T, st *store.Store) {
 }
 
 // The task became a milestone in Asana after the start date was queued (the cache did not
-// know it): the start date is dropped, the name is sent.
-func TestPushMilestoneStartOn400(t *testing.T) {
+// know it): the start date is not sent (Asana would answer 400) but dropped, the name is
+// sent, and the cache learns that it is a milestone.
+func TestPushMilestoneStartOnBlocked(t *testing.T) {
 	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
 	st.SetDescribeChange(format.DescribeChange)
 	ctx := context.Background()
@@ -46,8 +47,17 @@ func TestPushMilestoneStartOn400(t *testing.T) {
 	if f.task["name"] != "リリース" || f.task["start_on"] != nil {
 		t.Fatalf("server task = %v", f.task)
 	}
-	if d, _ := st.GetTask(ctx, "t1"); d.Name != "リリース" || d.StartOn != "" || d.Pending {
-		t.Fatalf("t1 = name %q start %q pending %v", d.Name, d.StartOn, d.Pending)
+	for _, put := range f.puts {
+		if _, ok := put["start_on"]; ok {
+			t.Fatalf("the start date was sent: %v", f.puts)
+		}
+	}
+	if d, _ := st.GetTask(ctx, "t1"); d.Name != "リリース" || d.StartOn != "" || d.Pending || d.ResourceSubtype != "milestone" {
+		t.Fatalf("t1 = name %q start %q pending %v type %q", d.Name, d.StartOn, d.Pending, d.ResourceSubtype)
+	}
+	// Now known: the next start date is refused before it is queued.
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-02"}, now); err == nil {
+		t.Fatal("a start date was queued on a known milestone")
 	}
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
 		t.Fatalf("ops = %+v", ops)
@@ -55,7 +65,8 @@ func TestPushMilestoneStartOn400(t *testing.T) {
 	noStartMark(t, st)
 }
 
-// Only the start date (what realcheck sent): the entry is gone and the cache has no start
+// Only the start date (what realcheck sent), and Asana answers the PUT with the 400 (the
+// task became a milestone after the GET): the entry is gone and the cache has no start
 // date, as Asana; start dates stay offered in the workspace.
 func TestPushMilestoneStartOnOnly400(t *testing.T) {
 	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
@@ -64,9 +75,9 @@ func TestPushMilestoneStartOnOnly400(t *testing.T) {
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-01"}, now); err != nil {
 		t.Fatal(err)
 	}
-	f.task["resource_subtype"] = "milestone"
+	f.milestoneOnWrite = true
 	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 {
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 || len(f.puts) != 1 {
 		t.Fatalf("push = %+v, %v (puts %v)", res, err, f.puts)
 	}
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
@@ -76,13 +87,13 @@ func TestPushMilestoneStartOnOnly400(t *testing.T) {
 	if d, _ := st.GetTask(ctx, "t1"); d.StartOn != "" || d.Pending {
 		t.Fatalf("t1 = start %q pending %v", d.StartOn, d.Pending)
 	}
-	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "default_task", "start_on": "2026-12-03"}, now); err != nil {
-		t.Fatalf("a start date with the type changed back: %v", err)
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-03"}, now); err != nil {
+		t.Fatalf("a start date after the 400: %v", err)
 	}
 }
 
-// A task created with a start date and made a milestone before it was sent: Asana refuses
-// the create (400); it is created again without the start date.
+// A task created with a start date that Asana makes a milestone (a rule of the project):
+// Asana refuses the create (400); it is created again without the start date.
 func TestPushCreateMilestoneStartOn400(t *testing.T) {
 	f, s, st := setupStart(t, nil)
 	ctx := context.Background()
@@ -91,14 +102,12 @@ func TestPushCreateMilestoneStartOn400(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateTaskLocal(ctx, gid, map[string]any{"resource_subtype": "milestone"}, now); err != nil {
-		t.Fatal(err)
-	}
+	f.milestoneOnWrite = true
 	res, err := s.Push(ctx)
 	if err != nil || res.Failed != 0 || res.Sent != 1 || len(res.Discarded) != 1 {
 		t.Fatalf("push = %+v, %v (created %v)", res, err, f.created)
 	}
-	if _, ok := f.created["start_on"]; ok || f.created["resource_subtype"] != "milestone" || f.created["due_on"] != "2026-12-10" {
+	if _, ok := f.created["start_on"]; ok || f.created["due_on"] != "2026-12-10" {
 		t.Fatalf("created %v", f.created)
 	}
 	real, err := st.RealGID(ctx, gid)

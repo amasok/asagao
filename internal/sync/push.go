@@ -455,12 +455,12 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		start, withStart = h.startOn(op)
 	}
 	var startWS string
+	wsKnown := false
 	if withStart {
 		// before sending: a create gives the task its Asana gid
 		var err error
-		if startWS, err = s.Store.TaskWorkspace(ctx, op.TaskGID); err != nil {
-			withStart = false // not in the cache: nothing to record the plan for
-		}
+		startWS, err = s.Store.TaskWorkspace(ctx, op.TaskGID)
+		wsKnown = err == nil // not in the cache: nothing to record the plan for
 	}
 	out, err := s.sendOp(ctx, op)
 	if isForbidden(err) && h.forbidden != nil {
@@ -481,7 +481,13 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	if withStart && !errors.As(err, new(*customTypeWithdrawn)) {
 		// A 402 to an entry with a custom type takes out the custom type first (#59),
 		// the more likely cause: the start date is tried again with the rest.
-		return out, s.startOnOutcome(ctx, startWS, start, out, err)
+		if isMilestoneStartRefused(err) {
+			// Not the plan: no mark. The start date is taken out and the rest sent again.
+			return out, &startOnWithdrawn{reason: milestoneStartReason(start), err: err}
+		}
+		if wsKnown {
+			return out, s.startOnOutcome(ctx, startWS, start, out, err)
+		}
 	}
 	switch feature := plan.FeatureOf(op.Kind); feature {
 	case plan.TimeTracking:
@@ -520,10 +526,6 @@ func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outco
 			_ = s.Store.ClearPlanRefusal(ctx, plan.StartOn, ws)
 		}
 		return nil
-	}
-	if isMilestoneStartRefused(err) {
-		// Not the plan: no mark. The start date is taken out and the rest sent again.
-		return &startOnWithdrawn{reason: milestoneStartReason(start), err: err}
 	}
 	if refused, rerr := recordPlanRefusal(ctx, s.Store, s.clock(), plan.StartOn, ws, err); rerr != nil {
 		return errors.Join(err, rerr)

@@ -38,6 +38,9 @@ type startServer struct {
 	// without start_on.
 	ignoreStart, omitStart bool
 	badRequest             bool // answer a start date with a 400 without an error code
+	// milestoneOnWrite: the task is a milestone when a write arrives (made one meanwhile,
+	// or by a rule of the project), whatever a GET said before.
+	milestoneOnWrite bool
 }
 
 func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -64,6 +67,9 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := data["resource_subtype"]; ok {
 			subtype = v
+		}
+		if f.milestoneOnWrite {
+			subtype = "milestone"
 		}
 		if start, _ := data["start_on"].(string); start != "" && subtype == "milestone" {
 			rw.WriteHeader(http.StatusBadRequest)

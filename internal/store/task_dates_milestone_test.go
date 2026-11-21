@@ -46,6 +46,19 @@ func TestUpdateTaskLocalMilestoneStartRefused(t *testing.T) {
 	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-11-15"}, now); !errors.Is(err, task.ErrMilestoneStart) {
 		t.Fatalf("start on a local milestone: %v", err)
 	}
+	// A task with a start date is made a milestone only with the start date cleared.
+	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "default_task"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-11-15"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "milestone"}, now); !errors.Is(err, task.ErrMilestoneStart) {
+		t.Fatalf("a task with a start date made a milestone: %v", err)
+	}
+	if err := s.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "milestone", "start_on": ""}, now); err != nil {
+		t.Fatalf("made a milestone with its start date cleared: %v", err)
+	}
 	// Back to a task with a start date in one edit: allowed.
 	if err := s.UpdateTaskLocal(ctx, "m1", map[string]any{"resource_subtype": "default_task", "start_on": "2026-12-01"}, now); err != nil {
 		t.Fatal(err)
