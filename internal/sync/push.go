@@ -521,12 +521,36 @@ func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outco
 		}
 		return nil
 	}
+	if isMilestoneStartRefused(err) {
+		// Not the plan: no mark. The start date is taken out and the rest sent again.
+		return &startOnWithdrawn{reason: milestoneStartReason(start), err: err}
+	}
 	if refused, rerr := recordPlanRefusal(ctx, s.Store, s.clock(), plan.StartOn, ws, err); rerr != nil {
 		return errors.Join(err, rerr)
 	} else if refused {
 		return &startOnWithdrawn{reason: readmodel.PlanUnavailableMessage(plan.StartOn), err: err}
 	}
 	return err
+}
+
+// isMilestoneStartRefused reports Asana's 400 to a start date on a milestone, on any plan
+// (measured on the real Asana, #62: an update and a create answer it alike).
+func isMilestoneStartRefused(err error) bool {
+	var e *model.Error
+	if !errors.As(err, &e) || e.Status != http.StatusBadRequest {
+		return false
+	}
+	for _, x := range e.Errors {
+		if x.Error == "cannot_set_start_date_on_milestone" {
+			return true
+		}
+	}
+	return false
+}
+
+// milestoneStartReason is why a start date sent to a milestone was taken out.
+func milestoneStartReason(start string) string {
+	return fmt.Sprintf("マイルストーンには開始日を付けられないため、開始日 (%s) を外しました (Asana が 400 を返しました)", start)
 }
 
 // startOnIgnored says that Asana answered a create or an update that set a task's start
@@ -549,7 +573,8 @@ func (e *startOnIgnored) Error() string {
 }
 
 // startOnWithdrawn says that an entry's start date cannot be sent (Asana answered 402,
-// or the task's due date in Asana no longer allows it) and why: the start date is taken
+// or 400 to a start date on a milestone, or the task's due date in Asana no longer allows
+// it) and why: the start date is taken
 // out of the entry and the rest sent again (handleOutcome, withdrawStartOn).
 type startOnWithdrawn struct {
 	reason string
@@ -567,7 +592,7 @@ func (e *startOnWithdrawn) Unwrap() error { return e.err }
 // withdrawStartOn handles a start date that cannot be sent without making the user
 // decide: the start date is dropped (and reported in res.Discarded, with the reason), and
 // the rest of the entry, if any, is sent again right away. Asana did not apply the
-// request (a 402, or it was not sent), so sending the rest again repeats nothing.
+// request (a 402 or a 400, or it was not sent), so sending the rest again repeats nothing.
 func (s *Pusher) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
 	rest, d, err := s.Store.WithdrawStartOn(ctx, op.ID, w.reason, s.clock())
 	if err != nil {

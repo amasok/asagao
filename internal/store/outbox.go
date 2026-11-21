@@ -106,6 +106,9 @@ func updateTaskLocal(ctx context.Context, tx *sql.Tx, gid string, changes map[st
 	if err := task.CheckApproval(subtype, changes); err != nil {
 		return err
 	}
+	if err := task.CheckMilestoneStart(subtype, changes); err != nil {
+		return err
+	}
 	if err := checkTaskDates(ctx, tx, gid, cur, changes, now); err != nil {
 		return err
 	}
