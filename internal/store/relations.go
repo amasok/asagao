@@ -38,12 +38,16 @@ func opposite(kind Kind) Kind {
 		OpAddProject: OpRemoveProject, OpRemoveProject: OpAddProject}[kind]
 }
 
-// relationKey is the payload field identifying the related object.
-func relationKey(kind Kind) string {
-	if kind == OpAddProject || kind == OpRemoveProject {
-		return "project"
+// relationTarget returns the payload field identifying the related object of a follower
+// or project change (payload p), and the object.
+func relationTarget(p any) (key, gid string) {
+	switch p := p.(type) {
+	case outbox.ProjectMembership:
+		return "project", p.Project
+	case outbox.Follower:
+		return "user", p.User
 	}
-	return "user"
+	panic(fmt.Sprintf("store: %T is not the payload of a relation", p))
 }
 
 // queueRelation applies a follower/project change and queues it; doing the opposite of a
@@ -64,9 +68,9 @@ func (s *Store) queueRelation(ctx context.Context, kind Kind, taskGID string, p 
 		if err := applyRelation(ctx, tx, op, false); err != nil {
 			return err
 		}
-		key := relationKey(kind)
+		key, target := relationTarget(p)
 		res, err := tx.ExecContext(ctx, `DELETE FROM outbox WHERE kind = ? AND task_gid = ? AND state = 'pending'
-			AND json_extract(payload, '$.`+key+`') = ?`, opposite(kind), taskGID, op.Payload[key])
+			AND json_extract(payload, '$.`+key+`') = ?`, opposite(kind), taskGID, target)
 		if err != nil {
 			return err
 		}

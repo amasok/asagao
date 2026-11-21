@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 )
 
 // The payload of an entry is stored as a JSON object (the outbox payload column), and Op
@@ -92,10 +93,34 @@ func BestEffortPayload[P any](op Op) (P, error) {
 		return p, err
 	}
 	var q P
-	if b, merr := json.Marshal(op.Payload); merr == nil {
-		_ = json.Unmarshal(b, &q) // fills in every field that reads
-	}
+	readAsFarAsItReads(op.Payload, &q)
 	return q, err
+}
+
+// readAsFarAsItReads reads the stored form m into the struct dst points to key by key: a
+// key that does not read as one of its fields (unknown, or a value of another type) is
+// left out, and its field stays zero (a pointer nil, not pointing to a zero value).
+func readAsFarAsItReads(m map[string]any, dst any) {
+	t := reflect.TypeOf(dst).Elem()
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		one := map[string]any{k: m[k]}
+		if decodePayload(one, reflect.New(t).Interface()) != nil {
+			continue
+		}
+		_ = decodePayload(one, dst)
+	}
+}
+
+// ReadsField reports whether the stored form of op has key, with a value (not null) that
+// reads as the field of its kind's struct: what a field that is always written (a bool, a
+// string) reads as when it is absent or of another type cannot tell.
+func ReadsField(op Op, key string) bool {
+	t, ok := payloadTypes[op.Kind]
+	v, has := op.Payload[key]
+	if !ok || !has || v == nil {
+		return false
+	}
+	return decodePayload(map[string]any{key: v}, reflect.New(t).Interface()) == nil
 }
 
 // DecodePayload returns the payload of op as its kind's struct (a value of PayloadType),
@@ -200,10 +225,12 @@ func EditPayload[P any](op *Op, f func(*P)) error {
 	} else if t != reflect.TypeFor[P]() {
 		return fmt.Errorf("outbox: %v is not the payload of kind %q (%v)", reflect.TypeFor[P](), op.Kind, t)
 	}
-	p, err := BestEffortPayload[P](*op)
-	var pe *PayloadError
-	if err != nil && !errors.As(err, &pe) {
-		return err
+	// Read as a whole, not key by key (readAsFarAsItReads): a pointer field holding a value
+	// of another type then points to a zero value, so that f clearing it (nil) takes the
+	// key out, while one f leaves as it is stays as stored.
+	var p P
+	if b, err := json.Marshal(op.Payload); err == nil {
+		_ = json.Unmarshal(b, &p) // fills in every field that reads
 	}
 	before, err := EncodePayload(op.Kind, p)
 	if err != nil {
@@ -258,9 +285,7 @@ func PayloadFields(op Op) map[string]any {
 		return nil
 	}
 	p := reflect.New(t)
-	if b, err := json.Marshal(op.Payload); err == nil {
-		_ = json.Unmarshal(b, p.Interface()) // fills in every field that reads
-	}
+	readAsFarAsItReads(op.Payload, p.Interface())
 	return fieldsOf(p.Elem().Interface())
 }
 
@@ -278,4 +303,17 @@ func MergeFields(op *Op, fields map[string]any) error {
 	}
 	maps.Copy(op.Payload, fields)
 	return nil
+}
+
+// PayloadName returns the name the payload of op holds (the task, section, tag, file …
+// its kind's struct calls name), as far as it reads: "" when it has none. For a kind this
+// version does not know, it is the stored form's "name" if that is a string (what such an
+// entry most likely names, shown when it is discarded).
+func PayloadName(op Op) string {
+	fields := PayloadFields(op)
+	if fields == nil {
+		fields = op.Payload
+	}
+	name, _ := fields["name"].(string)
+	return name
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/domain/tag"
-	"github.com/amasok/asagao/internal/termsafe"
 )
 
 func init() {
@@ -225,7 +224,7 @@ func (s *Store) ApplyTag(ctx context.Context, t model.Tag) error {
 // renamed or recolored tag keeps its new name and color, a deleted one stays deleted.
 // With gids, only those tags are looked at.
 func reapplyTagEdits(ctx context.Context, tx *sql.Tx, gids ...string) error {
-	q := "SELECT kind, task_gid, payload FROM outbox WHERE kind IN (?, ?) AND state <> 'failed'"
+	q := "SELECT id FROM outbox WHERE kind IN (?, ?) AND state <> 'failed'"
 	args := []any{OpUpdateTag, OpDeleteTag}
 	if len(gids) > 0 {
 		q += " AND task_gid IN (" + strings.TrimSuffix(strings.Repeat("?,", len(gids)), ",") + ")"
@@ -233,45 +232,23 @@ func reapplyTagEdits(ctx context.Context, tx *sql.Tx, gids ...string) error {
 			args = append(args, g)
 		}
 	}
-	rows, err := tx.QueryContext(ctx, q+" ORDER BY id", args...)
+	ops, err := opsTx(ctx, tx, q+" ORDER BY id", args...)
 	if err != nil {
 		return err
 	}
-	type edit struct {
-		kind    Kind
-		gid     string
-		payload map[string]any
-	}
-	var edits []edit
-	for rows.Next() {
-		var e edit
-		var payload string
-		if err := rows.Scan(&e.kind, &e.gid, &payload); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := termsafe.Unmarshal([]byte(payload), &e.payload); err != nil {
-			rows.Close()
-			return err
-		}
-		edits = append(edits, e)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, e := range edits {
-		if e.kind == OpDeleteTag {
+	for _, op := range ops {
+		if op.Kind == OpDeleteTag {
 			for _, q := range []string{"DELETE FROM task_tags WHERE tag_gid = ?", "DELETE FROM tags WHERE gid = ?"} {
-				if _, err := tx.ExecContext(ctx, q, e.gid); err != nil {
+				if _, err := tx.ExecContext(ctx, q, op.TaskGID); err != nil {
 					return err
 				}
 			}
 			continue
 		}
-		for _, k := range []string{"name", "color"} {
-			if v, ok := e.payload[k].(string); ok {
-				if _, err := tx.ExecContext(ctx, "UPDATE tags SET "+k+" = ? WHERE gid = ?", v, e.gid); err != nil {
+		p, _ := outbox.BestEffortPayload[outbox.UpdateTag](op) // (held: as far as it reads)
+		for k, v := range map[string]*string{"name": p.Name, "color": p.Color} {
+			if v != nil {
+				if _, err := tx.ExecContext(ctx, "UPDATE tags SET "+k+" = ? WHERE gid = ?", *v, op.TaskGID); err != nil {
 					return err
 				}
 			}

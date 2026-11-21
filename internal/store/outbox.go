@@ -625,7 +625,7 @@ func (s *Store) ResolveKeepLocal(ctx context.Context, id int64) error {
 			base := cachedBrief{state: briefStr(op.Base, "state"), title: briefStr(op.Base, "title"),
 				text: briefStr(op.Base, "text"), html: briefStr(op.Base, "html_text")}
 			if cur.state != BriefUnavailable {
-				if err := writeBrief(ctx, tx, op.TaskGID, briefWith(base, op.Payload)); err != nil {
+				if err := writeBrief(ctx, tx, op.TaskGID, briefWith(base, *op)); err != nil {
 					return err
 				}
 			}
@@ -924,46 +924,20 @@ func applyFields(ctx context.Context, tx *sql.Tx, gid string, fields map[string]
 }
 
 // reapplyUpdates re-applies unsent update_task payloads for a task (after a pull overwrote it).
+// An unreadable payload (held) is applied as far as it reads.
 func reapplyUpdates(ctx context.Context, tx *sql.Tx, gid string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT kind, payload, base FROM outbox
+	ops, err := opsTx(ctx, tx, `SELECT id FROM outbox
 		WHERE task_gid = ? AND kind IN (?, ?) AND state <> 'failed' ORDER BY id`, gid, OpUpdateTask, OpMoveTask)
 	if err != nil {
 		return err
 	}
-	type entry struct {
-		kind          Kind
-		payload, base map[string]any
-	}
-	var entries []entry
-	for rows.Next() {
-		var e entry
-		var p, b string
-		if err := rows.Scan(&e.kind, &p, &b); err != nil {
-			rows.Close()
-			return err
-		}
-		if err := termsafe.Unmarshal([]byte(p), &e.payload); err != nil {
-			rows.Close()
-			return err
-		}
-		if e.kind == OpMoveTask && b != "" {
-			if err := termsafe.Unmarshal([]byte(b), &e.base); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		entries = append(entries, e)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, e := range entries {
+	for _, op := range ops {
 		var err error
-		if e.kind == OpMoveTask {
-			err = reapplyMove(ctx, tx, gid, e.payload, e.base)
+		if op.Kind == OpMoveTask {
+			err = reapplyMove(ctx, tx, op)
 		} else {
-			err = applyFields(ctx, tx, gid, e.payload, time.Time{})
+			p, _ := outbox.BestEffortPayload[outbox.UpdateTask](op)
+			err = applyFields(ctx, tx, gid, p.Fields(), time.Time{})
 		}
 		if err != nil {
 			return err
@@ -1028,6 +1002,37 @@ func findUpdateOp(ctx context.Context, tx *sql.Tx, gid string) (*Op, error) {
 	var id int64
 	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state IN ('pending', 'conflict')
 		ORDER BY id DESC LIMIT 1`, OpUpdateTask, gid).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return getOpTx(ctx, tx, id)
+}
+
+// opsTx returns the entries whose ids query q selects, in its order (the payload read
+// through their kinds' structs: outbox.PayloadOf, BestEffortPayload).
+func opsTx(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]Op, error) {
+	ids, err := scanIDsQuery(ctx, tx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	ops := make([]Op, 0, len(ids))
+	for _, id := range ids {
+		op, err := getOpTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, *op)
+	}
+	return ops, nil
+}
+
+// findLastOp returns the entry whose id query q selects (nil when it selects none).
+func findLastOp(ctx context.Context, tx *sql.Tx, q string, args ...any) (*Op, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, q, args...).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

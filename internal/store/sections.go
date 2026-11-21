@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/amasok/asagao/internal/domain/outbox"
-	"github.com/amasok/asagao/internal/termsafe"
 )
 
 func init() {
@@ -69,31 +68,18 @@ func (s *Store) RenameSectionLocal(ctx context.Context, sectionGID, name string,
 	})
 }
 
-// reapplySectionRenames keeps unsent renames after a sync replaced the sections.
+// reapplySectionRenames keeps unsent renames after a sync replaced the sections. An
+// unreadable payload (held) is applied as far as it reads (a name is never "").
 func reapplySectionRenames(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT task_gid, payload FROM outbox WHERE kind = ? AND state <> 'failed' ORDER BY id", OpRenameSection)
+	ops, err := opsTx(ctx, tx, "SELECT id FROM outbox WHERE kind = ? AND state <> 'failed' ORDER BY id", OpRenameSection)
 	if err != nil {
 		return err
 	}
 	renames := map[string]string{}
-	for rows.Next() {
-		var gid, payload string
-		if err := rows.Scan(&gid, &payload); err != nil {
-			rows.Close()
-			return err
+	for _, op := range ops {
+		if p, _ := outbox.BestEffortPayload[outbox.RenameSection](op); p.Name != "" {
+			renames[op.TaskGID] = p.Name
 		}
-		var p map[string]any
-		if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
-			rows.Close()
-			return err
-		}
-		if name, ok := p["name"].(string); ok {
-			renames[gid] = name
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
 	}
 	for gid, name := range renames {
 		if _, err := tx.ExecContext(ctx, "UPDATE sections SET name = ? WHERE gid = ?", name, gid); err != nil {
