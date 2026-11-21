@@ -7,18 +7,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/amasok/asagao/internal/domain/plan"
-	"github.com/amasok/asagao/internal/readmodel"
 )
 
 // startOnKey is the store's mark that start dates are hidden in the test workspace
 // (plan.StartOn): set after a 402, and since #62 also when Asana answers a write that
 // sets a start date with the task keeping another one.
-const startOnKey = "plan_unavailable:" + plan.StartOn + ":" + TestWorkspace
+// (This program imports only the standard library: internal/archtest.)
+const startOnKey = "plan_unavailable:start_on:" + TestWorkspace
 
-// startOnDropped is the reason recorded with a start date taken for dropped.
-var startOnDropped = readmodel.PlanUnavailableMessage(plan.StartOn)
+// startOnDropped is the reason recorded with a start date taken for dropped
+// (readmodel.PlanUnavailableMessage(plan.StartOn), copied).
+const startOnDropped = "このワークスペースのプランでは、タスクの開始日を API で使えません (Asana が 402 を返しました。1 日たったら、もう一度試します)"
 
 // startMark reads the mark from this run's store (only reads; sqlite3 -readonly).
 func (c *Check) startMark() (string, error) {
