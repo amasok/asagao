@@ -194,7 +194,8 @@ func replaceLocalOption(ctx context.Context, tx *sql.Tx, id int64, local string,
 	if err != nil {
 		return err
 	}
-	field, _ := op.Payload["field"].(string)
+	p, _ := outbox.BestEffortPayload[outbox.CreateEnumOption](*op)
+	field := p.Field
 	if d, err := getFieldDef(ctx, tx, field); err == nil && d.OptionsKnown {
 		var opts []EnumOptionView
 		for _, o := range d.Options {
@@ -364,7 +365,8 @@ func undoCreateEnumOption(ctx context.Context, tx *sql.Tx, op *Op, p outbox.Crea
 			return err
 		}
 		// Nothing left (it set just that option), or back to Asana's value: nothing to send.
-		if v := normalizeCFValue(o.Payload["value"]); v == nil || sameValue(normalizeCFValue(o.Base["value"]), v) {
+		p, _ := outbox.BestEffortPayload[outbox.SetCustomField](*o)
+		if v := normalizeCFValue(p.Value); v == nil || sameValue(normalizeCFValue(o.Base["value"]), v) {
 			if err := applyCustomFieldOp(ctx, tx, *o, true); err != nil {
 				return err
 			}
@@ -511,7 +513,8 @@ func reapplyFieldSettingOps(ctx context.Context, tx *sql.Tx, projectGID string) 
 		if err != nil {
 			return err
 		}
-		field, _ := op.Payload["field"].(string)
+		p, _ := outbox.BestEffortPayload[outbox.FieldSetting](*op)
+		field := p.Field
 		if op.Kind == OpAddFieldSetting {
 			err = attachField(ctx, tx, projectGID, field, -1, false)
 		} else {

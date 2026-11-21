@@ -150,18 +150,43 @@ func (c *Client) Stories(ctx context.Context, taskGID string) ([]Story, error) {
 
 // UpdateTask sends changed fields (PUT /tasks/{gid}) and returns the updated task.
 func (c *Client) UpdateTask(ctx context.Context, gid string, fields map[string]any) (*Task, error) {
-	var t Task
-	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(c.taskFields(false)), fields, &t)
-	c.tier().mark(&t)
-	return &t, err
+	var w writtenTask
+	_, err := c.do(ctx, http.MethodPut, "/tasks/"+url.PathEscape(gid), fieldsQuery(c.taskFields(false)), fields, &w)
+	return c.written(&w), err
 }
 
 // CreateTask creates a task (POST /tasks).
 func (c *Client) CreateTask(ctx context.Context, fields map[string]any) (*Task, error) {
-	var t Task
-	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(c.taskFields(false)), fields, &t)
-	c.tier().mark(&t)
-	return &t, err
+	var w writtenTask
+	_, err := c.do(ctx, http.MethodPost, "/tasks", fieldsQuery(c.taskFields(false)), fields, &w)
+	return c.written(&w), err
+}
+
+// writtenTask reads Asana's answer to a create or an update of a task: the task, and
+// whether the answer included start_on (Task.StartOnKnown), which Asana may leave as it
+// was when the workspace's plan lacks start dates (#62).
+type writtenTask struct {
+	Task
+	StartOn json.RawMessage `json:"start_on"` // shadows Task.StartOn: nil when left out
+}
+
+// written returns the task of an answer read into w, its StartOn and StartOnKnown set.
+func (c *Client) written(w *writtenTask) *Task {
+	t := &w.Task
+	c.tier().mark(t)
+	t.StartOn, t.StartOnKnown = "", false
+	if len(w.StartOn) == 0 {
+		return t
+	}
+	var start *string
+	if json.Unmarshal(w.StartOn, &start) != nil {
+		return t // not a date: unknown
+	}
+	t.StartOnKnown = true
+	if start != nil {
+		t.StartOn = *start
+	}
+	return t
 }
 
 // AddTaskToSection moves a task into a section (POST /sections/{gid}/addTask).
@@ -319,10 +344,9 @@ func (c *Client) Users(ctx context.Context, workspaceGID string) ([]User, error)
 
 // CreateSubtask creates a subtask under parentGID (POST /tasks/{gid}/subtasks).
 func (c *Client) CreateSubtask(ctx context.Context, parentGID string, fields map[string]any) (*Task, error) {
-	var t Task
-	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(c.taskFields(false)), fields, &t)
-	c.tier().mark(&t)
-	return &t, err
+	var w writtenTask
+	_, err := c.do(ctx, http.MethodPost, "/tasks/"+url.PathEscape(parentGID)+"/subtasks", fieldsQuery(c.taskFields(false)), fields, &w)
+	return c.written(&w), err
 }
 
 // --- tags ---

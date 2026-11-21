@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
 	"github.com/amasok/asagao/internal/termsafe"
 )
@@ -141,7 +142,7 @@ func (s *Store) recordDiscard(ctx context.Context, tx *sql.Tx, op *Op, reason st
 	var name string
 	_ = tx.QueryRowContext(ctx, "SELECT name FROM tasks WHERE gid = ?", op.TaskGID).Scan(&name)
 	if name == "" {
-		name, _ = op.Payload["name"].(string)
+		name = outbox.PayloadName(*op)
 	}
 	d := Discard{Kind: op.Kind, TaskGID: op.TaskGID, TaskName: name, Reason: reason, DiscardedAt: formatTime(now), Payload: op.Payload}
 	if s.describeChange != nil {

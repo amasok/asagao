@@ -11,7 +11,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/termsafe"
 )
 
 func init() {
@@ -161,29 +160,16 @@ func notificationTarget(objs []model.WorkRef) model.WorkRef {
 // reapplyNotificationMarks keeps unsent read / unread changes after a sync replaced the
 // notifications.
 func reapplyNotificationMarks(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, "SELECT task_gid, payload FROM outbox WHERE kind = ? AND state <> 'failed' ORDER BY id", OpMarkNotification)
+	ops, err := opsTx(ctx, tx, "SELECT id FROM outbox WHERE kind = ? AND state <> 'failed' ORDER BY id", OpMarkNotification)
 	if err != nil {
 		return err
 	}
 	marks := map[string]bool{}
-	for rows.Next() {
-		var gid, payload string
-		if err := rows.Scan(&gid, &payload); err != nil {
-			rows.Close()
-			return err
+	for _, op := range ops {
+		// (held: as far as it reads; a read that does not read leaves the notification as it is)
+		if p, _ := outbox.BestEffortPayload[outbox.MarkNotification](op); outbox.ReadsField(op, "read") {
+			marks[op.TaskGID] = p.Read
 		}
-		var p map[string]any
-		if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
-			rows.Close()
-			return err
-		}
-		if read, ok := p["read"].(bool); ok {
-			marks[gid] = read
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
 	}
 	for gid, read := range marks {
 		if _, err := tx.ExecContext(ctx, "UPDATE notifications SET is_read = ? WHERE gid = ?", read, gid); err != nil {
@@ -369,12 +355,15 @@ func (s *Store) PendingNotificationMarks(ctx context.Context, op Op, limit int) 
 			first[o.TaskGID] = o.ID
 		}
 	}
+	mark, _ := outbox.BestEffortPayload[outbox.MarkNotification](op)
 	var out []Op
 	for _, o := range ops {
 		if o.ID == op.ID || o.State != OpPending || o.Verify || first[o.TaskGID] != o.ID || o.TaskGID == op.TaskGID {
 			continue
 		}
-		if len(out) < limit && o.Payload["workspace"] == op.Payload["workspace"] && o.Payload["read"] == op.Payload["read"] {
+		// One whose payload does not read is not sent along (it is held when its turn comes).
+		if p, err := outbox.PayloadOf[outbox.MarkNotification](o); err == nil && len(out) < limit &&
+			p.Workspace == mark.Workspace && p.Read == mark.Read {
 			out = append(out, o)
 		}
 	}

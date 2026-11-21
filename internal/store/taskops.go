@@ -10,7 +10,6 @@ import (
 	"github.com/amasok/asagao/internal/asana/model"
 	"github.com/amasok/asagao/internal/domain/outbox"
 	"github.com/amasok/asagao/internal/readmodel"
-	"github.com/amasok/asagao/internal/termsafe"
 )
 
 func init() {
@@ -371,31 +370,24 @@ func restoreSubtaskPosition(ctx context.Context, tx *sql.Tx, gid string, base ma
 	})
 }
 
-// reapplySetParent keeps an unsent parent change of a task after a pull.
+// reapplySetParent keeps an unsent parent change of a task after a pull. An unreadable
+// payload (held) is applied as far as it reads.
 func reapplySetParent(ctx context.Context, tx *sql.Tx, gid string) error {
-	var parent sql.NullString
-	var payload string
-	err := tx.QueryRowContext(ctx, `SELECT json_extract(payload, '$.parent'), payload FROM outbox
-		WHERE kind = ? AND task_gid = ? AND state <> 'failed' ORDER BY id DESC LIMIT 1`, OpSetParent, gid).Scan(&parent, &payload)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	op, err := findLastOp(ctx, tx, `SELECT id FROM outbox
+		WHERE kind = ? AND task_gid = ? AND state <> 'failed' ORDER BY id DESC LIMIT 1`, OpSetParent, gid)
+	if op == nil || err != nil {
 		return err
 	}
+	p, _ := outbox.BestEffortPayload[outbox.SetParent](*op)
 	// Only the parent: the parents' subtask counts are the local ones (SetParentLocal
 	// counted the change) until a pull of the parent itself brings Asana's. Its place
 	// stays if the pull had it under that parent already, else it goes where the change
 	// puts it.
 	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET parent_gid = ?1,
-		subtask_position = CASE WHEN parent_gid = ?1 THEN subtask_position END WHERE gid = ?2`, parent.String, gid); err != nil {
+		subtask_position = CASE WHEN parent_gid = ?1 THEN subtask_position END WHERE gid = ?2`, p.Parent, gid); err != nil {
 		return err
 	}
-	var p map[string]any
-	if err := termsafe.Unmarshal([]byte(payload), &p); err != nil {
-		return err
-	}
-	return placeSubtask(ctx, tx, gid, parent.String, payloadPosition(p))
+	return placeSubtask(ctx, tx, gid, p.Parent, insertPosition(p.InsertBefore, p.InsertAfter))
 }
 
 // refuseDeleted refuses to use tasks whose delete is queued (or that go with one): Asana

@@ -194,11 +194,12 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 		if err := outbox.SetPayload(&withdrawn, w); err != nil {
 			return err
 		}
-		for k := range withdrawn.Payload {
+		goes := outbox.PayloadFields(withdrawn)
+		for k := range goes {
 			withdrawn.Base[k] = op.Base[k]
 			delete(op.Conflict, k)
 		}
-		if len(withdrawn.Payload) == 0 { // nothing of a custom type: leave the entry as it is
+		if len(goes) == 0 { // nothing of a custom type: leave the entry as it is
 			rest = op
 			_, err := tx.ExecContext(ctx, "UPDATE outbox SET state = 'pending' WHERE id = ? AND state = 'sending'", id)
 			return err
@@ -209,14 +210,15 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 		// Back to the base: the kind of task, its custom type and status, and completed
 		// unless the entry changes it itself (a status completes the task locally).
 		restore := map[string]any{}
+		left := outbox.PayloadFields(*op) // what the entry still sends
 		for _, k := range append(slices.Clone(customTypeKeys), "resource_subtype") {
 			if v, ok := op.Base[k]; ok {
-				if _, still := op.Payload[k]; !still {
+				if _, still := left[k]; !still {
 					restore[k] = v
 				}
 			}
 		}
-		_, sendsCompleted := op.Payload["completed"]
+		_, sendsCompleted := left["completed"]
 		if v, ok := op.Base["completed"]; ok && !sendsCompleted {
 			restore["completed"] = v
 		}
@@ -224,7 +226,7 @@ func (s *Store) WithdrawCustomType(ctx context.Context, id int64, reason string,
 			return err
 		}
 		for k := range restore {
-			if _, still := op.Payload[k]; !still {
+			if _, still := left[k]; !still {
 				delete(op.Base, k)
 			}
 		}

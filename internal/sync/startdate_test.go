@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -32,6 +33,9 @@ type startServer struct {
 	created map[string]any // the body of a POST /tasks
 	puts    []map[string]any
 	plan402 bool
+	// ignoreStart: answer 200 but keep the task's start date (#62); omitStart: answer
+	// without start_on.
+	ignoreStart, omitStart bool
 }
 
 func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -41,6 +45,10 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	var body struct{ Data map[string]any }
 	_ = json.Unmarshal(b, &body)
 	answer := func(task map[string]any) {
+		if f.omitStart {
+			task = maps.Clone(task)
+			delete(task, "start_on")
+		}
 		out, _ := json.Marshal(map[string]any{"data": task})
 		rw.Write(out)
 	}
@@ -75,6 +83,9 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for k, v := range body.Data {
+			if k == "start_on" && f.ignoreStart {
+				continue
+			}
 			f.task[k] = v
 		}
 		if _, ok := body.Data["due_on"]; ok {
@@ -90,6 +101,9 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			"created_at": time.Now().UTC().Format(time.RFC3339), "created_by": map[string]any{"gid": "me"}}
 		for _, k := range []string{"due_on", "start_on"} {
 			task[k] = body.Data[k]
+		}
+		if f.ignoreStart {
+			task["start_on"] = nil
 		}
 		answer(task)
 	default:
