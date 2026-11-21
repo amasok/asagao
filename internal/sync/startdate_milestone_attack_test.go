@@ -214,35 +214,168 @@ func TestAttackMilestoneCacheMatchesAsana(t *testing.T) {
 	}
 }
 
-// The type is changed to milestone and the start date set in two steps while the cache
-// does not know the type is a milestone: only the type edit is sent through; the 400 for
-// the start date is dropped and the type (which Asana took) stays.
-func TestAttackMilestoneTypeAndStartTogetherInAsana(t *testing.T) {
+// A task with a start date is not made a milestone, and a start date is not queued on a
+// milestone made locally; the type edit with the start date cleared goes through, and is sent.
+func TestAttackMilestoneTypeAndStartLocal(t *testing.T) {
 	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10", "resource_subtype": "default_task"})
 	ctx := context.Background()
 	s.now = func() time.Time { return now }
-	// start date first (task is a plain task in the cache), then the type
 	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-01"}, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "milestone"}, now); err != nil {
-		t.Fatalf("type change after a queued start date: %v", err)
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "milestone"}, now); err == nil {
+		t.Fatal("a task with a queued start date was made a milestone")
+	}
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "milestone", "start_on": ""}, now); err != nil {
+		t.Fatalf("type with the start date cleared: %v", err)
 	}
 	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 {
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 0 {
 		t.Fatalf("push = %+v, %v (puts %v)", res, err, f.puts)
 	}
 	if f.task["resource_subtype"] != "milestone" || f.task["start_on"] != nil {
 		t.Fatalf("server = %v", f.task)
 	}
-	if d, _ := st.GetTask(ctx, "t1"); d.StartOn != "" {
-		t.Fatalf("cache start_on = %q", d.StartOn)
+}
+
+// The cache does not know the type; Asana's GET says milestone: the start date is not sent
+// at all (no PUT), the rest is, the reason is given, and the cache learns the type so a
+// next start date is refused before it is queued.
+func TestAttackMilestoneBlockedByGET(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "N", "start_on": "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
+	}
+	f.task["resource_subtype"] = "milestone"
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 || !strings.Contains(res.Discarded[0].Reason, "マイルストーン") {
+		t.Fatalf("push = %+v, %v", res, err)
+	}
+	for _, p := range f.puts {
+		if _, ok := p["start_on"]; ok {
+			t.Fatalf("a PUT carried start_on: %v", f.puts)
+		}
+	}
+	if f.task["name"] != "N" {
+		t.Fatalf("server = %v", f.task)
+	}
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-02"}, now); err == nil {
+		t.Fatal("the cache did not learn that t1 is a milestone")
+	}
+	noStartMark(t, st)
+}
+
+// Only the start date, GET says milestone: no PUT at all, the entry is gone.
+func TestAttackMilestoneBlockedByGETOnly(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
+	}
+	f.task["resource_subtype"] = "milestone"
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 || len(f.puts) != 0 {
+		t.Fatalf("push = %+v, %v puts %v", res, err, f.puts)
+	}
+	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
+		t.Fatalf("ops = %+v", ops)
 	}
 }
 
-// A 402 after a milestone 400 on another entry in the same push still marks the workspace
-// (the milestone's 400 must not swallow the plan's mark), and a milestone 400 does not
-// hide start dates for a later edit of an ordinary task.
+// Clearing a start date of a milestone in Asana is not "blocked" (nothing to refuse).
+func TestAttackMilestoneClearNotBlocked(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10", "start_on": "2026-12-01", "resource_subtype": "milestone"})
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": ""}, now); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 0 {
+		t.Fatalf("push = %+v, %v puts %v", res, err, f.puts)
+	}
+	if f.task["start_on"] != nil {
+		t.Fatalf("server = %v", f.task)
+	}
+}
+
+// The task is a milestone in Asana, the edit turns it into a plain task with a start date:
+// sent (the GET's type does not decide, the edit's does).
+func TestAttackMilestoneEditChangesTypeBack(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10", "resource_subtype": "milestone"})
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "default_task", "start_on": "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 0 {
+		t.Fatalf("push = %+v, %v puts %v", res, err, f.puts)
+	}
+	if f.task["start_on"] != "2026-12-01" || f.task["resource_subtype"] != "default_task" {
+		t.Fatalf("server = %v", f.task)
+	}
+}
+
+// The task was made a milestone after the GET (milestoneOnWrite): the 400 path takes the
+// start date out and sends the rest, no mark.
+func TestAttackMilestoneOnWrite400(t *testing.T) {
+	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
+	f.milestoneOnWrite = true
+	ctx := context.Background()
+	s.now = func() time.Time { return now }
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "N", "start_on": "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Push(ctx)
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 {
+		t.Fatalf("push = %+v, %v (puts %v)", res, err, f.puts)
+	}
+	if len(f.puts) != 2 || f.task["name"] != "N" || f.task["start_on"] != nil {
+		t.Fatalf("puts %v server %v", f.puts, f.task)
+	}
+	noStartMark(t, st)
+}
+
+// noWorkspaceStore is a store that does not know the task's workspace.
+type noWorkspaceStore struct{ LocalStore }
+
+func (noWorkspaceStore) TaskWorkspace(context.Context, string) (string, error) {
+	return "", store.ErrNotFound
+}
+
+// The task's workspace is not known when its entry is sent: the milestone 400 is still taken
+// out (the workspace is only for the mark); a 402 is not, and makes no mark.
+func TestAttackMilestone400UnknownWorkspace(t *testing.T) {
+	for _, milestone := range []bool{true, false} {
+		f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
+		f.milestoneOnWrite = milestone
+		f.plan402 = !milestone
+		s.Store = noWorkspaceStore{st}
+		ctx := context.Background()
+		s.now = func() time.Time { return now }
+		if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "N", "start_on": "2026-12-01"}, now); err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.Push(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if milestone && (res.Failed != 0 || len(res.Discarded) != 1 || f.task["name"] != "N" || f.task["start_on"] != nil) {
+			t.Fatalf("milestone: push = %+v (puts %v)", res, f.puts)
+		}
+		if !milestone && res.Failed != 1 {
+			t.Fatalf("402: push = %+v", res)
+		}
+		noStartMark(t, st)
+	}
+}
+
+// After the milestone is blocked (cache learned the type), a plain task with a start date
+// queued later and a 402 is recorded as usual.
 func TestAttackMilestoneThenPlan402(t *testing.T) {
 	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
 	ctx := context.Background()
@@ -255,11 +388,10 @@ func TestAttackMilestoneThenPlan402(t *testing.T) {
 		t.Fatalf("push = %+v, %v", res, err)
 	}
 	noStartMark(t, st)
-	// Asana turns the task back into a plain one; a start date can be queued again (no
-	// workspace mark) and a 402 now is recorded as usual.
+	// Asana turned the task back into a plain one; the edit says so too.
 	f.task["resource_subtype"] = "default_task"
-	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-02"}, now); err != nil {
-		t.Fatalf("start date queued after a milestone 400: %v", err)
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "default_task", "start_on": "2026-12-02"}, now); err != nil {
+		t.Fatalf("type back with a start date: %v", err)
 	}
 	f.plan402 = true
 	res, err := s.Push(ctx)
@@ -271,43 +403,14 @@ func TestAttackMilestoneThenPlan402(t *testing.T) {
 	}
 }
 
-// A task created with a start date, with a custom type in the same entry, refused 400
-// milestone: both are dropped in turn and the create completes with the name and due date.
-func TestAttackMilestoneWithCustomTypeChange(t *testing.T) {
-	f, s, st := setupStart(t, map[string]any{"due_on": "2026-12-10"})
-	ctx := context.Background()
-	s.now = func() time.Time { return now }
-	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"name": "改名", "start_on": "2026-12-01"}, now); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"resource_subtype": "custom", "custom_type": "ct1"}, now); err != nil {
-		t.Logf("custom type edit refused locally (%v); scenario skipped", err)
-		return
-	}
-	f.task["resource_subtype"] = "milestone"
-	res, err := s.Push(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed != 0 {
-		t.Fatalf("push = %+v (puts %v)", res, f.puts)
-	}
-	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
-		t.Fatalf("ops = %+v (puts %v)", ops, f.puts)
-	}
-	if f.task["name"] != "改名" || f.task["start_on"] != nil {
-		t.Fatalf("server = %v", f.task)
-	}
-	noStartMark(t, st)
-}
-
-// A create (offline gid) refused 400 milestone and then the retry succeeds without the
-// start date; the folded later edit is kept and the local gid is mapped.
+// A create made a milestone locally (no start date) keeps its folded edits and type; a
+// start date on it is refused. A create with a start date, whose task is a milestone in
+// Asana by a rule (milestoneOnWrite), is created again without it.
 func TestAttackMilestoneCreateFoldedLaterEdit(t *testing.T) {
 	f, s, st := setupStart(t, nil)
 	ctx := context.Background()
 	s.now = func() time.Time { return now }
-	gid, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "リリース", ProjectGID: "p1", DueOn: "2026-12-10", StartOn: "2026-12-01"}, now)
+	gid, err := st.CreateTaskLocal(ctx, store.NewTask{Name: "リリース", ProjectGID: "p1", DueOn: "2026-12-10"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,21 +419,31 @@ func TestAttackMilestoneCreateFoldedLaterEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// a start date on the local milestone is refused before it is queued
 	if err := st.UpdateTaskLocal(ctx, gid, map[string]any{"start_on": "2026-12-02"}, now); err == nil {
 		t.Fatal("a start date was queued on a local milestone")
 	}
 	res, err := s.Push(ctx)
-	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 {
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 0 {
 		t.Fatalf("push = %+v, %v (created %v)", res, err, f.created)
 	}
-	if _, ok := f.created["start_on"]; ok || f.created["name"] != "リリース改" || f.created["resource_subtype"] != "milestone" {
+	if f.created["name"] != "リリース改" || f.created["resource_subtype"] != "milestone" {
 		t.Fatalf("created %v", f.created)
 	}
-	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
-		t.Fatalf("ops = %+v", ops)
+
+	f2, s2, st2 := setupStart(t, nil)
+	f2.milestoneOnWrite = true
+	s2.now = func() time.Time { return now }
+	if _, err := st2.CreateTaskLocal(ctx, store.NewTask{Name: "x", ProjectGID: "p1", DueOn: "2026-12-10", StartOn: "2026-12-01"}, now); err != nil {
+		t.Fatal(err)
 	}
-	noStartMark(t, st)
+	res, err = s2.Push(ctx)
+	if err != nil || res.Failed != 0 || len(res.Discarded) != 1 {
+		t.Fatalf("create push = %+v, %v (created %v)", res, err, f2.created)
+	}
+	if _, ok := f2.created["start_on"]; ok || f2.created["name"] != "x" {
+		t.Fatalf("created %v", f2.created)
+	}
+	noStartMark(t, st2)
 }
 
 // A create refused with another 400 stays failed (no create without the start date).

@@ -38,16 +38,18 @@ func TestAttackCLIMilestoneStartRefused(t *testing.T) {
 	if out, err := runCLI(t, "task", "start", "m1", ""); err != nil {
 		t.Fatalf("clear: %v\n%s", err, out)
 	}
-	// start date and then type milestone (two commands, t1 is an ordinary task): the second
-	// is the type change, which is not a start date edit and is allowed; a start date after
-	// it is refused.
+	// a task with a start date is not made a milestone (until the start date goes too)
 	if out, err := runCLI(t, "task", "start", "t1", "2026-12-01", "--due", "2026-12-10"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if out, err := runCLI(t, "task", "type", "t1", "milestone"); err != nil {
+	if _, err := runCLI(t, "task", "type", "t1", "milestone"); err == nil || !strings.Contains(err.Error(), "マイルストーン") {
+		t.Fatalf("type milestone on a task with a start date: %v", err)
+	}
+	// a milestone made first refuses the start date afterwards
+	if out, err := runCLI(t, "task", "type", "t2", "milestone"); err != nil {
 		t.Fatalf("type: %v\n%s", err, out)
 	}
-	if _, err := runCLI(t, "task", "start", "t1", "2026-12-02", "--due", "2026-12-10"); err == nil || !strings.Contains(err.Error(), "マイルストーン") {
+	if _, err := runCLI(t, "task", "start", "t2", "2026-12-02", "--due", "2026-12-10"); err == nil || !strings.Contains(err.Error(), "マイルストーン") {
 		t.Fatalf("start date on a task made a milestone locally: %v", err)
 	}
 }
