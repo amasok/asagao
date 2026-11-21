@@ -98,9 +98,16 @@ func (s *Pusher) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 	return h.find(s, ctx, op, finder{since: since, me: me})
 }
 
-// sameTaskFields is outbox.SameTaskFields on the task as Asana returns it.
+// sameTaskFields is outbox.SameTaskFields on the task as Asana returns it. A task without
+// a start date is taken for one created with it: a plan without start dates may create
+// it without (#62; findCreatedTask then says so). One whose start date is not known
+// (t.StartOnKnown false) is compared without it.
 func sameTaskFields(t model.Task, p outbox.CreateTask) bool {
-	f := outbox.TaskFields{DueOn: t.DueOn, StartOn: t.StartOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
+	start := t.StartOn
+	if !t.StartOnKnown || start == "" {
+		start = outbox.Str(p.StartOn)
+	}
+	f := outbox.TaskFields{DueOn: t.DueOn, StartOn: start, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
 	if t.Assignee != nil {
 		f.AssigneeGID = t.Assignee.GID
 	}

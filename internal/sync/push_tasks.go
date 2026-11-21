@@ -386,10 +386,20 @@ func findCreatedTask(s *Pusher, ctx context.Context, op outbox.Op, p outbox.Crea
 		return sent, notFound, err
 	}
 	s.refresh(ctx, t)
+	out := sent
 	if move != nil {
-		return followUp, matched, nil
+		out = followUp
 	}
-	return sent, matched, nil
+	// Found without the start date it was created with: as when Asana answers the create so
+	// (#62), the start date is a dropped change, and start dates are hidden in the workspace.
+	if err := startOnKept(&t, p.StartOn); err != nil {
+		ws, wsErr := s.Store.TaskWorkspace(ctx, t.GID)
+		if wsErr != nil {
+			return out, matched, err // not in the cache: nothing to record the plan for (as send)
+		}
+		return out, matched, s.startOnOutcome(ctx, ws, outbox.Str(p.StartOn), out, err)
+	}
+	return out, matched, nil
 }
 
 // findDuplicate looks for the copy a duplicate_task made (see reconcile).

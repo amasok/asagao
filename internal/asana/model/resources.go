@@ -134,11 +134,35 @@ type Task struct {
 	// NoCustomType is set when the task was fetched without its custom type and status
 	// (Asana refused those fields, #59; or Partial): they are unknown, not empty.
 	NoCustomType bool `json:"-"`
-	// StartOnKnown is set on Asana's answer to a create or an update (CreateTask,
-	// CreateSubtask, UpdateTask) that included start_on (null or a date), so that StartOn
-	// says what Asana kept. It is false on other reads and on an answer without start_on:
-	// StartOn "" is then not known to be empty (#62).
+	// StartOnKnown is set when Asana's answer included start_on (null or a date), so that
+	// StartOn says what Asana has: on an answer to a create or an update (CreateTask,
+	// CreateSubtask, UpdateTask), what it kept. It is false on an answer without start_on
+	// (a read that did not ask for it) or with something else than a date: StartOn "" is
+	// then not known to be empty (#62).
 	StartOnKnown bool `json:"-"`
+}
+
+// UnmarshalJSON reads a task as Asana returns it, with StartOnKnown (a start_on that is
+// not a date leaves StartOn unknown, not the task unread).
+func (t *Task) UnmarshalJSON(b []byte) error {
+	type task Task // without this method
+	w := struct {
+		*task
+		StartOn json.RawMessage `json:"start_on"` // shadows Task.StartOn: nil when left out
+	}{task: (*task)(t)}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	t.StartOn, t.StartOnKnown = "", false
+	var start *string
+	if len(w.StartOn) == 0 || json.Unmarshal(w.StartOn, &start) != nil {
+		return nil
+	}
+	t.StartOnKnown = true
+	if start != nil {
+		t.StartOn = *start
+	}
+	return nil
 }
 
 // HasCustomID reports whether t has an ID custom field whose value equals id (exact match).
