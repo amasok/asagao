@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,10 @@ func TestAttackMilestoneStartUnknownType(t *testing.T) {
 		if err := s.UpdateTaskLocal(ctx, c.gid, c.ch, now); !errors.Is(err, task.ErrMilestoneStart) {
 			t.Errorf("%s %v: err = %v", c.gid, c.ch, err)
 		}
+	}
+	// the reason names the start date when it is the type change that is refused
+	if err := s.UpdateTaskLocal(ctx, "s1", map[string]any{"resource_subtype": "milestone"}, now); err == nil || !strings.Contains(err.Error(), "2026-12-01") {
+		t.Errorf("reason lacks the start date: %v", err)
 	}
 	for _, c := range []struct {
 		gid string

@@ -283,6 +283,9 @@ func TestAttackMilestoneBlockedByGETOnly(t *testing.T) {
 	if ops, _ := st.ListOps(ctx); len(ops) != 0 {
 		t.Fatalf("ops = %+v", ops)
 	}
+	if err := st.UpdateTaskLocal(ctx, "t1", map[string]any{"start_on": "2026-12-02"}, now); err == nil {
+		t.Fatal("the cache did not learn that t1 is a milestone (no PUT carried it either)")
+	}
 }
 
 // Clearing a start date of a milestone in Asana is not "blocked" (nothing to refuse).
