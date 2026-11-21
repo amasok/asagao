@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/amasok/asagao/internal/asana/model"
@@ -199,23 +200,49 @@ func removeTaskTree(ctx context.Context, tx *sql.Tx, gid string) ([]string, erro
 // Without uploads, a file a queued upload still refers to is left out: the upload is
 // recorded as a dropped change that shows where its copy is, to get the file back.
 func taskTreeFiles(ctx context.Context, tx *sql.Tx, gid string, uploads bool) ([]string, error) {
-	q := `WITH RECURSIVE sub(gid) AS (
-			SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid),
-		ups(path) AS (SELECT json_extract(payload, '$.path') FROM outbox
-			WHERE task_gid IN (SELECT gid FROM sub) AND kind = ? AND json_extract(payload, '$.path') <> '')
-		SELECT local_path FROM attachments WHERE parent_gid IN (SELECT gid FROM sub) AND local_path <> ''
-		UNION SELECT json_extract(payload, '$.path') FROM outbox WHERE task_gid IN (SELECT gid FROM sub)
-			AND kind = ? AND json_extract(payload, '$.path') <> ''`
-	if uploads {
-		q += ` UNION SELECT path FROM ups`
-	} else {
-		q += ` EXCEPT SELECT path FROM ups`
-	}
-	rows, err := tx.QueryContext(ctx, q, gid, OpUploadAttachment, OpDeleteAttachment)
+	const sub = `WITH RECURSIVE sub(gid) AS (SELECT ? UNION SELECT t.gid FROM tasks t JOIN sub ON t.parent_gid = sub.gid)`
+	rows, err := tx.QueryContext(ctx, sub+` SELECT local_path FROM attachments WHERE parent_gid IN (SELECT gid FROM sub) AND local_path <> ''`, gid)
 	if err != nil {
 		return nil, err
 	}
-	return scanStrings(rows)
+	files, err := scanStrings(rows)
+	if err != nil {
+		return nil, err
+	}
+	ops, err := opsWhere(ctx, tx, nil, `kind IN (?, ?) AND task_gid IN (`+sub+` SELECT gid FROM sub)`,
+		OpUploadAttachment, OpDeleteAttachment, gid)
+	if err != nil {
+		return nil, err
+	}
+	var ups []string
+	for _, op := range ops {
+		if p := attachmentPath(op); p != "" && op.Kind == OpUploadAttachment {
+			ups = append(ups, p)
+		} else if p != "" {
+			files = append(files, p)
+		}
+	}
+	if uploads {
+		files = append(files, ups...)
+	} else {
+		files = slices.DeleteFunc(files, func(f string) bool { return slices.Contains(ups, f) })
+	}
+	slices.Sort(files)
+	return slices.Compact(files), nil
+}
+
+// attachmentPath returns the local file an upload_attachment sends or a delete_attachment
+// keeps, as far as its payload reads ("" for none, or another kind).
+func attachmentPath(op Op) string {
+	switch op.Kind {
+	case OpUploadAttachment:
+		p, _ := outbox.BestEffortPayload[outbox.UploadAttachment](op)
+		return p.Path
+	case OpDeleteAttachment:
+		p, _ := outbox.BestEffortPayload[outbox.DeleteAttachment](op)
+		return p.Path
+	}
+	return ""
 }
 
 // SetParentLocal makes task gid a subtask of parent ("" for a top-level task), at pos
@@ -431,16 +458,16 @@ func requeue(ctx context.Context, tx *sql.Tx, op *Op, now time.Time) error {
 // undoSetParentsTo discards the parent changes that put a task under gid, which is going
 // away (a task never sent, discarded or dropped): the tasks go back to their parents.
 func undoSetParentsTo(ctx context.Context, tx *sql.Tx, gid string) error {
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM outbox WHERE kind = ? AND json_extract(payload, '$.parent') = ? ORDER BY id", OpSetParent, gid)
+	ops, err := opsWhere(ctx, tx, payloadIs(func(p outbox.SetParent) bool { return gid != "" && p.Parent == gid }), "kind = ?", OpSetParent)
 	if err != nil {
 		return err
 	}
-	ids, err := scanIDs(rows)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		op, err := getOpTx(ctx, tx, id)
+	for _, op := range ops {
+		// (read again: discarding one may have changed or removed another)
+		op, err := getOpTx(ctx, tx, op.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return err
 		}

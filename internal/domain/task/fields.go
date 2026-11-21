@@ -72,6 +72,38 @@ func CheckApproval(subtype string, changes map[string]any) error {
 	return nil
 }
 
+// ErrMilestoneStart refuses a start date on a milestone: Asana answers it with a 400
+// (cannot_set_start_date_on_milestone), on any plan.
+// The errors of CheckMilestoneStart wrap it.
+var ErrMilestoneStart = errors.New("マイルストーンには開始日を付けられません")
+
+// CheckMilestoneStart refuses changes after which a task is a milestone with a start
+// date: one set on a milestone, or a task with a start date made a milestone without
+// clearing it. subtype and start are the task's type and start date now; a type "" (not
+// known) lets it through, and Asana's answer decides. Only changes that set start_on or
+// resource_subtype are checked, so a milestone that has a start date in Asana can still
+// be edited otherwise, and its start date cleared.
+func CheckMilestoneStart(subtype, start string, changes map[string]any) error {
+	newStart, setsStart := changes["start_on"].(string)
+	newType, setsType := changes["resource_subtype"].(string)
+	if !setsStart && !setsType {
+		return nil
+	}
+	if setsStart {
+		start = newStart
+	}
+	if setsType {
+		subtype = newType
+	}
+	switch {
+	case subtype != SubtypeMilestone || start == "":
+		return nil
+	case setsStart:
+		return fmt.Errorf("%w（Asana が受け付けません。開始日を付けるには、種類を「タスク」に変えてください）", ErrMilestoneStart)
+	}
+	return fmt.Errorf("%w。開始日 (%s) があるため、マイルストーンにできません（開始日も一緒に外してください）", ErrMilestoneStart, start)
+}
+
 // CustomTypeChange is a change of a task's custom task type (#59), as CheckCustomType
 // sees it: the type and status the task will have.
 type CustomTypeChange struct {

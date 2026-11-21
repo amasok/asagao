@@ -274,6 +274,12 @@ func (s *Pusher) pushEntry(ctx context.Context, snapshot outbox.Op, first int, v
 					return err
 				}
 				sendIt = false
+			case m == matched && errors.As(err, new(*startOnIgnored)):
+				// Asana has it, without its start date (#62): recorded as after sending it.
+				if again, err = s.handleOutcome(ctx, *op, out, err, wasFollowUp, res, drops); err != nil {
+					return err
+				}
+				sendIt = false
 			case model.IsUnauthorized(err): // the token is rejected: keep it for after a new login
 				if rerr := s.Store.MarkOpVerify(context.WithoutCancel(ctx), op.ID, "Asana に届いたか確かめられませんでした: "+err.Error()); rerr != nil {
 					return rerr
@@ -455,12 +461,12 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 		start, withStart = h.startOn(op)
 	}
 	var startWS string
+	wsKnown := false
 	if withStart {
 		// before sending: a create gives the task its Asana gid
 		var err error
-		if startWS, err = s.Store.TaskWorkspace(ctx, op.TaskGID); err != nil {
-			withStart = false // not in the cache: nothing to record the plan for
-		}
+		startWS, err = s.Store.TaskWorkspace(ctx, op.TaskGID)
+		wsKnown = err == nil // not in the cache: nothing to record the plan for
 	}
 	out, err := s.sendOp(ctx, op)
 	if isForbidden(err) && h.forbidden != nil {
@@ -481,7 +487,13 @@ func (s *Pusher) send(ctx context.Context, op outbox.Op) (outcome, error) {
 	if withStart && !errors.As(err, new(*customTypeWithdrawn)) {
 		// A 402 to an entry with a custom type takes out the custom type first (#59),
 		// the more likely cause: the start date is tried again with the rest.
-		return out, s.startOnOutcome(ctx, startWS, start, out, err)
+		if isMilestoneStartRefused(err) {
+			// Not the plan: no mark. The start date is taken out and the rest sent again.
+			return out, &startOnWithdrawn{reason: milestoneStartReason(start), err: err}
+		}
+		if wsKnown {
+			return out, s.startOnOutcome(ctx, startWS, start, out, err)
+		}
 	}
 	switch feature := plan.FeatureOf(op.Kind); feature {
 	case plan.TimeTracking:
@@ -529,6 +541,26 @@ func (s *Pusher) startOnOutcome(ctx context.Context, ws, start string, out outco
 	return err
 }
 
+// isMilestoneStartRefused reports Asana's 400 to a start date on a milestone, on any plan
+// (measured on the real Asana, #62: an update and a create answer it alike).
+func isMilestoneStartRefused(err error) bool {
+	var e *model.Error
+	if !errors.As(err, &e) || e.Status != http.StatusBadRequest {
+		return false
+	}
+	for _, x := range e.Errors {
+		if x.Error == "cannot_set_start_date_on_milestone" {
+			return true
+		}
+	}
+	return false
+}
+
+// milestoneStartReason is why a start date sent to a milestone was taken out.
+func milestoneStartReason(start string) string {
+	return fmt.Sprintf("マイルストーンには開始日を付けられないため、開始日 (%s) を外しました (Asana が 400 を返しました)", start)
+}
+
 // startOnIgnored says that Asana answered a create or an update that set a task's start
 // date (to start) with the task keeping another one (kept, "" for none), as a plan
 // without start dates may do instead of a 402 (#62). The rest of the change was applied
@@ -549,7 +581,8 @@ func (e *startOnIgnored) Error() string {
 }
 
 // startOnWithdrawn says that an entry's start date cannot be sent (Asana answered 402,
-// or the task's due date in Asana no longer allows it) and why: the start date is taken
+// or 400 to a start date on a milestone, or the task's due date in Asana no longer allows
+// it) and why: the start date is taken
 // out of the entry and the rest sent again (handleOutcome, withdrawStartOn).
 type startOnWithdrawn struct {
 	reason string
@@ -567,7 +600,7 @@ func (e *startOnWithdrawn) Unwrap() error { return e.err }
 // withdrawStartOn handles a start date that cannot be sent without making the user
 // decide: the start date is dropped (and reported in res.Discarded, with the reason), and
 // the rest of the entry, if any, is sent again right away. Asana did not apply the
-// request (a 402, or it was not sent), so sending the rest again repeats nothing.
+// request (a 402 or a 400, or it was not sent), so sending the rest again repeats nothing.
 func (s *Pusher) withdrawStartOn(ctx context.Context, op outbox.Op, w *startOnWithdrawn, res *PushResult) (again bool, err error) {
 	rest, d, err := s.Store.WithdrawStartOn(ctx, op.ID, w.reason, s.clock())
 	if err != nil {

@@ -774,16 +774,7 @@ func applyCustomFieldOp(ctx context.Context, tx *sql.Tx, op Op, undo bool) error
 
 // findCustomFieldOp returns the pending or conflicted entry setting field of task.
 func findCustomFieldOp(ctx context.Context, tx *sql.Tx, taskGID, fieldGID string) (*Op, error) {
-	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND task_gid = ? AND state IN ('pending', 'conflict')
-		AND json_extract(payload, '$.field') = ? ORDER BY id DESC LIMIT 1`, OpSetCustomField, taskGID, fieldGID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return getOpTx(ctx, tx, id)
+	return lastOpWhere(ctx, tx, fieldIs(fieldGID), "kind = ? AND task_gid = ? AND state IN ('pending', 'conflict')", OpSetCustomField, taskGID)
 }
 
 // reapplyCustomFieldOps keeps unsent custom field changes after a pull.

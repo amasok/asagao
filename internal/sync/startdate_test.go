@@ -25,7 +25,8 @@ import (
 
 // startServer is a fake Asana with one task t1 in workspace w1, which keeps start_on,
 // due_on and due_at as Asana does, and refuses start dates like Asana: without a due date
-// in the request (400), or with a 402 when plan402 is set.
+// in the request (400), on a milestone (400 cannot_set_start_date_on_milestone, as the
+// real Asana answers on any plan, #62), or with a 402 when plan402 is set.
 type startServer struct {
 	t       *testing.T
 	mu      stdsync.Mutex
@@ -36,6 +37,14 @@ type startServer struct {
 	// ignoreStart: answer 200 but keep the task's start date (#62); omitStart: answer
 	// without start_on.
 	ignoreStart, omitStart bool
+	// loseCreate: make the task of a POST /tasks but answer 500 (the answer lost); it is
+	// then listed in project p1 (made).
+	loseCreate bool
+	made       map[string]any
+	badRequest bool // answer a start date with a 400 without an error code
+	// milestoneOnWrite: the task is a milestone when a write arrives (made one meanwhile,
+	// or by a rule of the project), whatever a GET said before.
+	milestoneOnWrite bool
 }
 
 func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -56,9 +65,24 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(status)
 		fmt.Fprintf(rw, `{"errors":[{"message":%q}]}`, msg)
 	}
-	checkStart := func(data map[string]any) bool {
+	checkStart := func(data map[string]any, subtype any) bool {
 		if _, ok := data["start_on"]; !ok {
 			return true
+		}
+		if v, ok := data["resource_subtype"]; ok {
+			subtype = v
+		}
+		if f.milestoneOnWrite {
+			subtype = "milestone"
+		}
+		if start, _ := data["start_on"].(string); start != "" && subtype == "milestone" {
+			rw.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(rw, `{"errors":[{"error":"cannot_set_start_date_on_milestone","message":"You cannot set a start date on a milestone."}]}`)
+			return false
+		}
+		if f.badRequest {
+			refuse(http.StatusBadRequest, "start_on: Invalid date")
+			return false
 		}
 		if f.plan402 {
 			refuse(http.StatusPaymentRequired, "start dates are a premium feature")
@@ -79,7 +103,7 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		answer(f.task)
 	case r.URL.Path == "/tasks/t1" && r.Method == http.MethodPut:
 		f.puts = append(f.puts, body.Data)
-		if !checkStart(body.Data) {
+		if !checkStart(body.Data, f.task["resource_subtype"]) {
 			return
 		}
 		for k, v := range body.Data {
@@ -94,18 +118,35 @@ func (f *startServer) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		answer(f.task)
 	case r.URL.Path == "/tasks" && r.Method == http.MethodPost:
 		f.created = body.Data
-		if !checkStart(body.Data) {
+		if !checkStart(body.Data, nil) {
 			return
 		}
 		task := map[string]any{"gid": "new1", "name": body.Data["name"], "workspace": map[string]any{"gid": "w1"},
 			"created_at": time.Now().UTC().Format(time.RFC3339), "created_by": map[string]any{"gid": "me"}}
-		for _, k := range []string{"due_on", "start_on"} {
+		for _, k := range []string{"due_on", "start_on", "resource_subtype"} {
 			task[k] = body.Data[k]
 		}
 		if f.ignoreStart {
 			task["start_on"] = nil
 		}
+		if f.loseCreate {
+			task["memberships"] = []any{map[string]any{"project": map[string]any{"gid": "p1"}}}
+			f.made = task
+			refuse(http.StatusInternalServerError, "server error")
+			return
+		}
 		answer(task)
+	case r.URL.Path == "/tasks" && r.Method == http.MethodGet:
+		var list []map[string]any
+		if f.made != nil && r.URL.Query().Get("project") == "p1" {
+			list = append(list, f.made)
+			if f.omitStart {
+				list[0] = maps.Clone(f.made)
+				delete(list[0], "start_on")
+			}
+		}
+		out, _ := json.Marshal(map[string]any{"data": list})
+		rw.Write(out)
 	default:
 		refuse(http.StatusNotFound, "not found: "+r.Method+" "+r.URL.Path)
 	}

@@ -234,8 +234,8 @@ func insertPosition(before, after string) Position {
 // reapplyMoves puts the tasks with an unsent move in project where the moves put them,
 // after a listing of Asana's order (which does not have them yet).
 func reapplyMoves(ctx context.Context, tx *sql.Tx, project string) error {
-	ops, err := opsTx(ctx, tx, `SELECT id FROM outbox
-		WHERE kind = ? AND state <> 'failed' AND json_extract(payload, '$.project') = ? ORDER BY id`, OpMoveTask, project)
+	ops, err := opsWhere(ctx, tx, payloadIs(func(p outbox.MoveTask) bool { return project != "" && p.Project == project }),
+		"kind = ? AND state <> 'failed'", OpMoveTask)
 	if err != nil {
 		return err
 	}
@@ -261,8 +261,8 @@ func reapplyMove(ctx context.Context, tx *sql.Tx, op Op) error {
 // reapplyParentMoves puts the subtasks with an unsent, placed parent change into parent
 // where the changes put them, after a listing of Asana's order.
 func reapplyParentMoves(ctx context.Context, tx *sql.Tx, parent string) error {
-	ops, err := opsTx(ctx, tx, `SELECT id FROM outbox
-		WHERE kind = ? AND state <> 'failed' AND json_extract(payload, '$.parent') = ? ORDER BY id`, OpSetParent, parent)
+	ops, err := opsWhere(ctx, tx, payloadIs(func(p outbox.SetParent) bool { return parent != "" && p.Parent == parent }),
+		"kind = ? AND state <> 'failed'", OpSetParent)
 	if err != nil {
 		return err
 	}

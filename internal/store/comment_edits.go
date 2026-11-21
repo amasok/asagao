@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,7 +25,7 @@ func init() {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM stories WHERE gid = ?", gid); err != nil {
 			return err
 		}
-		return dropChangesOf(ctx, tx, "story", gid, OpUpdateStory, OpDeleteStory)
+		return dropChangesOf(ctx, tx, gid, OpUpdateStory, OpDeleteStory)
 	})
 	registerUndo(OpUpdateStory, func(ctx context.Context, tx *sql.Tx, op *Op, p outbox.UpdateStory) error {
 		return undoStoryOp(ctx, tx, op, p.Story)
@@ -36,7 +38,7 @@ func init() {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE gid = ?", gid); err != nil {
 			return err
 		}
-		return dropChangesOf(ctx, tx, "attachment", gid, OpDeleteAttachment)
+		return dropChangesOf(ctx, tx, gid, OpDeleteAttachment)
 	})
 	registerUndo(OpDeleteAttachment, undoAttachmentDelete)
 }
@@ -105,17 +107,12 @@ func ownComment(ctx context.Context, tx *sql.Tx, gid, me string) (*storyRow, err
 
 // unsentCreate returns the create (kind) of a comment or attachment with a local gid, as
 // long as it was never sent: until then it can be rewritten or dropped.
-func unsentCreate(ctx context.Context, tx *sql.Tx, kind Kind, key, gid string) (*Op, error) {
-	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?
-		AND state IN ('pending', 'failed') AND verify = 0 AND sent_at = '' AND attempts = 0`, kind, key, gid).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
+func unsentCreate(ctx context.Context, tx *sql.Tx, kind Kind, gid string) (*Op, error) {
+	ops, err := opsWhere(ctx, tx, refIs(gid), "kind = ? AND state IN ('pending', 'failed') AND verify = 0 AND sent_at = '' AND attempts = 0", kind)
+	if err != nil || len(ops) == 0 {
 		return nil, err
 	}
-	return getOpTx(ctx, tx, id)
+	return &ops[0], nil
 }
 
 // EditCommentLocal changes the text of one of the user's comments (htmlText, Asana rich
@@ -140,7 +137,7 @@ func (s *Store) EditCommentLocal(ctx context.Context, storyGID, text, htmlText s
 			return err
 		}
 		if IsLocalGID(storyGID) {
-			create, err := unsentCreate(ctx, tx, OpAddComment, "story_gid", storyGID)
+			create, err := unsentCreate(ctx, tx, OpAddComment, storyGID)
 			if err != nil {
 				return err
 			}
@@ -150,12 +147,12 @@ func (s *Store) EditCommentLocal(ctx context.Context, storyGID, text, htmlText s
 				}
 				return saveOp(ctx, tx, create)
 			}
-			if err := ensureStoryCreateQueued(ctx, tx, OpAddComment, "story_gid", storyGID); err != nil {
+			if err := ensureStoryCreateQueued(ctx, tx, OpAddComment, storyGID); err != nil {
 				return err
 			}
 		}
 		// Join the edit not sent yet, so its base stays the text before the first edit.
-		op, err := findStoryOp(ctx, tx, OpUpdateStory, "story", storyGID, "'pending', 'failed'")
+		op, err := findStoryOp(ctx, tx, OpUpdateStory, storyGID, "'pending', 'failed'")
 		if err != nil {
 			return err
 		}
@@ -187,14 +184,14 @@ func (s *Store) DeleteCommentLocal(ctx context.Context, storyGID string, now tim
 			return err
 		}
 		if IsLocalGID(storyGID) {
-			create, err := unsentCreate(ctx, tx, OpAddComment, "story_gid", storyGID)
+			create, err := unsentCreate(ctx, tx, OpAddComment, storyGID)
 			if err != nil {
 				return err
 			}
 			if create != nil { // never sent: forget it (with the edits queued for it)
 				return discardOpTx(ctx, tx, create)
 			}
-			if err := ensureStoryCreateQueued(ctx, tx, OpAddComment, "story_gid", storyGID); err != nil {
+			if err := ensureStoryCreateQueued(ctx, tx, OpAddComment, storyGID); err != nil {
 				return err
 			}
 		}
@@ -224,7 +221,7 @@ func (s *Store) DeleteAttachmentLocal(ctx context.Context, gid string, now time.
 		name, _ := row["name"].(string)
 		payload := outbox.DeleteAttachment{Attachment: gid, Name: name}
 		if IsLocalGID(gid) {
-			create, err := unsentCreate(ctx, tx, OpUploadAttachment, "attachment", gid)
+			create, err := unsentCreate(ctx, tx, OpUploadAttachment, gid)
 			if err != nil {
 				return err
 			}
@@ -233,7 +230,7 @@ func (s *Store) DeleteAttachmentLocal(ctx context.Context, gid string, now time.
 				remove = up.Path
 				return discardOpTx(ctx, tx, create)
 			}
-			if err := ensureStoryCreateQueued(ctx, tx, OpUploadAttachment, "attachment", gid); err != nil {
+			if err := ensureStoryCreateQueued(ctx, tx, OpUploadAttachment, gid); err != nil {
 				return err
 			}
 			if path != "" { // the upload may be sent again from it
@@ -279,71 +276,97 @@ func getAttachmentRow(ctx context.Context, tx *sql.Tx, gid string) (map[string]a
 
 // ensureStoryCreateQueued checks that a comment or attachment with a local gid still has
 // its create in the outbox (in any state): a change queued for it waits for that.
-func ensureStoryCreateQueued(ctx context.Context, tx *sql.Tx, kind Kind, key, gid string) error {
-	var n int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?",
-		kind, key, gid).Scan(&n); err != nil {
+func ensureStoryCreateQueued(ctx context.Context, tx *sql.Tx, kind Kind, gid string) error {
+	queued, err := anyOpWhere(ctx, tx, refIs(gid), "kind = ?", kind)
+	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if !queued {
 		return fmt.Errorf("%s: %w", gid, ErrNotFound)
 	}
 	return nil
 }
 
-// findStoryOp returns the newest entry of kind whose payload key is gid, in one of states
-// (a SQL list).
-func findStoryOp(ctx context.Context, tx *sql.Tx, kind Kind, key, gid, states string) (*Op, error) {
-	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?
-		AND state IN (`+states+`) ORDER BY id DESC LIMIT 1`, kind, key, gid).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return getOpTx(ctx, tx, id)
-}
-
-// resolvedSQL is the gid in payload key of an outbox row "o", as Asana knows it: a local
-// gid is replaced by what Asana created for it (recorded under prefix), if recorded.
-func resolvedSQL(key, prefix string) string {
-	return `COALESCE((SELECT value FROM sync_state WHERE key = '` + prefix + `' || json_extract(o.payload, '$.` + key + `')),
-		json_extract(o.payload, '$.` + key + `'))`
+// findStoryOp returns the newest entry of kind whose payload names gid (refOf), in one of
+// states (a SQL list).
+func findStoryOp(ctx context.Context, tx *sql.Tx, kind Kind, gid, states string) (*Op, error) {
+	return lastOpWhere(ctx, tx, refIs(gid), "kind = ? AND state IN ("+states+")", kind)
 }
 
 // reapplyStoryOps applies the queued edits and deletes of a task's comments to its stories
-// again (after they were replaced by what Asana returned). A failed one is not: Asana's
-// version is shown, as for a failed task update.
+// again (after they were replaced by what Asana returned), in the order they were made. A
+// failed one is not: Asana's version is shown, as for a failed task update. The comment
+// they name is the one Asana created for it, for a local gid already sent (resolveResult);
+// one whose payload does not read entirely (held) is applied as far as it reads.
 func reapplyStoryOps(ctx context.Context, tx *sql.Tx, taskGID string) error {
-	gid := resolvedSQL("story", resultPrefixStory)
-	if _, err := tx.ExecContext(ctx, `UPDATE stories SET
-		text = (SELECT json_extract(o.payload, '$.text') FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed' AND `+gid+` = stories.gid ORDER BY o.id DESC LIMIT 1),
-		html_text = (SELECT json_extract(o.payload, '$.html_text') FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed' AND `+gid+` = stories.gid ORDER BY o.id DESC LIMIT 1)
-		WHERE task_gid = ?2 AND gid IN (SELECT `+gid+` FROM outbox o WHERE o.kind = ?1 AND o.state <> 'failed')`, OpUpdateStory, taskGID); err != nil {
+	ops, err := opsWhere(ctx, tx, nil, "kind IN (?, ?) AND state <> 'failed'", OpUpdateStory, OpDeleteStory)
+	if err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM stories WHERE task_gid = ? AND gid IN (SELECT `+gid+` FROM outbox o WHERE o.kind = ? AND o.state <> 'failed')`,
-		taskGID, OpDeleteStory)
+	for _, op := range ops {
+		ref := refOf(op)
+		if ref == "" {
+			continue
+		}
+		gid, err := resolveResult(ctx, tx, resultPrefixStory, ref)
+		if err != nil {
+			return err
+		}
+		if op.Kind == OpDeleteStory {
+			_, err = tx.ExecContext(ctx, "DELETE FROM stories WHERE task_gid = ? AND gid = ?", taskGID, gid)
+		} else {
+			p, _ := outbox.BestEffortPayload[outbox.UpdateStory](op)
+			err = updateReadFields(ctx, tx, "stories", op, map[string]any{"text": p.Text, "html_text": p.HTMLText}, taskGID, gid)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateReadFields sets the columns of the row (task_gid, gid) of table to the values of
+// fields (column → value, its payload key the same) whose key the payload of op holds,
+// with a value that reads (outbox.ReadsField): one that does not read is left as it is,
+// not cleared.
+func updateReadFields(ctx context.Context, tx *sql.Tx, table string, op Op, fields map[string]any, taskGID, gid string) error {
+	var sets []string
+	var args []any
+	for _, k := range slices.Sorted(maps.Keys(fields)) {
+		if outbox.ReadsField(op, k) {
+			sets = append(sets, k+" = ?")
+			args = append(args, fields[k])
+		}
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE "+table+" SET "+strings.Join(sets, ", ")+" WHERE task_gid = ? AND gid = ?", append(args, taskGID, gid)...)
 	return err
 }
 
 // reapplyAttachmentDeletes removes again a task's attachments whose delete is queued.
 func reapplyAttachmentDeletes(ctx context.Context, tx *sql.Tx, taskGID string) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM attachments WHERE parent_gid = ? AND gid IN
-		(SELECT `+resolvedSQL("attachment", resultPrefixAttachment)+` FROM outbox o WHERE o.kind = ? AND o.state <> 'failed')`, taskGID, OpDeleteAttachment)
-	return err
+	deleted, err := resolvedRefs(ctx, tx, resultPrefixAttachment, "kind = ? AND state <> 'failed'", OpDeleteAttachment)
+	if err != nil {
+		return err
+	}
+	for gid := range deleted {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE parent_gid = ? AND gid = ?", taskGID, gid); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveResult returns what Asana created for a local gid (recorded under prefix), or
 // gid itself.
-func resolveResult(ctx context.Context, tx *sql.Tx, prefix, gid string) (string, error) {
+func resolveResult(ctx context.Context, q queryer, prefix, gid string) (string, error) {
 	if !IsLocalGID(gid) {
 		return gid, nil
 	}
 	var real string
-	err := tx.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", prefix+gid).Scan(&real)
+	err := q.QueryRowContext(ctx, "SELECT value FROM sync_state WHERE key = ?", prefix+gid).Scan(&real)
 	if errors.Is(err, sql.ErrNoRows) {
 		return gid, nil
 	}
@@ -404,13 +427,16 @@ func undoAttachmentDelete(ctx context.Context, tx *sql.Tx, op *Op, p outbox.Dele
 
 // dropChangesOf removes the queued changes (kinds) to a comment or attachment whose create
 // is discarded: there is nothing left in Asana for them to change.
-func dropChangesOf(ctx context.Context, tx *sql.Tx, key, gid string, kinds ...Kind) error {
+func dropChangesOf(ctx context.Context, tx *sql.Tx, gid string, kinds ...Kind) error {
 	if gid == "" {
 		return nil
 	}
 	for _, k := range kinds {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ? AND state <> 'sending'",
-			k, key, gid); err != nil {
+		ops, err := opsWhere(ctx, tx, refIs(gid), "kind = ? AND state <> 'sending'", k)
+		if err != nil {
+			return err
+		}
+		if _, err := deleteOps(ctx, tx, ops); err != nil {
 			return err
 		}
 	}
@@ -434,16 +460,15 @@ func (s *Store) LocalResult(ctx context.Context, kind readmodel.ResultKind, gid 
 	if real != "" {
 		return real, false, nil
 	}
-	opKind, key := OpAddComment, "story_gid"
+	opKind := OpAddComment
 	switch kind {
 	case readmodel.ResultAttachment:
-		opKind, key = OpUploadAttachment, "attachment"
+		opKind = OpUploadAttachment
 	case readmodel.ResultTimeEntry:
-		opKind, key = OpAddTimeEntry, "entry"
+		opKind = OpAddTimeEntry
 	}
-	var n int
-	err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE kind = ? AND json_extract(payload, '$.'||?) = ?", opKind, key, gid).Scan(&n)
-	return "", n > 0, err
+	waiting, err = anyOpWhere(ctx, s.db, refIs(gid), "kind = ?", opKind)
+	return "", waiting, err
 }
 
 // ApplyStory records the comment Asana returned after an edit (its text as Asana keeps it).

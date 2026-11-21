@@ -98,9 +98,16 @@ func (s *Pusher) find(ctx context.Context, op outbox.Op, since time.Time) (outco
 	return h.find(s, ctx, op, finder{since: since, me: me})
 }
 
-// sameTaskFields is outbox.SameTaskFields on the task as Asana returns it.
-func sameTaskFields(t model.Task, p outbox.CreateTask) bool {
-	f := outbox.TaskFields{DueOn: t.DueOn, StartOn: t.StartOn, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
+// sameTaskFields is outbox.SameTaskFields on the task as Asana returns it. With
+// startDropped (the workspace's plan is known to drop start dates, #62), a task without
+// a start date, or whose start date is not known (t.StartOnKnown false), is taken for one
+// created with it (findCreatedTask then says whether it was dropped).
+func sameTaskFields(t model.Task, p outbox.CreateTask, startDropped bool) bool {
+	start := t.StartOn
+	if startDropped && (!t.StartOnKnown || start == "") {
+		start = outbox.Str(p.StartOn)
+	}
+	f := outbox.TaskFields{DueOn: t.DueOn, StartOn: start, Notes: t.Notes, HTMLNotes: t.HTMLNotes}
 	if t.Assignee != nil {
 		f.AssigneeGID = t.Assignee.GID
 	}
