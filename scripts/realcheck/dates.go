@@ -20,7 +20,9 @@ func (c *Check) dates() {
 	}
 	c.Made.add(&c.Made.Projects, c.p)
 	var seen []string // dropped changes already looked at (#62)
-	c.startDrops(&seen)
+	if _, err := c.startDrops(&seen); err != nil {
+		c.Rep.fail("outbox discarded", err.Error())
+	}
 
 	// CLI: a task made with a start and a due date (task create prints no gid once sent).
 	c.cli("task create --start --due", "task", "create", pre+"-T1", "--project", c.p, "--start", "2030-03-01", "--due", "2030-03-10")
@@ -91,6 +93,7 @@ func (c *Check) dates() {
 	_, _ = c.R.CLI(c.ctx, "sync")
 	c.reportDates("Asana に直接送ったあとの T2", c.t2)
 	c.syncClean("最後")
+	c.noStartMark("#62 Asana に直接送ったあと", &seen)
 
 	// Last: a milestone may make asagao mark start dates as unavailable (#62).
 	c.milestoneStart()
