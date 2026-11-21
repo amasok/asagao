@@ -180,6 +180,8 @@ type PushStore interface {
 	WithdrawCustomType(ctx context.Context, id int64, reason string, applied bool, now time.Time) (*outbox.Op, readmodel.Discard, error)
 	// WithdrawStartOn takes a start date the plan lacks out of an entry (#57).
 	WithdrawStartOn(ctx context.Context, id int64, reason string, now time.Time) (*outbox.Op, readmodel.Discard, error)
+	// RecordStartOnIgnored records a start date Asana answered without keeping (#62).
+	RecordStartOnIgnored(ctx context.Context, taskGID, start, reason string, now time.Time) (readmodel.Discard, error)
 }
 
 // PullAPI is the part of the Asana API Puller uses to bring the cache up to date.

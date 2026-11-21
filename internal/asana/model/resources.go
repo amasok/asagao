@@ -134,6 +134,11 @@ type Task struct {
 	// NoCustomType is set when the task was fetched without its custom type and status
 	// (Asana refused those fields, #59; or Partial): they are unknown, not empty.
 	NoCustomType bool `json:"-"`
+	// StartOnKnown is set on Asana's answer to a create or an update (CreateTask,
+	// CreateSubtask, UpdateTask) that included start_on (null or a date), so that StartOn
+	// says what Asana kept. It is false on other reads and on an answer without start_on:
+	// StartOn "" is then not known to be empty (#62).
+	StartOnKnown bool `json:"-"`
 }
 
 // HasCustomID reports whether t has an ID custom field whose value equals id (exact match).
