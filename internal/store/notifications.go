@@ -166,8 +166,10 @@ func reapplyNotificationMarks(ctx context.Context, tx *sql.Tx) error {
 	}
 	marks := map[string]bool{}
 	for _, op := range ops {
-		p, _ := outbox.BestEffortPayload[outbox.MarkNotification](op) // (held: as far as it reads)
-		marks[op.TaskGID] = p.Read
+		// (held: as far as it reads; a read that does not read leaves the notification as it is)
+		if p, _ := outbox.BestEffortPayload[outbox.MarkNotification](op); outbox.ReadsField(op, "read") {
+			marks[op.TaskGID] = p.Read
+		}
 	}
 	for gid, read := range marks {
 		if _, err := tx.ExecContext(ctx, "UPDATE notifications SET is_read = ? WHERE gid = ?", read, gid); err != nil {

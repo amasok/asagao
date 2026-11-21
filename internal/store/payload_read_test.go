@@ -34,7 +34,7 @@ func TestReapplyHeldEntriesAsFarAsTheyRead(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.db.Exec(`INSERT INTO notifications(gid, workspace_gid, is_read) VALUES('n1', 'w1', 0)`)
 	if err != nil {
-		t.Skip("notifications table differs:", err)
+		t.Fatal(err)
 	}
 	insertRawOp(t, s, OpMarkNotification, "n1", `{"workspace":"w1","name":"a","read":true,"from_future":1}`, `{}`)
 	must(t, s.tx(ctx, func(tx *sql.Tx) error { return reapplyNotificationMarks(ctx, tx) }))

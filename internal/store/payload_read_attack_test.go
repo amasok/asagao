@@ -165,7 +165,9 @@ func TestAttackReapplyProjectUpdates(t *testing.T) {
 		{"owner and due cleared", `{"owner":"","due_on":""}`, "", "", "2026-01-01", "red", "N"},
 		{"only start", `{"start_on":"2026-02-02"}`, "u1", "2026-03-03", "2026-02-02", "red", "N"},
 		{"future key", `{"due_on":"","from_future":1}`, "u1", "", "2026-01-01", "red", "N"},
-		{"due wrong type (as main: written as \"\"), notes ok", `{"due_on":9,"notes":"M"}`, "u1", "", "2026-01-01", "red", "M"},
+		// a value of another type is left out, as for tags, briefs and tasks (main cleared
+		// the due date with it: "")
+		{"due wrong type left out, notes ok", `{"due_on":9,"notes":"M"}`, "u1", "2026-03-03", "2026-01-01", "red", "M"},
 		{"empty payload", `{}`, "u1", "2026-03-03", "2026-01-01", "red", "N"},
 	}
 	for _, c := range cases {
